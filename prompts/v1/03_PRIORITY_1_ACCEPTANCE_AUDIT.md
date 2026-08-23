@@ -8,6 +8,13 @@ Audit `sameenhewage/samdroidx_ai_exam_guru` for **Priority 1 completion**. Your 
 
 Read all repository V1 instructions/specifications and inspect implementation, tests, migrations, eval fixtures, CI, runtime configuration and tracker evidence.
 
+## Mandatory skills
+Before auditing, inspect `.agents/skills/*/SKILL.md` and follow `AGENTS.md` automatic routing rules.
+- Always use `loop-engineering` and `tdd-eval-engineering`.
+- Always use `priority1-admin-acceptance` and `security-reliability-review` for this audit.
+- Load every relevant domain skill while revalidating its gate: document ingestion/OCR, RAG, forecast/backtesting, LLM generation/validation, FastAPI or Next.js as applicable.
+- If a defect is found and work moves into a different domain, re-evaluate and load the newly relevant skills before fixing it.
+
 ## Rule
 You may mark P10 DONE only if **P0-P9 are individually proven DONE** and the complete Priority 1 acceptance journey passes. If any criterion is incomplete, downgrade the relevant phase status, create/fix the missing regression coverage, and continue engineering instead of declaring completion.
 
@@ -67,5 +74,7 @@ Only if every P0-P10 criterion passes with evidence. Update the tracker to DONE 
 
 ### `PRIORITY_1_INCOMPLETE`
 If anything remains. Update tracker statuses/evidence accurately, fix everything you safely can in the same run, and list only genuine external/human blockers that remain.
+
+Also report the repository skills materially used during the audit/fix loop.
 
 Do not use percentages such as 95% as a substitute for acceptance. Priority 2 remains blocked until the result is `PRIORITY_1_COMPLETE`.
