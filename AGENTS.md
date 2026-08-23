@@ -33,6 +33,52 @@ This project is **not developed by feeding one implementation prompt per phase**
 
 Phases in `docs/v1/PHASE_TRACKER.md` are acceptance/status gates, not isolated prompt-driven implementation units.
 
+## Agent Skills — mandatory automatic routing
+Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the Agent Skills `SKILL.md` format.
+
+### Mandatory trigger rules
+1. **For every engineering turn, always read and apply:**
+   - `.agents/skills/loop-engineering/SKILL.md`
+   - `.agents/skills/tdd-eval-engineering/SKILL.md`
+2. Before changing code, tests, prompts, schemas, migrations, infrastructure or docs that affect behavior, inspect the available skill list below and select **all** skills whose description matches the current work.
+3. If a task clearly matches a skill description, using that skill is mandatory. Do not wait for the user to name the skill.
+4. Multiple skills may be active at the same time. Example: a RAG API change normally uses `loop-engineering` + `tdd-eval-engineering` + `rag-retrieval-evaluation` + `fastapi-domain-engineering` + possibly `security-reliability-review`.
+5. Read the full relevant `SKILL.md` before implementation; do not rely on remembered summaries from earlier sessions.
+6. Re-evaluate skill selection whenever the active work item changes during the continuous loop.
+7. If a skill conflicts with `AGENTS.md` or the V1 contract docs, the more specific repository contract/`AGENTS.md` rule wins; document the conflict rather than silently ignoring it.
+8. At the end of an execution session, report which repo skills materially governed the work.
+
+### Available repository skills
+- **loop-engineering** — `.agents/skills/loop-engineering/SKILL.md`  
+  Always use for implementation, refactors, bug fixes, integration work and acceptance work. Drives the continuous loop and Priority 1 lock.
+- **tdd-eval-engineering** — `.agents/skills/tdd-eval-engineering/SKILL.md`  
+  Always use when behavior changes. Enforces RED→GREEN→REFACTOR and eval-first AI/RAG work.
+- **fastapi-domain-engineering** — `.agents/skills/fastapi-domain-engineering/SKILL.md`  
+  Use for Python/FastAPI, Pydantic, SQLAlchemy/Alembic, REST/OpenAPI, background jobs, modular-monolith/domain architecture and provider ports.
+- **nextjs-product-engineering** — `.agents/skills/nextjs-product-engineering/SKILL.md`  
+  Use for Next.js/React/TypeScript, shadcn/ui, React Aria, Tailwind, typed API integration and admin/student product UI.
+- **document-ingestion-ocr** — `.agents/skills/document-ingestion-ocr/SKILL.md`  
+  Use for PDF upload, native extraction, OCR, layout/reading order, provenance, extraction review and ingestion/chunk preparation.
+- **rag-retrieval-evaluation** — `.agents/skills/rag-retrieval-evaluation/SKILL.md`  
+  Use for embeddings, pgvector, full-text/hybrid retrieval, metadata filters, ranking/reranking, context building, provenance and retrieval evals.
+- **exam-forecast-backtesting** — `.agents/skills/exam-forecast-backtesting/SKILL.md`  
+  Use for historical analytics, practice-priority forecasting, held-out rolling backtests, baseline comparison and forecast calibration.
+- **llm-question-generation-validation** — `.agents/skills/llm-question-generation-validation/SKILL.md`  
+  Use for LLM/provider adapters, structured generation, prompts, answer/marking generation, validation, duplicate detection, AI evals and cost/latency tracking.
+- **security-reliability-review** — `.agents/skills/security-reliability-review/SKILL.md`  
+  Use for authz/security, uploads, prompt injection/RAG poisoning, leakage, retries/idempotency/races, publish bypass, provider failure, cost abuse and adversarial review.
+- **priority1-admin-acceptance** — `.agents/skills/priority1-admin-acceptance/SKILL.md`  
+  Use for Priority 1 admin workflows, tracker phase closure, full admin→published-paper acceptance and especially P10 unlock decisions.
+
+### Task-to-skill examples
+- Bootstrap backend/API/database → always-on skills + `fastapi-domain-engineering`.
+- Build admin UI → always-on skills + `nextjs-product-engineering` + `priority1-admin-acceptance`.
+- Upload/extract/OCR → always-on skills + `document-ingestion-ocr` + `fastapi-domain-engineering` + security when handling untrusted files.
+- Build/tune RAG → always-on skills + `rag-retrieval-evaluation` + `fastapi-domain-engineering` + security for injection/leakage cases.
+- Forecast/backtest → always-on skills + `exam-forecast-backtesting`.
+- Generate/validate questions → always-on skills + `llm-question-generation-validation` + `rag-retrieval-evaluation`; add security for prompt-injection/provider-failure work.
+- Close P0–P10 gates → always-on skills + `priority1-admin-acceptance`; use `security-reliability-review` before major/P10 closure.
+
 ## TDD is mandatory
 Use RED -> GREEN -> REFACTOR for application behavior.
 
@@ -89,6 +135,7 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 ## Repository discipline
 - Treat `docs/v1/` as the V1 contract.
 - Treat `prompts/v1/` as reusable operator prompts, not product runtime prompts.
+- Treat `.agents/skills/` as mandatory reusable engineering workflows; keep skill descriptions accurate because they drive automatic selection.
 - Update `docs/v1/PHASE_TRACKER.md` only when evidence exists.
 - A phase can be marked `DONE` only when all listed acceptance criteria, tests, evals, docs, and runtime verification pass.
 - Never mark partial work as DONE.
