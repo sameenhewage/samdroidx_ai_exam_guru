@@ -8,6 +8,13 @@ Perform an adversarial engineering review of the current **active Priority 1 imp
 
 Read `AGENTS.md`, `docs/v1/00_V1_MASTER_PLAN.md`, `docs/v1/01_ENGINEERING_WORKFLOW.md`, `docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md`, and `docs/v1/PHASE_TRACKER.md` first.
 
+## Mandatory skills
+Before reviewing/fixing, inspect `.agents/skills/*/SKILL.md` and apply the routing rules in `AGENTS.md`.
+- Always use `loop-engineering` and `tdd-eval-engineering`.
+- Always use `security-reliability-review` for this prompt.
+- Load each domain-specific skill matching the reviewed area (RAG, LLM, ingestion/OCR, forecast/backtesting, FastAPI, Next.js, Priority 1 acceptance).
+- Re-evaluate skills as the review moves between areas.
+
 Do not only write a review report. Execute a full review/fix loop.
 
 ## Review areas
@@ -111,6 +118,7 @@ At the end, report:
 - remaining accepted limitations;
 - test/eval results;
 - tracker changes;
-- commits.
+- commits;
+- repository skills materially used.
 
 Do not mark a tracker phase DONE unless all of its exit criteria are actually satisfied.
