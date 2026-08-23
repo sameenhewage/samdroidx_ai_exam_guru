@@ -22,6 +22,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode
 from exam_guru_api.infrastructure.database import Base
 
+_TAXONOMY_LEVELS_SQL = ", ".join(f"'{level.value}'" for level in TaxonomyLevel)
+
 
 class AuditColumns:
     created_at: Mapped[datetime] = mapped_column(
@@ -121,7 +123,7 @@ class TaxonomyNodeModel(AuditColumns, Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "level IN ('competency', 'skill', 'sub_skill', 'learning_concept')",
+            f"level IN ({_TAXONOMY_LEVELS_SQL})",
             name="ck_taxonomy_node_level",
         ),
         CheckConstraint(
