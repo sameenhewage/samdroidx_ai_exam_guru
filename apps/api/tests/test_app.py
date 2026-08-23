@@ -119,6 +119,14 @@ def test_openapi_contract_identifies_service_and_liveness_schema() -> None:
     assert readiness_operation["responses"]["503"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ReadinessResponse"
     }
+    taxonomy_path = "/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes"
+    taxonomy_operation = schema["paths"][taxonomy_path]["post"]
+    assert taxonomy_operation["operationId"] == "create_taxonomy_node"
+    assert taxonomy_operation["security"] == [{"HTTPBearer": []}]
+    assert schema["components"]["securitySchemes"]["HTTPBearer"] == {
+        "scheme": "bearer",
+        "type": "http",
+    }
 
 
 def test_cli_starts_the_api_server(monkeypatch: pytest.MonkeyPatch) -> None:

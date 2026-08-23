@@ -43,6 +43,7 @@ dev = [
 
 [tool.coverage.run]
 branch = true
+concurrency = ["thread"]
 source = ["exam_guru_api"]
 
 [tool.coverage.report]

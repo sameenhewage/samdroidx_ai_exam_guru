@@ -1,9 +1,14 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from exam_guru_api.core.config import Settings
 
@@ -20,6 +25,10 @@ class ApplicationResources(Protocol):
 class RuntimeResources:
     database_engine: AsyncEngine
     valkey: Redis
+    session_factory: async_sessionmaker[AsyncSession] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.session_factory = async_sessionmaker(self.database_engine, expire_on_commit=False)
 
     async def check_database(self) -> None:
         async with self.database_engine.connect() as connection:

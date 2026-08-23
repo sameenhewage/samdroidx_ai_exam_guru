@@ -4,6 +4,24 @@
  */
 
 export interface paths {
+    "/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List curriculum taxonomy nodes */
+        get: operations["list_taxonomy_nodes"];
+        put?: never;
+        /** Create a curriculum taxonomy node */
+        post: operations["create_taxonomy_node"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -55,6 +73,11 @@ export interface components {
              */
             valkey: "ok" | "unavailable";
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -72,6 +95,61 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /**
+         * TaxonomyLevel
+         * @enum {string}
+         */
+        TaxonomyLevel: "competency" | "skill" | "sub_skill" | "learning_concept";
+        /** TaxonomyNodeCreate */
+        TaxonomyNodeCreate: {
+            /**
+             * Active
+             * @default true
+             */
+            active: boolean;
+            /** Code */
+            code: string;
+            level: components["schemas"]["TaxonomyLevel"];
+            /** Parent Id */
+            parent_id?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** TaxonomyNodeResponse */
+        TaxonomyNodeResponse: {
+            /** Active */
+            active: boolean;
+            /** Code */
+            code: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            level: components["schemas"]["TaxonomyLevel"];
+            /** Parent Id */
+            parent_id: string | null;
+            /** Title */
+            title: string;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -81,6 +159,84 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_taxonomy_nodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaxonomyNodeResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_taxonomy_node: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaxonomyNodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaxonomyNodeResponse"];
+                };
+            };
+            /** @description Curriculum version not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Taxonomy conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid taxonomy hierarchy */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_liveness: {
         parameters: {
             query?: never;
