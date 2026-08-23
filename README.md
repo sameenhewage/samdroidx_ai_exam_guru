@@ -15,7 +15,19 @@ Read:
 - [`docs/v1/01_ENGINEERING_WORKFLOW.md`](docs/v1/01_ENGINEERING_WORKFLOW.md)
 - [`docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md`](docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md)
 - [`docs/v1/03_PRIORITY_2_STUDENT_SPEC.md`](docs/v1/03_PRIORITY_2_STUDENT_SPEC.md)
+- [`docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md`](docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md)
 - [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md)
+
+## Automatic repository skills
+Reusable agent workflows live in `.agents/skills/<skill-name>/SKILL.md`.
+
+`AGENTS.md` contains the authoritative skill registry and automatic trigger rules. Every engineering task always loads:
+- `loop-engineering`
+- `tdd-eval-engineering`
+
+The agent must then automatically load all matching domain skills (FastAPI, Next.js, OCR/ingestion, RAG, forecast/backtesting, LLM generation/validation, security/acceptance, and later the P10-gated student product skill) without waiting for the operator to name them.
+
+See [`docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md`](docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md) for compositions and maintenance rules.
 
 ## GPT-5.6 Sol operator prompts
 Start V1 with:
@@ -33,5 +45,7 @@ Before unlocking student development run:
 Only after P10 is proven DONE, continue with:
 - [`prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md`](prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md)
 
+All prompts re-apply the repository skill-routing rules so skill use survives session/resume boundaries.
+
 ## Current state
-Planning/instruction baseline created. Implementation tracker begins at **P0 — Repository & Engineering Foundation**. Priority 2 remains blocked until P10 is DONE.
+Planning/instruction/skills baseline created. Implementation tracker begins at **P0 — Repository & Engineering Foundation**. Priority 2 remains blocked until P10 is DONE.
