@@ -1,7 +1,9 @@
 import hashlib
 from typing import cast
 
+import boto3
 import pytest
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from mypy_boto3_s3 import S3Client
 
@@ -86,6 +88,31 @@ def storage_with_client(
     )
     storage._client = cast(S3Client, client)
     return storage
+
+
+def test_s3_client_has_bounded_timeouts_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def capture_client(_service: str, **kwargs: object) -> ScriptedS3Client:
+        captured.update(kwargs)
+        return ScriptedS3Client()
+
+    monkeypatch.setattr(boto3, "client", capture_client)
+    S3ObjectStorage(
+        endpoint_url="http://localhost:9000",
+        access_key_id="test-access",
+        secret_access_key="x",
+        bucket="test-bucket",
+        region="us-east-1",
+    )
+
+    config = cast(Config, captured["config"])
+    config_values = vars(config)
+    assert config_values["connect_timeout"] == 5
+    assert config_values["read_timeout"] == 30
+    assert cast(dict[str, object], config_values["retries"])["total_max_attempts"] == 3
 
 
 def test_existing_bucket_is_not_recreated() -> None:

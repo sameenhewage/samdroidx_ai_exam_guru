@@ -40,6 +40,20 @@ def test_liveness_contract() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_oversized_declared_request_is_rejected_before_body_parsing() -> None:
+    settings = Settings(max_upload_bytes=1_024)
+
+    with TestClient(create_app(settings=settings)) as client:
+        response = client.post(
+            "/api/v1/admin/source-documents",
+            content=b"",
+            headers={"Content-Length": str(2 * 1024 * 1024)},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "request_too_large"
+
+
 def test_request_id_is_preserved_when_it_is_a_valid_uuid() -> None:
     request_id = str(uuid4())
 

@@ -327,6 +327,135 @@
         "title": "ExamConfigurationUpdate",
         "type": "object"
       },
+      "ExtractedBlockResponse": {
+        "properties": {
+          "bbox": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Bbox",
+            "type": "array"
+          },
+          "character_count": {
+            "title": "Character Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "extractor": {
+            "title": "Extractor",
+            "type": "string"
+          },
+          "extractor_version": {
+            "title": "Extractor Version",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "reading_order": {
+            "title": "Reading Order",
+            "type": "integer"
+          },
+          "reviewed_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed Text"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "source_page_id": {
+            "format": "uuid",
+            "title": "Source Page Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "source_page_id",
+          "source_document_id",
+          "page_number",
+          "reading_order",
+          "extractor",
+          "extractor_version",
+          "bbox",
+          "raw_text",
+          "reviewed_text",
+          "character_count",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ExtractedBlockResponse",
+        "type": "object"
+      },
+      "ExtractionJobResponse": {
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExtractionStatus"
+          }
+        },
+        "required": [
+          "document_id",
+          "message_id",
+          "status"
+        ],
+        "title": "ExtractionJobResponse",
+        "type": "object"
+      },
       "ExtractionStatus": {
         "enum": [
           "uploaded",
@@ -468,6 +597,28 @@
         "title": "ReadinessResponse",
         "type": "object"
       },
+      "ReviewedTextUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reviewed_text": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Reviewed Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reviewed_text",
+          "expected_version"
+        ],
+        "title": "ReviewedTextUpdate",
+        "type": "object"
+      },
       "SourceDocumentResponse": {
         "properties": {
           "checksum_sha256": {
@@ -503,17 +654,129 @@
           "document_type": {
             "$ref": "#/components/schemas/SourceDocumentType"
           },
+          "extracted_block_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extracted Block Count"
+          },
+          "extracted_character_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extracted Character Count"
+          },
+          "extracted_page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extracted Page Count"
+          },
+          "extraction_attempt_count": {
+            "title": "Extraction Attempt Count",
+            "type": "integer"
+          },
+          "extraction_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Completed At"
+          },
+          "extraction_failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Failure Code"
+          },
+          "extraction_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Started At"
+          },
           "extraction_status": {
             "$ref": "#/components/schemas/ExtractionStatus"
+          },
+          "extractor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor"
+          },
+          "extractor_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractor Version"
           },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
-          "object_key": {
-            "title": "Object Key",
-            "type": "string"
+          "native_text_page_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Text Page Ratio"
+          },
+          "needs_ocr": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Ocr"
           },
           "original_filename": {
             "title": "Original Filename",
@@ -549,7 +812,6 @@
         "required": [
           "id",
           "checksum_sha256",
-          "object_key",
           "original_filename",
           "content_type",
           "size_bytes",
@@ -558,6 +820,17 @@
           "curriculum_version_id",
           "year",
           "paper_code",
+          "extraction_attempt_count",
+          "extractor",
+          "extractor_version",
+          "extracted_page_count",
+          "extracted_block_count",
+          "extracted_character_count",
+          "native_text_page_ratio",
+          "needs_ocr",
+          "extraction_failure_code",
+          "extraction_started_at",
+          "extraction_completed_at",
           "created_at"
         ],
         "title": "SourceDocumentResponse",
@@ -574,6 +847,85 @@
         ],
         "title": "SourceDocumentType",
         "type": "string"
+      },
+      "SourcePageResponse": {
+        "properties": {
+          "block_count": {
+            "title": "Block Count",
+            "type": "integer"
+          },
+          "character_count": {
+            "title": "Character Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "extractor": {
+            "title": "Extractor",
+            "type": "string"
+          },
+          "extractor_version": {
+            "title": "Extractor Version",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "reviewed_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed Text"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "source_document_id",
+          "page_number",
+          "extractor",
+          "extractor_version",
+          "raw_text",
+          "reviewed_text",
+          "character_count",
+          "block_count",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SourcePageResponse",
+        "type": "object"
       },
       "TaxonomyLevel": {
         "enum": [
@@ -1674,6 +2026,34 @@
       }
     },
     "/api/v1/admin/source-documents": {
+      "get": {
+        "operationId": "list_source_documents",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceDocumentResponse"
+                  },
+                  "title": "Response List Source Documents",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Source Documents",
+        "tags": [
+          "admin-documents"
+        ]
+      },
       "post": {
         "operationId": "upload_source_document",
         "requestBody": {
@@ -1710,6 +2090,406 @@
           }
         ],
         "summary": "Upload Source Document",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/extract": {
+      "post": {
+        "operationId": "trigger_source_document_extraction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Trigger Source Document Extraction",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/pages": {
+      "get": {
+        "operationId": "list_source_document_pages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourcePageResponse"
+                  },
+                  "title": "Response List Source Document Pages",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Source Document Pages",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}": {
+      "patch": {
+        "operationId": "correct_source_document_page",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "title": "Page Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewedTextUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcePageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct Source Document Page",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks": {
+      "get": {
+        "operationId": "list_source_page_blocks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "title": "Page Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExtractedBlockResponse"
+                  },
+                  "title": "Response List Source Page Blocks",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Source Page Blocks",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks/{reading_order}": {
+      "patch": {
+        "operationId": "correct_source_document_block",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "title": "Page Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reading_order",
+            "required": true,
+            "schema": {
+              "title": "Reading Order",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewedTextUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractedBlockResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct Source Document Block",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/review": {
+      "post": {
+        "operationId": "begin_source_document_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Begin Source Document Review",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/trust": {
+      "post": {
+        "operationId": "trust_source_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Trust Source Document",
         "tags": [
           "admin-documents"
         ]

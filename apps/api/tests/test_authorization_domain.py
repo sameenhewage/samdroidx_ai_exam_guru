@@ -20,6 +20,10 @@ REVIEWER_ID = UUID(int=2)
         Permission.TAXONOMY_READ,
         Permission.TAXONOMY_WRITE,
         Permission.CONTENT_REVIEW,
+        Permission.SOURCE_READ,
+        Permission.SOURCE_WRITE,
+        Permission.EXTRACTION_TRIGGER,
+        Permission.SOURCE_TRUST,
         Permission.PAPER_PUBLISH,
     ],
 )
@@ -31,7 +35,7 @@ def test_admin_has_every_priority_one_permission(permission: Permission) -> None
 
 @pytest.mark.parametrize(
     "permission",
-    [Permission.TAXONOMY_READ, Permission.CONTENT_REVIEW],
+    [Permission.TAXONOMY_READ, Permission.SOURCE_READ, Permission.CONTENT_REVIEW],
 )
 def test_reviewer_has_read_and_review_permissions(permission: Permission) -> None:
     principal = Principal(subject_id=REVIEWER_ID, roles=frozenset({AdminRole.REVIEWER}))
@@ -41,7 +45,13 @@ def test_reviewer_has_read_and_review_permissions(permission: Permission) -> Non
 
 @pytest.mark.parametrize(
     "permission",
-    [Permission.TAXONOMY_WRITE, Permission.PAPER_PUBLISH],
+    [
+        Permission.TAXONOMY_WRITE,
+        Permission.SOURCE_WRITE,
+        Permission.EXTRACTION_TRIGGER,
+        Permission.SOURCE_TRUST,
+        Permission.PAPER_PUBLISH,
+    ],
 )
 def test_reviewer_cannot_manage_taxonomy_or_publish(permission: Permission) -> None:
     principal = Principal(subject_id=REVIEWER_ID, roles=frozenset({AdminRole.REVIEWER}))

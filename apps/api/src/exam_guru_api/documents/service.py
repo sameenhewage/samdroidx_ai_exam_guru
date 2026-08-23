@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import cast
@@ -44,6 +45,13 @@ class SourceDocumentService:
         self._session = session
         self._object_storage = object_storage
         self._max_upload_bytes = max_upload_bytes
+
+    async def list_documents(self) -> Sequence[SourceDocumentModel]:
+        return (
+            await self._session.scalars(
+                select(SourceDocumentModel).order_by(SourceDocumentModel.created_at.desc())
+            )
+        ).all()
 
     async def upload_pdf(
         self,
@@ -108,7 +116,6 @@ class SourceDocumentService:
                 payload={
                     "checksum_sha256": upload.checksum_sha256,
                     "document_type": document_type.value,
-                    "object_key": upload.object_key,
                     "original_filename": upload.filename,
                     "size_bytes": upload.size_bytes,
                 },

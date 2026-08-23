@@ -4,6 +4,35 @@ from typing import Any
 
 import pymupdf
 
+from exam_guru_api.documents.domain import ExtractionStatus
+
+_ALLOWED_EXTRACTION_TRANSITIONS = frozenset(
+    {
+        (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING),
+        (ExtractionStatus.EXTRACTION_PENDING, ExtractionStatus.EXTRACTED),
+        (ExtractionStatus.EXTRACTION_PENDING, ExtractionStatus.FAILED),
+        (ExtractionStatus.FAILED, ExtractionStatus.EXTRACTION_PENDING),
+        (ExtractionStatus.EXTRACTED, ExtractionStatus.IN_REVIEW),
+        (ExtractionStatus.IN_REVIEW, ExtractionStatus.TRUSTED),
+    }
+)
+
+
+class InvalidExtractionTransitionError(ValueError):
+    def __init__(self, current: ExtractionStatus, target: ExtractionStatus) -> None:
+        self.current = current
+        self.target = target
+        super().__init__(f"cannot transition extraction from {current.value} to {target.value}")
+
+
+def transition_extraction_status(
+    current: ExtractionStatus,
+    target: ExtractionStatus,
+) -> ExtractionStatus:
+    if current is not target and (current, target) not in _ALLOWED_EXTRACTION_TRANSITIONS:
+        raise InvalidExtractionTransitionError(current, target)
+    return target
+
 
 class ExtractionViolation(StrEnum):
     MALFORMED_PDF = "malformed_pdf"

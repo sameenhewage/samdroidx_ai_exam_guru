@@ -11,7 +11,11 @@ class AdminRole(StrEnum):
 class Permission(StrEnum):
     TAXONOMY_READ = "taxonomy:read"
     TAXONOMY_WRITE = "taxonomy:write"
+    SOURCE_READ = "source:read"
+    SOURCE_WRITE = "source:write"
+    EXTRACTION_TRIGGER = "extraction:trigger"
     CONTENT_REVIEW = "content:review"
+    SOURCE_TRUST = "source:trust"
     PAPER_PUBLISH = "paper:publish"
 
 
@@ -20,6 +24,7 @@ _ROLE_PERMISSIONS = {
     AdminRole.REVIEWER: frozenset(
         {
             Permission.TAXONOMY_READ,
+            Permission.SOURCE_READ,
             Permission.CONTENT_REVIEW,
         }
     ),

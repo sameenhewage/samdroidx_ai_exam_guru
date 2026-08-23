@@ -2,6 +2,16 @@ import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_UPLOAD_BODY_BYTES = 26 * 1024 * 1024;
+
+export function bodyLimitForRequest(method: string, path: string[], contentType: string): number {
+  return method === "POST" &&
+    path.length === 1 &&
+    path[0] === "source-documents" &&
+    contentType.toLowerCase().startsWith("multipart/form-data;")
+    ? MAX_UPLOAD_BODY_BYTES
+    : MAX_BODY_BYTES;
+}
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -17,7 +27,12 @@ async function proxy(request: NextRequest, context: RouteContext) {
   }
 
   const body = request.method === "GET" ? undefined : await request.arrayBuffer();
-  if (body && body.byteLength > MAX_BODY_BYTES) {
+  const bodyLimit = bodyLimitForRequest(
+    request.method,
+    path,
+    request.headers.get("Content-Type") ?? "",
+  );
+  if (body && body.byteLength > bodyLimit) {
     return NextResponse.json({ detail: { code: "request_too_large" } }, { status: 413 });
   }
 

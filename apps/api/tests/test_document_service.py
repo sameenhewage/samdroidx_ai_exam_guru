@@ -33,9 +33,18 @@ class StubStorage:
         raise AssertionError(key)
 
 
+class ScalarRows:
+    def __init__(self, rows: list[SourceDocumentModel]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[SourceDocumentModel]:
+        return self._rows
+
+
 class StubSession:
     def __init__(self) -> None:
         self.scalar_results: list[SourceDocumentModel | None] = []
+        self.list_rows: list[SourceDocumentModel] = []
         self.curriculum: object | None = SimpleNamespace(active=True)
         self.added: list[object] = []
         self.fail_commit = False
@@ -43,6 +52,9 @@ class StubSession:
 
     async def scalar(self, _query: object) -> SourceDocumentModel | None:
         return self.scalar_results.pop(0)
+
+    async def scalars(self, _query: object) -> ScalarRows:
+        return ScalarRows(self.list_rows)
 
     async def get(self, _model: object, _identifier: UUID) -> object | None:
         return self.curriculum
@@ -90,6 +102,15 @@ def service(session: StubSession, storage: StubStorage) -> SourceDocumentService
         cast(ObjectStorage, storage),
         max_upload_bytes=1_024,
     )
+
+
+def test_source_document_service_lists_documents() -> None:
+    session = StubSession()
+    storage = StubStorage()
+    document = existing_document()
+    session.list_rows = [document]
+
+    assert asyncio.run(service(session, storage).list_documents()) == [document]
 
 
 def test_source_document_service_uploads_and_deduplicates() -> None:

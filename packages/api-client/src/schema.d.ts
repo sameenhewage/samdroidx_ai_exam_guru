@@ -253,10 +253,130 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Source Documents */
+        get: operations["list_source_documents"];
         put?: never;
         /** Upload Source Document */
         post: operations["upload_source_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger Source Document Extraction */
+        post: operations["trigger_source_document_extraction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Source Document Pages */
+        get: operations["list_source_document_pages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Correct Source Document Page */
+        patch: operations["correct_source_document_page"];
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Source Page Blocks */
+        get: operations["list_source_page_blocks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks/{reading_order}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Correct Source Document Block */
+        patch: operations["correct_source_document_block"];
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Begin Source Document Review */
+        post: operations["begin_source_document_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-documents/{document_id}/trust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trust Source Document */
+        post: operations["trust_source_document"];
         delete?: never;
         options?: never;
         head?: never;
@@ -456,6 +576,68 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ExtractedBlockResponse */
+        ExtractedBlockResponse: {
+            /** Bbox */
+            bbox: [
+                number,
+                number,
+                number,
+                number
+            ];
+            /** Character Count */
+            character_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Extractor */
+            extractor: string;
+            /** Extractor Version */
+            extractor_version: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Page Number */
+            page_number: number;
+            /** Raw Text */
+            raw_text: string;
+            /** Reading Order */
+            reading_order: number;
+            /** Reviewed Text */
+            reviewed_text: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+            /**
+             * Source Page Id
+             * Format: uuid
+             */
+            source_page_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** ExtractionJobResponse */
+        ExtractionJobResponse: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Message Id */
+            message_id: string;
+            status: components["schemas"]["ExtractionStatus"];
+        };
         /**
          * ExtractionStatus
          * @enum {string}
@@ -519,6 +701,13 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /** ReviewedTextUpdate */
+        ReviewedTextUpdate: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reviewed Text */
+            reviewed_text: string;
+        };
         /** SourceDocumentResponse */
         SourceDocumentResponse: {
             /** Checksum Sha256 */
@@ -538,14 +727,34 @@ export interface components {
              */
             deduplicated: boolean;
             document_type: components["schemas"]["SourceDocumentType"];
+            /** Extracted Block Count */
+            extracted_block_count: number | null;
+            /** Extracted Character Count */
+            extracted_character_count: number | null;
+            /** Extracted Page Count */
+            extracted_page_count: number | null;
+            /** Extraction Attempt Count */
+            extraction_attempt_count: number;
+            /** Extraction Completed At */
+            extraction_completed_at: string | null;
+            /** Extraction Failure Code */
+            extraction_failure_code: string | null;
+            /** Extraction Started At */
+            extraction_started_at: string | null;
             extraction_status: components["schemas"]["ExtractionStatus"];
+            /** Extractor */
+            extractor: string | null;
+            /** Extractor Version */
+            extractor_version: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Object Key */
-            object_key: string;
+            /** Native Text Page Ratio */
+            native_text_page_ratio: number | null;
+            /** Needs Ocr */
+            needs_ocr: boolean | null;
             /** Original Filename */
             original_filename: string;
             /** Paper Code */
@@ -560,6 +769,45 @@ export interface components {
          * @enum {string}
          */
         SourceDocumentType: "syllabus" | "teacher_guide" | "past_paper" | "marking_scheme" | "evaluation_report" | "other_approved";
+        /** SourcePageResponse */
+        SourcePageResponse: {
+            /** Block Count */
+            block_count: number;
+            /** Character Count */
+            character_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Extractor */
+            extractor: string;
+            /** Extractor Version */
+            extractor_version: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Page Number */
+            page_number: number;
+            /** Raw Text */
+            raw_text: string;
+            /** Reviewed Text */
+            reviewed_text: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
         /**
          * TaxonomyLevel
          * @enum {string}
@@ -1204,6 +1452,26 @@ export interface operations {
             };
         };
     };
+    list_source_documents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDocumentResponse"][];
+                };
+            };
+        };
+    };
     upload_source_document: {
         parameters: {
             query?: never;
@@ -1239,6 +1507,235 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    trigger_source_document_extraction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractionJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_source_document_pages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePageResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_source_document_page: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewedTextUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_source_page_blocks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractedBlockResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_source_document_block: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+                reading_order: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewedTextUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractedBlockResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    begin_source_document_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trust_source_document: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

@@ -70,7 +70,7 @@ def validate_pdf_upload(
     )
     if unsafe_filename:
         raise UploadValidationError(UploadViolation.UNSAFE_FILENAME)
-    if not data[:1_024].lstrip().startswith(b"%PDF-"):
+    if not data.startswith(b"%PDF-"):
         raise UploadValidationError(UploadViolation.INVALID_PDF_SIGNATURE)
 
     checksum = hashlib.sha256(data).hexdigest()

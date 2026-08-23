@@ -46,6 +46,13 @@ def test_valid_pdf_upload_has_deterministic_identity_and_storage_key() -> None:
             UploadViolation.INVALID_PDF_SIGNATURE,
         ),
         (
+            "prefixed.pdf",
+            "application/pdf",
+            b" \n%PDF-1.7\nspoofed prefix",
+            1_024,
+            UploadViolation.INVALID_PDF_SIGNATURE,
+        ),
+        (
             "paper.pdf",
             "text/plain",
             VALID_PDF,

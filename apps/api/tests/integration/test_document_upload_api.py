@@ -11,6 +11,7 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.documents.jobs import DeterministicExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.infrastructure.object_storage import StoredObject
@@ -76,11 +77,16 @@ def upload_database_url() -> Iterator[str]:
         yield database_url
 
 
-def upload_client(database_url: str, storage: RecordingObjectStorage) -> TestClient:
+def upload_client(
+    database_url: str,
+    storage: RecordingObjectStorage,
+    dispatcher: DeterministicExtractionDispatcher | None = None,
+) -> TestClient:
     return TestClient(
         create_app(
             identity_provider=StaticIdentityProvider(),
             object_storage=storage,
+            extraction_dispatcher=dispatcher,
             resource_factory=lambda _: DatabaseTestResources(database_url),
         )
     )
@@ -89,9 +95,10 @@ def upload_client(database_url: str, storage: RecordingObjectStorage) -> TestCli
 @pytest.mark.integration
 def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: str) -> None:
     storage = RecordingObjectStorage()
+    dispatcher = DeterministicExtractionDispatcher()
     headers = {"Authorization": "Bearer admin-token"}
 
-    with upload_client(upload_database_url, storage) as client:
+    with upload_client(upload_database_url, storage, dispatcher) as client:
         created = client.post(
             "/api/v1/admin/source-documents",
             data={"document_type": "syllabus"},
@@ -110,13 +117,40 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
             files={"file": ("reviewer.pdf", VALID_PDF, "application/pdf")},
             headers={"Authorization": "Bearer reviewer-token"},
         )
+        listed = client.get(
+            "/api/v1/admin/source-documents",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        extraction = client.post(
+            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
+            headers=headers,
+        )
+        duplicate_extraction = client.post(
+            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
+            headers=headers,
+        )
+        reviewer_extraction = client.post(
+            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
 
     assert created.status_code == 201
     assert created.json()["deduplicated"] is False
+    assert "object_key" not in created.json()
+    assert created.json()["extraction_attempt_count"] == 0
+    assert created.json()["extracted_page_count"] is None
     assert retried.status_code == 200
     assert retried.json()["deduplicated"] is True
     assert retried.json()["id"] == created.json()["id"]
     assert forbidden.status_code == 403
+    assert listed.status_code == 200
+    assert [document["id"] for document in listed.json()] == [created.json()["id"]]
+    assert extraction.status_code == 202
+    assert extraction.json()["message_id"] == "deterministic-extraction-message-id"
+    assert extraction.json()["status"] == "extraction_pending"
+    assert duplicate_extraction.status_code == 409
+    assert reviewer_extraction.status_code == 403
+    assert dispatcher.dispatched == [(UUID(created.json()["id"]), ADMIN_ID)]
     assert len(storage.puts) == 1
 
     async def persisted_state() -> tuple[int, list[str]]:
@@ -136,7 +170,10 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
 
     document_count, actions = asyncio.run(persisted_state())
     assert document_count == 1
-    assert actions == ["source_document.uploaded"]
+    assert actions == [
+        "source_document.uploaded",
+        "source_document.extraction_queued",
+    ]
 
 
 @pytest.mark.integration

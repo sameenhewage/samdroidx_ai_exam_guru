@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from exam_guru_api.core.config import Settings
@@ -68,6 +69,11 @@ class S3ObjectStorage:
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name=region,
+            config=Config(
+                connect_timeout=5,
+                read_timeout=30,
+                retries={"total_max_attempts": 3, "mode": "standard"},
+            ),
         )
 
     def ensure_bucket(self) -> None:
