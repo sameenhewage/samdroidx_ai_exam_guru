@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: 3.12.13
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: true
+          version: 0.11.26
+      - name: Install backend dependencies
+        run: uv sync --project apps/api --frozen
+      - name: Lint backend
+        run: uv run --project apps/api ruff check apps/api
+      - name: Check backend formatting
+        run: uv run --project apps/api ruff format --check apps/api
+      - name: Type-check backend
+        run: uv run --directory apps/api mypy
+      - name: Test backend and integrations
+        run: uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing
+      - name: Verify OpenAPI export
+        run: uv run --project apps/api exam-guru-openapi packages/api-client/openapi.json && git diff --exit-code -- packages/api-client/openapi.json
+      - name: Scan committed files for secrets
+        run: git ls-files -z | xargs -0 uv run --project apps/api detect-secrets-hook --baseline .secrets.baseline
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          cache: npm
+          node-version: 24.19.0
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=moderate
+      - name: Verify generated client
+        run: npm run generate --prefix packages/api-client && git diff --exit-code -- packages/api-client/src/schema.d.ts
+      - name: Lint frontend
+        run: npm run lint --prefix apps/web
+      - name: Type-check frontend and client
+        run: npm run typecheck
+      - name: Test frontend
+        run: npm run test:coverage --prefix apps/web
+      - name: Build frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+        run: npm run build --prefix apps/web
+
+  runtime:
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Start runtime
+        run: docker compose up --build --detach --wait --wait-timeout 240
+      - name: Verify API and web
+        run: curl --fail --silent http://localhost:8000/api/v1/health/ready && curl --fail --silent http://localhost:3000/ > /dev/null
+      - name: Inspect runtime
+        run: docker compose ps
+      - name: Stop runtime
+        if: always()
+        run: docker compose down --volumes --remove-orphans

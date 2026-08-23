@@ -16,7 +16,7 @@
 # PRIORITY 1 — ADMIN + EXAM INTELLIGENCE + RAG + LLM
 
 ## P0 — Repository & Engineering Foundation
-**Status:** NOT_STARTED
+**Status:** DONE
 
 ### Scope
 - monorepo/workspace bootstrap
@@ -35,18 +35,25 @@
 - secrets/config handling
 
 ### Exit criteria
-- [ ] clean clone can bootstrap documented local environment
-- [ ] web/API/worker processes start successfully
-- [ ] database migrations run from empty database
-- [ ] pgvector extension verified
-- [ ] Valkey connectivity verified
-- [ ] OpenAPI client generation is reproducible
-- [ ] unit/integration/API test harnesses pass
-- [ ] CI runs lint/type/test/build/migration checks
-- [ ] no secret committed to repository
+- [x] clean clone can bootstrap documented local environment
+- [x] web/API/worker processes start successfully
+- [x] database migrations run from empty database
+- [x] pgvector extension verified
+- [x] Valkey connectivity verified
+- [x] OpenAPI client generation is reproducible
+- [x] unit/integration/API test harnesses pass
+- [x] CI runs lint/type/test/build/migration checks
+- [x] no secret committed to repository
 
 ### Evidence
-TBD
+- 2026-08-23 bootstrap/runtime: `docker compose up --build --detach --wait --wait-timeout 240` completed with web, API, Dramatiq worker, PostgreSQL 18/pgvector, Valkey and MinIO running; `/api/v1/health/ready` returned database/Valkey `ok`, web returned HTTP 200, worker logged `ready for action`, and PostgreSQL reported pgvector `0.8.6`.
+- Backend gate: `uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing` — 42 passed with 100% statement coverage; real disposable pgvector/PostgreSQL, Valkey and MinIO integration tests include clean migration, readiness, worker startup and immutable/idempotent object storage.
+- Backend quality: Ruff check/format and strict mypy pass; production configuration rejects local credentials and unencrypted database, Valkey and object-storage connections; readiness checks have explicit deadlines and every API response carries a validated request ID.
+- Frontend gate: ESLint and strict TypeScript pass; Vitest — 2 passed with 100% statements/branches/functions/lines; Next.js 16.3.1 production build succeeds with `/`, `/_not-found` and `/icon.svg` prerendered.
+- OpenAPI: deterministic FastAPI export test passes; regenerating `packages/api-client/openapi.json` and `src/schema.d.ts` produced identical SHA-256 hashes; the `openapi-fetch` client contract type-checks.
+- CI/security: pinned GitHub Actions run backend lint/format/type/test/migration, frontend audit/lint/type/test/build, generated-artifact checks and full Compose runtime smoke; `actionlint` passes, `npm audit --audit-level=moderate` reports zero vulnerabilities, and `detect-secrets-hook --baseline .secrets.baseline` passes on all repository files.
+- Browser runtime: Chrome desktop and 390px mobile checks show the accessible Admin Content Studio workflow, no horizontal overflow and no console warnings/errors.
+- Commit reference: the cohesive P0 foundation commit containing this tracker evidence.
 
 ---
 
@@ -403,4 +410,4 @@ TBD
 ---
 
 # Current next action
-At repository bootstrap, the active gate is **P0**, but implementation must continuously optimize toward **Priority 1 completion**, not stop after each phase waiting for a new prompt.
+P0 is complete. The highest-priority active gate is **P1 — Grade 5 Domain Model & Admin Foundation**, beginning with the database-backed Grade 5 taxonomy and admin authorization/audit boundaries. Priority 2 remains blocked by P10.

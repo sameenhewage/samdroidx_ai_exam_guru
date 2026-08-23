@@ -1,0 +1,92 @@
+[project]
+name = "exam-guru-api"
+version = "0.1.0"
+description = "AI Exam Guru backend API"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "alembic==1.19.1",
+    "asyncpg==0.31.0",
+    "boto3==1.43.72",
+    "botocore==1.43.72",
+    "dramatiq[redis]==2.2.0",
+    "fastapi==0.141.1",
+    "opentelemetry-api==1.44.0",
+    "opentelemetry-exporter-otlp-proto-http==1.44.0",
+    "opentelemetry-instrumentation-fastapi==0.65b0",
+    "opentelemetry-sdk==1.44.0",
+    "pydantic-settings==2.15.0",
+    "redis==8.1.0",
+    "sentry-sdk[fastapi]==2.68.0",
+    "sqlalchemy[asyncio]==2.0.52",
+    "uvicorn[standard]==0.52.3",
+]
+
+[project.scripts]
+exam-guru-api = "exam_guru_api.cli:main"
+exam-guru-openapi = "exam_guru_api.openapi:main"
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "boto3-stubs[s3]==1.43.72",
+    "detect-secrets==1.5.0",
+    "httpx2==2.10.0",
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.3",
+    "testcontainers==4.15.0",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["exam_guru_api"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+python_version = "3.12"
+strict = true
+untyped_calls_exclude = ["dramatiq"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+markers = ["integration: requires Docker-backed external services"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ASYNC",
+    "B",
+    "C4",
+    "E",
+    "F",
+    "I",
+    "N",
+    "PERF",
+    "PIE",
+    "PT",
+    "RET",
+    "RUF",
+    "S",
+    "SIM",
+    "T20",
+    "UP",
+]
+ignore = ["S104"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]

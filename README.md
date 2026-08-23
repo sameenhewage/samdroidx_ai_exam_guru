@@ -48,4 +48,78 @@ Only after P10 is proven DONE, continue with:
 All prompts re-apply the repository skill-routing rules so skill use survives session/resume boundaries.
 
 ## Current state
-Planning/instruction/skills baseline created. Implementation tracker begins at **P0 — Repository & Engineering Foundation**. Priority 2 remains blocked until P10 is DONE.
+Implementation is active in **P0 — Repository & Engineering Foundation**. Priority 2 remains blocked until P10 is DONE. See [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md) for acceptance status and evidence.
+
+## Local bootstrap
+
+### Prerequisites
+- Docker Engine 29+ with Docker Compose 2.40+
+- `uv` 0.11.26+ for host-side backend development
+- Node.js 24.19 with npm 11.17 for host-side frontend development
+
+The full local stack can run without host Python or Node installations:
+
+```bash
+cp .env.example .env
+docker compose up --build --wait
+```
+
+Services:
+- admin web: `http://localhost:3000`
+- API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- MinIO console: `http://localhost:9001`
+- PostgreSQL/pgvector: `localhost:55432`
+- Valkey: `localhost:56379`
+
+The committed credentials are local-development placeholders only. Production mode rejects them. Stop services without deleting persisted local data using:
+
+```bash
+docker compose down
+```
+
+## Backend development
+
+```bash
+uv sync --project apps/api --frozen
+uv run --project apps/api ruff check apps/api
+uv run --project apps/api ruff format --check apps/api
+uv run --directory apps/api mypy
+uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing
+```
+
+The integration suite uses disposable real PostgreSQL/pgvector, Valkey, and MinIO containers.
+
+## Frontend development
+
+```bash
+npm ci
+npm run lint --prefix apps/web
+npm run typecheck
+npm run test:coverage --prefix apps/web
+npm run build --prefix apps/web
+```
+
+If the host Node version is older than Node 24, use the Docker runtime instead of relaxing the pinned engine requirement.
+
+## Generated API client
+
+The FastAPI OpenAPI document and TypeScript client types are reproducible repository artifacts:
+
+```bash
+npm run generate:client
+npm run typecheck --prefix packages/api-client
+```
+
+CI regenerates both artifacts and fails if the committed output differs.
+
+## Configuration and observability
+
+Backend settings use the `EXAM_GURU_` environment prefix. Database, Valkey, and object-storage credentials are redacted through `SecretStr`. Production configuration rejects local placeholders and requires PostgreSQL TLS (`ssl=require` or stronger), `rediss://` for Valkey, and an HTTPS object-storage endpoint. Optional observability variables include:
+
+- `EXAM_GURU_SENTRY_DSN`
+- `EXAM_GURU_OTEL_EXPORTER_OTLP_ENDPOINT`
+- `EXAM_GURU_OTEL_SERVICE_NAME`
+- `EXAM_GURU_TRACE_SAMPLE_RATIO`
+
+Every API response carries a validated `X-Request-ID`. OpenTelemetry FastAPI instrumentation is active, and Sentry-compatible error reporting is enabled only when a DSN is configured.

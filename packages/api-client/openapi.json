@@ -1,0 +1,126 @@
+{
+  "components": {
+    "schemas": {
+      "DependencyChecks": {
+        "properties": {
+          "database": {
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Database",
+            "type": "string"
+          },
+          "valkey": {
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Valkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "database",
+          "valkey"
+        ],
+        "title": "DependencyChecks",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/DependencyChecks"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "ReadinessResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "AI Exam Guru API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/health/live": {
+      "get": {
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Check API liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Check API dependencies",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  }
+}

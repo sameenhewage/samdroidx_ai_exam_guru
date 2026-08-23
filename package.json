@@ -1,0 +1,21 @@
+{
+  "name": "ai-exam-guru",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --prefix apps/web",
+    "dev": "npm run dev --prefix apps/web",
+    "generate:client": "uv run --project apps/api exam-guru-openapi packages/api-client/openapi.json && npm run generate --prefix packages/api-client",
+    "lint": "npm run lint --prefix apps/web",
+    "test": "npm run test --prefix apps/web",
+    "typecheck": "npm run typecheck --prefix apps/web && npm run typecheck --prefix packages/api-client"
+  }
+}

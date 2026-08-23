@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --background: #f3f4ef;
+  --foreground: #0f172a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Inter", "Noto Sans Sinhala", "Noto Sans Tamil", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "Noto Sans Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: #fde68a;
+  color: #0f172a;
+}

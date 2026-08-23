@@ -1,0 +1,133 @@
+name: ai-exam-guru
+
+x-api-environment: &api-environment
+  EXAM_GURU_ENVIRONMENT: local
+  EXAM_GURU_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-exam_guru}:${POSTGRES_PASSWORD:-exam-guru-local-db}@postgres:5432/${POSTGRES_DB:-exam_guru}
+  EXAM_GURU_VALKEY_URL: redis://valkey:6379/0
+  EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL: http://minio:9000
+  EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-exam-guru-local}
+  EXAM_GURU_OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-exam-guru-local-secret}
+  EXAM_GURU_OBJECT_STORAGE_BUCKET: exam-guru-sources
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-exam_guru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exam-guru-local-db}
+      POSTGRES_USER: ${POSTGRES_USER:-exam_guru}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres18-data:/var/lib/postgresql
+
+  valkey:
+    image: valkey/valkey:9.1.1-alpine3.24@sha256:de31910896150d5e754a07d57d227cfdde4e258ddd0d1aa4607f2d2f95843715
+    command: ["valkey-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "${VALKEY_PORT:-56379}:6379"
+    volumes:
+      - valkey-data:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-exam-guru-local-secret}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-exam-guru-local}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-exam-guru-local-secret}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-exam-guru-local}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done; mc mb --ignore-existing local/exam-guru-sources
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *api-environment
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment: *api-environment
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["dramatiq", "--processes", "1", "--threads", "4", "exam_guru_api.worker:broker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment: *api-environment
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: http://api:8000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  minio-data:
+  postgres18-data:
+  valkey-data:
