@@ -246,6 +246,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/source-documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Source Document */
+        post: operations["upload_source_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -314,6 +331,18 @@ export interface components {
             resource_id: string;
             /** Resource Type */
             resource_type: string;
+        };
+        /** Body_upload_source_document */
+        Body_upload_source_document: {
+            /** Curriculum Version Id */
+            curriculum_version_id?: string | null;
+            document_type: components["schemas"]["SourceDocumentType"];
+            /** File */
+            file: string;
+            /** Paper Code */
+            paper_code?: string | null;
+            /** Year */
+            year?: number | null;
         };
         /** CurriculumVersionCreate */
         CurriculumVersionCreate: {
@@ -427,6 +456,11 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * ExtractionStatus
+         * @enum {string}
+         */
+        ExtractionStatus: "uploaded" | "extraction_pending" | "extracted" | "in_review" | "trusted" | "failed";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -485,6 +519,47 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /** SourceDocumentResponse */
+        SourceDocumentResponse: {
+            /** Checksum Sha256 */
+            checksum_sha256: string;
+            /** Content Type */
+            content_type: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Curriculum Version Id */
+            curriculum_version_id: string | null;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            document_type: components["schemas"]["SourceDocumentType"];
+            extraction_status: components["schemas"]["ExtractionStatus"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Object Key */
+            object_key: string;
+            /** Original Filename */
+            original_filename: string;
+            /** Paper Code */
+            paper_code: string | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Year */
+            year: number | null;
+        };
+        /**
+         * SourceDocumentType
+         * @enum {string}
+         */
+        SourceDocumentType: "syllabus" | "teacher_guide" | "past_paper" | "marking_scheme" | "evaluation_report" | "other_approved";
         /**
          * TaxonomyLevel
          * @enum {string}
@@ -1126,6 +1201,44 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    upload_source_document: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_source_document"];
+            };
+        };
+        responses: {
+            /** @description Existing checksum returned idempotently */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Source document created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDocumentResponse"];
+                };
+            };
+            /** @description Upload validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

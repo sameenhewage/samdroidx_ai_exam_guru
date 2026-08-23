@@ -5,6 +5,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from exam_guru_api.core.config import Settings
+from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.infrastructure.resources import ApplicationResources
 
 
@@ -18,6 +19,10 @@ def get_resources(request: Request) -> ApplicationResources:
 
 def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+
+def get_object_storage(request: Request) -> ObjectStorage:
+    return cast(ObjectStorage, request.app.state.object_storage)
 
 
 async def get_database_session(request: Request) -> AsyncIterator[AsyncSession]:

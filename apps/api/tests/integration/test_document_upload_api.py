@@ -1,0 +1,153 @@
+import asyncio
+from collections.abc import Iterator
+from uuid import UUID
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from testcontainers.community.postgres import PostgresContainer
+
+from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.infrastructure.migrations import upgrade_database
+from exam_guru_api.infrastructure.object_storage import StoredObject
+from exam_guru_api.main import create_app
+
+PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
+VALID_PDF = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
+ADMIN_ID = UUID(int=9_000)
+
+
+class StaticIdentityProvider:
+    async def authenticate(self, access_token: str) -> Principal:
+        if access_token == "admin-token":
+            return Principal(subject_id=ADMIN_ID, roles=frozenset({AdminRole.ADMIN}))
+        if access_token == "reviewer-token":
+            return Principal(subject_id=UUID(int=9_001), roles=frozenset({AdminRole.REVIEWER}))
+        raise AuthenticationError(AuthenticationFailureCode.INVALID)
+
+
+class RecordingObjectStorage:
+    def __init__(self) -> None:
+        self.puts: list[tuple[str, bytes, str]] = []
+
+    def put_immutable(self, key: str, data: bytes, *, content_type: str) -> StoredObject:
+        self.puts.append((key, data, content_type))
+        return StoredObject(
+            key=key,
+            checksum_sha256=key.removesuffix(".pdf").split("/")[-1],
+            size=len(data),
+            etag="fixture-etag",
+        )
+
+    def get_bytes(self, key: str) -> bytes:
+        raise AssertionError(key)
+
+
+class DatabaseTestResources:
+    def __init__(self, database_url: str) -> None:
+        self.engine = create_async_engine(database_url)
+        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def check_database(self) -> None:
+        return None
+
+    async def check_valkey(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        await self.engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def upload_database_url() -> Iterator[str]:
+    with PostgresContainer(
+        image=PGVECTOR_IMAGE,
+        username="exam_guru",
+        password="upload-" + "only",
+        dbname="exam_guru_upload_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        upgrade_database(database_url)
+        yield database_url
+
+
+def upload_client(database_url: str, storage: RecordingObjectStorage) -> TestClient:
+    return TestClient(
+        create_app(
+            identity_provider=StaticIdentityProvider(),
+            object_storage=storage,
+            resource_factory=lambda _: DatabaseTestResources(database_url),
+        )
+    )
+
+
+@pytest.mark.integration
+def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: str) -> None:
+    storage = RecordingObjectStorage()
+    headers = {"Authorization": "Bearer admin-token"}
+
+    with upload_client(upload_database_url, storage) as client:
+        created = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "syllabus"},
+            files={"file": ("grade-5-syllabus.pdf", VALID_PDF, "application/pdf")},
+            headers=headers,
+        )
+        retried = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "syllabus"},
+            files={"file": ("renamed-retry.pdf", VALID_PDF, "application/pdf")},
+            headers=headers,
+        )
+        forbidden = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "syllabus"},
+            files={"file": ("reviewer.pdf", VALID_PDF, "application/pdf")},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["deduplicated"] is False
+    assert retried.status_code == 200
+    assert retried.json()["deduplicated"] is True
+    assert retried.json()["id"] == created.json()["id"]
+    assert forbidden.status_code == 403
+    assert len(storage.puts) == 1
+
+    async def persisted_state() -> tuple[int, list[str]]:
+        engine = create_async_engine(upload_database_url)
+        sessions = async_sessionmaker(engine)
+        async with sessions() as session:
+            documents = list(await session.scalars(select(SourceDocumentModel)))
+            actions = list(
+                await session.scalars(
+                    select(AdminAuditEventModel.action).where(
+                        AdminAuditEventModel.resource_id == UUID(created.json()["id"])
+                    )
+                )
+            )
+        await engine.dispose()
+        return len(documents), actions
+
+    document_count, actions = asyncio.run(persisted_state())
+    assert document_count == 1
+    assert actions == ["source_document.uploaded"]
+
+
+@pytest.mark.integration
+def test_upload_rejects_spoofed_pdf(upload_database_url: str) -> None:
+    with upload_client(upload_database_url, RecordingObjectStorage()) as client:
+        response = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "past_paper"},
+            files={"file": ("spoofed.pdf", b"not a pdf", "application/pdf")},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_pdf_signature"

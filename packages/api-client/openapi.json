@@ -49,6 +49,61 @@
         "title": "AdminAuditEventResponse",
         "type": "object"
       },
+      "Body_upload_source_document": {
+        "properties": {
+          "curriculum_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Version Id"
+          },
+          "document_type": {
+            "$ref": "#/components/schemas/SourceDocumentType"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "paper_code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Code"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1900.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "file",
+          "document_type"
+        ],
+        "title": "Body_upload_source_document",
+        "type": "object"
+      },
       "CurriculumVersionCreate": {
         "additionalProperties": false,
         "properties": {
@@ -272,6 +327,18 @@
         "title": "ExamConfigurationUpdate",
         "type": "object"
       },
+      "ExtractionStatus": {
+        "enum": [
+          "uploaded",
+          "extraction_pending",
+          "extracted",
+          "in_review",
+          "trusted",
+          "failed"
+        ],
+        "title": "ExtractionStatus",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -400,6 +467,113 @@
         ],
         "title": "ReadinessResponse",
         "type": "object"
+      },
+      "SourceDocumentResponse": {
+        "properties": {
+          "checksum_sha256": {
+            "title": "Checksum Sha256",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Version Id"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "document_type": {
+            "$ref": "#/components/schemas/SourceDocumentType"
+          },
+          "extraction_status": {
+            "$ref": "#/components/schemas/ExtractionStatus"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "object_key": {
+            "title": "Object Key",
+            "type": "string"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "paper_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Code"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "checksum_sha256",
+          "object_key",
+          "original_filename",
+          "content_type",
+          "size_bytes",
+          "document_type",
+          "extraction_status",
+          "curriculum_version_id",
+          "year",
+          "paper_code",
+          "created_at"
+        ],
+        "title": "SourceDocumentResponse",
+        "type": "object"
+      },
+      "SourceDocumentType": {
+        "enum": [
+          "syllabus",
+          "teacher_guide",
+          "past_paper",
+          "marking_scheme",
+          "evaluation_report",
+          "other_approved"
+        ],
+        "title": "SourceDocumentType",
+        "type": "string"
       },
       "TaxonomyLevel": {
         "enum": [
@@ -1496,6 +1670,48 @@
         "summary": "Deactivate Medium",
         "tags": [
           "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents": {
+      "post": {
+        "operationId": "upload_source_document",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_source_document"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing checksum returned idempotently"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Source document created"
+          },
+          "422": {
+            "description": "Upload validation failed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Source Document",
+        "tags": [
+          "admin-documents"
         ]
       }
     },

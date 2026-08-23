@@ -8,6 +8,7 @@ from exam_guru_api.api.router import api_router
 from exam_guru_api.auth.adapters import build_identity_provider
 from exam_guru_api.auth.ports import IdentityProvider
 from exam_guru_api.core.config import Settings
+from exam_guru_api.infrastructure.object_storage import ObjectStorage, create_object_storage
 from exam_guru_api.infrastructure.resources import (
     ApplicationResources,
     create_resources,
@@ -22,6 +23,7 @@ def create_app(
     settings: Settings | None = None,
     resource_factory: ResourceFactory = create_resources,
     identity_provider: IdentityProvider | None = None,
+    object_storage: ObjectStorage | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
 
@@ -47,6 +49,9 @@ def create_app(
         identity_provider
         if identity_provider is not None
         else build_identity_provider(resolved_settings)
+    )
+    application.state.object_storage = (
+        object_storage if object_storage is not None else create_object_storage(resolved_settings)
     )
     application.include_router(api_router, prefix="/api/v1")
     observability_runtime = configure_observability(application, resolved_settings)

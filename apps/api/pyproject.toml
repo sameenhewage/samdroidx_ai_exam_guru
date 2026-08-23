@@ -15,6 +15,8 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi==0.65b0",
     "opentelemetry-sdk==1.44.0",
     "pydantic-settings==2.15.0",
+    "pymupdf==1.28.2",
+    "python-multipart==0.0.32",
     "redis==8.1.0",
     "sentry-sdk[fastapi]==2.68.0",
     "sqlalchemy[asyncio]==2.0.52",
@@ -56,7 +58,7 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 python_version = "3.12"
 strict = true
-untyped_calls_exclude = ["dramatiq"]
+untyped_calls_exclude = ["dramatiq", "pymupdf"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra"]

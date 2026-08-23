@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     otel_service_name: str = "exam-guru-api"
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
     deterministic_admin_token: SecretStr | None = None
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None
