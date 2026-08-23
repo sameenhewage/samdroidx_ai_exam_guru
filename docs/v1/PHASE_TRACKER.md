@@ -111,18 +111,22 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] real Grade 5 fixture documents can be uploaded and preserved
 - [x] native PDF extraction works with deterministic tests
 - [ ] OCR abstraction exists and chosen open-source OCR has a benchmark record on representative Sinhala scans
-- [ ] admin can compare/correct extracted content
-- [ ] every extracted block retains immutable source/page provenance
-- [ ] retrying ingestion does not duplicate trusted content
-- [ ] failure/recovery paths are integration-tested
-- [ ] extraction quality metrics are recorded
+- [x] admin can compare/correct extracted content
+- [x] every extracted block retains immutable source/page provenance
+- [x] retrying ingestion does not duplicate trusted content
+- [x] failure/recovery paths are integration-tested
+- [x] extraction quality metrics are recorded
 
 ### Evidence
 - `7628bfa` adds bounded PDF-only upload validation, unsafe-name/content spoof rejection, deterministic SHA-256 identity/object keys, immutable object writes, PostgreSQL source metadata, transactional upload auditing and same-checksum idempotent retries.
 - Alembic `0005_source_documents` passes clean migration and schema-drift checks; authorized upload integration tests prove 201 creation, 200 deduplication, reviewer 403 rejection, one immutable storage write and one persisted audit event.
 - PyMuPDF `1.28.2` native extraction has deterministic tests for page numbering, reading-order blocks, bounding-box/page provenance, engine/version metadata, character/page quality metrics, malformed/encrypted/page-limit failures and explicit OCR routing for textless PDFs.
-- Backend gate after this slice: 148 tests pass with 100% statements and branches; Ruff check/format and strict mypy pass. These fixtures prove mechanics only and do not claim real Sinhala OCR or educational-content quality.
-- Remaining before P2 completion: persist extracted pages/blocks and quality metrics, idempotent worker/recovery state machine, OCR port and representative Sinhala benchmark, admin compare/correct/review UI, real Grade 5 fixture preservation and browser E2E.
+- `e28cb06` adds migration `0006_extraction_persistence`, database-enforced forward/recovery/review/trust states, immutable page/block provenance, persisted quality metrics, optimistic correction versions, auditable human review/trust transitions and a bounded Dramatiq extraction worker.
+- Real PostgreSQL integration tests cover extraction idempotency, concurrent serialization, interrupted-attempt cleanup, malformed/source-integrity failure, retry recovery, contiguous reading order, immutable raw provenance, correction conflicts and reviewed-to-trusted promotion. Request-size middleware, exact PDF headers, S3 timeouts and source-specific permissions close adversarial findings.
+- A provider-independent OCR port and deterministic benchmark harness record engine/version/configuration, page/block provenance, normalized character error rate, page coverage and question-structure coverage; 56 focused tests prove the harness while explicitly making no real Sinhala quality claim.
+- The Compose-backed Chromium journey proves `admin upload -> immutable MinIO source -> queued Valkey/Dramatiq extraction -> PostgreSQL pages/blocks/metrics -> compare/correct -> trusted -> same-checksum reuse`, visible audit evidence and reviewer 403 denial. The P1 taxonomy journey also remains green; 2 browser tests pass in 7.0 seconds.
+- Final gate for this progress point: 289 backend tests pass with 100% statements and branches; 18 frontend tests pass, configured unit coverage remains 100%, and Ruff/format/mypy/ESLint/typecheck/build/OpenAPI reproducibility/npm audit/actionlint/Compose health all pass.
+- P2 remains IN_PROGRESS because no legally usable representative scanned Sinhala Grade 5 fixture set with human-adjudicated ground truth is available, so no open-source OCR engine can yet be benchmarked or selected honestly. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, but lifecycle/tagged orphan cleanup is still required before P2 closure.
 
 ---
 
@@ -428,4 +432,4 @@ TBD
 ---
 
 # Current next action
-P2 is IN_PROGRESS. The next slice is the idempotent extraction worker/state machine with persisted page/block provenance and quality metrics, followed by the OCR adapter benchmark and admin correction/review browser workflow. Production identity integration remains deferred to P10, and student Priority 2 remains blocked by P10.
+P2 is IN_PROGRESS with an external content blocker. The next required evidence is a legally usable representative set of scanned Sinhala Grade 5 pages plus human-adjudicated text/layout/question ground truth; then the fixed OCR harness can compare open-source engines without inventing quality claims. In parallel, add tagged object-upload lifecycle/orphan cleanup for PostgreSQL failures. P3 and student Priority 2 remain blocked.
