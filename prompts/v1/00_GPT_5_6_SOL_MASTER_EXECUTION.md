@@ -20,6 +20,29 @@ Before changing code, read in full:
 
 Then inspect the entire repository, current branch, commit history, existing code, tests, migrations, CI and open TODOs.
 
+## Mandatory repository-skill protocol
+The repo contains reusable engineering skills in `.agents/skills/*/SKILL.md`. Skill use is not optional.
+
+Before any implementation work:
+1. enumerate/inspect the available repository skills and their descriptions;
+2. **always read and apply** `.agents/skills/loop-engineering/SKILL.md` and `.agents/skills/tdd-eval-engineering/SKILL.md`;
+3. select every additional skill whose description matches the current work item and read its full `SKILL.md` before changing code;
+4. use multiple skills together when the task spans domains;
+5. whenever the continuous loop moves to a different work item, re-evaluate skill selection and load newly relevant skills;
+6. do not wait for the user to explicitly name a skill if the task clearly matches it;
+7. follow the trigger matrix and exact paths in `AGENTS.md` as the authoritative repository skill registry.
+
+Examples:
+- backend/API/database work -> always-on skills + `fastapi-domain-engineering`;
+- admin UI -> always-on skills + `nextjs-product-engineering` + `priority1-admin-acceptance`;
+- upload/PDF/OCR -> always-on skills + `document-ingestion-ocr` + backend + security skills as relevant;
+- RAG -> always-on skills + `rag-retrieval-evaluation` + backend + security as relevant;
+- forecasting -> always-on skills + `exam-forecast-backtesting`;
+- LLM generation/validation -> always-on skills + `llm-question-generation-validation` + RAG and security as relevant;
+- acceptance closure -> always-on skills + `priority1-admin-acceptance` + `security-reliability-review`.
+
+Include the repo skills materially used in the end-of-session report.
+
 ## Primary mission
 The active mission is **Priority 1 only** until `P10 — Priority 1 Full Acceptance` is legitimately `DONE`.
 
@@ -77,10 +100,10 @@ LangChain may be used selectively only when it provides measurable value. It mus
 ## Required engineering loop
 Continuously repeat:
 
-`inspect -> select highest-priority incomplete acceptance item -> define tests/evals -> RED -> implement GREEN -> REFACTOR -> integration/eval -> adversarial review -> regression-test findings -> fix -> broad gate -> update tracker evidence -> commit -> continue`
+`inspect -> select highest-priority incomplete acceptance item -> select/load matching repo skills -> define tests/evals -> RED -> implement GREEN -> REFACTOR -> integration/eval -> adversarial review -> regression-test findings -> fix -> broad gate -> update tracker evidence -> commit -> continue`
 
 ### Do not wait for a new prompt after a tracker phase becomes DONE.
-Move immediately to the next highest-priority incomplete Priority 1 acceptance item.
+Move immediately to the next highest-priority incomplete Priority 1 acceptance item and re-evaluate the applicable skill set.
 
 ## TDD rules
 TDD is mandatory.
@@ -212,6 +235,7 @@ When you finish the current execution session, report:
 3. tests/evals/CI results;
 4. commits created;
 5. known limitations/blockers;
-6. exact next highest-priority repository work.
+6. exact next highest-priority repository work;
+7. repository skills materially used during the session.
 
 Do not report success merely because code compiles. Success means evidence-backed acceptance criteria.
