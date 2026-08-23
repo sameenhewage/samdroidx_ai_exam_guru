@@ -26,6 +26,7 @@ dependencies = [
 [project.scripts]
 exam-guru-api = "exam_guru_api.cli:main"
 exam-guru-openapi = "exam_guru_api.openapi:main"
+exam-guru-inventory = "exam_guru_api.documents.inventory:main"
 
 [build-system]
 requires = ["uv_build>=0.11.26,<0.12.0"]

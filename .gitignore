@@ -17,3 +17,4 @@ dist/
 *.pyc
 *.tsbuildinfo
 .DS_Store
+/RAG DATA
