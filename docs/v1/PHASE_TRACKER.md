@@ -126,7 +126,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - A provider-independent OCR port and deterministic benchmark harness record engine/version/configuration, page/block provenance, normalized character error rate, page coverage and question-structure coverage; 56 focused tests prove the harness while explicitly making no real Sinhala quality claim.
 - The Compose-backed Chromium journey proves `admin upload -> immutable MinIO source -> queued Valkey/Dramatiq extraction -> PostgreSQL pages/blocks/metrics -> compare/correct -> trusted -> same-checksum reuse`, visible audit evidence and reviewer 403 denial. The P1 taxonomy journey also remains green; 2 browser tests pass in 7.0 seconds.
 - Final gate for this progress point: 289 backend tests pass with 100% statements and branches; 18 frontend tests pass, configured unit coverage remains 100%, and Ruff/format/mypy/ESLint/typecheck/build/OpenAPI reproducibility/npm audit/actionlint/Compose health all pass.
-- P2 remains IN_PROGRESS because no legally usable representative scanned Sinhala Grade 5 fixture set with human-adjudicated ground truth is available, so no open-source OCR engine can yet be benchmarked or selected honestly. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, but lifecycle/tagged orphan cleanup is still required before P2 closure.
+- P2 remains IN_PROGRESS because no legally usable representative scanned Sinhala Grade 5 fixture set with human-adjudicated ground truth is available, so no open-source OCR engine can yet be benchmarked or selected honestly. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, and lifecycle/tagged orphan cleanup remains P10 reliability hardening.
 
 ---
 
@@ -432,4 +432,4 @@ TBD
 ---
 
 # Current next action
-P2 is IN_PROGRESS with an external content blocker. The next required evidence is a legally usable representative set of scanned Sinhala Grade 5 pages plus human-adjudicated text/layout/question ground truth; then the fixed OCR harness can compare open-source engines without inventing quality claims. In parallel, add tagged object-upload lifecycle/orphan cleanup for PostgreSQL failures. P3 and student Priority 2 remain blocked.
+P2 is IN_PROGRESS with an external content blocker. The next required evidence is a legally usable representative set of scanned Sinhala Grade 5 pages plus human-adjudicated text/layout/question ground truth; then the fixed OCR harness can compare open-source engines without inventing quality claims. Tagged object-upload lifecycle/orphan cleanup remains queued for P10 reliability hardening. P3 and student Priority 2 remain blocked.
