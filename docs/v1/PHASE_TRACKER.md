@@ -53,7 +53,7 @@
 - OpenAPI: deterministic FastAPI export test passes; regenerating `packages/api-client/openapi.json` and `src/schema.d.ts` produced identical SHA-256 hashes; the `openapi-fetch` client contract type-checks.
 - CI/security: pinned GitHub Actions run backend lint/format/type/test/migration, frontend audit/lint/type/test/build, generated-artifact checks and full Compose runtime smoke; `actionlint` passes, `npm audit --audit-level=moderate` reports zero vulnerabilities, and `detect-secrets-hook --baseline .secrets.baseline` passes on all repository files.
 - Browser runtime: Chrome desktop and 390px mobile checks show the accessible Admin Content Studio workflow, no horizontal overflow and no console warnings/errors.
-- Commit reference: the cohesive P0 foundation commit containing this tracker evidence.
+- Commit reference: `bb61052` (`feat(foundation): bootstrap P0 application platform`).
 
 ---
 
