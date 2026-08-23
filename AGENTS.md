@@ -69,6 +69,8 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
   Use for authz/security, uploads, prompt injection/RAG poisoning, leakage, retries/idempotency/races, publish bypass, provider failure, cost abuse and adversarial review.
 - **priority1-admin-acceptance** — `.agents/skills/priority1-admin-acceptance/SKILL.md`  
   Use for Priority 1 admin workflows, tracker phase closure, full admin→published-paper acceptance and especially P10 unlock decisions.
+- **student-exam-product** — `.agents/skills/student-exam-product/SKILL.md`  
+  Use only after P10 is DONE, for Priority 2 student identity/entitlements, exam runner, autosave/resume, marking, analytics, progress and recommendations.
 
 ### Task-to-skill examples
 - Bootstrap backend/API/database → always-on skills + `fastapi-domain-engineering`.
@@ -78,6 +80,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 - Forecast/backtest → always-on skills + `exam-forecast-backtesting`.
 - Generate/validate questions → always-on skills + `llm-question-generation-validation` + `rag-retrieval-evaluation`; add security for prompt-injection/provider-failure work.
 - Close P0–P10 gates → always-on skills + `priority1-admin-acceptance`; use `security-reliability-review` before major/P10 closure.
+- After P10 only, build student product → always-on skills + `student-exam-product` + `nextjs-product-engineering` + `fastapi-domain-engineering` + security as relevant.
 
 ## TDD is mandatory
 Use RED -> GREEN -> REFACTOR for application behavior.
