@@ -58,7 +58,7 @@
 ---
 
 ## P1 — Grade 5 Domain Model & Admin Foundation
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - admin authentication/authorization
@@ -69,7 +69,7 @@
 - immutable/auditable state transitions for reviewed content
 
 ### Exit criteria
-- [ ] Grade 5 domain taxonomy represented in database and validated
+- [x] Grade 5 domain taxonomy represented in database and validated
 - [ ] admin can manage allowed taxonomy/configuration
 - [ ] role/permission tests exist
 - [ ] invalid state transitions are rejected
@@ -77,7 +77,11 @@
 - [ ] admin UI/API E2E coverage exists for core taxonomy workflow
 
 ### Evidence
-TBD
+- `19b7ae8` adds the Grade 5 exam configuration, medium, curriculum-version and competency/skill/sub-skill/learning-concept hierarchy domain/persistence foundation.
+- Domain validation rejects malformed codes/titles, missing or wrong-level parents, cross-curriculum parents, inactive-parent activation, duplicate IDs and duplicate sibling codes while supporting incremental hierarchy writes.
+- Alembic `0002_grade5_taxonomy` creates audit-stamped PostgreSQL tables, Grade 5/check constraints, null-safe sibling uniqueness, same-curriculum composite foreign keys and hierarchy/active-parent triggers; clean migration plus `alembic check` pass against real PostgreSQL/pgvector.
+- Backend gate after this slice: 61 tests passed with 100% statements and branches; Ruff check/format and strict mypy pass. Integration coverage includes audit metadata, Grade 5 enforcement, cross-curriculum isolation, parent-level/active-parent invariants and database-enforced sibling uniqueness.
+- Remaining before P1 completion: admin identity/roles, authorized taxonomy CRUD API, append-only admin audit events, reviewed-content state transitions, product UI and admin API/browser E2E coverage.
 
 ---
 
@@ -410,4 +414,4 @@ TBD
 ---
 
 # Current next action
-P0 is complete. The highest-priority active gate is **P1 — Grade 5 Domain Model & Admin Foundation**, beginning with the database-backed Grade 5 taxonomy and admin authorization/audit boundaries. Priority 2 remains blocked by P10.
+P1 is IN_PROGRESS. The next highest-priority slice is admin identity/role authorization plus audited REST contracts for taxonomy management, followed by the core admin UI/E2E workflow. Priority 2 remains blocked by P10.
