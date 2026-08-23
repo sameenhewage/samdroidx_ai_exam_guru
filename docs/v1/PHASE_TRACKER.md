@@ -95,7 +95,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P2 — Source Document Ingestion & Extraction
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - syllabus/teacher-guide/past-paper/marking-scheme upload
@@ -109,7 +109,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 
 ### Exit criteria
 - [ ] real Grade 5 fixture documents can be uploaded and preserved
-- [ ] native PDF extraction works with deterministic tests
+- [x] native PDF extraction works with deterministic tests
 - [ ] OCR abstraction exists and chosen open-source OCR has a benchmark record on representative Sinhala scans
 - [ ] admin can compare/correct extracted content
 - [ ] every extracted block retains immutable source/page provenance
@@ -118,7 +118,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] extraction quality metrics are recorded
 
 ### Evidence
-TBD
+- `7628bfa` adds bounded PDF-only upload validation, unsafe-name/content spoof rejection, deterministic SHA-256 identity/object keys, immutable object writes, PostgreSQL source metadata, transactional upload auditing and same-checksum idempotent retries.
+- Alembic `0005_source_documents` passes clean migration and schema-drift checks; authorized upload integration tests prove 201 creation, 200 deduplication, reviewer 403 rejection, one immutable storage write and one persisted audit event.
+- PyMuPDF `1.28.2` native extraction has deterministic tests for page numbering, reading-order blocks, bounding-box/page provenance, engine/version metadata, character/page quality metrics, malformed/encrypted/page-limit failures and explicit OCR routing for textless PDFs.
+- Backend gate after this slice: 148 tests pass with 100% statements and branches; Ruff check/format and strict mypy pass. These fixtures prove mechanics only and do not claim real Sinhala OCR or educational-content quality.
+- Remaining before P2 completion: persist extracted pages/blocks and quality metrics, idempotent worker/recovery state machine, OCR port and representative Sinhala benchmark, admin compare/correct/review UI, real Grade 5 fixture preservation and browser E2E.
 
 ---
 
@@ -424,4 +428,4 @@ TBD
 ---
 
 # Current next action
-P1 is DONE. The active gate is **P2 — Source Document Ingestion & Extraction**, beginning with secure immutable source upload, checksums/idempotency, native PDF extraction provenance and the admin review workflow. Production identity integration remains deferred to P10, and student Priority 2 remains blocked by P10.
+P2 is IN_PROGRESS. The next slice is the idempotent extraction worker/state machine with persisted page/block provenance and quality metrics, followed by the OCR adapter benchmark and admin correction/review browser workflow. Production identity integration remains deferred to P10, and student Priority 2 remains blocked by P10.
