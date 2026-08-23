@@ -1,5 +1,6 @@
 from typing import Literal, Self
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,9 +33,25 @@ class Settings(BaseSettings):
     otel_service_name: str = "exam-guru-api"
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    deterministic_admin_token: SecretStr | None = None
+    deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
+    deterministic_reviewer_token: SecretStr | None = None
+    deterministic_reviewer_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000102")
 
     @model_validator(mode="after")
     def reject_local_credentials_in_production(self) -> Self:
+        deterministic_tokens = [
+            token.get_secret_value()
+            for token in (self.deterministic_admin_token, self.deterministic_reviewer_token)
+            if token is not None
+        ]
+        if self.environment == "production" and deterministic_tokens:
+            raise ValueError("production configuration cannot use deterministic identity tokens")
+        if any(len(token) < 16 for token in deterministic_tokens):
+            raise ValueError("deterministic identity tokens must contain at least 16 characters")
+        if len(deterministic_tokens) != len(set(deterministic_tokens)):
+            raise ValueError("deterministic identity tokens must be distinct")
+
         local_credentials = (
             self.database_url.get_secret_value() == LOCAL_DATABASE_URL
             or self.valkey_url.get_secret_value() == LOCAL_VALKEY_URL

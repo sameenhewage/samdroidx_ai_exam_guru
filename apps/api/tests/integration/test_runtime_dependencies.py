@@ -59,7 +59,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     vector_version, migration_revision = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0003_admin_audit_events"
+    assert migration_revision == "0004_taxonomy_review_lifecycle"
 
 
 @pytest.mark.integration

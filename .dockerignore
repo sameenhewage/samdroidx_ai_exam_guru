@@ -7,6 +7,8 @@
 **/.ruff_cache
 **/.next
 **/coverage
+**/playwright-report
+**/test-results
 **/node_modules
 **/*.pyc
 **/*.tsbuildinfo

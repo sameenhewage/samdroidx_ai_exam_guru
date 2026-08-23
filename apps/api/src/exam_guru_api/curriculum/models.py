@@ -19,10 +19,15 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode
+from exam_guru_api.curriculum.domain import (
+    TaxonomyLevel,
+    TaxonomyNode,
+    TaxonomyReviewState,
+)
 from exam_guru_api.infrastructure.database import Base
 
 _TAXONOMY_LEVELS_SQL = ", ".join(f"'{level.value}'" for level in TaxonomyLevel)
+_TAXONOMY_REVIEW_STATES_SQL = ", ".join(f"'{state.value}'" for state in TaxonomyReviewState)
 
 
 class AuditColumns:
@@ -127,6 +132,15 @@ class TaxonomyNodeModel(AuditColumns, Base):
             name="ck_taxonomy_node_level",
         ),
         CheckConstraint(
+            f"review_state IN ({_TAXONOMY_REVIEW_STATES_SQL})",
+            name="ck_taxonomy_node_review_state",
+        ),
+        CheckConstraint(
+            "(review_state = 'deprecated' AND NOT active) OR "
+            "(review_state IN ('draft', 'reviewed') AND active)",
+            name="ck_taxonomy_node_review_state_active",
+        ),
+        CheckConstraint(
             "(level = 'competency' AND parent_id IS NULL) OR "
             "(level <> 'competency' AND parent_id IS NOT NULL)",
             name="ck_taxonomy_node_parent_shape",
@@ -172,6 +186,19 @@ class TaxonomyNodeModel(AuditColumns, Base):
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
+    review_state: Mapped[TaxonomyReviewState] = mapped_column(
+        Enum(
+            TaxonomyReviewState,
+            name="taxonomy_review_state",
+            native_enum=False,
+            create_constraint=False,
+            values_callable=lambda states: [state.value for state in states],
+            length=32,
+        ),
+        nullable=False,
+        default=TaxonomyReviewState.DRAFT,
+        server_default=TaxonomyReviewState.DRAFT.value,
+    )
 
     @classmethod
     def from_domain(cls, node: TaxonomyNode, actor_id: UUID) -> Self:
@@ -183,6 +210,7 @@ class TaxonomyNodeModel(AuditColumns, Base):
             code=node.code,
             title=node.title,
             active=node.active,
+            review_state=node.review_state,
             created_by=actor_id,
             updated_by=actor_id,
         )
@@ -196,4 +224,5 @@ class TaxonomyNodeModel(AuditColumns, Base):
             title=self.title,
             parent_id=self.parent_id,
             active=self.active,
+            review_state=self.review_state,
         )

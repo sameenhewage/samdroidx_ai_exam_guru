@@ -5,8 +5,11 @@ import pytest
 from exam_guru_api.curriculum.domain import (
     TaxonomyLevel,
     TaxonomyNode,
+    TaxonomyReviewState,
     TaxonomyValidationError,
     TaxonomyViolation,
+    transition_review_state,
+    update_taxonomy_node,
     validate_taxonomy,
 )
 
@@ -23,6 +26,7 @@ def make_node(
     curriculum_version_id: UUID = CURRICULUM_A,
     title: str | None = None,
     active: bool = True,
+    review_state: TaxonomyReviewState = TaxonomyReviewState.DRAFT,
 ) -> TaxonomyNode:
     return TaxonomyNode(
         id=UUID(int=identifier),
@@ -32,6 +36,7 @@ def make_node(
         title=title or code,
         parent_id=parent_id,
         active=active,
+        review_state=review_state,
     )
 
 
@@ -129,7 +134,13 @@ def test_parent_must_belong_to_the_same_curriculum_version() -> None:
 
 
 def test_active_node_cannot_have_an_inactive_parent() -> None:
-    competency = make_node(1, TaxonomyLevel.COMPETENCY, "C1", active=False)
+    competency = make_node(
+        1,
+        TaxonomyLevel.COMPETENCY,
+        "C1",
+        active=False,
+        review_state=TaxonomyReviewState.DEPRECATED,
+    )
     skill = make_node(2, TaxonomyLevel.SKILL, "S1", parent_id=competency.id)
 
     with pytest.raises(TaxonomyValidationError) as raised:
@@ -157,3 +168,78 @@ def test_same_code_is_allowed_under_different_parents() -> None:
     nodes = first_competency, second_competency, first_skill, second_skill
 
     assert validate_taxonomy(nodes) == nodes
+
+
+def test_reviewed_child_requires_reviewed_parent() -> None:
+    parent = make_node(11, TaxonomyLevel.COMPETENCY, "C11")
+    child = make_node(
+        12,
+        TaxonomyLevel.SKILL,
+        "S11",
+        parent_id=parent.id,
+        review_state=TaxonomyReviewState.REVIEWED,
+    )
+
+    with pytest.raises(TaxonomyValidationError) as raised:
+        validate_taxonomy((parent, child))
+
+    assert raised.value.violation is TaxonomyViolation.REVIEWED_PARENT_REQUIRED
+
+
+def test_review_lifecycle_is_forward_only_and_deprecation_sets_inactive() -> None:
+    draft = make_node(21, TaxonomyLevel.COMPETENCY, "C21")
+
+    reviewed = transition_review_state(draft, TaxonomyReviewState.REVIEWED)
+    deprecated = transition_review_state(reviewed, TaxonomyReviewState.DEPRECATED)
+
+    assert reviewed.review_state is TaxonomyReviewState.REVIEWED
+    assert reviewed.active
+    assert deprecated.review_state is TaxonomyReviewState.DEPRECATED
+    assert not deprecated.active
+
+    with pytest.raises(TaxonomyValidationError) as raised:
+        transition_review_state(reviewed, TaxonomyReviewState.DRAFT)
+
+    assert raised.value.violation is TaxonomyViolation.INVALID_REVIEW_TRANSITION
+
+
+def test_reviewed_taxonomy_node_is_immutable() -> None:
+    reviewed = make_node(
+        31,
+        TaxonomyLevel.COMPETENCY,
+        "C31",
+        review_state=TaxonomyReviewState.REVIEWED,
+    )
+
+    with pytest.raises(TaxonomyValidationError) as raised:
+        update_taxonomy_node(reviewed, code="C32", title="Changed")
+
+    assert raised.value.violation is TaxonomyViolation.REVIEWED_NODE_IMMUTABLE
+
+
+def test_review_state_and_active_flag_must_match() -> None:
+    with pytest.raises(TaxonomyValidationError) as raised:
+        make_node(
+            40,
+            TaxonomyLevel.COMPETENCY,
+            "C40",
+            active=False,
+            review_state=TaxonomyReviewState.DRAFT,
+        )
+
+    assert raised.value.violation is TaxonomyViolation.ACTIVE_STATE_MISMATCH
+
+
+def test_transition_to_current_review_state_is_idempotent() -> None:
+    draft = make_node(42, TaxonomyLevel.COMPETENCY, "C42")
+
+    assert transition_review_state(draft, TaxonomyReviewState.DRAFT) is draft
+
+
+def test_draft_taxonomy_node_can_be_updated() -> None:
+    draft = make_node(41, TaxonomyLevel.COMPETENCY, "C41")
+
+    updated = update_taxonomy_node(draft, code="C42", title="Updated competency")
+
+    assert updated.code == "C42"
+    assert updated.title == "Updated competency"

@@ -7,11 +7,32 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exam_guru_api.api.routes.taxonomy import create_taxonomy_node, list_taxonomy_nodes
+from exam_guru_api.api.routes.taxonomy import (
+    _execute_taxonomy_write,
+    create_taxonomy_node,
+    deactivate_taxonomy_node_route,
+    list_taxonomy_nodes,
+    review_taxonomy_node_route,
+    update_taxonomy_node_route,
+)
 from exam_guru_api.auth.domain import AdminRole, Principal
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode
-from exam_guru_api.curriculum.schemas import TaxonomyNodeCreate
-from exam_guru_api.curriculum.service import CurriculumVersionNotFoundError, TaxonomyService
+from exam_guru_api.curriculum.domain import (
+    TaxonomyLevel,
+    TaxonomyNode,
+    TaxonomyValidationError,
+    TaxonomyViolation,
+)
+from exam_guru_api.curriculum.schemas import (
+    TaxonomyNodeCreate,
+    TaxonomyNodeResponse,
+    TaxonomyNodeUpdate,
+)
+from exam_guru_api.curriculum.service import (
+    CurriculumVersionInactiveError,
+    CurriculumVersionNotFoundError,
+    TaxonomyNodeNotFoundError,
+    TaxonomyService,
+)
 
 
 class RollbackSession:
@@ -146,3 +167,116 @@ def test_taxonomy_routes_return_success_and_not_found(
 
     assert list_error.status_code == 404
     assert create_error.status_code == 404
+
+
+def test_taxonomy_lifecycle_route_wrappers_return_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curriculum_version_id = UUID(int=50)
+    node = TaxonomyNode(
+        id=UUID(int=51),
+        curriculum_version_id=curriculum_version_id,
+        level=TaxonomyLevel.COMPETENCY,
+        code="C1",
+        title="Competency",
+    )
+    principal = Principal(subject_id=UUID(int=52), roles=frozenset({AdminRole.ADMIN}))
+    session = cast(AsyncSession, RollbackSession())
+
+    async def return_node(
+        _service: TaxonomyService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> TaxonomyNode:
+        return node
+
+    monkeypatch.setattr(TaxonomyService, "update_node", return_node)
+    monkeypatch.setattr(TaxonomyService, "review_node", return_node)
+    monkeypatch.setattr(TaxonomyService, "deactivate_node", return_node)
+
+    async def exercise() -> tuple[
+        TaxonomyNodeResponse,
+        TaxonomyNodeResponse,
+        TaxonomyNodeResponse,
+    ]:
+        return (
+            await update_taxonomy_node_route(
+                curriculum_version_id,
+                node.id,
+                TaxonomyNodeUpdate(code="C2", title="Updated"),
+                principal,
+                session,
+            ),
+            await review_taxonomy_node_route(
+                curriculum_version_id,
+                node.id,
+                principal,
+                session,
+            ),
+            await deactivate_taxonomy_node_route(
+                curriculum_version_id,
+                node.id,
+                principal,
+                session,
+            ),
+        )
+
+    updated, reviewed, deprecated = asyncio.run(exercise())
+
+    assert updated.id == node.id
+    assert reviewed.id == node.id
+    assert deprecated.id == node.id
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "code"),
+    [
+        (
+            CurriculumVersionNotFoundError(UUID(int=60)),
+            404,
+            "curriculum_version_not_found",
+        ),
+        (
+            CurriculumVersionInactiveError(UUID(int=60)),
+            409,
+            "curriculum_version_inactive",
+        ),
+        (TaxonomyNodeNotFoundError(UUID(int=61)), 404, "taxonomy_node_not_found"),
+        (
+            TaxonomyValidationError(TaxonomyViolation.REVIEWED_NODE_IMMUTABLE, UUID(int=61)),
+            409,
+            "reviewed_node_immutable",
+        ),
+        (
+            TaxonomyValidationError(TaxonomyViolation.INVALID_CODE, UUID(int=61)),
+            422,
+            "invalid_code",
+        ),
+    ],
+)
+def test_taxonomy_write_helper_maps_domain_errors(
+    error: Exception,
+    status_code: int,
+    code: str,
+) -> None:
+    async def fail() -> TaxonomyNode:
+        raise error
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(_execute_taxonomy_write(cast(AsyncSession, RollbackSession()), fail))
+
+    assert raised.value.status_code == status_code
+    assert cast(dict[str, str], raised.value.detail)["code"] == code
+
+
+def test_taxonomy_write_helper_rolls_back_integrity_error() -> None:
+    session = RollbackSession()
+
+    async def fail() -> TaxonomyNode:
+        raise IntegrityError("UPDATE", {}, RuntimeError("conflict"))
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(_execute_taxonomy_write(cast(AsyncSession, session), fail))
+
+    assert raised.value.status_code == 409
+    assert session.rolled_back

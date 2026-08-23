@@ -5,7 +5,8 @@ from fastapi import FastAPI
 
 from exam_guru_api import __version__
 from exam_guru_api.api.router import api_router
-from exam_guru_api.auth.ports import DenyAllIdentityProvider, IdentityProvider
+from exam_guru_api.auth.adapters import build_identity_provider
+from exam_guru_api.auth.ports import IdentityProvider
 from exam_guru_api.core.config import Settings
 from exam_guru_api.infrastructure.resources import (
     ApplicationResources,
@@ -43,7 +44,9 @@ def create_app(
     )
     application.state.settings = resolved_settings
     application.state.identity_provider = (
-        identity_provider if identity_provider is not None else DenyAllIdentityProvider()
+        identity_provider
+        if identity_provider is not None
+        else build_identity_provider(resolved_settings)
     )
     application.include_router(api_router, prefix="/api/v1")
     observability_runtime = configure_observability(application, resolved_settings)

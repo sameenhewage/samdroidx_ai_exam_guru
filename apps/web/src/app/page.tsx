@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { WorkflowNavigation } from "@/components/workflow-navigation";
 import { Badge } from "@/components/ui/badge";
 import { contentWorkflow } from "@/lib/content-workflow";
@@ -22,7 +24,7 @@ export default function Home() {
           <dl className="mt-8 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 text-xs">
             <div>
               <dt className="text-slate-500">Active gate</dt>
-              <dd className="mt-1 font-mono text-slate-200">P0</dd>
+              <dd className="mt-1 font-mono text-slate-200">P1</dd>
             </div>
             <div>
               <dt className="text-slate-500">Student product</dt>
@@ -60,6 +62,12 @@ export default function Home() {
               <p className="mt-1 font-medium">Human review remains required before publishing</p>
             </div>
           </div>
+          <Link
+            className="mt-6 inline-flex bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
+            href="/admin/login"
+          >
+            Open Admin Content Studio
+          </Link>
         </header>
 
         <section aria-labelledby="workflow-heading" className="mx-auto mt-10 max-w-6xl">

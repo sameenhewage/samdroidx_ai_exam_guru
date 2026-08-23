@@ -75,12 +75,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          cache: npm
+          node-version: 24.19.0
+      - name: Install E2E dependencies
+        run: npm ci && npx playwright install --with-deps chromium
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Start runtime
         run: docker compose up --build --detach --wait --wait-timeout 240
       - name: Verify API and web
         run: curl --fail --silent http://localhost:8000/api/v1/health/ready && curl --fail --silent http://localhost:3000/ > /dev/null
+      - name: Run admin browser E2E
+        run: npm run test:e2e --prefix apps/web
       - name: Inspect runtime
         run: docker compose ps
       - name: Stop runtime

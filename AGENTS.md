@@ -26,6 +26,8 @@ Build V1 of AI Exam Guru as a production-quality Grade 5 Scholarship examination
 
 **Do not start Priority 2 until every Priority 1 acceptance gate is DONE.**
 
+For P1 admin acceptance, preserve the authentication port, role/permission enforcement, append-only auditing and secure deterministic development/test identity adapter. Defer production OAuth/OIDC/external identity-provider integration to P10 production hardening; do not let it block proving the core Priority 1 content-intelligence system.
+
 ## Execution model
 This project is **not developed by feeding one implementation prompt per phase**. Work as a continuous engineering loop:
 

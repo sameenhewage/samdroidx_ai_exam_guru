@@ -8,7 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
 
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode
+from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.curriculum.domain import (
+    TaxonomyLevel,
+    TaxonomyNode,
+    TaxonomyReviewState,
+    TaxonomyValidationError,
+)
 from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
@@ -16,6 +22,7 @@ from exam_guru_api.curriculum.models import (
     TaxonomyNodeModel,
 )
 from exam_guru_api.curriculum.repository import SqlAlchemyTaxonomyRepository
+from exam_guru_api.curriculum.service import TaxonomyService
 from exam_guru_api.infrastructure.migrations import upgrade_database
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
@@ -214,6 +221,7 @@ def test_database_rejects_active_child_with_inactive_parent(
                 code="C1",
                 title="Inactive competency",
                 active=False,
+                review_state=TaxonomyReviewState.DEPRECATED,
                 created_by=ACTOR_ID,
                 updated_by=ACTOR_ID,
             )
@@ -338,5 +346,58 @@ def test_database_rejects_duplicate_sibling_code(taxonomy_database_url: str) -> 
             with pytest.raises(IntegrityError):
                 await session.commit()
         await engine.dispose()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_concurrent_review_and_deactivate_are_serialized(
+    taxonomy_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        engine = create_async_engine(taxonomy_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            curriculum_version_id = await seed_curriculum(session, 8)
+            node = taxonomy_nodes(curriculum_version_id, 8)[0]
+            repository = SqlAlchemyTaxonomyRepository(session)
+            await repository.add_nodes((node,), actor_id=ACTOR_ID)
+            await session.commit()
+
+        async def review() -> TaxonomyNode:
+            async with sessions() as session:
+                return await TaxonomyService(session).review_node(
+                    curriculum_version_id,
+                    node.id,
+                    actor_id=UUID(int=901),
+                )
+
+        async def deactivate() -> TaxonomyNode:
+            async with sessions() as session:
+                return await TaxonomyService(session).deactivate_node(
+                    curriculum_version_id,
+                    node.id,
+                    actor_id=UUID(int=902),
+                )
+
+        results = await asyncio.gather(review(), deactivate(), return_exceptions=True)
+
+        async with sessions() as session:
+            persisted = await session.get(TaxonomyNodeModel, node.id)
+            actions = list(
+                await session.scalars(
+                    select(AdminAuditEventModel.action).where(
+                        AdminAuditEventModel.resource_id == node.id
+                    )
+                )
+            )
+        await engine.dispose()
+
+        assert persisted is not None
+        assert persisted.review_state is TaxonomyReviewState.DEPRECATED
+        assert not persisted.active
+        assert actions.count("taxonomy.node.deactivated") == 1
+        assert actions.count("taxonomy.node.reviewed") <= 1
+        assert all(isinstance(result, TaxonomyNode | TaxonomyValidationError) for result in results)
 
     asyncio.run(exercise())

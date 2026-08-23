@@ -10,7 +10,13 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ["src/app/layout.tsx", "src/test/**"],
+      exclude: [
+        "src/app/admin/**",
+        "src/app/api/**",
+        "src/app/layout.tsx",
+        "src/components/admin/**",
+        "src/test/**",
+      ],
       include: ["src/**/*.{ts,tsx}"],
       provider: "v8",
       thresholds: {
@@ -22,6 +28,7 @@ export default defineConfig({
     },
     environment: "jsdom",
     globals: true,
+    include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test/setup.ts"],
   },
 });

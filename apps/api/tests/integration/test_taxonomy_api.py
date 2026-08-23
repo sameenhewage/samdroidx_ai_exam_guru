@@ -301,6 +301,120 @@ def test_taxonomy_api_rejects_invalid_domain_shape(taxonomy_api_database_url: st
 
 
 @pytest.mark.integration
+def test_taxonomy_review_update_and_deactivation_lifecycle(
+    taxonomy_api_database_url: str,
+) -> None:
+    base_path = f"/api/v1/admin/curricula/{CURRICULUM_ID}/taxonomy/nodes"
+
+    with api_client(taxonomy_api_database_url) as client:
+        parent = client.post(
+            base_path,
+            json={"level": "competency", "code": "C8", "title": "Draft competency"},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        updated = client.patch(
+            f"{base_path}/{parent.json()['id']}",
+            json={"code": "C8A", "title": "Updated draft competency"},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        reviewed_parent = client.post(
+            f"{base_path}/{parent.json()['id']}/review",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        immutable = client.patch(
+            f"{base_path}/{parent.json()['id']}",
+            json={"code": "C8B", "title": "Forbidden reviewed edit"},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        child = client.post(
+            base_path,
+            json={
+                "level": "skill",
+                "code": "S8",
+                "title": "Draft child",
+                "parent_id": parent.json()["id"],
+            },
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        reviewed_child = client.post(
+            f"{base_path}/{child.json()['id']}/review",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        blocked_parent = client.post(
+            f"{base_path}/{parent.json()['id']}/deactivate",
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        reviewer_deactivate = client.post(
+            f"{base_path}/{child.json()['id']}/deactivate",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        deprecated_child = client.post(
+            f"{base_path}/{child.json()['id']}/deactivate",
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        deprecated_parent = client.post(
+            f"{base_path}/{parent.json()['id']}/deactivate",
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        terminal_review = client.post(
+            f"{base_path}/{parent.json()['id']}/review",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+
+    assert parent.status_code == 201
+    assert parent.json()["review_state"] == "draft"
+    assert updated.status_code == 200
+    assert updated.json()["code"] == "C8A"
+    assert reviewed_parent.status_code == 200
+    assert reviewed_parent.json()["review_state"] == "reviewed"
+    assert immutable.status_code == 409
+    assert immutable.json()["detail"]["code"] == "reviewed_node_immutable"
+    assert child.status_code == 201
+    assert reviewed_child.status_code == 200
+    assert reviewed_child.json()["review_state"] == "reviewed"
+    assert blocked_parent.status_code == 409
+    assert blocked_parent.json()["detail"]["code"] == "inactive_parent"
+    assert reviewer_deactivate.status_code == 403
+    assert deprecated_child.status_code == 200
+    assert deprecated_child.json()["review_state"] == "deprecated"
+    assert deprecated_parent.status_code == 200
+    assert deprecated_parent.json()["active"] is False
+    assert terminal_review.status_code == 409
+    assert terminal_review.json()["detail"]["code"] == "invalid_review_transition"
+
+
+@pytest.mark.integration
+def test_reviewed_child_requires_reviewed_parent_api(
+    taxonomy_api_database_url: str,
+) -> None:
+    base_path = f"/api/v1/admin/curricula/{CURRICULUM_ID}/taxonomy/nodes"
+
+    with api_client(taxonomy_api_database_url) as client:
+        parent = client.post(
+            base_path,
+            json={"level": "competency", "code": "C9", "title": "Draft parent"},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        child = client.post(
+            base_path,
+            json={
+                "level": "skill",
+                "code": "S9",
+                "title": "Draft child",
+                "parent_id": parent.json()["id"],
+            },
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        response = client.post(
+            f"{base_path}/{child.json()['id']}/review",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "reviewed_parent_required"
+
+
+@pytest.mark.integration
 def test_taxonomy_api_returns_machine_readable_domain_error(
     taxonomy_api_database_url: str,
 ) -> None:

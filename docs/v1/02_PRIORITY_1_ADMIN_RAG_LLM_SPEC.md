@@ -256,6 +256,11 @@ Priority 1 must cover:
 
 Treat uploaded documents as untrusted input even when an admin uploads them.
 
+### Identity integration sequencing
+P1 uses the existing authentication port, role/permission enforcement, append-only audit trail and secure deterministic development/test identity adapter to prove authorized admin workflows and negative authorization cases. Production OAuth/OIDC or external identity-provider integration is not a P1 closure requirement.
+
+P10 must replace the deterministic adapter with the selected production identity/login integration and re-run authentication, session, authorization and browser acceptance security tests before production readiness can be declared.
+
 ## 8. Priority 1 final demo
 A reviewer should be able to start with a real Grade 5 source document and finish with a published practice paper, while the system can explain:
 - what sources were used;

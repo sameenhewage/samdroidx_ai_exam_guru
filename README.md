@@ -123,3 +123,5 @@ Backend settings use the `EXAM_GURU_` environment prefix. Database, Valkey, and 
 - `EXAM_GURU_TRACE_SAMPLE_RATIO`
 
 Every API response carries a validated `X-Request-ID`. OpenTelemetry FastAPI instrumentation is active, and Sentry-compatible error reporting is enabled only when a DSN is configured.
+
+P1 browser acceptance uses deterministic admin/reviewer tokens only when `ENABLE_DETERMINISTIC_IDENTITY=true`; backend production settings reject those tokens. The development cookie is HttpOnly and SameSite=Strict. `ADMIN_COOKIE_SECURE=false` is allowed only for local HTTP, while the P10 production identity integration must set secure cookies and re-run authentication/session security tests.

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode
+from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode, TaxonomyReviewState
 
 
 class TaxonomyNodeCreate(BaseModel):
@@ -15,6 +15,13 @@ class TaxonomyNodeCreate(BaseModel):
     active: bool = True
 
 
+class TaxonomyNodeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=255)
+
+
 class TaxonomyNodeResponse(BaseModel):
     id: UUID
     curriculum_version_id: UUID
@@ -23,6 +30,7 @@ class TaxonomyNodeResponse(BaseModel):
     code: str
     title: str
     active: bool
+    review_state: TaxonomyReviewState
 
     @classmethod
     def from_domain(cls, node: TaxonomyNode) -> "TaxonomyNodeResponse":
@@ -34,4 +42,5 @@ class TaxonomyNodeResponse(BaseModel):
             code=node.code,
             title=node.title,
             active=node.active,
+            review_state=node.review_state,
         )
