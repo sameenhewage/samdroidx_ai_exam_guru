@@ -58,23 +58,25 @@
 ---
 
 ## P1 — Grade 5 Domain Model & Admin Foundation
-**Status:** IN_PROGRESS
+**Status:** DONE
 
 ### Scope
-- admin authentication/authorization
+- admin authentication/authorization boundary using the secure deterministic development/test identity adapter
 - Grade 5 Scholarship exam configuration
 - medium/version metadata
 - competency/skill/sub-skill/learning-concept taxonomy
 - admin CRUD/review screens required for content operations
 - immutable/auditable state transitions for reviewed content
 
+Production OAuth/OIDC/external identity-provider integration is deferred to P10. P1 proves the same authentication port, role checks, negative authorization paths and admin browser workflow with the secure deterministic adapter.
+
 ### Exit criteria
 - [x] Grade 5 domain taxonomy represented in database and validated
-- [ ] admin can manage allowed taxonomy/configuration
+- [x] admin can manage allowed taxonomy/configuration
 - [x] role/permission tests exist
-- [ ] invalid state transitions are rejected
+- [x] invalid state transitions are rejected
 - [x] audit metadata exists for sensitive admin changes
-- [ ] admin UI/API E2E coverage exists for core taxonomy workflow
+- [x] admin UI/API E2E coverage exists for core taxonomy workflow
 
 ### Evidence
 - `19b7ae8` adds the Grade 5 exam configuration, medium, curriculum-version and competency/skill/sub-skill/learning-concept hierarchy domain/persistence foundation.
@@ -84,7 +86,11 @@
 - `83d1845` adds secure-by-default identity/authorization ports, admin/reviewer permission boundaries, bearer-token input limits, authorized taxonomy list/create REST contracts, generated TypeScript contracts and transactional audit events.
 - Alembic `0003_admin_audit_events` is applied in the Compose runtime and makes audit events append-only at the database boundary; unauthenticated taxonomy access returns machine-readable HTTP 401 while health endpoints remain available.
 - Backend gate after the authorization/API slice: 89 tests passed with 100% statements and branches; API integration tests cover 401/403, admin create, reviewer read, object not found, domain validation, duplicate/database conflict handling, transaction rollback and append-only audit behavior.
-- Remaining before P1 completion: a real admin identity-provider/login adapter, complete exam/medium/curriculum and taxonomy update/deactivation contracts, reviewed-content state transitions, product UI and admin API/browser E2E coverage.
+- `d1556f5` completes authorized exam/medium/curriculum create/list/update/deactivate workflows, deterministic non-production admin/reviewer identity, audited taxonomy draft/reviewed/deprecated lifecycle, generated client integration, Next.js admin UI, same-origin HttpOnly cookie proxy and Playwright acceptance coverage.
+- Alembic `0004_taxonomy_review_lifecycle` enforces forward-only review state, immutable reviewed content, reviewed-parent requirements, active-state consistency and hierarchy-safe deactivation in PostgreSQL; concurrent review/deactivate integration coverage proves row-lock serialization and a valid final state.
+- Final backend gate: 123 tests passed with 100% statements and branches; Ruff check/format and strict mypy pass. Final frontend gate: 5 Vitest tests pass with 100% coverage for unit-scoped modules, ESLint/typecheck/build pass, and the full Chromium E2E passes in 6.6 seconds.
+- Browser/API E2E evidence covers admin and reviewer identities, negative 403 authorization, exam/medium/curriculum creation, duplicate validation failure, taxonomy draft update, review immutability, reviewed-parent selection, blocked parent deactivation, ordered child/parent deactivation and visible append-only audit evidence. The only browser console errors are the two explicitly asserted HTTP 409 negative paths.
+- CI includes clean migrations/schema drift checks, generated OpenAPI checks, npm audit, secrets scan, full Compose startup and Playwright admin E2E. Production identity integration remains explicitly deferred to P10 hardening.
 
 ---
 
@@ -310,6 +316,7 @@ TBD
 ### Exit criteria
 - [ ] every P0-P9 phase is DONE
 - [ ] Priority 1 E2E journey passes
+- [ ] production identity-provider/login integration replaces the deterministic adapter and passes session/authentication security tests
 - [ ] security/adversarial review completed with regression tests for findings
 - [ ] migrations verified from clean database
 - [ ] backup/restore or data recovery approach documented for critical source/question data
@@ -417,4 +424,4 @@ TBD
 ---
 
 # Current next action
-P1 is IN_PROGRESS. The next highest-priority slice is a real admin identity-provider/login adapter plus exam/medium/curriculum management contracts, followed by the taxonomy admin UI and browser E2E workflow. Priority 2 remains blocked by P10.
+P1 is DONE. The active gate is **P2 — Source Document Ingestion & Extraction**, beginning with secure immutable source upload, checksums/idempotency, native PDF extraction provenance and the admin review workflow. Production identity integration remains deferred to P10, and student Priority 2 remains blocked by P10.
