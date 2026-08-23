@@ -22,7 +22,15 @@ def configure_database_url_from_environment(
         _set_database_url(config, database_url)
 
 
-def upgrade_database(database_url: str) -> None:
+def _config_for_database(database_url: str) -> Config:
     config = Config(str(ALEMBIC_CONFIG_PATH))
     _set_database_url(config, database_url)
-    command.upgrade(config, "head")
+    return config
+
+
+def upgrade_database(database_url: str) -> None:
+    command.upgrade(_config_for_database(database_url), "head")
+
+
+def assert_database_schema_current(database_url: str) -> None:
+    command.check(_config_for_database(database_url))

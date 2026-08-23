@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from exam_guru_api.infrastructure.database import get_metadata
 from exam_guru_api.infrastructure.migrations import configure_database_url_from_environment
 
 config = context.config
@@ -13,7 +14,7 @@ configure_database_url_from_environment(config)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = None
+target_metadata = get_metadata()
 
 
 def run_migrations_offline() -> None:

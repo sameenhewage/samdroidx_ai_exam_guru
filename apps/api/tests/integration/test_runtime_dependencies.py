@@ -11,7 +11,7 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.core.config import Settings
-from exam_guru_api.infrastructure.migrations import upgrade_database
+from exam_guru_api.infrastructure.migrations import assert_database_schema_current, upgrade_database
 from exam_guru_api.main import create_app
 from exam_guru_api.worker import create_broker
 
@@ -42,6 +42,7 @@ def valkey_url() -> Iterator[str]:
 @pytest.mark.integration
 def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     upgrade_database(database_url)
+    assert_database_schema_current(database_url)
 
     async def read_database_state() -> tuple[str | None, str | None]:
         engine = create_async_engine(database_url)
@@ -58,7 +59,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     vector_version, migration_revision = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0001_enable_pgvector"
+    assert migration_revision == "0002_grade5_taxonomy"
 
 
 @pytest.mark.integration
