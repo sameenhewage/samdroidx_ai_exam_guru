@@ -71,17 +71,20 @@
 ### Exit criteria
 - [x] Grade 5 domain taxonomy represented in database and validated
 - [ ] admin can manage allowed taxonomy/configuration
-- [ ] role/permission tests exist
+- [x] role/permission tests exist
 - [ ] invalid state transitions are rejected
-- [ ] audit metadata exists for sensitive admin changes
+- [x] audit metadata exists for sensitive admin changes
 - [ ] admin UI/API E2E coverage exists for core taxonomy workflow
 
 ### Evidence
 - `19b7ae8` adds the Grade 5 exam configuration, medium, curriculum-version and competency/skill/sub-skill/learning-concept hierarchy domain/persistence foundation.
 - Domain validation rejects malformed codes/titles, missing or wrong-level parents, cross-curriculum parents, inactive-parent activation, duplicate IDs and duplicate sibling codes while supporting incremental hierarchy writes.
 - Alembic `0002_grade5_taxonomy` creates audit-stamped PostgreSQL tables, Grade 5/check constraints, null-safe sibling uniqueness, same-curriculum composite foreign keys and hierarchy/active-parent triggers; clean migration plus `alembic check` pass against real PostgreSQL/pgvector.
-- Backend gate after this slice: 61 tests passed with 100% statements and branches; Ruff check/format and strict mypy pass. Integration coverage includes audit metadata, Grade 5 enforcement, cross-curriculum isolation, parent-level/active-parent invariants and database-enforced sibling uniqueness.
-- Remaining before P1 completion: admin identity/roles, authorized taxonomy CRUD API, append-only admin audit events, reviewed-content state transitions, product UI and admin API/browser E2E coverage.
+- Backend gate after the taxonomy foundation: 61 tests passed with 100% statements and branches; Ruff check/format and strict mypy pass. Integration coverage includes audit metadata, Grade 5 enforcement, cross-curriculum isolation, parent-level/active-parent invariants and database-enforced sibling uniqueness.
+- `83d1845` adds secure-by-default identity/authorization ports, admin/reviewer permission boundaries, bearer-token input limits, authorized taxonomy list/create REST contracts, generated TypeScript contracts and transactional audit events.
+- Alembic `0003_admin_audit_events` is applied in the Compose runtime and makes audit events append-only at the database boundary; unauthenticated taxonomy access returns machine-readable HTTP 401 while health endpoints remain available.
+- Backend gate after the authorization/API slice: 89 tests passed with 100% statements and branches; API integration tests cover 401/403, admin create, reviewer read, object not found, domain validation, duplicate/database conflict handling, transaction rollback and append-only audit behavior.
+- Remaining before P1 completion: a real admin identity-provider/login adapter, complete exam/medium/curriculum and taxonomy update/deactivation contracts, reviewed-content state transitions, product UI and admin API/browser E2E coverage.
 
 ---
 
@@ -414,4 +417,4 @@ TBD
 ---
 
 # Current next action
-P1 is IN_PROGRESS. The next highest-priority slice is admin identity/role authorization plus audited REST contracts for taxonomy management, followed by the core admin UI/E2E workflow. Priority 2 remains blocked by P10.
+P1 is IN_PROGRESS. The next highest-priority slice is a real admin identity-provider/login adapter plus exam/medium/curriculum management contracts, followed by the taxonomy admin UI and browser E2E workflow. Priority 2 remains blocked by P10.
