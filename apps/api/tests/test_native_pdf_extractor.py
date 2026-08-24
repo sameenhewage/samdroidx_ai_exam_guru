@@ -47,6 +47,49 @@ def test_textless_pdf_is_explicitly_routed_to_ocr() -> None:
     assert result.needs_ocr is True
 
 
+def test_image_dominant_sparse_overlay_is_routed_to_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRect:
+        def __init__(self, area: float) -> None:
+            self._area = area
+
+        def get_area(self) -> float:
+            return self._area
+
+    class FakePage:
+        rect = FakeRect(100.0)
+
+        def get_text(self, _mode: str, *, sort: bool) -> list[tuple[object, ...]]:
+            assert sort
+            return [(0, 0, 10, 10, "Repeated sparse overlay text", 0, 0)]
+
+        def get_images(self, *, full: bool) -> list[tuple[int]]:
+            assert full
+            return [(1,)]
+
+        def get_image_rects(self, _xref: int) -> list[FakeRect]:
+            return [FakeRect(99.0)]
+
+    class FakeDocument:
+        needs_pass = False
+        page_count = 1
+
+        def __getitem__(self, _index: int) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(pymupdf, "open", lambda **_kwargs: FakeDocument())
+
+    result = PyMuPdfExtractor(max_pages=10).extract(b"fixture")
+
+    assert result.image_dominant_page_ratio == 1.0
+    assert result.pages[0].largest_image_coverage == 0.99
+    assert result.needs_ocr is True
+
+
 def test_native_pdf_extraction_rejects_encrypted_and_empty_documents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -66,6 +109,34 @@ def test_native_pdf_extraction_rejects_encrypted_and_empty_documents(
         with pytest.raises(ExtractionError) as raised:
             PyMuPdfExtractor(max_pages=10).extract(b"fixture")
         assert raised.value.violation is violation
+
+
+def test_zero_area_page_cannot_report_image_coverage() -> None:
+    class ZeroRect:
+        @staticmethod
+        def get_area() -> float:
+            return 0.0
+
+    class FakePage:
+        rect = ZeroRect()
+
+        @staticmethod
+        def get_text(_mode: str, *, sort: bool) -> list[tuple[object, ...]]:
+            assert sort
+            return []
+
+        @staticmethod
+        def get_images(*, full: bool) -> list[tuple[int]]:
+            assert full
+            return [(1,)]
+
+        @staticmethod
+        def get_image_rects(_xref: int) -> list[ZeroRect]:
+            return [ZeroRect()]
+
+    page = PyMuPdfExtractor._extract_page(FakePage(), 1)
+
+    assert page.largest_image_coverage == 0.0
 
 
 def test_page_extraction_ignores_non_text_blocks() -> None:
