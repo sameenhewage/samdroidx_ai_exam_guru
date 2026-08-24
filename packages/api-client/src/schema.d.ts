@@ -3949,6 +3949,8 @@ export interface components {
             } | null;
             /** Extraction Failure Code */
             extraction_failure_code: string | null;
+            /** Extraction Queue Message Id */
+            extraction_queue_message_id?: string | null;
             /** Extraction Started At */
             extraction_started_at: string | null;
             extraction_status: components["schemas"]["ExtractionStatus"];
@@ -7586,6 +7588,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Extraction queue unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

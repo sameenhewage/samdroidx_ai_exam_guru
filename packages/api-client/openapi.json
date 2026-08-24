@@ -7431,6 +7431,18 @@
             ],
             "title": "Extraction Failure Code"
           },
+          "extraction_queue_message_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Queue Message Id"
+          },
           "extraction_started_at": {
             "anyOf": [
               {
@@ -14108,6 +14120,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Extraction queue unavailable"
           }
         },
         "security": [
