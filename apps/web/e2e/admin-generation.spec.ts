@@ -10,12 +10,15 @@ type SourcePage = components["schemas"]["SourcePageResponse"];
 type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
 type KnowledgeChunk = components["schemas"]["KnowledgeChunkResponse"];
 type Blueprint = components["schemas"]["PaperBlueprintResponse"];
+type BlueprintSlot = components["schemas"]["BlueprintSlotResponse"];
 type BlueprintRequest = components["schemas"]["BlueprintCreateRequest"];
+type QuestionType = components["schemas"]["QuestionType"];
 type GenerationRun = components["schemas"]["GenerationRunResponse"];
 type GenerationRunSummary = components["schemas"]["GenerationRunSummaryResponse"];
 type GenerationRequest = components["schemas"]["GenerationRunCreateRequest"];
 type ValidationReport = components["schemas"]["ValidationRunResponse"];
 type ValidationReportSummary = components["schemas"]["ValidationRunSummaryResponse"];
+type ValidationFinding = components["schemas"]["ValidationFindingResponse"];
 type ValidationRequest = components["schemas"]["ValidationRunCreateRequest"];
 type ReviewCandidate = components["schemas"]["ReviewCandidateResponse"];
 type ReviewEditRequest = components["schemas"]["ReviewCandidateEditRequest"];
@@ -24,6 +27,32 @@ type PaperPublishRequest = components["schemas"]["PaperPublishRequest"];
 type PaperSummary = components["schemas"]["PaperSummaryResponse"];
 type Publication = components["schemas"]["PublishedPaperVersionResponse"];
 type AuditEvent = components["schemas"]["AdminAuditEventResponse"];
+
+type GeneratedSlot = {
+  expectedStem: string;
+  run: GenerationRun;
+  slot: BlueprintSlot;
+};
+
+type ValidatedSlot = GeneratedSlot & {
+  validation: ValidationReport;
+};
+
+type ReviewedSlot = ValidatedSlot & {
+  candidate: ReviewCandidate;
+  publishedStem: string;
+};
+
+const DETERMINISTIC_STEMS: Record<QuestionType, string> = {
+  multiple_choice: "Which response is supported by the reviewed context?",
+  short_answer: "Write a short answer supported by the reviewed context.",
+  structured: "Construct a response using evidence from the reviewed source.",
+};
+const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
+  multiple_choice: "Multiple choice",
+  short_answer: "Short answer",
+  structured: "Structured",
+};
 
 function syntheticPdf(marker: string): Buffer {
   const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
@@ -58,6 +87,15 @@ async function login(page: Page, role: "admin" | "reviewer") {
   await expect(page).toHaveURL(/\/admin\/curriculum$/);
 }
 
+async function getJson<ResponseDto>(
+  request: APIRequestContext,
+  path: string,
+): Promise<ResponseDto> {
+  const response = await request.get(path);
+  expect(response.ok(), `GET ${path} should succeed`).toBe(true);
+  return (await response.json()) as ResponseDto;
+}
+
 async function postCreated<ResponseDto>(
   request: APIRequestContext,
   path: string,
@@ -85,13 +123,13 @@ function blueprintRequest(
     analytics_run_id: null,
     seed: 2026,
     specification: {
-      config_version: "generation-e2e-v1",
+      config_version: "generation-complete-paper-e2e-v1",
       curriculum_scope: {
         curriculum_version_id: curriculum.id,
         grade: 5,
         medium: medium.code,
       },
-      difficulty_allocations: [{ difficulty: "medium", exact_marks: 2, exact_slots: 1 }],
+      difficulty_allocations: [{ difficulty: "medium", exact_marks: 6, exact_slots: 3 }],
       generation_policy: {
         answer_requirements: ["Provide one unambiguous answer with marking guidance."],
         instructions: ["Use age-appropriate Grade 5 language."],
@@ -112,6 +150,18 @@ function blueprintRequest(
           exact_slots: 1,
           question_type: "multiple_choice",
         },
+        {
+          archetypes: ["short_constructed_response"],
+          exact_marks: 2,
+          exact_slots: 1,
+          question_type: "short_answer",
+        },
+        {
+          archetypes: ["evidence_response"],
+          exact_marks: 2,
+          exact_slots: 1,
+          question_type: "structured",
+        },
       ],
       sections: [
         {
@@ -125,13 +175,35 @@ function blueprintRequest(
           section_id: "A",
           title: "Selection",
         },
+        {
+          allowed_difficulties: ["medium"],
+          allowed_marks_per_slot: [2],
+          allowed_question_types: ["short_answer"],
+          allowed_taxonomy_targets: [target],
+          marks: 2,
+          question_count: 1,
+          retrieval_query_hints: ["short answer section"],
+          section_id: "B",
+          title: "Short answer",
+        },
+        {
+          allowed_difficulties: ["medium"],
+          allowed_marks_per_slot: [2],
+          allowed_question_types: ["structured"],
+          allowed_taxonomy_targets: [target],
+          marks: 2,
+          question_count: 1,
+          retrieval_query_hints: ["structured response section"],
+          section_id: "C",
+          title: "Structured response",
+        },
       ],
       taxonomy_requirements: [
         {
-          allowed_section_ids: ["A"],
+          allowed_section_ids: ["A", "B", "C"],
           generation_instructions: ["Use a familiar number setting."],
-          maximum_slots: 1,
-          minimum_slots: 1,
+          maximum_slots: 3,
+          minimum_slots: 3,
           priority: {
             baseline_evidence_refs: ["curriculum:reviewed-taxonomy"],
             baseline_score: 100,
@@ -142,19 +214,300 @@ function blueprintRequest(
         },
       ],
       title: `Generation E2E paper ${unique}`,
-      total_marks: 2,
+      total_marks: 6,
     },
   };
 }
 
-test("real generation reaches validation and reviewer approval with terminal audit history", async ({
+function assertRepresentativeBlueprint(
+  blueprint: Blueprint,
+  competency: TaxonomyNode,
+  skill: TaxonomyNode,
+) {
+  const slots = blueprint.blueprint.slots;
+  expect(blueprint.slot_count).toBe(3);
+  expect(blueprint.total_marks).toBe(6);
+  expect(blueprint.specification.total_marks).toBe(6);
+  expect(
+    blueprint.specification.question_type_allocations.map((allocation) => ({
+      marks: allocation.exact_marks,
+      slots: allocation.exact_slots,
+      type: allocation.question_type,
+    })),
+  ).toEqual([
+    { marks: 2, slots: 1, type: "multiple_choice" },
+    { marks: 2, slots: 1, type: "short_answer" },
+    { marks: 2, slots: 1, type: "structured" },
+  ]);
+  expect(
+    blueprint.specification.sections.map((section) => ({
+      marks: section.marks,
+      questionCount: section.question_count,
+      sectionId: section.section_id,
+    })),
+  ).toEqual([
+    { marks: 2, questionCount: 1, sectionId: "A" },
+    { marks: 2, questionCount: 1, sectionId: "B" },
+    { marks: 2, questionCount: 1, sectionId: "C" },
+  ]);
+  expect(blueprint.blueprint.sections).toEqual([
+    { marks: 2, section_id: "A", slot_count: 1, title: "Selection" },
+    { marks: 2, section_id: "B", slot_count: 1, title: "Short answer" },
+    { marks: 2, section_id: "C", slot_count: 1, title: "Structured response" },
+  ]);
+  expect(blueprint.specification.taxonomy_requirements).toHaveLength(1);
+  expect(blueprint.specification.taxonomy_requirements[0]).toMatchObject({
+    allowed_section_ids: ["A", "B", "C"],
+    maximum_slots: 3,
+    minimum_slots: 3,
+    target: { competency_id: competency.id, skill_id: skill.id },
+  });
+  expect(
+    slots.map((slot) => ({
+      marks: slot.marks,
+      ordinal: slot.ordinal,
+      sectionId: slot.section_id,
+      sectionOrdinal: slot.section_ordinal,
+      taxonomy: slot.taxonomy_target,
+      type: slot.question_type,
+    })),
+  ).toEqual([
+    {
+      marks: 2,
+      ordinal: 1,
+      sectionId: "A",
+      sectionOrdinal: 1,
+      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      type: "multiple_choice",
+    },
+    {
+      marks: 2,
+      ordinal: 2,
+      sectionId: "B",
+      sectionOrdinal: 1,
+      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      type: "short_answer",
+    },
+    {
+      marks: 2,
+      ordinal: 3,
+      sectionId: "C",
+      sectionOrdinal: 1,
+      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      type: "structured",
+    },
+  ]);
+}
+
+async function loadGenerationRunForSlot(
+  request: APIRequestContext,
+  curriculumId: string,
+  blueprintId: string,
+  slotId: string,
+): Promise<GenerationRun> {
+  const summaries = await getJson<GenerationRunSummary[]>(
+    request,
+    `/api/v1/admin/curricula/${curriculumId}/generation-runs`,
+  );
+  const matches = summaries.filter(
+    (run) => run.paper_blueprint_id === blueprintId && run.slot_id === slotId,
+  );
+  expect(matches).toHaveLength(1);
+  return getJson<GenerationRun>(
+    request,
+    `/api/v1/admin/curricula/${curriculumId}/generation-runs/${matches[0]?.id}`,
+  );
+}
+
+async function generateSlotThroughUi(
+  page: Page,
+  curriculum: Curriculum,
+  blueprint: Blueprint,
+  slot: BlueprintSlot,
+  context: KnowledgeChunk,
+): Promise<GeneratedSlot> {
+  const expectedStem = DETERMINISTIC_STEMS[slot.question_type];
+  await page.getByLabel("Exact blueprint slot").selectOption(slot.slot_id);
+  await expect(page.getByLabel("Exact blueprint slot")).toHaveValue(slot.slot_id);
+  const contextChoice = page.getByRole("checkbox", {
+    name: `Select knowledge chunk ${context.id}`,
+  });
+  await expect(contextChoice).toBeEnabled();
+  await contextChoice.check();
+  await page.getByRole("button", { name: "Create generation run" }).click();
+  await expect(page.getByText("Generation run queued.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Generation run overview" })).toContainText(
+    "Succeeded",
+    { timeout: 45_000 },
+  );
+  await expect(
+    page.getByRole("region", { name: "Immutable blueprint and slot snapshot" }),
+  ).toContainText(slot.slot_id);
+  await expect(page.getByRole("region", { name: "Persisted generation context" })).toContainText(
+    context.text,
+  );
+  await expect(page.getByRole("region", { name: "Generated candidate" })).toContainText(
+    expectedStem,
+  );
+  await expect(page.getByText("REQUIRES VALIDATION")).toBeVisible();
+
+  const run = await loadGenerationRunForSlot(
+    page.request,
+    curriculum.id,
+    blueprint.id,
+    slot.slot_id,
+  );
+  expect(run.status).toBe("succeeded");
+  expect(run.disposition).toBe("requires_validation");
+  expect(run.provider).toBe("deterministic-fake");
+  expect(run.model).toBe("fixture-model");
+  expect(run.cost_microusd).toBe(0);
+  expect(run.context.map((item) => item.record_id)).toEqual([context.id]);
+  expect(run.candidate).toMatchObject({
+    question_type: slot.question_type,
+    stem: expectedStem,
+  });
+  return { expectedStem, run, slot };
+}
+
+async function validateSlotThroughUi(
+  page: Page,
+  curriculum: Curriculum,
+  source: SourceDocument,
+  generated: GeneratedSlot,
+  expectedDuplicateReferenceCount: number,
+): Promise<ValidatedSlot> {
+  await page.getByLabel("Generation run").selectOption(generated.run.id);
+  await page.getByRole("button", { name: "Run deterministic validation" }).click();
+  const reportMetadata = page.getByRole("region", { name: "Validation report metadata" });
+  await expect(reportMetadata).toContainText(generated.run.id);
+  await expect(reportMetadata).toContainText("Deterministic result: Pass");
+  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
+    source.id,
+  );
+
+  const summaries = await getJson<ValidationReportSummary[]>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
+  );
+  const matching = summaries.filter((report) => report.generation_run_id === generated.run.id);
+  expect(matching).toHaveLength(1);
+  const validation = await getJson<ValidationReport>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs/${matching[0]?.id}`,
+  );
+  const findings = await getJson<ValidationFinding[]>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs/${validation.id}/findings?limit=100&offset=0`,
+  );
+  const duplicateFindings = findings.filter((finding) => finding.code.startsWith("duplicate."));
+  const lexicalFinding = duplicateFindings.find(
+    (finding) => finding.code === "duplicate.lexical_similarity_indicator",
+  );
+  const lexicalEvidence = lexicalFinding?.evidence.find((item) =>
+    item.observed?.includes("score_basis_points="),
+  );
+  const lexicalScore = Number(
+    lexicalEvidence?.observed.match(/score_basis_points=(\d+)/)?.[1] ?? Number.NaN,
+  );
+
+  expect(validation.overall_status).toBe("pass");
+  expect(validation.duplicate_reference_count).toBe(expectedDuplicateReferenceCount);
+  expect(duplicateFindings).toHaveLength(3);
+  expect(duplicateFindings.map((finding) => finding.status)).toEqual(["pass", "pass", "pass"]);
+  expect(lexicalScore).toBeLessThan(8_000);
+  expect(validation.limitations.join(" ").toLowerCase()).toContain(
+    "does not establish factual or semantic correctness",
+  );
+  return { ...generated, validation };
+}
+
+async function reviewSlotThroughUi(
+  page: Page,
+  curriculum: Curriculum,
+  context: KnowledgeChunk,
+  validated: ValidatedSlot,
+  editStem: string | null,
+): Promise<ReviewedSlot> {
+  await page.getByLabel("Passing validation run").selectOption(validated.validation.id);
+  await page.getByRole("button", { name: "Create review candidate" }).click();
+  await expect(
+    page.getByText("Review candidate created from persisted PASS validation evidence."),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Generated revision 1 evidence" })).toContainText(
+    validated.expectedStem,
+  );
+  await expect(page.getByRole("region", { name: "Generation blueprint evidence" })).toContainText(
+    validated.slot.slot_id,
+  );
+  await expect(page.getByRole("region", { name: "Generation context provenance" })).toContainText(
+    context.id,
+  );
+  await expect(
+    page.getByRole("region", { name: "P8 validation report and findings" }),
+  ).toContainText(validated.validation.pipeline_version);
+
+  await page.getByRole("button", { name: "Start review" }).click();
+  await expect(page.getByText("Human review started.")).toBeVisible();
+  await expect(page.getByLabel("Question type (locked)")).toBeDisabled();
+  await expect(page.getByLabel("Marks (locked)")).toBeDisabled();
+
+  if (editStem !== null) {
+    await page.getByLabel("Question stem").fill(editStem);
+    await page.getByLabel("Edit reason").fill("Clarify the reviewed context wording.");
+    await page.getByRole("button", { name: "Save revision" }).click();
+    await expect(
+      page.getByText("Revision 2 saved. Automated validation still applies only to revision 1."),
+    ).toBeVisible();
+    await expect(page.getByLabel("Question stem")).toHaveValue(editStem);
+  }
+
+  const approvalNote = `Human checked ${validated.slot.question_type} source, answer, and marking.`;
+  await page.getByLabel("Approval note (optional)").fill(approvalNote);
+  await page.getByRole("button", { name: "Approve candidate" }).click();
+  await expect(page.getByText("Candidate approved. This is not a publish action.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approved terminal state" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
+    "Approved",
+  );
+
+  const candidate = await getJson<ReviewCandidate>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${validated.run.id}`,
+  );
+  const expectedActions = editStem === null ? ["started", "approved"] : ["started", "edited", "approved"];
+  expect(candidate).toMatchObject({
+    blueprint_slot_id: validated.slot.slot_id,
+    current_content: {
+      marks: 2,
+      question_type: validated.slot.question_type,
+      stem: editStem ?? validated.expectedStem,
+    },
+    generation_run_id: validated.run.id,
+    state: "approved",
+    validation: {
+      passed: true,
+      validated_revision: 1,
+      validation_run_id: validated.validation.id,
+    },
+  });
+  expect(candidate.current_revision).toBe(editStem === null ? 1 : 2);
+  expect(candidate.events.map((event) => event.action)).toEqual(expectedActions);
+  return {
+    ...validated,
+    candidate,
+    publishedStem: editStem ?? validated.expectedStem,
+  };
+}
+
+test("representative mixed paper completes generation, validation, human review, and immutable publication", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   test.info().annotations.push({
     type: "limitation",
     description:
-      "The deterministic one-slot fixture proves exact paper assembly and publication mechanics; it is not evidence of representative complete-paper quality.",
+      "This deterministic three-type fixture proves representative lifecycle and exact-slot acceptance only; it makes no factual, semantic, language, curriculum, paraphrase-uniqueness, or paid-model quality claim.",
   });
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -245,8 +598,10 @@ test("real generation reaches validation and reviewer approval with terminal aud
   await expect
     .poll(
       async () => {
-        const response = await page.request.get("/api/v1/admin/source-documents");
-        const documents = (await response.json()) as SourceDocument[];
+        const documents = await getJson<SourceDocument[]>(
+          page.request,
+          "/api/v1/admin/source-documents",
+        );
         return documents.find((document) => document.id === source.id)?.extraction_status;
       },
       { timeout: 30_000 },
@@ -259,17 +614,15 @@ test("real generation reaches validation and reviewer approval with terminal aud
     true,
   );
 
-  const pagesResponse = await page.request.get(
+  const [sourcePage] = await getJson<SourcePage[]>(
+    page.request,
     `/api/v1/admin/source-documents/${source.id}/pages`,
   );
-  expect(pagesResponse.ok()).toBe(true);
-  const [sourcePage] = (await pagesResponse.json()) as SourcePage[];
   if (!sourcePage) throw new Error("Generation source page was not extracted");
-  const blocksResponse = await page.request.get(
+  const [sourceBlock] = await getJson<ExtractedBlock[]>(
+    page.request,
     `/api/v1/admin/source-documents/${source.id}/pages/${sourcePage.page_number}/blocks`,
   );
-  expect(blocksResponse.ok()).toBe(true);
-  const [sourceBlock] = (await blocksResponse.json()) as ExtractedBlock[];
   if (!sourceBlock) throw new Error("Generation source block was not extracted");
 
   const importedChunk = await postCreated<KnowledgeChunk>(
@@ -313,287 +666,189 @@ test("real generation reaches validation and reviewer approval with terminal aud
   const reviewedChunk = (await reviewedResponse.json()) as KnowledgeChunk;
   expect(reviewedChunk.review_state).toBe("reviewed");
 
-  const blueprintResponse = await page.request.post(
+  const blueprint = await postCreated<Blueprint>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/blueprints`,
-    { data: blueprintRequest(curriculum, medium, competency, skill, unique) },
+    blueprintRequest(curriculum, medium, competency, skill, unique),
   );
-  expect(blueprintResponse.status()).toBe(201);
-  const blueprint = (await blueprintResponse.json()) as Blueprint;
-  const exactSlot = blueprint.blueprint.slots[0];
-  if (!exactSlot) throw new Error("Generation blueprint did not contain an exact slot");
+  assertRepresentativeBlueprint(blueprint, competency, skill);
+  const exactSlots = blueprint.blueprint.slots;
 
   await page.goto("/admin/generation");
   await expect(page.getByRole("heading", { name: "Generation Studio" })).toBeVisible();
   await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
   await page.getByLabel("Immutable blueprint").selectOption(blueprint.id);
-  await expect(page.getByLabel("Exact blueprint slot")).toHaveValue(exactSlot.slot_id);
-  const contextChoice = page.getByRole("checkbox", {
-    name: `Select knowledge chunk ${reviewedChunk.id}`,
-  });
-  await expect(contextChoice).toBeEnabled();
-  await contextChoice.check();
-  await page.getByRole("button", { name: "Create generation run" }).click();
-  await expect(page.getByText("Generation run queued.")).toBeVisible();
-  await expect(page.getByText("REQUIRES VALIDATION")).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByRole("region", { name: "Generation run overview" })).toContainText(
-    "Succeeded",
-  );
-  await expect(page.getByRole("region", { name: "Persisted generation context" })).toContainText(
-    reviewedChunk.text,
-  );
-  await expect(page.getByRole("region", { name: "Generated candidate" })).toContainText(
-    "Which response is supported by the reviewed context?",
-  );
+  const generatedSlots: GeneratedSlot[] = [];
+  for (const slot of exactSlots) {
+    generatedSlots.push(
+      await generateSlotThroughUi(page, curriculum, blueprint, slot, reviewedChunk),
+    );
+  }
   await expect(page.getByText(/No publish action is available/i)).toBeVisible();
-
-  const listResponse = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
-  );
-  expect(listResponse.ok()).toBe(true);
-  const summaries = (await listResponse.json()) as GenerationRunSummary[];
-  const persisted = summaries.find((run) => run.paper_blueprint_id === blueprint.id);
-  expect(persisted?.status).toBe("succeeded");
-  const detailResponse = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/generation-runs/${persisted?.id}`,
-  );
-  expect(detailResponse.ok()).toBe(true);
-  const run = (await detailResponse.json()) as GenerationRun;
-  expect(run.disposition).toBe("requires_validation");
-  expect(run.context[0]?.record_id).toBe(reviewedChunk.id);
-  expect(run.provider).toBe("deterministic-fake");
+  expect(generatedSlots.map((item) => item.run.slot_id)).toEqual(exactSlots.map((slot) => slot.slot_id));
+  expect(generatedSlots.map((item) => item.run.provider)).toEqual([
+    "deterministic-fake",
+    "deterministic-fake",
+    "deterministic-fake",
+  ]);
 
   await page.goto("/admin/validation");
   await expect(page.getByRole("heading", { name: "Validation Studio" })).toBeVisible();
   await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
-  await expect(page.getByLabel("Generation run")).toContainText(run.id);
-  await page.getByLabel("Generation run").selectOption(run.id);
-  await page.getByRole("button", { name: "Run deterministic validation" }).click();
-  await expect(page.getByText("Immutable validation report created. Human review is still required.")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Validation report metadata" })).toContainText(
-    "Deterministic result:",
-  );
-  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
-    source.id,
-  );
-
-  const validationListResponse = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
-  );
-  expect(validationListResponse.ok()).toBe(true);
-  const validationSummaries = (await validationListResponse.json()) as ValidationReportSummary[];
-  const validationSummary = validationSummaries.find(
-    (item) => item.generation_run_id === run.id,
-  );
-  if (!validationSummary) throw new Error("Validation UI did not persist a report for the generation");
-  const validationDetailResponse = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/validation-runs/${validationSummary.id}`,
-  );
-  expect(validationDetailResponse.ok()).toBe(true);
-  const validationReport = (await validationDetailResponse.json()) as ValidationReport;
-  expect(validationReport.finding_count).toBeGreaterThan(0);
-  expect(validationReport.limitations.length).toBeGreaterThan(0);
+  const validatedSlots: ValidatedSlot[] = [];
+  for (const [index, generated] of generatedSlots.entries()) {
+    validatedSlots.push(
+      await validateSlotThroughUi(page, curriculum, source, generated, index),
+    );
+  }
+  await expect(
+    page.getByRole("heading", { name: "Deterministic validation is limited" }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "reviewer");
-  await page.goto("/admin/generation");
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
-  await expect(page.getByText("Reviewer read access")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Reviewer read-only mode" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Generation run overview" })).toContainText(
-    "Succeeded",
-  );
-  await expect(page.getByRole("region", { name: "Generated candidate" })).toContainText(
-    "Which response is supported by the reviewed context?",
-  );
-  await expect(page.getByRole("button", { name: "Create generation run" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Retry failed run" })).toHaveCount(0);
-
-  await page.goto("/admin/validation");
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
-  await expect(page.getByRole("heading", { name: "Reviewer read-only mode" })).toBeVisible();
-  await page.getByRole("button", { name: `Select validation report ${validationSummary.id}` }).click();
-  await expect(page.getByRole("region", { name: "Validation report metadata" })).toContainText(
-    validationReport.pipeline_version,
-  );
-  await expect(page.getByText(/A passing report does not establish factual or semantic correctness/i)).toBeVisible();
-  await expect(page.getByRole("region", { name: "Validation findings" })).toContainText(
-    `of ${validationReport.finding_count}`,
-  );
-  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
-    source.id,
-  );
-  await expect(page.getByRole("button", { name: "Run deterministic validation" })).toHaveCount(0);
-  expect(validationReport.overall_status).toBe("pass");
-
   await page.goto("/admin/review");
   await expect(page.getByRole("heading", { name: "Reviewer Studio" })).toBeVisible();
   await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
-  await expect(page.getByLabel("Passing validation run")).toContainText(validationSummary.id);
-  await page.getByLabel("Passing validation run").selectOption(validationSummary.id);
-  await page.getByRole("button", { name: "Create review candidate" }).click();
-  await expect(
-    page.getByText("Review candidate created from persisted PASS validation evidence."),
-  ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Candidate review editor" })).toContainText(
-    "Validated",
-  );
-  await expect(page.getByRole("region", { name: "Generated revision 1 evidence" })).toContainText(
-    "Which response is supported by the reviewed context?",
-  );
-  await expect(page.getByRole("region", { name: "Generation context provenance" })).toContainText(
-    reviewedChunk.id,
-  );
-  await expect(page.getByRole("region", { name: "P8 validation report and findings" })).toContainText(
-    validationReport.pipeline_version,
-  );
-  await expect(page.getByText(/Automated validation applies to generated revision 1 only/i)).toBeVisible();
-  await expect(page.getByText(/Human edits are not automatically revalidated/i)).toBeVisible();
-  await expect(page.getByText(/Approval does not publish/i)).toBeVisible();
-
-  await page.getByRole("button", { name: "Start review" }).click();
-  await expect(page.getByText("Human review started.")).toBeVisible();
-  await expect(page.getByLabel("Question type (locked)")).toBeDisabled();
-  await expect(page.getByLabel("Marks (locked)")).toBeDisabled();
-  const reviewedStem = `Which response is supported by the reviewed context for ${unique}?`;
-  await page.getByLabel("Question stem").fill(reviewedStem);
-  await page.getByLabel("Option B text").fill("The supported even-number choice");
-  await page.getByLabel("Explanation").fill("The trusted reviewed source supports option B.");
-  await page
-    .getByLabel("Marking guide (one item per line)")
-    .fill("Award two marks for selecting B.\nAward no marks for unsupported choices.");
-  await page.getByLabel("Edit reason").fill("Clarify the grounded wording and marking guidance.");
-  await page.getByRole("button", { name: "Save revision" }).click();
-  await expect(
-    page.getByText("Revision 2 saved. Automated validation still applies only to revision 1."),
-  ).toBeVisible();
-  await expect(page.getByLabel("Question stem")).toHaveValue(reviewedStem);
-
-  await page
-    .getByLabel("Approval note (optional)")
-    .fill("Source, answer, explanation, and marking guidance reviewed.");
-  await page.getByRole("button", { name: "Approve candidate" }).click();
-  await expect(page.getByText("Candidate approved. This is not a publish action.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Approved terminal state" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
-    "Revision 2",
-  );
-  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
-    "Started",
-  );
-  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
-    "Edited",
-  );
-  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
-    "Approved",
-  );
-  await expect(page.getByRole("region", { name: "Review decision" })).toContainText(
-    "Source, answer, explanation, and marking guidance reviewed.",
-  );
-
-  const candidateResponse = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${run.id}`,
-  );
-  expect(candidateResponse.ok()).toBe(true);
-  const approvedCandidate = (await candidateResponse.json()) as ReviewCandidate;
-  expect(approvedCandidate.state).toBe("approved");
-  expect(approvedCandidate.current_revision).toBe(2);
-  expect(approvedCandidate.current_content.stem).toBe(reviewedStem);
-  expect(approvedCandidate.validation.validated_revision).toBe(1);
-  expect(approvedCandidate.events.map((event) => event.action)).toEqual([
-    "started",
-    "edited",
+  const reviewedSlots: ReviewedSlot[] = [];
+  for (const validated of validatedSlots) {
+    const editStem =
+      validated.slot.question_type === "multiple_choice"
+        ? `Which response is supported by the reviewed context for ${unique}?`
+        : null;
+    reviewedSlots.push(
+      await reviewSlotThroughUi(page, curriculum, reviewedChunk, validated, editStem),
+    );
+  }
+  expect(reviewedSlots.map((item) => item.candidate.state)).toEqual([
+    "approved",
+    "approved",
     "approved",
   ]);
+  expect(reviewedSlots.filter((item) => item.candidate.current_revision === 2)).toHaveLength(1);
 
-  const auditResponse = await page.request.get(
-    "/api/v1/admin/audit-events?resource_type=question_candidate&limit=200",
-  );
-  expect(auditResponse.ok()).toBe(true);
-  const candidateAudit = ((await auditResponse.json()) as AuditEvent[])
-    .filter((event) => event.resource_id === approvedCandidate.id)
-    .map((event) => event.action);
-  expect(candidateAudit).toEqual(
-    expect.arrayContaining([
-      "question_candidate.created",
-      "question_candidate.review_started",
-      "question_candidate.edited",
-      "question_candidate.approved",
-    ]),
-  );
-
+  const editedCandidate = reviewedSlots.find((item) => item.candidate.current_revision === 2)?.candidate;
+  if (!editedCandidate) throw new Error("The representative paper did not retain its required edit");
   const terminalPayload: ReviewEditRequest = {
-    content: approvedCandidate.current_content,
-    expected_version: approvedCandidate.version,
+    content: editedCandidate.current_content,
+    expected_version: editedCandidate.version,
     reason: "Attempt to mutate an approved terminal candidate.",
   };
   const terminalMutation = await page.request.patch(
-    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${approvedCandidate.id}`,
+    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${editedCandidate.id}`,
     { data: terminalPayload },
   );
   expect(terminalMutation.status()).toBe(409);
   expect((await terminalMutation.json()).detail.code).toBe("review_candidate_state_conflict");
 
-  const reviewerValidationPayload: ValidationRequest = { generation_run_id: run.id };
-  const validationDenied = await page.request.post(
+  const candidateAudit = await getJson<AuditEvent[]>(
+    page.request,
+    "/api/v1/admin/audit-events?resource_type=question_candidate&limit=200",
+  );
+  for (const reviewed of reviewedSlots) {
+    const actions = candidateAudit
+      .filter((event) => event.resource_id === reviewed.candidate.id)
+      .map((event) => event.action);
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        "question_candidate.created",
+        "question_candidate.review_started",
+        "question_candidate.approved",
+        ...(reviewed.candidate.current_revision === 2 ? ["question_candidate.edited"] : []),
+      ]),
+    );
+  }
+
+  const [firstReviewed] = reviewedSlots;
+  if (!firstReviewed) throw new Error("The representative paper has no reviewed slot");
+  const reviewerValidationPayload: ValidationRequest = {
+    generation_run_id: firstReviewed.run.id,
+  };
+  const reviewerValidationDenied = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
     { data: reviewerValidationPayload },
   );
-  expect(validationDenied.status()).toBe(403);
-
-  const reviewerPayload: GenerationRequest = {
+  expect(reviewerValidationDenied.status()).toBe(403);
+  const reviewerGenerationPayload: GenerationRequest = {
     historical_question_ids: [],
     knowledge_chunk_ids: [reviewedChunk.id],
     paper_blueprint_id: blueprint.id,
-    slot_id: exactSlot.slot_id,
+    slot_id: firstReviewed.slot.slot_id,
   };
-  const denied = await page.request.post(
+  const reviewerGenerationDenied = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
     {
-      data: reviewerPayload,
+      data: reviewerGenerationPayload,
       headers: { "Idempotency-Key": `generation-reviewer-denied-${unique}` },
     },
   );
-  expect(denied.status()).toBe(403);
+  expect(reviewerGenerationDenied.status()).toBe(403);
+
+  const generationStateBeforePaper = await getJson<GenerationRunSummary[]>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
+  );
+  expect(generationStateBeforePaper).toHaveLength(3);
+  expect(
+    generationStateBeforePaper.map((run) => ({
+      attempts: run.attempt_count,
+      provider: run.provider,
+      status: run.status,
+    })),
+  ).toEqual([
+    { attempts: 1, provider: "deterministic-fake", status: "succeeded" },
+    { attempts: 1, provider: "deterministic-fake", status: "succeeded" },
+    { attempts: 1, provider: "deterministic-fake", status: "succeeded" },
+  ]);
 
   await page.goto("/admin/papers");
   await expect(page.getByRole("heading", { name: "Paper Studio" })).toBeVisible();
   await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
   await page.getByLabel("Immutable paper blueprint").selectOption(blueprint.id);
-  await expect(page.getByTestId("exact-blueprint-slot")).toHaveCount(1);
-  await expect(page.getByTestId("exact-blueprint-slot")).toContainText(exactSlot.slot_id);
-  await page.getByLabel("Paper title").fill(`Published generation paper ${unique}`);
-  await page
-    .getByLabel(`Candidate for exact slot ${exactSlot.slot_id}`)
-    .selectOption(approvedCandidate.id);
+  const slotRows = page.getByTestId("exact-blueprint-slot");
+  await expect(slotRows).toHaveCount(3);
+  for (const [index, reviewed] of reviewedSlots.entries()) {
+    await expect(slotRows.nth(index)).toContainText(reviewed.slot.slot_id);
+    await expect(slotRows.nth(index)).toContainText(
+      QUESTION_TYPE_LABELS[reviewed.slot.question_type],
+    );
+    await expect(slotRows.nth(index)).toContainText("2 marks");
+    await page
+      .getByLabel(`Candidate for exact slot ${reviewed.slot.slot_id}`)
+      .selectOption(reviewed.candidate.id);
+  }
+  const paperTitle = `Published generation paper ${unique}`;
+  await page.getByLabel("Paper title").fill(paperTitle);
   await page.getByRole("button", { name: "Create immutable draft" }).click();
   await expect(page.getByText("Immutable draft version 1 created.")).toBeVisible();
   await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
     "Draft",
   );
-  await expect(page.getByRole("region", { name: "Immutable draft versions" })).toContainText(
-    approvedCandidate.id,
-  );
+  for (const reviewed of reviewedSlots) {
+    await expect(page.getByRole("region", { name: "Immutable draft versions" })).toContainText(
+      reviewed.candidate.id,
+    );
+  }
 
-  const paperListResponse = await page.request.get(
+  const papers = await getJson<PaperSummary[]>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/papers`,
   );
-  expect(paperListResponse.ok()).toBe(true);
-  const persistedPaper = ((await paperListResponse.json()) as PaperSummary[]).find(
-    (paper) => paper.title === `Published generation paper ${unique}`,
-  );
+  const persistedPaper = papers.find((paper) => paper.title === paperTitle);
   if (!persistedPaper) throw new Error("Paper Studio did not persist the reviewer-assembled draft");
-  const draftsResponse = await page.request.get(
+  const [paperDraft] = await getJson<PaperDraft[]>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/draft-versions`,
   );
-  expect(draftsResponse.ok()).toBe(true);
-  const [paperDraft] = (await draftsResponse.json()) as PaperDraft[];
-  expect(paperDraft?.candidates).toEqual([
-    expect.objectContaining({
-      blueprint_slot_id: exactSlot.slot_id,
-      candidate_id: approvedCandidate.id,
-      ordinal: 1,
-    }),
-  ]);
+  expect(paperDraft?.candidates).toEqual(
+    reviewedSlots.map((item, index) =>
+      expect.objectContaining({
+        blueprint_slot_id: item.slot.slot_id,
+        candidate_id: item.candidate.id,
+        ordinal: index + 1,
+      }),
+    ),
+  );
 
   const reviewerPublishPayload: PaperPublishRequest = {
     expected_version: persistedPaper.current_version,
@@ -605,13 +860,6 @@ test("real generation reaches validation and reviewer approval with terminal aud
   expect(reviewerPublishDenied.status()).toBe(403);
   await expect(page.getByRole("button", { name: "Publish current draft" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Archive paper terminally" })).toHaveCount(0);
-
-  const generationStateBeforeRead = await page.request.get(
-    `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
-  );
-  expect(generationStateBeforeRead.ok()).toBe(true);
-  const generationSummariesBeforeRead =
-    (await generationStateBeforeRead.json()) as GenerationRunSummary[];
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "admin");
@@ -630,55 +878,86 @@ test("real generation reaches validation and reviewer approval with terminal aud
     name: "Verified immutable publication snapshot",
   });
   await expect(snapshotRegion).toContainText("Student serving requires no live LLM or provider call");
-  await expect(snapshotRegion).toContainText("immutable, hash-verified snapshot");
-  await expect(snapshotRegion).toContainText(reviewedStem);
+  await expect(snapshotRegion).toContainText("Immutable, hash-verified snapshot");
   await expect(snapshotRegion).toContainText("deterministic-fake");
   await expect(snapshotRegion).toContainText(reviewedChunk.id);
+  await expect(snapshotRegion.getByRole("heading", { name: "Validation evidence" })).toHaveCount(3);
+  await expect(snapshotRegion.getByRole("heading", { name: "Reviewer revisions" })).toHaveCount(3);
+  await expect(snapshotRegion.getByRole("heading", { name: "Review history" })).toHaveCount(3);
+  await expect(snapshotRegion.getByRole("heading", { name: "Review decision" })).toHaveCount(3);
   await expect(snapshotRegion).toContainText("Validated revision");
-  await expect(snapshotRegion).toContainText("1");
   await expect(snapshotRegion).toContainText("Approved");
+  for (const reviewed of reviewedSlots) {
+    await expect(snapshotRegion).toContainText(reviewed.slot.slot_id);
+    await expect(snapshotRegion).toContainText(reviewed.publishedStem);
+  }
 
-  const publicationResponse = await page.request.get(
+  const immutablePublication = await getJson<Publication>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/publication-versions/1`,
   );
-  expect(publicationResponse.ok()).toBe(true);
-  const immutablePublication = (await publicationResponse.json()) as Publication;
   expect(immutablePublication.content_hash).toMatch(/^[a-f0-9]{64}$/);
-  expect(immutablePublication.snapshot.title).toBe(`Published generation paper ${unique}`);
-  expect(immutablePublication.snapshot.questions).toHaveLength(1);
-  expect(immutablePublication.snapshot.questions[0]).toMatchObject({
-    candidate_id: approvedCandidate.id,
-    content: { stem: reviewedStem },
-    content_revision: 2,
-    decision: { state: "approved" },
-    lineage: {
-      blueprint_slot_id: exactSlot.slot_id,
-      provider: "deterministic-fake",
-    },
-    validation: { passed: true, validated_revision: 1 },
-  });
-  expect(immutablePublication.snapshot.questions[0]?.lineage.provenance).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ chunk_id: reviewedChunk.id, source_document_id: source.id }),
-    ]),
+  expect(immutablePublication.snapshot.title).toBe(paperTitle);
+  expect(immutablePublication.snapshot.blueprint.slot_ids).toEqual(
+    exactSlots.map((slot) => slot.slot_id),
   );
-  expect(immutablePublication.snapshot.questions[0]?.review_history.map((item) => item.action)).toEqual([
-    "started",
-    "edited",
-    "approved",
-  ]);
+  expect(immutablePublication.snapshot.questions).toHaveLength(3);
+  expect(immutablePublication.snapshot.questions.map((question) => question.slot_id)).toEqual(
+    exactSlots.map((slot) => slot.slot_id),
+  );
+  expect(
+    immutablePublication.snapshot.questions.map((question) => question.content.question_type),
+  ).toEqual(exactSlots.map((slot) => slot.question_type));
 
-  const generationStateAfterRead = await page.request.get(
+  for (const [index, question] of immutablePublication.snapshot.questions.entries()) {
+    const reviewed = reviewedSlots[index];
+    if (!reviewed) throw new Error(`Published question ${index + 1} has no reviewed source`);
+    expect(question).toMatchObject({
+      candidate_id: reviewed.candidate.id,
+      content: {
+        marks: 2,
+        question_type: reviewed.slot.question_type,
+        stem: reviewed.publishedStem,
+      },
+      content_revision: reviewed.candidate.current_revision,
+      decision: { state: "approved" },
+      lineage: {
+        blueprint_slot_id: reviewed.slot.slot_id,
+        generation_id: reviewed.run.id,
+        provider: "deterministic-fake",
+      },
+      slot_id: reviewed.slot.slot_id,
+      validation: {
+        passed: true,
+        validated_revision: 1,
+      },
+    });
+    expect(question.lineage.provenance).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chunk_id: reviewedChunk.id,
+          source_document_id: source.id,
+        }),
+      ]),
+    );
+    expect(question.validation.finding_refs.length).toBeGreaterThan(0);
+    expect(question.review_history.map((item) => item.action)).toEqual(
+      reviewed.candidate.current_revision === 2
+        ? ["started", "edited", "approved"]
+        : ["started", "approved"],
+    );
+    expect(question.revisions).toHaveLength(reviewed.candidate.current_revision);
+  }
+
+  const generationStateAfterPublication = await getJson<GenerationRunSummary[]>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
   );
-  expect(generationStateAfterRead.ok()).toBe(true);
-  expect((await generationStateAfterRead.json()) as GenerationRunSummary[]).toEqual(
-    generationSummariesBeforeRead,
-  );
-  const finalPaperResponse = await page.request.get(
+  expect(generationStateAfterPublication).toEqual(generationStateBeforePaper);
+  const finalPaper = await getJson<PaperSummary>(
+    page.request,
     `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}`,
   );
-  expect(finalPaperResponse.ok()).toBe(true);
-  expect((await finalPaperResponse.json()).state).toBe("published");
+  expect(finalPaper.state).toBe("published");
   expect(browserErrors).toEqual([]);
 });

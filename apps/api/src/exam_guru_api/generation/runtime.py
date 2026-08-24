@@ -38,6 +38,12 @@ GENERATION_RETRIEVAL_VERSION = "reviewed-selected-context-v1"
 GENERATION_PROMPT_ID = "question-generation"
 GENERATION_PROMPT_VERSION = "1.0.0"
 
+_DETERMINISTIC_STEMS = {
+    QuestionType.MULTIPLE_CHOICE: "Which response is supported by the reviewed context?",
+    QuestionType.SHORT_ANSWER: "Write a short answer supported by the reviewed context.",
+    QuestionType.STRUCTURED: "Construct a response using evidence from the reviewed source.",
+}
+
 
 class GenerationRuntimeUnavailableError(RuntimeError):
     pass
@@ -114,7 +120,7 @@ class _ConfiguredDeterministicProvider:
             )
         question = GeneratedQuestion(
             question_type=slot.question_type,
-            stem="Which response is supported by the reviewed context?",
+            stem=_DETERMINISTIC_STEMS[slot.question_type],
             options=options,
             answer=answer,
             marking=MarkingScheme(
