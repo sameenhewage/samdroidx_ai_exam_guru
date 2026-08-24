@@ -134,7 +134,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P3 — Historical Question Bank & Curriculum Knowledge Base
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - question segmentation/normalization
@@ -156,7 +156,9 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] representative data-quality tests pass
 
 ### Evidence
-TBD
+- `8325efe` starts P3 with strict historical-question and educational-boundary chunk contracts, immutable source document/page/block provenance, forward-only review states, taxonomy classification requirements for reviewed records, and a provider/model/dimension/version/config-fingerprint-aware deterministic embedding port.
+- Fifteen focused domain tests pass with 100% statements and branches. The complete backend gate after real-data inventory and overlay hardening is 312 tests with 100% statements and branches; Ruff check/format and strict mypy pass.
+- Remaining: PostgreSQL/pgvector persistence and migration, idempotent source import, reviewer classification API/UI, real reviewed chunk/question records, and embedding/re-embedding integration evidence.
 
 ---
 
@@ -435,4 +437,4 @@ TBD
 ---
 
 # Current next action
-P2 is IN_PROGRESS with a human-adjudication blocker: representative Sinhala scan pages are now inventoried locally, but verified text/layout/question ground truth is still required before claiming OCR accuracy. Next, benchmark a Sinhala-capable open-source OCR adapter on the ignored local queue and continue P3 knowledge/question-bank engineering with the extracted native Sinhala Maths candidate and deterministic fixtures. Student Priority 2 remains blocked by P10.
+P2 remains IN_PROGRESS on human-adjudicated Sinhala OCR ground truth. P3 is now IN_PROGRESS; the next non-blocked slice is PostgreSQL/pgvector persistence for reviewed knowledge chunks, historical questions and versioned embeddings, followed by reviewer classification APIs and metadata-safe P4 retrieval evals. Student Priority 2 remains blocked by P10.
