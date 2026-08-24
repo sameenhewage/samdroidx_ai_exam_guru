@@ -231,7 +231,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P6 — Deterministic Paper Blueprint Engine
-**Status:** IN_PROGRESS
+**Status:** DONE
 
 ### Scope
 - paper structure rules
@@ -242,17 +242,19 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - versioned blueprint creation
 
 ### Exit criteria
-- [ ] blueprint generation is deterministic for the same inputs/seed/config where designed
-- [ ] coverage constraints are validated in code
-- [ ] impossible blueprints fail clearly
-- [ ] blueprint slots carry all generation requirements and rationale/evidence metadata
-- [ ] tests cover boundary distributions and rule conflicts
-- [ ] admin can inspect a blueprint before generation
+- [x] blueprint generation is deterministic for the same inputs/seed/config where designed
+- [x] coverage constraints are validated in code
+- [x] impossible blueprints fail clearly
+- [x] blueprint slots carry all generation requirements and rationale/evidence metadata
+- [x] tests cover boundary distributions and rule conflicts
+- [x] admin can inspect a blueprint before generation
 
 ### Evidence
 - `7a04c3a` starts P6 with a deterministic versioned blueprint constraint solver, exact paper/section marks, question-type/difficulty/taxonomy allocations, impossible-constraint diagnostics, baseline-safe forecast priorities and self-contained generation slots with scope, rationale and evidence.
 - One hundred twenty-six focused blueprint tests pass with 100% statements and branches across deterministic seeds, boundary distributions, conflicts, backtracking and forged aggregate invariants.
-- Remaining: persisted blueprint versions, direct P5 backtest integration, authorized API and admin inspection/browser acceptance.
+- `e76df48` adds migration `0012`, immutable bounded specification/blueprint/taxonomy snapshots, exact version/seed/marks/slot/fingerprint columns, same-curriculum analytics FKs, reviewed taxonomy hierarchy checks, atomic idempotency/race convergence and append-only protection. Persisted P5 results are fingerprint-, curriculum-, algorithm- and leakage-validated before server-side priority adaptation; clients cannot supply forecast evidence. Fully typed authorized create/list/get APIs expose stable diagnostics.
+- Real PostgreSQL integration covers exact marks/slots, analytics linkage and cross-scope rejection, client forecast spoofing, taxonomy attacks, impossible rules, audit, composite FKs, JSON bounds and immutability. The P6 gate is 168 focused tests with 100% statements and branches; the complete backend point passed 1,491 tests with two explicit optional provider/OCR skips.
+- `f350080` adds the generated-client Blueprint Studio with guided exact constraints, optional persisted analytics linkage, baseline-only client priorities, deterministic/idempotent feedback, impossible/conflict/permission states and immutable inspection of versions, fingerprints, allocations, slots, rationale/evidence and taxonomy snapshots. Component/axe gate: 50 web tests; the real API browser suite passes 5/5 including admin generation/deduplication and reviewer read-only inspection.
 
 ---
 
