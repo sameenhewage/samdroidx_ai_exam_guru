@@ -3821,6 +3821,158 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "PaperAggregateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_version": {
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "published",
+              "archived"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "title": "Updated By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "paper_blueprint_id",
+          "blueprint_id",
+          "blueprint_version",
+          "state",
+          "current_version",
+          "created_by",
+          "created_at",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "PaperAggregateResponse",
+        "type": "object"
+      },
+      "PaperArchiveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "reason"
+        ],
+        "title": "PaperArchiveRequest",
+        "type": "object"
+      },
+      "PaperArchiveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "format": "date-time",
+            "title": "Archived At",
+            "type": "string"
+          },
+          "archived_by": {
+            "format": "uuid",
+            "title": "Archived By",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paper_id",
+          "curriculum_version_id",
+          "version",
+          "reason",
+          "archived_by",
+          "archived_at",
+          "content_hash"
+        ],
+        "title": "PaperArchiveResponse",
+        "type": "object"
+      },
       "PaperBlueprintResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4121,6 +4273,291 @@
         "title": "PaperBlueprintSummaryResponse",
         "type": "object"
       },
+      "PaperDraftCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "candidate_revision": {
+            "title": "Candidate Revision",
+            "type": "integer"
+          },
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ordinal",
+          "blueprint_slot_id",
+          "candidate_id",
+          "candidate_version",
+          "candidate_revision"
+        ],
+        "title": "PaperDraftCandidateResponse",
+        "type": "object"
+      },
+      "PaperDraftCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Candidate Ids",
+            "type": "array"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_blueprint_id",
+          "title",
+          "candidate_ids"
+        ],
+        "title": "PaperDraftCreateRequest",
+        "type": "object"
+      },
+      "PaperDraftVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/PaperDraftCandidateResponse"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "supersedes_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Content Hash"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paper_id",
+          "curriculum_version_id",
+          "version",
+          "title",
+          "supersedes_content_hash",
+          "candidates",
+          "created_by",
+          "created_at"
+        ],
+        "title": "PaperDraftVersionResponse",
+        "type": "object"
+      },
+      "PaperPublishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "PaperPublishRequest",
+        "type": "object"
+      },
+      "PaperRevisionCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Candidate Ids",
+            "type": "array"
+          },
+          "expected_version": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "expected_version",
+          "candidate_ids"
+        ],
+        "title": "PaperRevisionCreateRequest",
+        "type": "object"
+      },
+      "PaperSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_version": {
+            "title": "Current Version",
+            "type": "integer"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_publication_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Publication Hash"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "published",
+              "archived"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "title": "Updated By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "paper_blueprint_id",
+          "blueprint_id",
+          "blueprint_version",
+          "state",
+          "current_version",
+          "created_by",
+          "created_at",
+          "updated_by",
+          "updated_at",
+          "title",
+          "latest_publication_hash"
+        ],
+        "title": "PaperSummaryResponse",
+        "type": "object"
+      },
       "PracticePriorityFeaturesResponse": {
         "properties": {
           "evidence_marks": {
@@ -4335,6 +4772,524 @@
           "recency"
         ],
         "title": "PriorityWeightsResponse",
+        "type": "object"
+      },
+      "PublishedBlueprintResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "slot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Slot Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "blueprint_id",
+          "blueprint_version",
+          "paper_blueprint_id",
+          "slot_ids"
+        ],
+        "title": "PublishedBlueprintResponse",
+        "type": "object"
+      },
+      "PublishedDecisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reviewer_id": {
+            "format": "uuid",
+            "title": "Reviewer Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "approved",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_version",
+          "reason",
+          "reviewer_id",
+          "state"
+        ],
+        "title": "PublishedDecisionResponse",
+        "type": "object"
+      },
+      "PublishedLineageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "generation_attempt_id": {
+            "format": "uuid",
+            "title": "Generation Attempt Id",
+            "type": "string"
+          },
+          "generation_id": {
+            "format": "uuid",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provenance": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedProvenanceResponse"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "retrieval_version": {
+            "title": "Retrieval Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blueprint_id",
+          "blueprint_slot_id",
+          "blueprint_version",
+          "generation_attempt_id",
+          "generation_id",
+          "model_version",
+          "prompt_version",
+          "provenance",
+          "provider",
+          "retrieval_version",
+          "schema_version"
+        ],
+        "title": "PublishedLineageResponse",
+        "type": "object"
+      },
+      "PublishedPaperSnapshotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint": {
+            "$ref": "#/components/schemas/PublishedBlueprintResponse"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version": {
+            "title": "Paper Version",
+            "type": "integer"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedQuestionResponse"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "schema": {
+            "const": "published-paper.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blueprint",
+          "paper_id",
+          "paper_version",
+          "questions",
+          "schema",
+          "title"
+        ],
+        "title": "PublishedPaperSnapshotResponse",
+        "type": "object"
+      },
+      "PublishedPaperVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Version"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "format": "uuid",
+            "title": "Published By",
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/PublishedPaperSnapshotResponse"
+          },
+          "supersedes_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Content Hash"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paper_id",
+          "curriculum_version_id",
+          "version",
+          "previous_version",
+          "supersedes_content_hash",
+          "content_hash",
+          "snapshot",
+          "published_by",
+          "published_at"
+        ],
+        "title": "PublishedPaperVersionResponse",
+        "type": "object"
+      },
+      "PublishedPaperVersionSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "format": "uuid",
+            "title": "Published By",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paper_id",
+          "curriculum_version_id",
+          "version",
+          "content_hash",
+          "published_by",
+          "published_at"
+        ],
+        "title": "PublishedPaperVersionSummaryResponse",
+        "type": "object"
+      },
+      "PublishedProvenanceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_document_id": {
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "source_version": {
+            "title": "Source Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "page_number",
+          "source_document_id",
+          "source_version"
+        ],
+        "title": "PublishedProvenanceResponse",
+        "type": "object"
+      },
+      "PublishedQuestionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "content": {
+            "$ref": "#/components/schemas/QuestionContentResponse"
+          },
+          "content_revision": {
+            "title": "Content Revision",
+            "type": "integer"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/PublishedDecisionResponse"
+          },
+          "lineage": {
+            "$ref": "#/components/schemas/PublishedLineageResponse"
+          },
+          "review_history": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedReviewRecordResponse"
+            },
+            "title": "Review History",
+            "type": "array"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedRevisionResponse"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "slot_id": {
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/PublishedValidationResponse"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "candidate_version",
+          "content",
+          "content_revision",
+          "decision",
+          "lineage",
+          "review_history",
+          "revisions",
+          "slot_id",
+          "validation"
+        ],
+        "title": "PublishedQuestionResponse",
+        "type": "object"
+      },
+      "PublishedReviewRecordResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "started",
+              "edited",
+              "approved"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reviewer_id": {
+            "format": "uuid",
+            "title": "Reviewer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "candidate_version",
+          "reason",
+          "reviewer_id"
+        ],
+        "title": "PublishedReviewRecordResponse",
+        "type": "object"
+      },
+      "PublishedRevisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/QuestionContentResponse"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reviewer_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Id"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content",
+          "reason",
+          "reviewer_id",
+          "revision"
+        ],
+        "title": "PublishedRevisionResponse",
+        "type": "object"
+      },
+      "PublishedValidationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "finding_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Finding Refs",
+            "type": "array"
+          },
+          "passed": {
+            "const": true,
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "validated_revision": {
+            "const": 1,
+            "title": "Validated Revision",
+            "type": "integer"
+          },
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          },
+          "validator_version": {
+            "title": "Validator Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "finding_refs",
+          "passed",
+          "validated_revision",
+          "validation_run_id",
+          "validator_version"
+        ],
+        "title": "PublishedValidationResponse",
         "type": "object"
       },
       "QuestionContentRequest": {
@@ -9480,6 +10435,1038 @@
         "summary": "Advance a historical question review state",
         "tags": [
           "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/paper-drafts": {
+      "post": {
+        "operationId": "create_paper_draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperDraftCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperDraftVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Assemble an approved candidate set into an immutable paper draft",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers": {
+      "get": {
+        "operationId": "list_practice_papers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "draft",
+                    "published",
+                    "archived"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_blueprint_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Blueprint Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PaperSummaryResponse"
+                  },
+                  "title": "Response List Practice Papers",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List bounded curriculum-scoped paper aggregates",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}": {
+      "get": {
+        "operationId": "get_practice_paper",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperAggregateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a curriculum-scoped paper aggregate",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/archive": {
+      "get": {
+        "operationId": "get_paper_archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperArchiveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get the append-only terminal archive event",
+        "tags": [
+          "admin-papers"
+        ]
+      },
+      "post": {
+        "operationId": "archive_practice_paper",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperArchiveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive the current publication terminally",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/draft-versions": {
+      "get": {
+        "operationId": "list_paper_draft_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PaperDraftVersionResponse"
+                  },
+                  "title": "Response List Paper Draft Versions",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List immutable paper draft versions",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/draft-versions/{version}": {
+      "get": {
+        "operationId": "get_paper_draft_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "maximum": 32,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperDraftVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get an immutable paper draft version",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publication-versions": {
+      "get": {
+        "operationId": "list_published_paper_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PublishedPaperVersionSummaryResponse"
+                  },
+                  "title": "Response List Published Paper Versions",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List immutable publication metadata without materializing snapshots",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publication-versions/{version}": {
+      "get": {
+        "operationId": "get_published_paper_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "maximum": 32,
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedPaperVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a verified full student-servable publication snapshot",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publish": {
+      "post": {
+        "operationId": "publish_practice_paper",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedPaperVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish the current authoritative draft with optimistic concurrency",
+        "tags": [
+          "admin-papers"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/revisions": {
+      "post": {
+        "operationId": "revise_practice_paper",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperRevisionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperDraftVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper, blueprint, draft, publication, or archive not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper state, version, idempotency, or integrity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded paper command or candidate selection"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create the next draft only from the current publication",
+        "tags": [
+          "admin-papers"
         ]
       }
     },

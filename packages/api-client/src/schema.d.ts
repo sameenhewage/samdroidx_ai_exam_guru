@@ -315,6 +315,177 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/paper-drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Assemble an approved candidate set into an immutable paper draft */
+        post: operations["create_paper_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List bounded curriculum-scoped paper aggregates */
+        get: operations["list_practice_papers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a curriculum-scoped paper aggregate */
+        get: operations["get_practice_paper"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the append-only terminal archive event */
+        get: operations["get_paper_archive"];
+        put?: never;
+        /** Archive the current publication terminally */
+        post: operations["archive_practice_paper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/draft-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable paper draft versions */
+        get: operations["list_paper_draft_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/draft-versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an immutable paper draft version */
+        get: operations["get_paper_draft_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publication-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable publication metadata without materializing snapshots */
+        get: operations["list_published_paper_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publication-versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a verified full student-servable publication snapshot */
+        get: operations["get_published_paper_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish the current authoritative draft with optimistic concurrency */
+        post: operations["publish_practice_paper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create the next draft only from the current publication */
+        post: operations["revise_practice_paper"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates": {
         parameters: {
             query?: never;
@@ -2289,6 +2460,96 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** PaperAggregateResponse */
+        PaperAggregateResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Current Version */
+            current_version: number;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "draft" | "published" | "archived";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Updated By
+             * Format: uuid
+             */
+            updated_by: string;
+        };
+        /** PaperArchiveRequest */
+        PaperArchiveRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** PaperArchiveResponse */
+        PaperArchiveResponse: {
+            /**
+             * Archived At
+             * Format: date-time
+             */
+            archived_at: string;
+            /**
+             * Archived By
+             * Format: uuid
+             */
+            archived_by: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Reason */
+            reason: string;
+            /** Version */
+            version: number;
+        };
         /** PaperBlueprintResponse */
         PaperBlueprintResponse: {
             /** Algorithm Version */
@@ -2415,6 +2676,137 @@ export interface components {
             /** Total Marks */
             total_marks: number;
         };
+        /** PaperDraftCandidateResponse */
+        PaperDraftCandidateResponse: {
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Candidate Version */
+            candidate_version: number;
+            /** Ordinal */
+            ordinal: number;
+        };
+        /** PaperDraftCreateRequest */
+        PaperDraftCreateRequest: {
+            /** Candidate Ids */
+            candidate_ids: string[];
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /** Title */
+            title: string;
+        };
+        /** PaperDraftVersionResponse */
+        PaperDraftVersionResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["PaperDraftCandidateResponse"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Supersedes Content Hash */
+            supersedes_content_hash: string | null;
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
+        };
+        /** PaperPublishRequest */
+        PaperPublishRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** PaperRevisionCreateRequest */
+        PaperRevisionCreateRequest: {
+            /** Candidate Ids */
+            candidate_ids: string[];
+            /** Expected Version */
+            expected_version: number;
+            /** Title */
+            title?: string | null;
+        };
+        /** PaperSummaryResponse */
+        PaperSummaryResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Current Version */
+            current_version: number;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Latest Publication Hash */
+            latest_publication_hash: string | null;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "draft" | "published" | "archived";
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Updated By
+             * Format: uuid
+             */
+            updated_by: string;
+        };
         /** PracticePriorityFeaturesResponse */
         PracticePriorityFeaturesResponse: {
             /** Evidence Marks */
@@ -2488,6 +2880,234 @@ export interface components {
             marks: components["schemas"]["ExactFraction"];
             recency: components["schemas"]["ExactFraction"];
             syllabus: components["schemas"]["ExactFraction"];
+        };
+        /** PublishedBlueprintResponse */
+        PublishedBlueprintResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /** Slot Ids */
+            slot_ids: string[];
+        };
+        /** PublishedDecisionResponse */
+        PublishedDecisionResponse: {
+            /** Candidate Version */
+            candidate_version: number;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Reviewer Id
+             * Format: uuid
+             */
+            reviewer_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "approved";
+        };
+        /** PublishedLineageResponse */
+        PublishedLineageResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provenance */
+            provenance: components["schemas"]["PublishedProvenanceResponse"][];
+            /** Provider */
+            provider: string;
+            /** Retrieval Version */
+            retrieval_version: string;
+            /** Schema Version */
+            schema_version: string;
+        };
+        /** PublishedPaperSnapshotResponse */
+        PublishedPaperSnapshotResponse: {
+            blueprint: components["schemas"]["PublishedBlueprintResponse"];
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Paper Version */
+            paper_version: number;
+            /** Questions */
+            questions: components["schemas"]["PublishedQuestionResponse"][];
+            /**
+             * Schema
+             * @constant
+             */
+            schema: "published-paper.v1";
+            /** Title */
+            title: string;
+        };
+        /** PublishedPaperVersionResponse */
+        PublishedPaperVersionResponse: {
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Previous Version */
+            previous_version: number | null;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /**
+             * Published By
+             * Format: uuid
+             */
+            published_by: string;
+            snapshot: components["schemas"]["PublishedPaperSnapshotResponse"];
+            /** Supersedes Content Hash */
+            supersedes_content_hash: string | null;
+            /** Version */
+            version: number;
+        };
+        /** PublishedPaperVersionSummaryResponse */
+        PublishedPaperVersionSummaryResponse: {
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /**
+             * Published By
+             * Format: uuid
+             */
+            published_by: string;
+            /** Version */
+            version: number;
+        };
+        /** PublishedProvenanceResponse */
+        PublishedProvenanceResponse: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Page Number */
+            page_number: number;
+            /** Source Document Id */
+            source_document_id: string;
+            /** Source Version */
+            source_version: string;
+        };
+        /** PublishedQuestionResponse */
+        PublishedQuestionResponse: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Candidate Version */
+            candidate_version: number;
+            content: components["schemas"]["QuestionContentResponse"];
+            /** Content Revision */
+            content_revision: number;
+            decision: components["schemas"]["PublishedDecisionResponse"];
+            lineage: components["schemas"]["PublishedLineageResponse"];
+            /** Review History */
+            review_history: components["schemas"]["PublishedReviewRecordResponse"][];
+            /** Revisions */
+            revisions: components["schemas"]["PublishedRevisionResponse"][];
+            /** Slot Id */
+            slot_id: string;
+            validation: components["schemas"]["PublishedValidationResponse"];
+        };
+        /** PublishedReviewRecordResponse */
+        PublishedReviewRecordResponse: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "started" | "edited" | "approved";
+            /** Candidate Version */
+            candidate_version: number;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Reviewer Id
+             * Format: uuid
+             */
+            reviewer_id: string;
+        };
+        /** PublishedRevisionResponse */
+        PublishedRevisionResponse: {
+            content: components["schemas"]["QuestionContentResponse"];
+            /** Reason */
+            reason: string | null;
+            /** Reviewer Id */
+            reviewer_id: string | null;
+            /** Revision */
+            revision: number;
+        };
+        /** PublishedValidationResponse */
+        PublishedValidationResponse: {
+            /** Finding Refs */
+            finding_refs: string[];
+            /**
+             * Passed
+             * @constant
+             */
+            passed: true;
+            /**
+             * Validated Revision
+             * @constant
+             */
+            validated_revision: 1;
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Validator Version */
+            validator_version: string;
         };
         /** QuestionContentRequest */
         QuestionContentRequest: {
@@ -4793,6 +5413,585 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_paper_draft: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperDraftCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperDraftVersionResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_practice_papers: {
+        parameters: {
+            query?: {
+                state?: ("draft" | "published" | "archived") | null;
+                paper_blueprint_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperSummaryResponse"][];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_practice_paper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperAggregateResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_paper_archive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperArchiveResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    archive_practice_paper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperArchiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperArchiveResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_paper_draft_versions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperDraftVersionResponse"][];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_paper_draft_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperDraftVersionResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_published_paper_versions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedPaperVersionSummaryResponse"][];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_published_paper_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedPaperVersionResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    publish_practice_paper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperPublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedPaperVersionResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    revise_practice_paper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperRevisionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperDraftVersionResponse"];
+                };
+            };
+            /** @description Paper, blueprint, draft, publication, or archive not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Paper state, version, idempotency, or integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded paper command or candidate selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
