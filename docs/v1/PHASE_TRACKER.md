@@ -259,7 +259,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P7 — LLM Provider Layer & Question Generation
-**Status:** IN_PROGRESS
+**Status:** DONE
 
 ### Scope
 - provider-independent LLM interface
@@ -275,10 +275,10 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ### Exit criteria
 - [x] domain services do not depend directly on an OpenAI SDK type
 - [x] generated outputs use validated structured schemas
-- [ ] model/provider/prompt/retrieval versions are stored for every generation
+- [x] model/provider/prompt/retrieval versions are stored for every generation
 - [x] paid/live provider is not required for normal CI
 - [x] provider failure/retry/idempotency is tested
-- [ ] cost/token usage is captured per generation run
+- [x] cost/token usage is captured per generation run
 - [x] generation uses blueprint + grounded context, not a generic "make a paper" prompt
 
 ### Evidence
@@ -286,7 +286,10 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - The generation boundary has no SDK dependency or publish authority; all candidates require validation. Prompt templates reject reserved context interpolation while retrieved prompt-injection text remains opaque data. Generation and blueprint integration tests pass with 100% generation-package statements and branches.
 - `4ff624c` adds bounded orchestration with retryable-code-only attempts, linked identities, injected backoff scheduling, atomic result-cache semantics and cumulative input/output token and integer-microusd budgets across successes and accounted failures.
 - `5a28ecd` adds the initial OpenAI adapter with the SDK isolated behind the port. `openai==3.1.0` was the newest release older than seven days and had no OSV advisory at selection. SDK retries are disabled, time/output/idempotency are bounded, strict schema parsing maps into first-party contracts, trusted blueprint instructions and digest-delimited untrusted context use separate roles, errors are sanitized, and versioned integer pricing captures latency/tokens/cost. The mocked adapter gate is 266 passed with 100% statements and branches; the paid live eval is explicitly skipped without opt-in credentials and makes no quality claim.
-- Remaining: durable generation runs/attempts/jobs/API with every version and accounting record, admin inspection, and opt-in live-model quality/cost acceptance.
+- `41103d0` persists curriculum-scoped generation runs, queued jobs and append-only attempts on immutable P6 blueprints and reviewed trusted P3 context. Server-owned prompt/provider/model/retrieval/schema/pricing configuration, complete request/context snapshots, CAS state transitions, sanitized failures, explicit retries, integer-microusd accounting, audit events, role-separated APIs and database invariants are covered against real PostgreSQL/Valkey.
+- `15ffc27` closes queue crash windows with bounded outbox redelivery, stale worker-lease recovery, persisted accounting reconciliation and completion locks. At-least-once duplicate messages converge through claim CAS without a duplicate provider call; periodic scheduler activation remains a P10 deployment responsibility.
+- `9306b1e` adds the generated-client Generation Studio with immutable blueprint-slot and exact-taxonomy context selection, IDs-only requests, bounded idempotency, durable polling, explicit retry, full versions/provenance/attempt/token/cost/latency inspection and a prominent `REQUIRES VALIDATION` no-publish state. The web gate is 63 tests at configured 100% coverage; the real API/worker/browser suite passes 6/6 including admin generation and reviewer read-only inspection.
+- The paid OpenAI live evaluation remains opt-in and is deferred to P10 model-quality/cost acceptance; P7 makes no Sinhala question-quality claim from deterministic or mocked evidence.
 
 ---
 
