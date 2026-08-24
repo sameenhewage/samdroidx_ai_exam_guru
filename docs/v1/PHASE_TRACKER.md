@@ -181,18 +181,21 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - retrieval eval dataset
 
 ### Exit criteria
-- [ ] retrieval cannot leak content across disallowed grade/medium/curriculum boundaries
-- [ ] hybrid retrieval works against real PostgreSQL + pgvector integration tests
-- [ ] every returned context item includes source provenance
-- [ ] fixed Grade 5 eval set measures retrieval relevance
-- [ ] baseline metrics recorded before tuning
+- [x] retrieval cannot leak content across disallowed grade/medium/curriculum boundaries
+- [x] hybrid retrieval works against real PostgreSQL + pgvector integration tests
+- [x] every returned context item includes source provenance
+- [x] fixed Grade 5 eval set measures retrieval relevance
+- [x] baseline metrics recorded before tuning
 - [ ] retrieval meets documented acceptance threshold on the agreed fixture set
-- [ ] adversarial/irrelevant queries are handled safely
+- [x] adversarial/irrelevant queries are handled safely
 
 ### Evidence
 - `1c1a80d` starts P4 with exact grade/exam/medium/curriculum/taxonomy boundaries applied before ranking, embedding-space validation, deterministic weighted reciprocal-rank fusion, Unicode-normalized deduplication, bounded opaque context with complete provenance, and fixed identifier-based Recall@K, Precision@K, MRR, nDCG and leakage metrics.
 - One hundred thirty focused retrieval tests pass with 100% statements and branches, including stronger-scoring forbidden scopes, mixed vector spaces, prompt-injection source text, irrelevant queries, duplicate poisoning, control-character rejection and context amplification limits.
-- Remaining: real PostgreSQL lexical/pgvector adapter integration, representative fixed Grade 5 eval records and baseline thresholds, authorized RAG Explorer API/UI, and runtime latency evidence.
+- `dcc64dc` adds the real PostgreSQL `simple` full-text/pgvector adapter and fixed Grade 5 integration eval. Reviewed records are hard-filtered before ranking; a stronger-scoring forbidden grade/medium/curriculum record is physically present but never enters either channel. The recorded deterministic baseline is Recall@3 `1.0`, MRR `1.0`, leakage `0.0`, with complete provenance and prompt-injection text retained only as untrusted data.
+- `36af06f` adds the authorized vector-free RAG Explorer API: server-side provider registry, exact persisted embedding metadata, active/reviewed taxonomy scope, bounded query/candidate/context work, lexical/vector/fused/context inspection, deduplication, truncation, diagnostics and phase latency. Deterministic embeddings are local/test only and staging/production fail closed until a real adapter is configured. The merged backend gate is 1,371 passed / 1 optional OCR integration skipped with 100% statements and branches.
+- `e196e1a` adds the generated-client RAG Explorer UI with active curriculum/taxonomy selection, paginated embedding discovery, no-vector requests, inspectable channels/fusion/context/provenance/latency/diagnostics, untrusted source labels, truncation and explicit no-embedding/provider/permission/retry states. Component/axe coverage proves full-result rendering; the real browser journey proves the actionable no-embedding state because no normal embedding-ingestion API exists yet.
+- Remaining: document the representative real Grade 5 acceptance threshold, meet it on human-reviewed embedded content, and prove the successful hybrid browser path. No reranker is added because no benchmark currently proves benefit.
 
 ---
 
@@ -209,18 +212,21 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - admin visualization/report
 
 ### Exit criteria
-- [ ] statistics are reproducible from source data
-- [ ] no LLM is required for deterministic scoring calculations
-- [ ] rolling held-out backtests exist for multiple historical years where data permits
-- [ ] baseline comparison is stored and visible
-- [ ] metrics/limitations are documented
-- [ ] if forecasting does not beat baseline meaningfully, product wording falls back to syllabus-balanced practice
-- [ ] no UI/API claims exact future-exam certainty
+- [x] statistics are reproducible from source data
+- [x] no LLM is required for deterministic scoring calculations
+- [x] rolling held-out backtests exist for multiple historical years where data permits
+- [x] baseline comparison is stored and visible
+- [x] metrics/limitations are documented
+- [x] if forecasting does not beat baseline meaningfully, product wording falls back to syllabus-balanced practice
+- [x] no UI/API claims exact future-exam certainty
 
 ### Evidence
 - `04a391d` starts P5 with provenance-backed historical observations, exact deterministic competency/skill/type/difficulty/marks distributions, syllabus-balanced baseline and practice-priority methods, explicit pre-holdout leakage rejection, expanding rolling held-out windows, baseline deltas/variance/limitations, and safe baseline fallback when improvement is not meaningful.
 - Fifty-seven focused analytics/backtest tests pass with 100% statements and branches. Synthetic fixed fixtures prove mechanics only; no future-exam prediction claim is made.
-- Remaining: persistence and APIs, reviewed multi-year real Grade 5 question records, stored visible baseline reports, and admin visualization/browser acceptance.
+- `36af06f` adds immutable append-only analytics runs (migration `0011`) and authorized APIs. Only reviewed questions with active reviewed skills, complete difficulty evidence, trusted source blocks and checksum-bound source versions are included; all exclusions and question IDs are recorded. Statistics, exact Fraction metrics, expanding held-out windows/leakage audits, baseline and method runs, limitations, recommendation/fallback, source/config/input/result fingerprints and algorithm versions are persisted idempotently and audited.
+- Real PostgreSQL integration seeds reviewed 2018–2021 fixtures plus incomplete and cross-curriculum records, verifies leakage exclusion, exact baseline visibility, idempotency, scoping, authorization and database immutability. This proves mechanics against real PostgreSQL, not real exam forecasting quality.
+- `e196e1a` adds the generated-client Analytics Report Studio: admin-run/reviewer-read permissions, exact Fraction controls/rendering, data-quality exclusions, all five distributions, practice priorities, rolling held-out leakage audits, baseline/method comparison, limitations, fallback wording, source versions and fingerprints. The real PostgreSQL/API browser journey creates four held-out years, runs the report and verifies reviewer visibility and no future-prediction wording. Web gate: 41 component/axe tests, lint, typecheck and production build pass; the combined intelligence/knowledge browser gate passes 2/2.
+- Remaining: repeat the acceptance report on multi-year human-reviewed real Grade 5 historical records. Until then, P5 remains IN_PROGRESS and makes no product-quality forecasting claim despite every deterministic mechanics criterion passing.
 
 ---
 
