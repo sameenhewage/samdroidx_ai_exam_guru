@@ -13,6 +13,7 @@ const workflowAreas = [
   "Exam intelligence",
   "Blueprints",
   "Generation",
+  "Validation",
   "Review queue",
   "Papers",
 ];
@@ -49,6 +50,16 @@ describe("admin foundation shell", () => {
     expect(within(navigation).getByRole("link", { name: /Generation/ })).toHaveAttribute(
       "href",
       "/admin/generation",
+    );
+    expect(within(navigation).getByRole("link", { name: /Validation/ })).toHaveAttribute(
+      "href",
+      "/admin/validation",
+    );
+    const validationCard = document.querySelector("#validation");
+    expect(validationCard).not.toBeNull();
+    expect(within(validationCard as HTMLElement).getByRole("link", { name: "Open Validation Studio" })).toHaveAttribute(
+      "href",
+      "/admin/validation",
     );
   });
 

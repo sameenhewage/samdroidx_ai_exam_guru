@@ -73,7 +73,7 @@ export default function Home() {
         <section aria-labelledby="workflow-heading" className="mx-auto mt-10 max-w-6xl">
           <div className="flex items-end justify-between gap-6">
             <div>
-              <p className="font-mono text-xs text-slate-500">10 operational areas</p>
+              <p className="font-mono text-xs text-slate-500">11 operational areas</p>
               <h2 id="workflow-heading" className="mt-2 text-2xl font-semibold tracking-tight">
                 Priority 1 workflow
               </h2>
@@ -99,6 +99,14 @@ export default function Home() {
                 </div>
                 <h3 className="mt-8 text-lg font-semibold">{area.label}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{area.description}</p>
+                {area.id === "validation" ? (
+                  <Link
+                    className="mt-4 inline-flex text-sm font-semibold text-slate-950 underline decoration-amber-500 decoration-2 underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    href="/admin/validation"
+                  >
+                    Open Validation Studio
+                  </Link>
+                ) : null}
               </article>
             ))}
           </div>

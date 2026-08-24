@@ -7,7 +7,8 @@ type AdminArea =
   | "documents"
   | "generation"
   | "knowledge"
-  | "retrieval";
+  | "retrieval"
+  | "validation";
 type Role = "admin" | "reviewer";
 
 const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
@@ -18,6 +19,7 @@ const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
   { href: "/admin/analytics", id: "analytics", label: "Analytics" },
   { href: "/admin/blueprints", id: "blueprints", label: "Blueprints" },
   { href: "/admin/generation", id: "generation", label: "Generation" },
+  { href: "/admin/validation", id: "validation", label: "Validation" },
 ];
 
 export function AdminHeader({ current, role }: { current: AdminArea; role: Role }) {

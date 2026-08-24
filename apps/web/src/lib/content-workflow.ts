@@ -40,6 +40,11 @@ export const contentWorkflow = [
     description: "Grounded candidate runs, provider metadata, cost, latency, and failures.",
   },
   {
+    id: "validation",
+    label: "Validation",
+    description: "Immutable deterministic reports, bounded findings, provenance, and limitations.",
+  },
+  {
     id: "review-queue",
     label: "Review queue",
     description: "Validation evidence, source context, edits, approvals, and rejections.",

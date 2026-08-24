@@ -35,6 +35,10 @@ describe("AdminHeader", () => {
       "href",
       "/admin/generation",
     );
+    expect(screen.getByRole("link", { name: "Validation" })).toHaveAttribute(
+      "href",
+      "/admin/validation",
+    );
     expect(screen.getByRole("link", { name: "Knowledge" })).toHaveAttribute(
       "aria-current",
       "page",

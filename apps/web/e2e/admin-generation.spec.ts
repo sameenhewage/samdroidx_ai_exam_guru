@@ -14,6 +14,9 @@ type BlueprintRequest = components["schemas"]["BlueprintCreateRequest"];
 type GenerationRun = components["schemas"]["GenerationRunResponse"];
 type GenerationRunSummary = components["schemas"]["GenerationRunSummaryResponse"];
 type GenerationRequest = components["schemas"]["GenerationRunCreateRequest"];
+type ValidationReport = components["schemas"]["ValidationRunResponse"];
+type ValidationReportSummary = components["schemas"]["ValidationRunSummaryResponse"];
+type ValidationRequest = components["schemas"]["ValidationRunCreateRequest"];
 
 function syntheticPdf(marker: string): Buffer {
   const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
@@ -137,7 +140,7 @@ function blueprintRequest(
   };
 }
 
-test("real admin generation reaches worker success and reviewer inspects it read-only", async ({
+test("real generation reaches worker success, validates through UI, and remains reviewer read-only", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -347,6 +350,37 @@ test("real admin generation reaches worker success and reviewer inspects it read
   expect(run.context[0]?.record_id).toBe(reviewedChunk.id);
   expect(run.provider).toBe("deterministic-fake");
 
+  await page.goto("/admin/validation");
+  await expect(page.getByRole("heading", { name: "Validation Studio" })).toBeVisible();
+  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await expect(page.getByLabel("Generation run")).toContainText(run.id);
+  await page.getByLabel("Generation run").selectOption(run.id);
+  await page.getByRole("button", { name: "Run deterministic validation" }).click();
+  await expect(page.getByText("Immutable validation report created. Human review is still required.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Validation report metadata" })).toContainText(
+    "Deterministic result:",
+  );
+  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
+    source.id,
+  );
+
+  const validationListResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
+  );
+  expect(validationListResponse.ok()).toBe(true);
+  const validationSummaries = (await validationListResponse.json()) as ValidationReportSummary[];
+  const validationSummary = validationSummaries.find(
+    (item) => item.generation_run_id === run.id,
+  );
+  if (!validationSummary) throw new Error("Validation UI did not persist a report for the generation");
+  const validationDetailResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs/${validationSummary.id}`,
+  );
+  expect(validationDetailResponse.ok()).toBe(true);
+  const validationReport = (await validationDetailResponse.json()) as ValidationReport;
+  expect(validationReport.finding_count).toBeGreaterThan(0);
+  expect(validationReport.limitations.length).toBeGreaterThan(0);
+
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "reviewer");
   await page.goto("/admin/generation");
@@ -361,6 +395,28 @@ test("real admin generation reaches worker success and reviewer inspects it read
   );
   await expect(page.getByRole("button", { name: "Create generation run" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry failed run" })).toHaveCount(0);
+
+  await page.goto("/admin/validation");
+  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await expect(page.getByRole("heading", { name: "Reviewer read-only mode" })).toBeVisible();
+  await page.getByRole("button", { name: `Select validation report ${validationSummary.id}` }).click();
+  await expect(page.getByRole("region", { name: "Validation report metadata" })).toContainText(
+    validationReport.pipeline_version,
+  );
+  await expect(page.getByText(/A passing report does not establish factual or semantic correctness/i)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Validation findings" })).toContainText(
+    `of ${validationReport.finding_count}`,
+  );
+  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
+    source.id,
+  );
+  await expect(page.getByRole("button", { name: "Run deterministic validation" })).toHaveCount(0);
+  const reviewerValidationPayload: ValidationRequest = { generation_run_id: run.id };
+  const validationDenied = await page.request.post(
+    `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
+    { data: reviewerValidationPayload },
+  );
+  expect(validationDenied.status()).toBe(403);
 
   const reviewerPayload: GenerationRequest = {
     historical_question_ids: [],
