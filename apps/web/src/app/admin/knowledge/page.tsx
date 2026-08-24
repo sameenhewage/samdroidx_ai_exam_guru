@@ -2,21 +2,22 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AdminHeader } from "@/components/admin/admin-header";
-import { CurriculumStudio } from "@/components/admin/curriculum-studio";
+import { KnowledgeStudio } from "@/components/admin/knowledge-studio";
 
 export const dynamic = "force-dynamic";
 
-export default async function CurriculumAdminPage() {
+export default async function KnowledgeAdminPage() {
   const cookieStore = await cookies();
   if (!cookieStore.get("exam_guru_admin_token")) {
     redirect("/admin/login");
   }
-  const role = cookieStore.get("exam_guru_admin_role")?.value === "reviewer" ? "reviewer" : "admin";
+  const role =
+    cookieStore.get("exam_guru_admin_role")?.value === "reviewer" ? "reviewer" : "admin";
 
   return (
     <main className="min-h-screen bg-[#f3f4ef] text-slate-950">
-      <AdminHeader current="curriculum" role={role} />
-      <CurriculumStudio role={role} />
+      <AdminHeader current="knowledge" role={role} />
+      <KnowledgeStudio role={role} />
     </main>
   );
 }

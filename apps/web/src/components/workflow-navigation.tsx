@@ -17,7 +17,9 @@ export function WorkflowNavigation() {
                   ? "/admin/curriculum"
                   : area.id === "documents"
                     ? "/admin/documents"
-                    : `#${area.id}`
+                    : area.id === "historical-questions"
+                      ? "/admin/knowledge"
+                      : `#${area.id}`
               }
             >
               <span className="mr-3 font-mono text-xs text-slate-500 group-hover:text-amber-300">

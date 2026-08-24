@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +32,9 @@ describe("admin foundation shell", () => {
     for (const area of workflowAreas) {
       expect(navigation).toHaveTextContent(area);
     }
+    expect(
+      within(navigation).getByRole("link", { name: /Historical questions/ }),
+    ).toHaveAttribute("href", "/admin/knowledge");
   });
 
   it("has no automated accessibility violations", async () => {
