@@ -10,6 +10,7 @@ dependencies = [
     "botocore==1.43.72",
     "dramatiq[redis]==2.2.0",
     "fastapi==0.141.1",
+    "openai==3.1.0",
     "opentelemetry-api==1.44.0",
     "opentelemetry-exporter-otlp-proto-http==1.44.0",
     "opentelemetry-instrumentation-fastapi==0.65b0",
@@ -64,7 +65,10 @@ untyped_calls_exclude = ["dramatiq", "pymupdf"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra"]
-markers = ["integration: requires Docker-backed external services"]
+markers = [
+    "integration: requires Docker-backed external services",
+    "live_openai: opt-in paid OpenAI contract telemetry; never a normal-CI quality gate",
+]
 testpaths = ["tests"]
 
 [tool.ruff]
