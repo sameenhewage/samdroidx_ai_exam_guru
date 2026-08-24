@@ -8,6 +8,7 @@ from exam_guru_api.validation import (
     DEFAULT_PIPELINE_VERSION,
     FindingEvidence,
     FindingStatus,
+    LexicalSimilarityIndicatorValidator,
     QuestionValidator,
     ValidationContractError,
     ValidationFinding,
@@ -58,11 +59,16 @@ def test_default_pipeline_is_composable_versioned_and_fully_deterministic() -> N
 
     assert first == second
     assert first.pipeline_version == DEFAULT_PIPELINE_VERSION
+    assert first.pipeline_version == "deterministic-question-validation.v2"
     assert first.overall_status is FindingStatus.PASS
     assert first.passed is True
     assert first.blocked is False
-    assert len(first.findings) == 12
-    assert len({(finding.validator_id, finding.code) for finding in first.findings}) == 12
+    assert len(first.findings) == 13
+    assert len({(finding.validator_id, finding.code) for finding in first.findings}) == 13
+    assert any(
+        validator.validator_id == LexicalSimilarityIndicatorValidator.validator_id
+        for validator in pipeline.validators
+    )
     assert all(finding.evidence for finding in first.findings)
     assert all(finding.validator_version for finding in first.findings)
 

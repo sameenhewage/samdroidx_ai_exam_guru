@@ -32,7 +32,11 @@ MAX_DUPLICATE_TEXT_CHARACTERS = 16_000
 
 REPORT_LIMITATIONS = (
     "Deterministic checks cover declared structure, encoded blueprint rules, identifier-level "
-    "provenance, bounded text indicators, prohibited residue, and exact normalized hashes only.",
+    "provenance, bounded text indicators, prohibited residue, exact normalized hashes, and a "
+    "bounded lexical-overlap indicator.",
+    "The Unicode character n-gram lexical indicator is not semantic paraphrase detection; it can "
+    "produce false positives for lexically similar questions and false negatives for "
+    "meaning-similar wording with low lexical overlap.",
     "A passing report does not establish factual or semantic correctness, curriculum alignment, "
     "age appropriateness, language fluency, or paraphrase uniqueness.",
     "Generated content still requires the configured human review gate before any separate "
@@ -72,6 +76,7 @@ class FindingCode(StrEnum):
     LANGUAGE_HEURISTIC = "heuristic.language_script"
     DUPLICATE_EXACT = "duplicate.exact_normalized_text"
     DUPLICATE_SHA256 = "duplicate.canonical_sha256"
+    DUPLICATE_LEXICAL_SIMILARITY = "duplicate.lexical_similarity_indicator"
 
 
 def _require_machine_id(value: object, field_name: str) -> str:

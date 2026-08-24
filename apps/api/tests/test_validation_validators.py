@@ -4,6 +4,8 @@ from typing import cast
 import pytest
 
 from exam_guru_api.validation import (
+    MAX_DUPLICATE_REFERENCES,
+    MAX_DUPLICATE_TEXT_CHARACTERS,
     AgeLanguageHeuristicsValidator,
     BlueprintComplianceValidator,
     DuplicateReference,
@@ -12,6 +14,8 @@ from exam_guru_api.validation import (
     FindingStatus,
     GroundingValidator,
     HeuristicPolicy,
+    LexicalSimilarityIndicatorValidator,
+    LexicalSimilarityPolicy,
     PromptInjectionResidueValidator,
     SchemaCompletenessValidator,
     ValidationContractError,
@@ -19,7 +23,14 @@ from exam_guru_api.validation import (
     ValidationInput,
     canonical_text_sha256,
 )
-from tests.test_validation_fixtures import blueprint, source, valid_candidate, validation_input
+from exam_guru_api.validation.validators import _lexical_normalize
+from tests.test_validation_fixtures import (
+    LEXICAL_SIMILARITY_FIXTURES,
+    blueprint,
+    source,
+    valid_candidate,
+    validation_input,
+)
 
 
 def by_code(
@@ -283,6 +294,160 @@ def test_duplicate_validator_fails_closed_when_stem_is_not_usable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("fixture_id", "candidate_stem", "reference_stem"), LEXICAL_SIMILARITY_FIXTURES
+)
+def test_lexical_similarity_indicator_warns_on_bounded_near_copies_without_semantic_claims(
+    fixture_id: str,
+    candidate_stem: str,
+    reference_stem: str,
+) -> None:
+    candidate = valid_candidate()
+    candidate["stem"] = candidate_stem
+    reference = DuplicateReference(question_id=fixture_id, text=reference_stem)
+    unrelated = DuplicateReference(question_id=f"z-{fixture_id}", text="Name a Sri Lankan ocean.")
+    validator = LexicalSimilarityIndicatorValidator()
+
+    first = validator.validate(
+        validation_input(candidate=candidate, duplicates=(reference, unrelated))
+    )[0]
+    second = validator.validate(
+        validation_input(candidate=candidate, duplicates=(unrelated, reference))
+    )[0]
+
+    assert first == second
+    assert first.code is FindingCode.DUPLICATE_LEXICAL_SIMILARITY
+    assert first.status is FindingStatus.WARN
+    assert first.validator_version == "1.0.0+unicode-char-trigram-dice.v1"
+    assert "not semantic paraphrase detection" in first.message.casefold()
+    assert fixture_id in repr(first.evidence)
+    assert "score_basis_points=" in repr(first.evidence)
+    assert "threshold_basis_points=" in repr(first.evidence)
+    assert candidate_stem not in repr(first)
+    assert reference_stem not in repr(first)
+
+
+@pytest.mark.parametrize(
+    ("reference_id", "reference_stem"),
+    [
+        ("dissimilar", "Name the largest ocean on Earth."),
+        ("same-meaning-different-lexicon", "Calculate the result obtained by summing 27 and 15."),
+    ],
+)
+def test_lexical_similarity_indicator_explicitly_misses_low_lexical_overlap(
+    reference_id: str,
+    reference_stem: str,
+) -> None:
+    reference = DuplicateReference(question_id=reference_id, text=reference_stem)
+
+    finding = LexicalSimilarityIndicatorValidator().validate(
+        validation_input(duplicates=(reference,))
+    )[0]
+
+    assert finding.status is FindingStatus.PASS
+    assert "not semantic paraphrase detection" in finding.message.casefold()
+    assert "false negatives" in finding.message.casefold()
+
+
+def test_lexical_normalization_never_exceeds_its_output_cap() -> None:
+    normalized = _lexical_normalize("a b", maximum_characters=2)
+
+    assert normalized == "a"
+    assert len(normalized) <= 2
+
+
+@pytest.mark.parametrize("stem", [None, " "])
+def test_lexical_similarity_indicator_fails_closed_for_unusable_stem(stem: object) -> None:
+    candidate = valid_candidate()
+    candidate["stem"] = stem
+
+    finding = LexicalSimilarityIndicatorValidator().validate(validation_input(candidate=candidate))[
+        0
+    ]
+
+    assert finding.status is FindingStatus.FAIL
+    assert "character_count=" in repr(finding.evidence)
+
+
+def test_lexical_similarity_indicator_handles_empty_and_short_normalized_ngrams() -> None:
+    punctuation_candidate = valid_candidate()
+    punctuation_candidate["stem"] = "!"
+    short_candidate = valid_candidate()
+    short_candidate["stem"] = "!a"
+    validator = LexicalSimilarityIndicatorValidator()
+
+    empty = validator.validate(
+        validation_input(
+            candidate=punctuation_candidate,
+            duplicates=(DuplicateReference(question_id="punctuation", text="?"),),
+        )
+    )[0]
+    short = validator.validate(
+        validation_input(
+            candidate=short_candidate,
+            duplicates=(DuplicateReference(question_id="short", text="?b"),),
+        )
+    )[0]
+
+    assert empty.status is FindingStatus.PASS
+    assert short.status is FindingStatus.PASS
+
+
+def test_lexical_indicator_leaves_exact_and_hash_matching_to_exact_validator() -> None:
+    stem = cast(str, valid_candidate()["stem"])
+    references = (
+        DuplicateReference(question_id="exact-text", text=stem),
+        DuplicateReference(question_id="exact-hash", content_sha256=canonical_text_sha256(stem)),
+    )
+
+    finding = LexicalSimilarityIndicatorValidator().validate(
+        validation_input(duplicates=references)
+    )[0]
+
+    assert finding.status is FindingStatus.PASS
+    assert "compared_reference_count=0" in repr(finding.evidence)
+
+
+def test_lexical_similarity_indicator_processes_existing_reference_and_text_caps() -> None:
+    references = tuple(
+        DuplicateReference(question_id=f"bounded-{index:05d}", text=f"unrelated {index}")
+        for index in range(MAX_DUPLICATE_REFERENCES)
+    )
+    candidate = valid_candidate()
+    candidate["stem"] = "අ" * MAX_DUPLICATE_TEXT_CHARACTERS
+    capped_reference = DuplicateReference(
+        question_id="capped-text",
+        text=("අ" * (MAX_DUPLICATE_TEXT_CHARACTERS - 1)) + "ආ",
+    )
+    validator = LexicalSimilarityIndicatorValidator()
+
+    maximum_references = validator.validate(validation_input(duplicates=references))[0]
+    maximum_text = validator.validate(
+        validation_input(candidate=candidate, duplicates=(capped_reference,))
+    )[0]
+
+    assert maximum_references.status is FindingStatus.PASS
+    assert "compared_reference_count=10000" in repr(maximum_references.evidence)
+    assert maximum_text.status is FindingStatus.WARN
+
+
+def test_lexical_similarity_indicator_fails_closed_before_scanning_oversized_stem() -> None:
+    candidate = valid_candidate()
+    candidate["stem"] = "x" * (MAX_DUPLICATE_TEXT_CHARACTERS + 1)
+    source_text = "x" * MAX_DUPLICATE_TEXT_CHARACTERS
+
+    finding = LexicalSimilarityIndicatorValidator().validate(
+        validation_input(
+            candidate=candidate,
+            duplicates=(DuplicateReference(question_id="bounded-source", text=source_text),),
+        )
+    )[0]
+
+    assert finding.status is FindingStatus.FAIL
+    assert source_text not in repr(finding)
+    assert "character_count=16001" in repr(finding.evidence)
+
+
+@pytest.mark.parametrize(
     "build",
     [
         lambda: HeuristicPolicy(policy_version=" "),
@@ -292,8 +457,16 @@ def test_duplicate_validator_fails_closed_when_stem_is_not_usable() -> None:
         lambda: HeuristicPolicy(maximum_sentence_words=0),
         lambda: HeuristicPolicy(maximum_word_characters=0),
         lambda: HeuristicPolicy(minimum_expected_script_basis_points=10_001),
+        lambda: LexicalSimilarityPolicy(policy_version=" "),
+        lambda: LexicalSimilarityPolicy(ngram_size=0),
+        lambda: LexicalSimilarityPolicy(ngram_size=cast(int, True)),
+        lambda: LexicalSimilarityPolicy(warning_threshold_basis_points=0),
+        lambda: LexicalSimilarityPolicy(warning_threshold_basis_points=cast(int, True)),
+        lambda: LexicalSimilarityPolicy(maximum_text_characters=0),
+        lambda: LexicalSimilarityPolicy(maximum_text_characters=MAX_DUPLICATE_TEXT_CHARACTERS + 1),
+        lambda: LexicalSimilarityIndicatorValidator(policy=cast(LexicalSimilarityPolicy, object())),
     ],
 )
-def test_invalid_heuristic_policy_is_rejected(build: Callable[[], object]) -> None:
+def test_invalid_bounded_indicator_policy_is_rejected(build: Callable[[], object]) -> None:
     with pytest.raises(ValidationContractError):
         build()

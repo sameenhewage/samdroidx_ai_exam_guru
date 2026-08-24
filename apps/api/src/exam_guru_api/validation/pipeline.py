@@ -19,11 +19,12 @@ from exam_guru_api.validation.validators import (
     ExactHashDuplicateValidator,
     GroundingValidator,
     HeuristicPolicy,
+    LexicalSimilarityIndicatorValidator,
     PromptInjectionResidueValidator,
     SchemaCompletenessValidator,
 )
 
-DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v1"
+DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v2"
 
 
 class QuestionValidator(Protocol):
@@ -145,7 +146,7 @@ def build_default_pipeline(
     *,
     heuristic_policy: HeuristicPolicy | None = None,
 ) -> ValidationPipeline:
-    """Build the versioned v1 ruleset; no model, persistence, or network is involved."""
+    """Build the canonical versioned ruleset; no model, persistence, or network is involved."""
 
     return ValidationPipeline(
         validators=(
@@ -155,6 +156,7 @@ def build_default_pipeline(
             PromptInjectionResidueValidator(),
             AgeLanguageHeuristicsValidator(policy=heuristic_policy),
             ExactHashDuplicateValidator(),
+            LexicalSimilarityIndicatorValidator(),
         )
     )
 

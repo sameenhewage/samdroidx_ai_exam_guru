@@ -1669,7 +1669,7 @@ def test_validation_report_is_transactional_idempotent_audited_readable_and_immu
     assert response["generation_run_id"] == str(run_id)
     assert response["curriculum_version_id"] == str(CURRICULUM_VERSION_ID)
     assert response["overall_status"] == "pass"
-    assert response["finding_count"] == len(findings.json()) == 12
+    assert response["finding_count"] == len(findings.json()) == 13
     assert response["duplicate_reference_count"] >= 1
     assert response["grounding_source_count"] == 2
     assert response["input_snapshot"]["trust"] == "server_reconstructed"
@@ -1783,22 +1783,22 @@ def test_validation_concurrent_create_converges_and_new_pipeline_version_reruns(
     assert sorted(result["deduplicated"] for _, result in results) == [False, True]
     first_id = results[0][1]["id"]
 
-    pipeline_v2 = replace(
+    pipeline_v3 = replace(
         build_default_pipeline(),
-        version="deterministic-question-validation.v2",
+        version="deterministic-question-validation.v3",
     )
     with api_client(
         generation_seed,
         dispatcher,
         runtime=runtime,
-        validation_pipeline=pipeline_v2,
+        validation_pipeline=pipeline_v3,
     ) as client:
         rerun = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
         duplicate = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
 
     assert rerun.status_code == duplicate.status_code == 201
     assert rerun.json()["id"] != first_id
-    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v2"
+    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v3"
     assert rerun.json()["deduplicated"] is False
     assert duplicate.json()["id"] == rerun.json()["id"]
     assert duplicate.json()["deduplicated"] is True

@@ -1,8 +1,9 @@
 """Deterministic, provider-free validators for generated question candidates.
 
 These checks intentionally stop at machine-verifiable structure, declared references,
-bounded indicators, prohibited phrase residue, and exact canonical matching.  They do
-not infer factual support, solve arbitrary questions, or claim semantic quality.
+bounded indicators, prohibited phrase residue, exact canonical matching, and bounded
+lexical overlap. They do not infer factual support, solve arbitrary questions, or claim
+semantic quality or semantic paraphrase detection.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from exam_guru_api.validation.domain import (
+    MAX_DUPLICATE_TEXT_CHARACTERS,
     FindingCode,
     FindingEvidence,
     FindingStatus,
@@ -1270,6 +1272,198 @@ class AgeLanguageHeuristicsValidator:
             evidence=language_evidence,
         )
         return age_finding, language_finding
+
+
+@dataclass(frozen=True, slots=True)
+class LexicalSimilarityPolicy:
+    """Versioned bounds for a conservative Unicode character n-gram indicator."""
+
+    policy_version: str = "unicode-char-trigram-dice.v1"
+    ngram_size: int = 3
+    warning_threshold_basis_points: int = 8_000
+    maximum_text_characters: int = MAX_DUPLICATE_TEXT_CHARACTERS
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.policy_version, str)
+            or not self.policy_version
+            or self.policy_version != self.policy_version.strip()
+            or any(character.isspace() for character in self.policy_version)
+            or len(self.policy_version) > 128
+        ):
+            raise ValidationContractError("policy_version must be a bounded machine value")
+        if (
+            not isinstance(self.ngram_size, int)
+            or isinstance(self.ngram_size, bool)
+            or not 1 <= self.ngram_size <= 8
+        ):
+            raise ValidationContractError("ngram_size must be between 1 and 8")
+        if (
+            not isinstance(self.warning_threshold_basis_points, int)
+            or isinstance(self.warning_threshold_basis_points, bool)
+            or not 1 <= self.warning_threshold_basis_points <= 10_000
+        ):
+            raise ValidationContractError(
+                "warning_threshold_basis_points must be between 1 and 10000"
+            )
+        if (
+            not isinstance(self.maximum_text_characters, int)
+            or isinstance(self.maximum_text_characters, bool)
+            or not 1 <= self.maximum_text_characters <= MAX_DUPLICATE_TEXT_CHARACTERS
+        ):
+            raise ValidationContractError(
+                f"maximum_text_characters must be between 1 and {MAX_DUPLICATE_TEXT_CHARACTERS}"
+            )
+
+
+def _lexical_normalize(value: str, *, maximum_characters: int) -> str:
+    """Normalize scripts uniformly while retaining letters, marks, and numbers only."""
+
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    characters: list[str] = []
+    pending_separator = False
+    for character in normalized:
+        if unicodedata.category(character)[0] in {"L", "M", "N"}:
+            required_characters = 2 if pending_separator and characters else 1
+            if len(characters) + required_characters > maximum_characters:
+                break
+            if pending_separator and characters:
+                characters.append(" ")
+            characters.append(character)
+            pending_separator = False
+        elif characters:
+            pending_separator = True
+        if len(characters) >= maximum_characters:
+            break
+    return "".join(characters).strip()
+
+
+def _character_ngram_counts(value: str, *, ngram_size: int) -> Counter[str]:
+    if not value:
+        return Counter()
+    if len(value) < ngram_size:
+        return Counter((value,))
+    return Counter(
+        value[index : index + ngram_size] for index in range(len(value) - ngram_size + 1)
+    )
+
+
+def _dice_basis_points(candidate: Counter[str], reference: Counter[str]) -> int:
+    candidate_total = candidate.total()
+    reference_total = reference.total()
+    denominator = candidate_total + reference_total
+    if denominator == 0:
+        return 0
+    intersection = sum(min(count, candidate.get(ngram, 0)) for ngram, count in reference.items())
+    return (2 * intersection * 10_000) // denominator
+
+
+class LexicalSimilarityIndicatorValidator:
+    """Flag high bounded lexical overlap; this is not semantic paraphrase detection."""
+
+    validator_id: ClassVar[str] = "lexical-similarity-indicator"
+    base_validator_version: ClassVar[str] = "1.0.0"
+
+    def __init__(self, *, policy: LexicalSimilarityPolicy | None = None) -> None:
+        self.policy = policy or LexicalSimilarityPolicy()
+        if not isinstance(self.policy, LexicalSimilarityPolicy):
+            raise ValidationContractError("policy must be LexicalSimilarityPolicy")
+
+    @property
+    def validator_version(self) -> str:
+        return f"{self.base_validator_version}+{self.policy.policy_version}"
+
+    def validate(self, validation_input: ValidationInput) -> tuple[ValidationFinding, ...]:
+        request = _require_input(validation_input)
+        stem = request.candidate.get("stem")
+        if not isinstance(stem, str) or not stem.strip():
+            observed_count = len(stem) if isinstance(stem, str) else 0
+            return (
+                _finding(
+                    validator_id=self.validator_id,
+                    validator_version=self.validator_version,
+                    code=FindingCode.DUPLICATE_LEXICAL_SIMILARITY,
+                    status=FindingStatus.FAIL,
+                    message="Bounded lexical comparison cannot run without a usable stem.",
+                    evidence=(
+                        _evidence(
+                            "$.stem",
+                            f"maximum_text_characters={self.policy.maximum_text_characters}",
+                            f"character_count={observed_count}",
+                        ),
+                    ),
+                ),
+            )
+        if len(stem) > self.policy.maximum_text_characters:
+            return (
+                _finding(
+                    validator_id=self.validator_id,
+                    validator_version=self.validator_version,
+                    code=FindingCode.DUPLICATE_LEXICAL_SIMILARITY,
+                    status=FindingStatus.FAIL,
+                    message="Candidate stem exceeds the bounded lexical comparison limit.",
+                    evidence=(
+                        _evidence(
+                            "$.stem",
+                            f"maximum_text_characters={self.policy.maximum_text_characters}",
+                            f"character_count={len(stem)}",
+                        ),
+                    ),
+                ),
+            )
+
+        candidate_hash = canonical_text_sha256(stem)
+        candidate_counts = _character_ngram_counts(
+            _lexical_normalize(stem, maximum_characters=self.policy.maximum_text_characters),
+            ngram_size=self.policy.ngram_size,
+        )
+        compared_count = 0
+        best_id = "none"
+        best_score = 0
+        for reference in request.duplicate_references:
+            if reference.text is None or reference.effective_sha256 == candidate_hash:
+                continue
+            reference_counts = _character_ngram_counts(
+                _lexical_normalize(
+                    reference.text,
+                    maximum_characters=self.policy.maximum_text_characters,
+                ),
+                ngram_size=self.policy.ngram_size,
+            )
+            score = _dice_basis_points(candidate_counts, reference_counts)
+            compared_count += 1
+            if score > best_score or (score == best_score and reference.question_id < best_id):
+                best_id = reference.question_id
+                best_score = score
+
+        threshold = self.policy.warning_threshold_basis_points
+        status = FindingStatus.WARN if best_score >= threshold else FindingStatus.PASS
+        return (
+            _finding(
+                validator_id=self.validator_id,
+                validator_version=self.validator_version,
+                code=FindingCode.DUPLICATE_LEXICAL_SIMILARITY,
+                status=status,
+                message=(
+                    "High bounded lexical overlap requires conservative human review; this is not "
+                    "semantic paraphrase detection and can produce false positives and false "
+                    "negatives."
+                    if status is FindingStatus.WARN
+                    else "No bounded lexical-overlap score crossed the review threshold; this is "
+                    "not semantic paraphrase detection and can produce false negatives."
+                ),
+                evidence=(
+                    _evidence(
+                        f"duplicate_reference_id={best_id}",
+                        f"threshold_basis_points={threshold}",
+                        (
+                            f"score_basis_points={best_score}; "
+                            f"compared_reference_count={compared_count}"
+                        ),
+                    ),
+                ),
+            ),
+        )
 
 
 def _matched_ids_summary(question_ids: list[str]) -> str:

@@ -706,7 +706,7 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
 
         assert created.deduplicated is False
         assert created.run.overall_status == "pass"
-        assert len(repository.stored_findings) == 12
+        assert len(repository.stored_findings) == 13
         assert repository.run_values is not None
         assert repository.run_values["generation_result_fingerprint"]
         assert len(session.added) == 1

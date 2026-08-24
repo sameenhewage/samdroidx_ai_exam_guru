@@ -1,5 +1,6 @@
-"""Opt-in paid-provider contract telemetry; this suite makes no quality claim."""
+"""Opt-in paid-provider contract and canonical P8 baseline telemetry."""
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import replace
@@ -18,6 +19,14 @@ from exam_guru_api.generation.openai_adapter import (
     OpenAIModelPricing,
 )
 from exam_guru_api.generation.prompt_registry import PromptRegistry, PromptTemplate
+from exam_guru_api.validation import (
+    BlueprintRequirements,
+    DuplicateReference,
+    FindingStatus,
+    adapt_generation_result,
+    build_default_pipeline,
+    generation_result_fingerprint,
+)
 from tests.test_generation_provider import request as provider_request
 
 _REQUIRED_LIVE_ENV = (
@@ -50,7 +59,7 @@ def _required_env(name: str) -> str:
     return value
 
 
-def test_live_openai_structured_contract_records_usage_without_quality_claim(
+def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
     record_property: Callable[[str, object], None],
 ) -> None:
     model = _required_env("EXAM_GURU_OPENAI_LIVE_MODEL")
@@ -110,6 +119,32 @@ def test_live_openai_structured_contract_records_usage_without_quality_claim(
     )
 
     result = adapter.generate(generation_request)
+    slot = result.request.blueprint_slot
+    requirements = BlueprintRequirements(
+        slot_id=slot.slot_id,
+        schema_version=result.request.versions.schema_version,
+        question_type=slot.question_type.value,
+        marks=slot.marks,
+        language=slot.generation_constraints.response_language,
+        minimum_age=9,
+        maximum_age=11,
+    )
+    validation_input = adapt_generation_result(
+        result,
+        requirements=requirements,
+        duplicate_references=(
+            DuplicateReference(
+                question_id="live-unrelated-history",
+                text="Which habitat is best suited to a camel during a sandstorm?",
+            ),
+        ),
+    )
+    pipeline = build_default_pipeline()
+    report = pipeline.validate(validation_input)
+    status_counts = {
+        status.value: sum(finding.status is status for finding in report.findings)
+        for status in FindingStatus
+    }
 
     telemetry: dict[str, object] = {
         "provider": result.request.versions.provider,
@@ -133,6 +168,25 @@ def test_live_openai_structured_contract_records_usage_without_quality_claim(
         "output_tokens": result.accounting.output_tokens,
         "total_tokens": result.accounting.total_tokens,
         "cost_microusd": result.accounting.cost_microusd,
+        "generation_result_fingerprint": generation_result_fingerprint(result),
+        "validation_candidate_fingerprint": validation_input.candidate_fingerprint,
+        "validation_input_fingerprint": validation_input.input_fingerprint,
+        "validation_report_fingerprint": report.report_fingerprint,
+        "validation_pipeline_fingerprint": pipeline.pipeline_fingerprint,
+        "validation_pipeline_version": report.pipeline_version,
+        "validation_report_schema_version": report.report_schema_version,
+        "validation_validator_versions": json.dumps(
+            {
+                validator.validator_id: validator.validator_version
+                for validator in pipeline.validators
+            },
+            sort_keys=True,
+        ),
+        "validation_status": report.overall_status.value,
+        "validation_finding_count": len(report.findings),
+        "validation_pass_count": status_counts[FindingStatus.PASS.value],
+        "validation_warn_count": status_counts[FindingStatus.WARN.value],
+        "validation_fail_count": status_counts[FindingStatus.FAIL.value],
     }
     for name, value in telemetry.items():
         record_property(name, value)
@@ -141,3 +195,9 @@ def test_live_openai_structured_contract_records_usage_without_quality_claim(
     assert result.question.question_type is QuestionType.MULTIPLE_CHOICE
     assert result.disposition is CandidateDisposition.REQUIRES_VALIDATION
     assert result.accounting.total_tokens > 0
+    assert validation_input.candidate_id == generation_result_fingerprint(result)
+    assert report.candidate_id == validation_input.candidate_id
+    assert report.pipeline_version == pipeline.version
+    assert len(report.findings) == sum(status_counts.values())
+    assert report.overall_status in {FindingStatus.PASS, FindingStatus.WARN}
+    assert status_counts[FindingStatus.FAIL.value] == 0

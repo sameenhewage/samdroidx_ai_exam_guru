@@ -217,6 +217,11 @@ def test_report_status_fingerprint_and_limitations_are_deterministic() -> None:
     assert first.report_fingerprint == second.report_fingerprint
     assert first.limitations == REPORT_LIMITATIONS
     assert any("semantic" in limitation for limitation in first.limitations)
+    assert any(
+        "lexical" in limitation and "false positives" in limitation
+        for limitation in first.limitations
+    )
+    assert any("false negatives" in limitation for limitation in first.limitations)
     assert not hasattr(first, "publish")
 
 

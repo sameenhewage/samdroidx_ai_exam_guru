@@ -1,6 +1,8 @@
 """Deterministic, composable validation contracts and validators."""
 
 from exam_guru_api.validation.domain import (
+    MAX_DUPLICATE_REFERENCES,
+    MAX_DUPLICATE_TEXT_CHARACTERS,
     QUESTION_SCHEMA_VERSION,
     REPORT_LIMITATIONS,
     REPORT_SCHEMA_VERSION,
@@ -43,12 +45,16 @@ from exam_guru_api.validation.validators import (
     ExactHashDuplicateValidator,
     GroundingValidator,
     HeuristicPolicy,
+    LexicalSimilarityIndicatorValidator,
+    LexicalSimilarityPolicy,
     PromptInjectionResidueValidator,
     SchemaCompletenessValidator,
 )
 
 __all__ = [
     "DEFAULT_PIPELINE_VERSION",
+    "MAX_DUPLICATE_REFERENCES",
+    "MAX_DUPLICATE_TEXT_CHARACTERS",
     "QUESTION_SCHEMA_VERSION",
     "REPORT_LIMITATIONS",
     "REPORT_SCHEMA_VERSION",
@@ -67,6 +73,8 @@ __all__ = [
     "GroundingSource",
     "GroundingValidator",
     "HeuristicPolicy",
+    "LexicalSimilarityIndicatorValidator",
+    "LexicalSimilarityPolicy",
     "PromptInjectionResidueValidator",
     "QuestionValidator",
     "SchemaCompletenessValidator",

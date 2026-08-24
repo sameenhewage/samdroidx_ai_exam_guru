@@ -7,6 +7,29 @@ from exam_guru_api.validation import (
     ValidationInput,
 )
 
+LEXICAL_SIMILARITY_FIXTURES = (
+    (
+        "english-near-copy",
+        "Nimal has twenty four red marbles and gives four red marbles to Kamal. How many remain?",
+        "Nimal has 24 red marbles and gives four of the red marbles to Kamal. How many remain?",
+    ),
+    (
+        "sinhala-near-copy",
+        "නිමල් සතුව රතු බෝල විසි හතරක් ඇත. ඔහු බෝල හතරක් කමල්ට දුන්නේය. ඉතිරි ගණන කීයද?",
+        "නිමල් ළඟ රතු බෝල විසි හතරක් ඇත. ඔහු එයින් බෝල හතරක් කමල්ට දුන්නේය. ඉතිරි ගණන කීයද?",
+    ),
+    (
+        "clause-reordering",
+        "First add the two tens. Then add the seven ones. What total do you obtain?",
+        "What total do you obtain? Add the seven ones, then first add the two tens.",
+    ),
+    (
+        "conservative-false-positive",
+        "A bus has 48 empty seats and 12 occupied seats. How many seats are empty?",
+        "A bus has 12 empty seats and 48 occupied seats. How many seats are empty?",
+    ),
+)
+
 
 def valid_candidate() -> dict[str, object]:
     return {
