@@ -307,19 +307,23 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - evaluation datasets and quality scoring
 
 ### Exit criteria
-- [ ] invalid structured output is rejected
-- [ ] generated question cannot bypass validation to published state
-- [ ] duplicate/paraphrase regression fixtures exist
-- [ ] MCQ single-correct-answer rules are tested where relevant
-- [ ] deterministic answer verification is used where possible
-- [ ] validation findings are persisted and auditable
-- [ ] every discovered quality defect becomes a regression test/eval case
+- [x] invalid structured output is rejected
+- [x] generated question cannot bypass validation to published state
+- [x] duplicate/paraphrase regression fixtures exist
+- [x] MCQ single-correct-answer rules are tested where relevant
+- [x] deterministic answer verification is used where possible
+- [x] validation findings are persisted and auditable
+- [x] every discovered quality defect becomes a regression test/eval case
 - [ ] live-model eval baseline exists for the chosen generation configuration
 
 ### Evidence
 - `f0f45b8` starts P8 with immutable versioned validation inputs/reports/findings, stable pass/warn/fail codes, bounded non-leaking evidence, deterministic schema/blueprint/option/answer/marks/grounding/injection/language/age indicators and exact/hash duplicate checks composed through a canonical pipeline.
 - Ninety-four focused validator tests pass with 100% statements and branches. Reports explicitly state that deterministic success does not prove semantic correctness, factual grounding, age appropriateness, fluency or paraphrase uniqueness.
-- Remaining: canonical P7 adapter, persisted/auditable runs and findings, stronger semantic/paraphrase and deterministic subject solvers where feasible, fixed real-content evals, live-model baseline, APIs and admin inspection.
+- `3fce869` adds immutable PostgreSQL validation runs and append-only findings bound by same-curriculum foreign keys to the exact succeeded generation result. The API accepts only a generation-run ID, reconstructs the candidate, blueprint and trusted provenance server-side, verifies every fingerprint, loads a bounded reviewed duplicate bank, executes the canonical pipeline, persists complete reports transactionally and race-idempotently, records audit events, and exposes role-separated list/detail/finding reads. Database triggers reject incomplete, inconsistent, updated or deleted reports.
+- `1c5e930` adds a versioned Unicode character-ngram lexical-overlap indicator and fixed English/Sinhala near-copy, clause-reordering, conservative false-positive, dissimilar and meaning-similar-but-lexically-different fixtures. Work and evidence are bounded and source text is never copied into findings. The report explicitly states that this is not semantic paraphrase detection and can produce false positives and negatives. The opt-in paid-provider test now carries the exact generated result through canonical P8 validation and records versions, fingerprints, pass/warn/fail counts, tokens, latency and integer cost; it remains skipped without explicit credentials.
+- `285f690` adds the generated-client Validation Studio with admin-only execution, reviewer read-only inspection, immutable report/version/fingerprint/provenance/finding views, bounded plain-text rendering and a prominent no-automated-approval limitation. The web gate is 67 tests at configured 100% coverage; the real API/worker/browser suite passes 6/6 through admin generation, validation and reviewer inspection, including reviewer POST 403.
+- Final backend gate: 1,677 passed and 2 expected optional skips with 100% statements and branches; Ruff, format and strict mypy pass. The optional skips are unavailable Tesseract/Sinhala integration and the explicit paid OpenAI live baseline. No deterministic or lexical result is represented as factual, semantic, language or curriculum approval; P9 human review remains mandatory.
+- Remaining P8 gate: execute the opt-in generation-to-validation suite with an explicitly configured paid model and record the measured quality/cost baseline. The committed harness alone does not count as a completed live-model baseline.
 
 ---
 
