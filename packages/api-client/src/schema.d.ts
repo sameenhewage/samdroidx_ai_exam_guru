@@ -1708,14 +1708,20 @@ export interface components {
                 number,
                 number,
                 number
-            ];
+            ] | null;
             /** Character Count */
             character_count: number;
+            /** Confidence */
+            confidence?: number | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Extraction Config */
+            extraction_config: {
+                [key: string]: unknown;
+            };
             /** Extractor */
             extractor: string;
             /** Extractor Version */
@@ -3803,6 +3809,10 @@ export interface components {
             extraction_attempt_count: number;
             /** Extraction Completed At */
             extraction_completed_at: string | null;
+            /** Extraction Config */
+            extraction_config: {
+                [key: string]: unknown;
+            } | null;
             /** Extraction Failure Code */
             extraction_failure_code: string | null;
             /** Extraction Started At */
@@ -3821,6 +3831,8 @@ export interface components {
             native_text_page_ratio: number | null;
             /** Needs Ocr */
             needs_ocr: boolean | null;
+            /** Ocr Page Count */
+            ocr_page_count: number | null;
             /** Original Filename */
             original_filename: string;
             /** Paper Code */
@@ -3841,11 +3853,17 @@ export interface components {
             block_count: number;
             /** Character Count */
             character_count: number;
+            /** Confidence */
+            confidence?: number | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Extraction Config */
+            extraction_config: {
+                [key: string]: unknown;
+            };
             /** Extractor */
             extractor: string;
             /** Extractor Version */

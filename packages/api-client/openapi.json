@@ -1707,33 +1707,58 @@
       "ExtractedBlockResponse": {
         "properties": {
           "bbox": {
-            "maxItems": 4,
-            "minItems": 4,
-            "prefixItems": [
+            "anyOf": [
               {
-                "type": "number"
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
               },
               {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
+                "type": "null"
               }
             ],
-            "title": "Bbox",
-            "type": "array"
+            "title": "Bbox"
           },
           "character_count": {
             "title": "Character Count",
             "type": "integer"
           },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "extraction_config": {
+            "additionalProperties": true,
+            "title": "Extraction Config",
+            "type": "object"
           },
           "extractor": {
             "title": "Extractor",
@@ -1799,6 +1824,7 @@
           "reading_order",
           "extractor",
           "extractor_version",
+          "extraction_config",
           "bbox",
           "raw_text",
           "reviewed_text",
@@ -7137,6 +7163,18 @@
             ],
             "title": "Extraction Completed At"
           },
+          "extraction_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Config"
+          },
           "extraction_failure_code": {
             "anyOf": [
               {
@@ -7212,6 +7250,17 @@
             ],
             "title": "Needs Ocr"
           },
+          "ocr_page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ocr Page Count"
+          },
           "original_filename": {
             "title": "Original Filename",
             "type": "string"
@@ -7262,6 +7311,8 @@
           "extracted_character_count",
           "native_text_page_ratio",
           "needs_ocr",
+          "ocr_page_count",
+          "extraction_config",
           "extraction_failure_code",
           "extraction_started_at",
           "extraction_completed_at",
@@ -7292,10 +7343,28 @@
             "title": "Character Count",
             "type": "integer"
           },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "extraction_config": {
+            "additionalProperties": true,
+            "title": "Extraction Config",
+            "type": "object"
           },
           "extractor": {
             "title": "Extractor",
@@ -7350,6 +7419,7 @@
           "page_number",
           "extractor",
           "extractor_version",
+          "extraction_config",
           "raw_text",
           "reviewed_text",
           "character_count",
