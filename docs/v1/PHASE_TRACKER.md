@@ -364,7 +364,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P10 — Priority 1 Full Acceptance / Production Readiness Gate
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Mandatory end-to-end journey
 `admin login -> upload real Grade 5 source -> extraction/OCR -> human correction -> ingest -> question/knowledge normalization -> RAG retrieval -> historical analysis/backtest -> blueprint -> LLM generation -> automated validation -> human review -> publish`
@@ -374,7 +374,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] Priority 1 E2E journey passes
 - [ ] production identity-provider/login integration replaces the deterministic adapter and passes session/authentication security tests
 - [ ] security/adversarial review completed with regression tests for findings
-- [ ] migrations verified from clean database
+- [x] migrations verified from clean database
 - [ ] backup/restore or data recovery approach documented for critical source/question data
 - [ ] observability covers ingestion, jobs, retrieval, LLM calls, validation and publishing failures
 - [ ] AI cost metrics are observable
@@ -383,7 +383,8 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] CI green on the release commit
 
 ### Evidence
-TBD
+- `a7366bd` adds deployment-level recovery scheduling and closes extraction's commit-before-dispatch window. Migration `0019` persists bounded per-attempt extraction queue identity; same-request replay and a `FOR UPDATE SKIP LOCKED` recovery actor safely redrive pending/null outbox rows with sanitized audits. A long-running maintenance service enqueues extraction, generation and embedding recovery actors every bounded interval with monotonic timing, error isolation and clean shutdown. Compose/CI require the scheduler to be healthy; the real Compose service is verified healthy. Backend gate: 1,973 passed / 2 expected optional skips at 100% statements and branches.
+- Remaining repository hardening includes production identity integration, cross-process observability/cost export, backup/restore verification, object-storage orphan handling and final security acceptance. External evidence blockers remain the human Sinhala OCR/data review, representative P3-P5 real-data thresholds and executed paid P8 live baseline.
 
 ### Priority gate
 **Priority 2 remains BLOCKED until P10 is DONE.**
