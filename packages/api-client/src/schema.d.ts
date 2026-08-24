@@ -21,6 +21,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/analytics/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List persisted historical analysis runs */
+        get: operations["list_analytics_runs"];
+        put?: never;
+        /** Run bounded historical analysis and held-out practice evaluation */
+        post: operations["create_analytics_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/analytics/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one persisted historical analysis run */
+        get: operations["get_analytics_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks": {
         parameters: {
             query?: never;
@@ -384,6 +419,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/retrieval/explore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explore hard-scoped hybrid retrieval evidence */
+        post: operations["explore_retrieval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/source-documents": {
         parameters: {
             query?: never;
@@ -590,6 +642,215 @@ export interface components {
             /** Resource Type */
             resource_type: string;
         };
+        /** AnalyticsConfigResponse */
+        AnalyticsConfigResponse: {
+            meaningful_improvement: components["schemas"]["ExactFraction"];
+            /** Minimum Training Years */
+            minimum_training_years: number;
+            priority_weights: components["schemas"]["PriorityWeightsResponse"];
+            synchronous_limits: components["schemas"]["SynchronousLimitsResponse"];
+            /** Top K Skills */
+            top_k_skills: number;
+        };
+        /** AnalyticsDataQualityExclusionResponse */
+        AnalyticsDataQualityExclusionResponse: {
+            /** Count */
+            count: number;
+            /** Question Ids */
+            question_ids: string[];
+            reason: components["schemas"]["AnalyticsExclusionReason"];
+        };
+        /** AnalyticsDataQualityResponse */
+        AnalyticsDataQualityResponse: {
+            /** Considered Count */
+            considered_count: number;
+            /** Excluded Count */
+            excluded_count: number;
+            /** Exclusions */
+            exclusions: components["schemas"]["AnalyticsDataQualityExclusionResponse"][];
+            /** Included Count */
+            included_count: number;
+        };
+        /**
+         * AnalyticsExclusionReason
+         * @enum {string}
+         */
+        AnalyticsExclusionReason: "competency_mismatch" | "incomplete_difficulty_evidence" | "invalid_source_checksum" | "missing_competency_id" | "missing_skill_id" | "missing_source_block_id" | "missing_source_checksum" | "non_finite_difficulty_confidence" | "not_reviewed" | "skill_not_in_reviewed_syllabus" | "source_not_trusted";
+        /** AnalyticsInputResponse */
+        AnalyticsInputResponse: {
+            /** Observation Fingerprint */
+            observation_fingerprint: string;
+            /** Observation Ids */
+            observation_ids: string[];
+            /** Selection Fingerprint */
+            selection_fingerprint: string;
+            /** Syllabus */
+            syllabus: components["schemas"]["SyllabusSkillResponse"][];
+            /** Years */
+            years: number[];
+        };
+        /** AnalyticsResultsResponse */
+        AnalyticsResultsResponse: {
+            backtest: components["schemas"]["RollingBacktestResponse"];
+            statistics: components["schemas"]["HistoricalStatisticsResponse"];
+        };
+        /** AnalyticsRunRequest */
+        AnalyticsRunRequest: {
+            meaningful_improvement?: components["schemas"]["ExactFraction"];
+            /**
+             * Minimum Training Years
+             * @default 2
+             */
+            minimum_training_years: number;
+            /**
+             * Top K Skills
+             * @default 3
+             */
+            top_k_skills: number;
+        };
+        /** AnalyticsRunResponse */
+        AnalyticsRunResponse: {
+            /** Compute Duration Ms */
+            compute_duration_ms: number;
+            config: components["schemas"]["AnalyticsConfigResponse"];
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            data_quality: components["schemas"]["AnalyticsDataQualityResponse"];
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            input: components["schemas"]["AnalyticsInputResponse"];
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            result: components["schemas"]["AnalyticsResultsResponse"];
+            /** Result Fingerprint */
+            result_fingerprint: string;
+            /** Run Fingerprint */
+            run_fingerprint: string;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /** Sources */
+            sources: components["schemas"]["SourceVersionResponse"][];
+            versions: components["schemas"]["AnalyticsVersionsResponse"];
+        };
+        /** AnalyticsRunSummaryResponse */
+        AnalyticsRunSummaryResponse: {
+            aggregate: components["schemas"]["BacktestAggregateResponse"];
+            /** Backtest Algorithm Version */
+            backtest_algorithm_version: string;
+            /** Baseline Algorithm Version */
+            baseline_algorithm_version: string;
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Excluded Count */
+            excluded_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Included Count */
+            included_count: number;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Practice Priority Algorithm Version */
+            practice_priority_algorithm_version: string;
+            recommendation: components["schemas"]["PracticeRecommendationResponse"];
+            /** Result Fingerprint */
+            result_fingerprint: string;
+            /** Run Fingerprint */
+            run_fingerprint: string;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /** Statistics Algorithm Version */
+            statistics_algorithm_version: string;
+        };
+        /** AnalyticsVersionsResponse */
+        AnalyticsVersionsResponse: {
+            /** Backtest */
+            backtest: string;
+            /** Baseline */
+            baseline: string;
+            /** Practice Priority */
+            practice_priority: string;
+            /** Statistics */
+            statistics: string;
+        };
+        /** BacktestAggregateResponse */
+        BacktestAggregateResponse: {
+            baseline_delta: components["schemas"]["ExactFraction"];
+            baseline_score_variance: components["schemas"]["ExactFraction"];
+            mean_baseline_score: components["schemas"]["ExactFraction"];
+            mean_method_score: components["schemas"]["ExactFraction"];
+            method_score_variance: components["schemas"]["ExactFraction"];
+            /** Window Count */
+            window_count: number;
+        };
+        /** BacktestMetricsResponse */
+        BacktestMetricsResponse: {
+            competency_distribution_accuracy: components["schemas"]["ExactFraction"];
+            competency_distribution_error: components["schemas"]["ExactFraction"];
+            composite_score: components["schemas"]["ExactFraction"];
+            skill_distribution_accuracy: components["schemas"]["ExactFraction"];
+            skill_distribution_error: components["schemas"]["ExactFraction"];
+            top_k_skill_hit_rate: components["schemas"]["ExactFraction"];
+        };
+        /** BacktestWindowResponse */
+        BacktestWindowResponse: {
+            baseline_delta: components["schemas"]["ExactFraction"];
+            baseline_metrics: components["schemas"]["BacktestMetricsResponse"];
+            baseline_run: components["schemas"]["PracticePriorityRunResponse"];
+            /** Heldout Input Fingerprint */
+            heldout_input_fingerprint: string;
+            /** Heldout Sources */
+            heldout_sources: components["schemas"]["SourceVersionResponse"][];
+            /** Heldout Year */
+            heldout_year: number;
+            leakage_audit: components["schemas"]["LeakageAuditResponse"];
+            method_metrics: components["schemas"]["BacktestMetricsResponse"];
+            method_run: components["schemas"]["PracticePriorityRunResponse"];
+            /** Training Input Fingerprint */
+            training_input_fingerprint: string;
+            /** Training Years */
+            training_years: number[];
+        };
         /** Body_upload_source_document */
         Body_upload_source_document: {
             /** Curriculum Version Id */
@@ -607,6 +868,12 @@ export interface components {
          * @enum {string}
          */
         ChunkType: "competency_section" | "learning_outcome" | "explanation" | "example" | "practice_question" | "key_term";
+        /**
+         * ContextTrust
+         * @description Trust classification attached to every retrieval context boundary.
+         * @enum {string}
+         */
+        ContextTrust: "untrusted_source_data";
         /** CurriculumVersionCreate */
         CurriculumVersionCreate: {
             /** Code */
@@ -681,6 +948,43 @@ export interface components {
          * @enum {string}
          */
         DifficultyLabel: "easy" | "medium" | "hard";
+        /** DistributionBucketResponse */
+        DistributionBucketResponse: {
+            /** Key */
+            key: string | number;
+            marks_share: components["schemas"]["ExactFraction"];
+            /** Question Count */
+            question_count: number;
+            question_share: components["schemas"]["ExactFraction"];
+            /** Total Marks */
+            total_marks: number;
+        };
+        /** EmbeddingConfigRequest */
+        EmbeddingConfigRequest: {
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Dimension */
+            dimension: number;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Version */
+            version: string;
+        };
+        /** EmbeddingConfigResponse */
+        EmbeddingConfigResponse: {
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Dimension */
+            dimension: number;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Version */
+            version: string;
+        };
         /** EmbeddingConfigurationMetadataResponse */
         EmbeddingConfigurationMetadataResponse: {
             /** Config Fingerprint */
@@ -704,6 +1008,13 @@ export interface components {
          * @enum {string}
          */
         EmbeddingStatus: "not_embedded" | "embedded";
+        /** ExactFraction */
+        ExactFraction: {
+            /** Denominator */
+            denominator: number;
+            /** Numerator */
+            numerator: number;
+        };
         /** ExamConfigurationCreate */
         ExamConfigurationCreate: {
             /** Code */
@@ -814,6 +1125,31 @@ export interface components {
          * @enum {string}
          */
         ExtractionStatus: "uploaded" | "extraction_pending" | "extracted" | "in_review" | "trusted" | "failed";
+        /** FusedRetrievalCandidateResponse */
+        FusedRetrievalCandidateResponse: {
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Lexical Rank */
+            lexical_rank: number | null;
+            /** Provenances */
+            provenances: components["schemas"]["RetrievalProvenanceResponse"][];
+            /** Rank */
+            rank: number;
+            scope: components["schemas"]["RetrievalScopeResponse"];
+            /** Score */
+            score: number;
+            /** Source Chunk Ids */
+            source_chunk_ids: string[];
+            /** Text */
+            text: string;
+            /** @default untrusted_source_data */
+            trust: components["schemas"]["ContextTrust"];
+            /** Vector Rank */
+            vector_rank: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -938,6 +1274,38 @@ export interface components {
             /** Year */
             year: number;
         };
+        /** HistoricalStatisticsResponse */
+        HistoricalStatisticsResponse: {
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Competency Distribution */
+            competency_distribution: components["schemas"]["DistributionBucketResponse"][];
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Difficulty Distribution */
+            difficulty_distribution: components["schemas"]["DistributionBucketResponse"][];
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Input Observation Ids */
+            input_observation_ids: string[];
+            /** Marks Distribution */
+            marks_distribution: components["schemas"]["DistributionBucketResponse"][];
+            /** Observation Count */
+            observation_count: number;
+            /** Question Type Distribution */
+            question_type_distribution: components["schemas"]["DistributionBucketResponse"][];
+            /** Skill Distribution */
+            skill_distribution: components["schemas"]["DistributionBucketResponse"][];
+            /** Sources */
+            sources: components["schemas"]["SourceVersionResponse"][];
+            /** Total Marks */
+            total_marks: number;
+            /** Years */
+            years: number[];
+        };
         JsonValue: unknown;
         /** KnowledgeChunkImportRequest */
         KnowledgeChunkImportRequest: {
@@ -1046,6 +1414,21 @@ export interface components {
             expected_version: number;
             target: components["schemas"]["ReviewState"];
         };
+        /** LeakageAuditResponse */
+        LeakageAuditResponse: {
+            /** Heldout Observation Ids */
+            heldout_observation_ids: string[];
+            /** Latest Training Year */
+            latest_training_year: number;
+            /** Overlapping Observation Ids */
+            overlapping_observation_ids: string[];
+            /** Passed */
+            passed: boolean;
+            /** Training Cutoff Exclusive */
+            training_cutoff_exclusive: number;
+            /** Training Observation Ids */
+            training_observation_ids: string[];
+        };
         /** MediumCreate */
         MediumCreate: {
             /** Code */
@@ -1082,6 +1465,96 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** PracticePriorityFeaturesResponse */
+        PracticePriorityFeaturesResponse: {
+            /** Evidence Marks */
+            evidence_marks: number;
+            /** Evidence Question Count */
+            evidence_question_count: number;
+            /** Last Observed Year */
+            last_observed_year: number | null;
+            marks_share: components["schemas"]["ExactFraction"];
+            question_frequency_share: components["schemas"]["ExactFraction"];
+            recency_gap_share: components["schemas"]["ExactFraction"];
+            syllabus_share: components["schemas"]["ExactFraction"];
+        };
+        /**
+         * PracticePriorityMethod
+         * @enum {string}
+         */
+        PracticePriorityMethod: "historical_evidence" | "syllabus_balanced";
+        /** PracticePriorityResponse */
+        PracticePriorityResponse: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Evidence Language */
+            evidence_language: string;
+            features: components["schemas"]["PracticePriorityFeaturesResponse"];
+            practice_share: components["schemas"]["ExactFraction"];
+            /** Rank */
+            rank: number;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Skill Title */
+            skill_title: string;
+        };
+        /** PracticePriorityRunResponse */
+        PracticePriorityRunResponse: {
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Evidence Through Year */
+            evidence_through_year: number | null;
+            /** Feature Definitions */
+            feature_definitions: string[];
+            /** Input Observation Ids */
+            input_observation_ids: string[];
+            method: components["schemas"]["PracticePriorityMethod"];
+            /** Priorities */
+            priorities: components["schemas"]["PracticePriorityResponse"][];
+            /** Random Seed */
+            random_seed: null;
+            recommendation: components["schemas"]["PracticeRecommendation"];
+            /** Run Fingerprint */
+            run_fingerprint: string;
+            /** Sources */
+            sources: components["schemas"]["SourceVersionResponse"][];
+            /** Target Year */
+            target_year: number;
+        };
+        /**
+         * PracticeRecommendation
+         * @enum {string}
+         */
+        PracticeRecommendation: "evidence_backed_practice" | "syllabus_balanced_practice";
+        /** PracticeRecommendationResponse */
+        PracticeRecommendationResponse: {
+            /** Language */
+            language: string;
+            meaningful_improvement: components["schemas"]["ExactFraction"];
+            mode: components["schemas"]["PracticeRecommendation"];
+            observed_baseline_delta: components["schemas"]["ExactFraction"];
+            selected_method: components["schemas"]["PracticePriorityMethod"];
+        };
+        /** PriorityWeightsResponse */
+        PriorityWeightsResponse: {
+            frequency: components["schemas"]["ExactFraction"];
+            marks: components["schemas"]["ExactFraction"];
+            recency: components["schemas"]["ExactFraction"];
+            syllabus: components["schemas"]["ExactFraction"];
+        };
         /**
          * QuestionType
          * @enum {string}
@@ -1096,6 +1569,230 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /** RetrievalChannelCandidateResponse */
+        RetrievalChannelCandidateResponse: {
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            provenance: components["schemas"]["RetrievalProvenanceResponse"];
+            /** Rank */
+            rank: number;
+            scope: components["schemas"]["RetrievalScopeResponse"];
+            /** Score */
+            score: number;
+            /** Text */
+            text: string;
+            /** @default untrusted_source_data */
+            trust: components["schemas"]["ContextTrust"];
+        };
+        /** RetrievalChannelsResponse */
+        RetrievalChannelsResponse: {
+            /** Lexical */
+            lexical: components["schemas"]["RetrievalChannelCandidateResponse"][];
+            /** Vector */
+            vector: components["schemas"]["RetrievalChannelCandidateResponse"][];
+        };
+        /** RetrievalContextItemResponse */
+        RetrievalContextItemResponse: {
+            /** Fusion Score */
+            fusion_score: number;
+            /** Original Character Count */
+            original_character_count: number;
+            /** Provenances */
+            provenances: components["schemas"]["RetrievalProvenanceResponse"][];
+            /** Rank */
+            rank: number;
+            scope: components["schemas"]["RetrievalScopeResponse"];
+            /** Source Chunk Ids */
+            source_chunk_ids: string[];
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+            trust: components["schemas"]["ContextTrust"];
+        };
+        /** RetrievalContextLimitsResponse */
+        RetrievalContextLimitsResponse: {
+            /** Max Item Characters */
+            max_item_characters: number;
+            /** Max Items */
+            max_items: number;
+            /** Max Total Characters */
+            max_total_characters: number;
+        };
+        /** RetrievalContextResponse */
+        RetrievalContextResponse: {
+            /** Character Count */
+            character_count: number;
+            /** Items */
+            items: components["schemas"]["RetrievalContextItemResponse"][];
+            limits: components["schemas"]["RetrievalContextLimitsResponse"];
+            /** Omitted Candidate Count */
+            omitted_candidate_count: number;
+            trust: components["schemas"]["ContextTrust"];
+        };
+        /** RetrievalDiagnosticsResponse */
+        RetrievalDiagnosticsResponse: {
+            /** Context Character Count */
+            context_character_count: number;
+            /** Context Item Count */
+            context_item_count: number;
+            /** Deduplicated Source Count */
+            deduplicated_source_count: number;
+            /** Filtered Out Candidate Count */
+            filtered_out_candidate_count: number;
+            /** Fused Candidate Count */
+            fused_candidate_count: number;
+            /**
+             * Hard Scope Filter Applied
+             * @default true
+             * @constant
+             */
+            hard_scope_filter_applied: true;
+            /** Lexical Candidate Count */
+            lexical_candidate_count: number;
+            /** Omitted Fused Candidate Count */
+            omitted_fused_candidate_count: number;
+            /** Vector Candidate Count */
+            vector_candidate_count: number;
+        };
+        /** RetrievalExploreLimitsRequest */
+        RetrievalExploreLimitsRequest: {
+            /** Candidate Limit */
+            candidate_limit: number;
+            /** Max Context Characters */
+            max_context_characters: number;
+            /** Max Context Item Characters */
+            max_context_item_characters: number;
+            /** Max Context Items */
+            max_context_items: number;
+            /** Top K */
+            top_k: number;
+        };
+        /** RetrievalExploreRequest */
+        RetrievalExploreRequest: {
+            embedding_config: components["schemas"]["EmbeddingConfigRequest"];
+            limits: components["schemas"]["RetrievalExploreLimitsRequest"];
+            /** Query */
+            query: string;
+            scope: components["schemas"]["RetrievalScopeRequest"];
+        };
+        /** RetrievalExploreResponse */
+        RetrievalExploreResponse: {
+            channels: components["schemas"]["RetrievalChannelsResponse"];
+            context: components["schemas"]["RetrievalContextResponse"];
+            diagnostics: components["schemas"]["RetrievalDiagnosticsResponse"];
+            embedding_config: components["schemas"]["EmbeddingConfigResponse"];
+            /** Fused Candidates */
+            fused_candidates: components["schemas"]["FusedRetrievalCandidateResponse"][];
+            latency_ms: components["schemas"]["RetrievalLatencyResponse"];
+            limits: components["schemas"]["RetrievalExploreLimitsRequest"];
+            /** Query */
+            query: string;
+            scope: components["schemas"]["RetrievalScopeResponse"];
+        };
+        /** RetrievalLatencyResponse */
+        RetrievalLatencyResponse: {
+            /** Candidate Retrieval Ms */
+            candidate_retrieval_ms: number;
+            /** Context Building Ms */
+            context_building_ms: number;
+            /** Embedding Ms */
+            embedding_ms: number;
+            /** Fusion Ms */
+            fusion_ms: number;
+            /** Total Ms */
+            total_ms: number;
+            /** Validation Ms */
+            validation_ms: number;
+        };
+        /** RetrievalProvenanceResponse */
+        RetrievalProvenanceResponse: {
+            /** Page Number */
+            page_number: number;
+            /** Source Block Id */
+            source_block_id: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+        };
+        /** RetrievalScopeRequest */
+        RetrievalScopeRequest: {
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Exam Id
+             * Format: uuid
+             */
+            exam_id: string;
+            /**
+             * Grade
+             * @constant
+             */
+            grade: 5;
+            /**
+             * Medium Id
+             * Format: uuid
+             */
+            medium_id: string;
+            taxonomy: components["schemas"]["RetrievalTaxonomyScopeRequest"];
+        };
+        /** RetrievalScopeResponse */
+        RetrievalScopeResponse: {
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Exam Id
+             * Format: uuid
+             */
+            exam_id: string;
+            /** Grade */
+            grade: number;
+            /**
+             * Medium Id
+             * Format: uuid
+             */
+            medium_id: string;
+            taxonomy: components["schemas"]["RetrievalTaxonomyScopeResponse"];
+        };
+        /** RetrievalTaxonomyScopeRequest */
+        RetrievalTaxonomyScopeRequest: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Learning Concept Id */
+            learning_concept_id?: string | null;
+            /** Skill Id */
+            skill_id?: string | null;
+            /** Sub Skill Id */
+            sub_skill_id?: string | null;
+        };
+        /** RetrievalTaxonomyScopeResponse */
+        RetrievalTaxonomyScopeResponse: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Learning Concept Id */
+            learning_concept_id: string | null;
+            /** Skill Id */
+            skill_id: string | null;
+            /** Sub Skill Id */
+            sub_skill_id: string | null;
+        };
         /**
          * ReviewState
          * @enum {string}
@@ -1107,6 +1804,24 @@ export interface components {
             expected_version: number;
             /** Reviewed Text */
             reviewed_text: string;
+        };
+        /** RollingBacktestResponse */
+        RollingBacktestResponse: {
+            aggregate: components["schemas"]["BacktestAggregateResponse"];
+            /** Backtest Version */
+            backtest_version: string;
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Limitations */
+            limitations: string[];
+            recommendation: components["schemas"]["PracticeRecommendationResponse"];
+            recommended_run: components["schemas"]["PracticePriorityRunResponse"];
+            /** Sources */
+            sources: components["schemas"]["SourceVersionResponse"][];
+            /** Windows */
+            windows: components["schemas"]["BacktestWindowResponse"][];
         };
         /** SourceDocumentResponse */
         SourceDocumentResponse: {
@@ -1208,6 +1923,45 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SourceVersionResponse */
+        SourceVersionResponse: {
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+            /** Source Version */
+            source_version: string;
+        };
+        /** SyllabusSkillResponse */
+        SyllabusSkillResponse: {
+            /** Balance Weight */
+            balance_weight: number;
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Title */
+            title: string;
+        };
+        /** SynchronousLimitsResponse */
+        SynchronousLimitsResponse: {
+            /** Maximum Records */
+            maximum_records: number;
+            /** Maximum Years */
+            maximum_years: number;
+        };
         /**
          * TaxonomyLevel
          * @enum {string}
@@ -1304,6 +2058,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminAuditEventResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_analytics_runs: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsRunSummaryResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_analytics_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyticsRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing identical analytics run returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Deterministic analytics run persisted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsRunResponse"];
+                };
+            };
+            /** @description Analytics fingerprint conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient or out-of-bounds reviewed evidence */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_analytics_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsRunResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2229,6 +3096,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    explore_retrieval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetrievalExploreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetrievalExploreResponse"];
+                };
+            };
+            /** @description Embedding configuration or exact retrieval scope not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed or internally inconsistent retrieval request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configured embedding provider is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -49,6 +49,539 @@
         "title": "AdminAuditEventResponse",
         "type": "object"
       },
+      "AnalyticsConfigResponse": {
+        "properties": {
+          "meaningful_improvement": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "minimum_training_years": {
+            "title": "Minimum Training Years",
+            "type": "integer"
+          },
+          "priority_weights": {
+            "$ref": "#/components/schemas/PriorityWeightsResponse"
+          },
+          "synchronous_limits": {
+            "$ref": "#/components/schemas/SynchronousLimitsResponse"
+          },
+          "top_k_skills": {
+            "title": "Top K Skills",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "minimum_training_years",
+          "top_k_skills",
+          "meaningful_improvement",
+          "priority_weights",
+          "synchronous_limits"
+        ],
+        "title": "AnalyticsConfigResponse",
+        "type": "object"
+      },
+      "AnalyticsDataQualityExclusionResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "question_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Question Ids",
+            "type": "array"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/AnalyticsExclusionReason"
+          }
+        },
+        "required": [
+          "reason",
+          "count",
+          "question_ids"
+        ],
+        "title": "AnalyticsDataQualityExclusionResponse",
+        "type": "object"
+      },
+      "AnalyticsDataQualityResponse": {
+        "properties": {
+          "considered_count": {
+            "title": "Considered Count",
+            "type": "integer"
+          },
+          "excluded_count": {
+            "title": "Excluded Count",
+            "type": "integer"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsDataQualityExclusionResponse"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "included_count": {
+            "title": "Included Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "considered_count",
+          "included_count",
+          "excluded_count",
+          "exclusions"
+        ],
+        "title": "AnalyticsDataQualityResponse",
+        "type": "object"
+      },
+      "AnalyticsExclusionReason": {
+        "enum": [
+          "competency_mismatch",
+          "incomplete_difficulty_evidence",
+          "invalid_source_checksum",
+          "missing_competency_id",
+          "missing_skill_id",
+          "missing_source_block_id",
+          "missing_source_checksum",
+          "non_finite_difficulty_confidence",
+          "not_reviewed",
+          "skill_not_in_reviewed_syllabus",
+          "source_not_trusted"
+        ],
+        "title": "AnalyticsExclusionReason",
+        "type": "string"
+      },
+      "AnalyticsInputResponse": {
+        "properties": {
+          "observation_fingerprint": {
+            "title": "Observation Fingerprint",
+            "type": "string"
+          },
+          "observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Observation Ids",
+            "type": "array"
+          },
+          "selection_fingerprint": {
+            "title": "Selection Fingerprint",
+            "type": "string"
+          },
+          "syllabus": {
+            "items": {
+              "$ref": "#/components/schemas/SyllabusSkillResponse"
+            },
+            "title": "Syllabus",
+            "type": "array"
+          },
+          "years": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "observation_ids",
+          "observation_fingerprint",
+          "selection_fingerprint",
+          "syllabus",
+          "years"
+        ],
+        "title": "AnalyticsInputResponse",
+        "type": "object"
+      },
+      "AnalyticsResultsResponse": {
+        "properties": {
+          "backtest": {
+            "$ref": "#/components/schemas/RollingBacktestResponse"
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/HistoricalStatisticsResponse"
+          }
+        },
+        "required": [
+          "statistics",
+          "backtest"
+        ],
+        "title": "AnalyticsResultsResponse",
+        "type": "object"
+      },
+      "AnalyticsRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "meaningful_improvement": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "minimum_training_years": {
+            "default": 2,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Minimum Training Years",
+            "type": "integer"
+          },
+          "top_k_skills": {
+            "default": 3,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K Skills",
+            "type": "integer"
+          }
+        },
+        "title": "AnalyticsRunRequest",
+        "type": "object"
+      },
+      "AnalyticsRunResponse": {
+        "properties": {
+          "compute_duration_ms": {
+            "title": "Compute Duration Ms",
+            "type": "integer"
+          },
+          "config": {
+            "$ref": "#/components/schemas/AnalyticsConfigResponse"
+          },
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "data_quality": {
+            "$ref": "#/components/schemas/AnalyticsDataQualityResponse"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/AnalyticsInputResponse"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AnalyticsResultsResponse"
+          },
+          "result_fingerprint": {
+            "title": "Result Fingerprint",
+            "type": "string"
+          },
+          "run_fingerprint": {
+            "title": "Run Fingerprint",
+            "type": "string"
+          },
+          "source_fingerprint": {
+            "title": "Source Fingerprint",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceVersionResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/AnalyticsVersionsResponse"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "run_fingerprint",
+          "config_fingerprint",
+          "input_fingerprint",
+          "source_fingerprint",
+          "result_fingerprint",
+          "versions",
+          "config",
+          "input",
+          "sources",
+          "data_quality",
+          "result",
+          "compute_duration_ms",
+          "created_by",
+          "created_at"
+        ],
+        "title": "AnalyticsRunResponse",
+        "type": "object"
+      },
+      "AnalyticsRunSummaryResponse": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/BacktestAggregateResponse"
+          },
+          "backtest_algorithm_version": {
+            "title": "Backtest Algorithm Version",
+            "type": "string"
+          },
+          "baseline_algorithm_version": {
+            "title": "Baseline Algorithm Version",
+            "type": "string"
+          },
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "excluded_count": {
+            "title": "Excluded Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "included_count": {
+            "title": "Included Count",
+            "type": "integer"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "practice_priority_algorithm_version": {
+            "title": "Practice Priority Algorithm Version",
+            "type": "string"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/PracticeRecommendationResponse"
+          },
+          "result_fingerprint": {
+            "title": "Result Fingerprint",
+            "type": "string"
+          },
+          "run_fingerprint": {
+            "title": "Run Fingerprint",
+            "type": "string"
+          },
+          "source_fingerprint": {
+            "title": "Source Fingerprint",
+            "type": "string"
+          },
+          "statistics_algorithm_version": {
+            "title": "Statistics Algorithm Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "run_fingerprint",
+          "config_fingerprint",
+          "input_fingerprint",
+          "source_fingerprint",
+          "result_fingerprint",
+          "statistics_algorithm_version",
+          "practice_priority_algorithm_version",
+          "baseline_algorithm_version",
+          "backtest_algorithm_version",
+          "included_count",
+          "excluded_count",
+          "aggregate",
+          "recommendation",
+          "created_by",
+          "created_at"
+        ],
+        "title": "AnalyticsRunSummaryResponse",
+        "type": "object"
+      },
+      "AnalyticsVersionsResponse": {
+        "properties": {
+          "backtest": {
+            "title": "Backtest",
+            "type": "string"
+          },
+          "baseline": {
+            "title": "Baseline",
+            "type": "string"
+          },
+          "practice_priority": {
+            "title": "Practice Priority",
+            "type": "string"
+          },
+          "statistics": {
+            "title": "Statistics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statistics",
+          "practice_priority",
+          "baseline",
+          "backtest"
+        ],
+        "title": "AnalyticsVersionsResponse",
+        "type": "object"
+      },
+      "BacktestAggregateResponse": {
+        "properties": {
+          "baseline_delta": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "baseline_score_variance": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "mean_baseline_score": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "mean_method_score": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "method_score_variance": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "window_count": {
+            "title": "Window Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_count",
+          "mean_method_score",
+          "mean_baseline_score",
+          "baseline_delta",
+          "method_score_variance",
+          "baseline_score_variance"
+        ],
+        "title": "BacktestAggregateResponse",
+        "type": "object"
+      },
+      "BacktestMetricsResponse": {
+        "properties": {
+          "competency_distribution_accuracy": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "competency_distribution_error": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "composite_score": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "skill_distribution_accuracy": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "skill_distribution_error": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "top_k_skill_hit_rate": {
+            "$ref": "#/components/schemas/ExactFraction"
+          }
+        },
+        "required": [
+          "competency_distribution_error",
+          "skill_distribution_error",
+          "competency_distribution_accuracy",
+          "skill_distribution_accuracy",
+          "top_k_skill_hit_rate",
+          "composite_score"
+        ],
+        "title": "BacktestMetricsResponse",
+        "type": "object"
+      },
+      "BacktestWindowResponse": {
+        "properties": {
+          "baseline_delta": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "baseline_metrics": {
+            "$ref": "#/components/schemas/BacktestMetricsResponse"
+          },
+          "baseline_run": {
+            "$ref": "#/components/schemas/PracticePriorityRunResponse"
+          },
+          "heldout_input_fingerprint": {
+            "title": "Heldout Input Fingerprint",
+            "type": "string"
+          },
+          "heldout_sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceVersionResponse"
+            },
+            "title": "Heldout Sources",
+            "type": "array"
+          },
+          "heldout_year": {
+            "title": "Heldout Year",
+            "type": "integer"
+          },
+          "leakage_audit": {
+            "$ref": "#/components/schemas/LeakageAuditResponse"
+          },
+          "method_metrics": {
+            "$ref": "#/components/schemas/BacktestMetricsResponse"
+          },
+          "method_run": {
+            "$ref": "#/components/schemas/PracticePriorityRunResponse"
+          },
+          "training_input_fingerprint": {
+            "title": "Training Input Fingerprint",
+            "type": "string"
+          },
+          "training_years": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Training Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "training_years",
+          "heldout_year",
+          "leakage_audit",
+          "training_input_fingerprint",
+          "heldout_input_fingerprint",
+          "heldout_sources",
+          "method_run",
+          "baseline_run",
+          "method_metrics",
+          "baseline_metrics",
+          "baseline_delta"
+        ],
+        "title": "BacktestWindowResponse",
+        "type": "object"
+      },
       "Body_upload_source_document": {
         "properties": {
           "curriculum_version_id": {
@@ -114,6 +647,14 @@
           "key_term"
         ],
         "title": "ChunkType",
+        "type": "string"
+      },
+      "ContextTrust": {
+        "description": "Trust classification attached to every retrieval context boundary.",
+        "enum": [
+          "untrusted_source_data"
+        ],
+        "title": "ContextTrust",
         "type": "string"
       },
       "CurriculumVersionCreate": {
@@ -256,6 +797,121 @@
         "title": "DifficultyLabel",
         "type": "string"
       },
+      "DistributionBucketResponse": {
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Key"
+          },
+          "marks_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "question_count": {
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "question_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "question_count",
+          "total_marks",
+          "question_share",
+          "marks_share"
+        ],
+        "title": "DistributionBucketResponse",
+        "type": "object"
+      },
+      "EmbeddingConfigRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config_fingerprint": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "dimension": {
+            "maximum": 4096.0,
+            "minimum": 1.0,
+            "title": "Dimension",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "dimension",
+          "version",
+          "config_fingerprint"
+        ],
+        "title": "EmbeddingConfigRequest",
+        "type": "object"
+      },
+      "EmbeddingConfigResponse": {
+        "properties": {
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "dimension": {
+            "title": "Dimension",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "dimension",
+          "version",
+          "config_fingerprint"
+        ],
+        "title": "EmbeddingConfigResponse",
+        "type": "object"
+      },
       "EmbeddingConfigurationMetadataResponse": {
         "properties": {
           "config_fingerprint": {
@@ -302,6 +958,27 @@
         ],
         "title": "EmbeddingStatus",
         "type": "string"
+      },
+      "ExactFraction": {
+        "additionalProperties": false,
+        "properties": {
+          "denominator": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Denominator",
+            "type": "integer"
+          },
+          "numerator": {
+            "title": "Numerator",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "numerator",
+          "denominator"
+        ],
+        "title": "ExactFraction",
+        "type": "object"
       },
       "ExamConfigurationCreate": {
         "additionalProperties": false,
@@ -535,6 +1212,85 @@
         ],
         "title": "ExtractionStatus",
         "type": "string"
+      },
+      "FusedRetrievalCandidateResponse": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "lexical_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lexical Rank"
+          },
+          "provenances": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalProvenanceResponse"
+            },
+            "title": "Provenances",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RetrievalScopeResponse"
+          },
+          "score": {
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "source_chunk_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Chunk Ids",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "trust": {
+            "$ref": "#/components/schemas/ContextTrust",
+            "default": "untrusted_source_data"
+          },
+          "vector_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Rank"
+          }
+        },
+        "required": [
+          "rank",
+          "chunk_id",
+          "text",
+          "score",
+          "lexical_rank",
+          "vector_rank",
+          "source_chunk_ids",
+          "provenances",
+          "scope"
+        ],
+        "title": "FusedRetrievalCandidateResponse",
+        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -968,6 +1724,105 @@
         "title": "HistoricalQuestionResponse",
         "type": "object"
       },
+      "HistoricalStatisticsResponse": {
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "competency_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionBucketResponse"
+            },
+            "title": "Competency Distribution",
+            "type": "array"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "difficulty_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionBucketResponse"
+            },
+            "title": "Difficulty Distribution",
+            "type": "array"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "input_observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Input Observation Ids",
+            "type": "array"
+          },
+          "marks_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionBucketResponse"
+            },
+            "title": "Marks Distribution",
+            "type": "array"
+          },
+          "observation_count": {
+            "title": "Observation Count",
+            "type": "integer"
+          },
+          "question_type_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionBucketResponse"
+            },
+            "title": "Question Type Distribution",
+            "type": "array"
+          },
+          "skill_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionBucketResponse"
+            },
+            "title": "Skill Distribution",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceVersionResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          },
+          "years": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "algorithm_version",
+          "years",
+          "observation_count",
+          "total_marks",
+          "competency_distribution",
+          "skill_distribution",
+          "question_type_distribution",
+          "difficulty_distribution",
+          "marks_distribution",
+          "input_observation_ids",
+          "sources",
+          "input_fingerprint"
+        ],
+        "title": "HistoricalStatisticsResponse",
+        "type": "object"
+      },
       "JsonValue": {},
       "KnowledgeChunkImportRequest": {
         "additionalProperties": false,
@@ -1283,6 +2138,56 @@
         "title": "KnowledgeReviewTransitionRequest",
         "type": "object"
       },
+      "LeakageAuditResponse": {
+        "properties": {
+          "heldout_observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Heldout Observation Ids",
+            "type": "array"
+          },
+          "latest_training_year": {
+            "title": "Latest Training Year",
+            "type": "integer"
+          },
+          "overlapping_observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Overlapping Observation Ids",
+            "type": "array"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "training_cutoff_exclusive": {
+            "title": "Training Cutoff Exclusive",
+            "type": "integer"
+          },
+          "training_observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Training Observation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "passed",
+          "training_cutoff_exclusive",
+          "latest_training_year",
+          "training_observation_ids",
+          "heldout_observation_ids",
+          "overlapping_observation_ids"
+        ],
+        "title": "LeakageAuditResponse",
+        "type": "object"
+      },
       "MediumCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1364,6 +2269,256 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "PracticePriorityFeaturesResponse": {
+        "properties": {
+          "evidence_marks": {
+            "title": "Evidence Marks",
+            "type": "integer"
+          },
+          "evidence_question_count": {
+            "title": "Evidence Question Count",
+            "type": "integer"
+          },
+          "last_observed_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed Year"
+          },
+          "marks_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "question_frequency_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "recency_gap_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "syllabus_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          }
+        },
+        "required": [
+          "syllabus_share",
+          "question_frequency_share",
+          "marks_share",
+          "recency_gap_share",
+          "evidence_question_count",
+          "evidence_marks",
+          "last_observed_year"
+        ],
+        "title": "PracticePriorityFeaturesResponse",
+        "type": "object"
+      },
+      "PracticePriorityMethod": {
+        "enum": [
+          "historical_evidence",
+          "syllabus_balanced"
+        ],
+        "title": "PracticePriorityMethod",
+        "type": "string"
+      },
+      "PracticePriorityResponse": {
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "evidence_language": {
+            "title": "Evidence Language",
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/PracticePriorityFeaturesResponse"
+          },
+          "practice_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "skill_id": {
+            "format": "uuid",
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "skill_title": {
+            "title": "Skill Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "competency_id",
+          "skill_id",
+          "skill_title",
+          "practice_share",
+          "features",
+          "evidence_language"
+        ],
+        "title": "PracticePriorityResponse",
+        "type": "object"
+      },
+      "PracticePriorityRunResponse": {
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "evidence_through_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Through Year"
+          },
+          "feature_definitions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Feature Definitions",
+            "type": "array"
+          },
+          "input_observation_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Input Observation Ids",
+            "type": "array"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PracticePriorityMethod"
+          },
+          "priorities": {
+            "items": {
+              "$ref": "#/components/schemas/PracticePriorityResponse"
+            },
+            "title": "Priorities",
+            "type": "array"
+          },
+          "random_seed": {
+            "title": "Random Seed",
+            "type": "null"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/PracticeRecommendation"
+          },
+          "run_fingerprint": {
+            "title": "Run Fingerprint",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceVersionResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "target_year": {
+            "title": "Target Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "target_year",
+          "evidence_through_year",
+          "method",
+          "recommendation",
+          "algorithm_version",
+          "config_fingerprint",
+          "run_fingerprint",
+          "feature_definitions",
+          "random_seed",
+          "input_observation_ids",
+          "sources",
+          "priorities"
+        ],
+        "title": "PracticePriorityRunResponse",
+        "type": "object"
+      },
+      "PracticeRecommendation": {
+        "enum": [
+          "evidence_backed_practice",
+          "syllabus_balanced_practice"
+        ],
+        "title": "PracticeRecommendation",
+        "type": "string"
+      },
+      "PracticeRecommendationResponse": {
+        "properties": {
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "meaningful_improvement": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PracticeRecommendation"
+          },
+          "observed_baseline_delta": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "selected_method": {
+            "$ref": "#/components/schemas/PracticePriorityMethod"
+          }
+        },
+        "required": [
+          "mode",
+          "selected_method",
+          "observed_baseline_delta",
+          "meaningful_improvement",
+          "language"
+        ],
+        "title": "PracticeRecommendationResponse",
+        "type": "object"
+      },
+      "PriorityWeightsResponse": {
+        "properties": {
+          "frequency": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "marks": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "recency": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "syllabus": {
+            "$ref": "#/components/schemas/ExactFraction"
+          }
+        },
+        "required": [
+          "syllabus",
+          "frequency",
+          "marks",
+          "recency"
+        ],
+        "title": "PriorityWeightsResponse",
+        "type": "object"
+      },
       "QuestionType": {
         "enum": [
           "multiple_choice",
@@ -1392,6 +2547,622 @@
           "checks"
         ],
         "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RetrievalChannelCandidateResponse": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RetrievalProvenanceResponse"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RetrievalScopeResponse"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "trust": {
+            "$ref": "#/components/schemas/ContextTrust",
+            "default": "untrusted_source_data"
+          }
+        },
+        "required": [
+          "rank",
+          "chunk_id",
+          "text",
+          "score",
+          "scope",
+          "provenance"
+        ],
+        "title": "RetrievalChannelCandidateResponse",
+        "type": "object"
+      },
+      "RetrievalChannelsResponse": {
+        "properties": {
+          "lexical": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalChannelCandidateResponse"
+            },
+            "title": "Lexical",
+            "type": "array"
+          },
+          "vector": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalChannelCandidateResponse"
+            },
+            "title": "Vector",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lexical",
+          "vector"
+        ],
+        "title": "RetrievalChannelsResponse",
+        "type": "object"
+      },
+      "RetrievalContextItemResponse": {
+        "properties": {
+          "fusion_score": {
+            "minimum": 0.0,
+            "title": "Fusion Score",
+            "type": "number"
+          },
+          "original_character_count": {
+            "title": "Original Character Count",
+            "type": "integer"
+          },
+          "provenances": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalProvenanceResponse"
+            },
+            "title": "Provenances",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RetrievalScopeResponse"
+          },
+          "source_chunk_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Chunk Ids",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "trust": {
+            "$ref": "#/components/schemas/ContextTrust"
+          }
+        },
+        "required": [
+          "rank",
+          "text",
+          "scope",
+          "source_chunk_ids",
+          "provenances",
+          "fusion_score",
+          "original_character_count",
+          "truncated",
+          "trust"
+        ],
+        "title": "RetrievalContextItemResponse",
+        "type": "object"
+      },
+      "RetrievalContextLimitsResponse": {
+        "properties": {
+          "max_item_characters": {
+            "title": "Max Item Characters",
+            "type": "integer"
+          },
+          "max_items": {
+            "title": "Max Items",
+            "type": "integer"
+          },
+          "max_total_characters": {
+            "title": "Max Total Characters",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_items",
+          "max_total_characters",
+          "max_item_characters"
+        ],
+        "title": "RetrievalContextLimitsResponse",
+        "type": "object"
+      },
+      "RetrievalContextResponse": {
+        "properties": {
+          "character_count": {
+            "title": "Character Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalContextItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/RetrievalContextLimitsResponse"
+          },
+          "omitted_candidate_count": {
+            "title": "Omitted Candidate Count",
+            "type": "integer"
+          },
+          "trust": {
+            "$ref": "#/components/schemas/ContextTrust"
+          }
+        },
+        "required": [
+          "items",
+          "limits",
+          "character_count",
+          "omitted_candidate_count",
+          "trust"
+        ],
+        "title": "RetrievalContextResponse",
+        "type": "object"
+      },
+      "RetrievalDiagnosticsResponse": {
+        "properties": {
+          "context_character_count": {
+            "minimum": 0.0,
+            "title": "Context Character Count",
+            "type": "integer"
+          },
+          "context_item_count": {
+            "minimum": 0.0,
+            "title": "Context Item Count",
+            "type": "integer"
+          },
+          "deduplicated_source_count": {
+            "minimum": 0.0,
+            "title": "Deduplicated Source Count",
+            "type": "integer"
+          },
+          "filtered_out_candidate_count": {
+            "minimum": 0.0,
+            "title": "Filtered Out Candidate Count",
+            "type": "integer"
+          },
+          "fused_candidate_count": {
+            "minimum": 0.0,
+            "title": "Fused Candidate Count",
+            "type": "integer"
+          },
+          "hard_scope_filter_applied": {
+            "const": true,
+            "default": true,
+            "title": "Hard Scope Filter Applied",
+            "type": "boolean"
+          },
+          "lexical_candidate_count": {
+            "minimum": 0.0,
+            "title": "Lexical Candidate Count",
+            "type": "integer"
+          },
+          "omitted_fused_candidate_count": {
+            "minimum": 0.0,
+            "title": "Omitted Fused Candidate Count",
+            "type": "integer"
+          },
+          "vector_candidate_count": {
+            "minimum": 0.0,
+            "title": "Vector Candidate Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lexical_candidate_count",
+          "vector_candidate_count",
+          "filtered_out_candidate_count",
+          "fused_candidate_count",
+          "deduplicated_source_count",
+          "context_item_count",
+          "context_character_count",
+          "omitted_fused_candidate_count"
+        ],
+        "title": "RetrievalDiagnosticsResponse",
+        "type": "object"
+      },
+      "RetrievalExploreLimitsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Candidate Limit",
+            "type": "integer"
+          },
+          "max_context_characters": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Max Context Characters",
+            "type": "integer"
+          },
+          "max_context_item_characters": {
+            "maximum": 20000.0,
+            "minimum": 1.0,
+            "title": "Max Context Item Characters",
+            "type": "integer"
+          },
+          "max_context_items": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Context Items",
+            "type": "integer"
+          },
+          "top_k": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_limit",
+          "top_k",
+          "max_context_items",
+          "max_context_characters",
+          "max_context_item_characters"
+        ],
+        "title": "RetrievalExploreLimitsRequest",
+        "type": "object"
+      },
+      "RetrievalExploreRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "embedding_config": {
+            "$ref": "#/components/schemas/EmbeddingConfigRequest"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/RetrievalExploreLimitsRequest"
+          },
+          "query": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RetrievalScopeRequest"
+          }
+        },
+        "required": [
+          "query",
+          "scope",
+          "embedding_config",
+          "limits"
+        ],
+        "title": "RetrievalExploreRequest",
+        "type": "object"
+      },
+      "RetrievalExploreResponse": {
+        "properties": {
+          "channels": {
+            "$ref": "#/components/schemas/RetrievalChannelsResponse"
+          },
+          "context": {
+            "$ref": "#/components/schemas/RetrievalContextResponse"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/RetrievalDiagnosticsResponse"
+          },
+          "embedding_config": {
+            "$ref": "#/components/schemas/EmbeddingConfigResponse"
+          },
+          "fused_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/FusedRetrievalCandidateResponse"
+            },
+            "title": "Fused Candidates",
+            "type": "array"
+          },
+          "latency_ms": {
+            "$ref": "#/components/schemas/RetrievalLatencyResponse"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/RetrievalExploreLimitsRequest"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RetrievalScopeResponse"
+          }
+        },
+        "required": [
+          "query",
+          "scope",
+          "embedding_config",
+          "limits",
+          "channels",
+          "fused_candidates",
+          "context",
+          "latency_ms",
+          "diagnostics"
+        ],
+        "title": "RetrievalExploreResponse",
+        "type": "object"
+      },
+      "RetrievalLatencyResponse": {
+        "properties": {
+          "candidate_retrieval_ms": {
+            "minimum": 0.0,
+            "title": "Candidate Retrieval Ms",
+            "type": "number"
+          },
+          "context_building_ms": {
+            "minimum": 0.0,
+            "title": "Context Building Ms",
+            "type": "number"
+          },
+          "embedding_ms": {
+            "minimum": 0.0,
+            "title": "Embedding Ms",
+            "type": "number"
+          },
+          "fusion_ms": {
+            "minimum": 0.0,
+            "title": "Fusion Ms",
+            "type": "number"
+          },
+          "total_ms": {
+            "minimum": 0.0,
+            "title": "Total Ms",
+            "type": "number"
+          },
+          "validation_ms": {
+            "minimum": 0.0,
+            "title": "Validation Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "validation_ms",
+          "embedding_ms",
+          "candidate_retrieval_ms",
+          "fusion_ms",
+          "context_building_ms",
+          "total_ms"
+        ],
+        "title": "RetrievalLatencyResponse",
+        "type": "object"
+      },
+      "RetrievalProvenanceResponse": {
+        "properties": {
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_block_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Block Id"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_document_id",
+          "page_number",
+          "source_block_id"
+        ],
+        "title": "RetrievalProvenanceResponse",
+        "type": "object"
+      },
+      "RetrievalScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "exam_id": {
+            "format": "uuid",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "grade": {
+            "const": 5,
+            "title": "Grade",
+            "type": "integer"
+          },
+          "medium_id": {
+            "format": "uuid",
+            "title": "Medium Id",
+            "type": "string"
+          },
+          "taxonomy": {
+            "$ref": "#/components/schemas/RetrievalTaxonomyScopeRequest"
+          }
+        },
+        "required": [
+          "grade",
+          "exam_id",
+          "medium_id",
+          "curriculum_version_id",
+          "taxonomy"
+        ],
+        "title": "RetrievalScopeRequest",
+        "type": "object"
+      },
+      "RetrievalScopeResponse": {
+        "properties": {
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "exam_id": {
+            "format": "uuid",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "medium_id": {
+            "format": "uuid",
+            "title": "Medium Id",
+            "type": "string"
+          },
+          "taxonomy": {
+            "$ref": "#/components/schemas/RetrievalTaxonomyScopeResponse"
+          }
+        },
+        "required": [
+          "grade",
+          "exam_id",
+          "medium_id",
+          "curriculum_version_id",
+          "taxonomy"
+        ],
+        "title": "RetrievalScopeResponse",
+        "type": "object"
+      },
+      "RetrievalTaxonomyScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "competency_id"
+        ],
+        "title": "RetrievalTaxonomyScopeRequest",
+        "type": "object"
+      },
+      "RetrievalTaxonomyScopeResponse": {
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "competency_id",
+          "skill_id",
+          "sub_skill_id",
+          "learning_concept_id"
+        ],
+        "title": "RetrievalTaxonomyScopeResponse",
         "type": "object"
       },
       "ReviewState": {
@@ -1424,6 +3195,65 @@
           "expected_version"
         ],
         "title": "ReviewedTextUpdate",
+        "type": "object"
+      },
+      "RollingBacktestResponse": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/BacktestAggregateResponse"
+          },
+          "backtest_version": {
+            "title": "Backtest Version",
+            "type": "string"
+          },
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/PracticeRecommendationResponse"
+          },
+          "recommended_run": {
+            "$ref": "#/components/schemas/PracticePriorityRunResponse"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceVersionResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestWindowResponse"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "backtest_version",
+          "config_fingerprint",
+          "input_fingerprint",
+          "sources",
+          "limitations",
+          "windows",
+          "aggregate",
+          "recommendation",
+          "recommended_run"
+        ],
+        "title": "RollingBacktestResponse",
         "type": "object"
       },
       "SourceDocumentResponse": {
@@ -1734,6 +3564,79 @@
         "title": "SourcePageResponse",
         "type": "object"
       },
+      "SourceVersionResponse": {
+        "properties": {
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "source_version": {
+            "title": "Source Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_document_id",
+          "source_version"
+        ],
+        "title": "SourceVersionResponse",
+        "type": "object"
+      },
+      "SyllabusSkillResponse": {
+        "properties": {
+          "balance_weight": {
+            "title": "Balance Weight",
+            "type": "integer"
+          },
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "skill_id": {
+            "format": "uuid",
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "competency_id",
+          "skill_id",
+          "title",
+          "balance_weight"
+        ],
+        "title": "SyllabusSkillResponse",
+        "type": "object"
+      },
+      "SynchronousLimitsResponse": {
+        "properties": {
+          "maximum_records": {
+            "title": "Maximum Records",
+            "type": "integer"
+          },
+          "maximum_years": {
+            "title": "Maximum Years",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maximum_records",
+          "maximum_years"
+        ],
+        "title": "SynchronousLimitsResponse",
+        "type": "object"
+      },
       "TaxonomyLevel": {
         "enum": [
           "competency",
@@ -1998,6 +3901,195 @@
         "summary": "List Admin Audit Events",
         "tags": [
           "admin-audit"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/analytics/runs": {
+      "get": {
+        "operationId": "list_analytics_runs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AnalyticsRunSummaryResponse"
+                  },
+                  "title": "Response List Analytics Runs",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List persisted historical analysis runs",
+        "tags": [
+          "admin-analytics"
+        ]
+      },
+      "post": {
+        "operationId": "create_analytics_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyticsRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing identical analytics run returned"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsRunResponse"
+                }
+              }
+            },
+            "description": "Deterministic analytics run persisted"
+          },
+          "409": {
+            "description": "Analytics fingerprint conflict"
+          },
+          "422": {
+            "description": "Insufficient or out-of-bounds reviewed evidence"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run bounded historical analysis and held-out practice evaluation",
+        "tags": [
+          "admin-analytics"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/analytics/runs/{run_id}": {
+      "get": {
+        "operationId": "get_analytics_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one persisted historical analysis run",
+        "tags": [
+          "admin-analytics"
         ]
       }
     },
@@ -3646,6 +5738,51 @@
         "summary": "Deactivate Medium",
         "tags": [
           "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/retrieval/explore": {
+      "post": {
+        "operationId": "explore_retrieval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrievalExploreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalExploreResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Embedding configuration or exact retrieval scope not found"
+          },
+          "422": {
+            "description": "Malformed or internally inconsistent retrieval request"
+          },
+          "503": {
+            "description": "Configured embedding provider is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Explore hard-scoped hybrid retrieval evidence",
+        "tags": [
+          "admin-retrieval"
         ]
       }
     },
