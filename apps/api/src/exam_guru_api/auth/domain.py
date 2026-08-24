@@ -16,6 +16,9 @@ class Permission(StrEnum):
     EXTRACTION_TRIGGER = "extraction:trigger"
     CONTENT_REVIEW = "content:review"
     SOURCE_TRUST = "source:trust"
+    KNOWLEDGE_READ = "knowledge:read"
+    KNOWLEDGE_WRITE = "knowledge:write"
+    RETRIEVAL_READ = "retrieval:read"
     PAPER_PUBLISH = "paper:publish"
 
 
@@ -25,6 +28,8 @@ _ROLE_PERMISSIONS = {
         {
             Permission.TAXONOMY_READ,
             Permission.SOURCE_READ,
+            Permission.KNOWLEDGE_READ,
+            Permission.RETRIEVAL_READ,
             Permission.CONTENT_REVIEW,
         }
     ),
