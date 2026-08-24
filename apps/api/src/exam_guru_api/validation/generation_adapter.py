@@ -7,6 +7,11 @@ missing policy.  Retrieved text remains untrusted ``GroundingSource`` data; only
 identifier and immutable provenance are used to construct candidate references.
 """
 
+import hashlib
+import json
+from dataclasses import asdict
+from uuid import UUID
+
 from exam_guru_api.generation.domain import (
     CandidateDisposition,
     ContextProvenance,
@@ -154,6 +159,42 @@ def _canonical_result(value: object) -> GenerationResult:
         raise GenerationAdapterError("generation result is not canonical") from error
 
 
+def _canonical_json_default(value: object) -> str:
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"unsupported canonical generation value: {type(value).__name__}")
+
+
+def _canonical_result_fingerprint(result: GenerationResult) -> str:
+    try:
+        payload = json.dumps(
+            asdict(result),
+            default=_canonical_json_default,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as error:
+        raise GenerationAdapterError(
+            "generation result cannot be canonically fingerprinted"
+        ) from error
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def generation_result_fingerprint(result: GenerationResult) -> str:
+    """Return the canonical SHA-256 identity of one exact generation result.
+
+    The digest binds generation/attempt identity, the complete canonical blueprint
+    version and slot, structured question content, ordered context and provenance,
+    version route, request parameters, accounting, and the validation-only
+    disposition.  Only the digest crosses the validation/report boundary; raw
+    retrieved source text never becomes report evidence.
+    """
+
+    return _canonical_result_fingerprint(_canonical_result(result))
+
+
 def _require_matching_requirements(
     result: GenerationResult,
     requirements: object,
@@ -294,7 +335,7 @@ def adapt_generation_result(
     )
     try:
         return ValidationInput(
-            candidate_id=str(canonical.request.identity.attempt_id),
+            candidate_id=_canonical_result_fingerprint(canonical),
             candidate=_candidate(canonical),
             blueprint=canonical_requirements,
             grounding_sources=grounding_sources,
@@ -312,5 +353,6 @@ generation_result_to_validation_input = adapt_generation_result
 __all__ = [
     "GenerationAdapterError",
     "adapt_generation_result",
+    "generation_result_fingerprint",
     "generation_result_to_validation_input",
 ]

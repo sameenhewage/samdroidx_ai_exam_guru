@@ -31,6 +31,7 @@ from exam_guru_api.validation import (
     GenerationAdapterError,
     ValidationInput,
     adapt_generation_result,
+    generation_result_fingerprint,
     validate_question,
 )
 from tests.test_blueprint_domain import make_uniform_specification
@@ -220,7 +221,8 @@ def test_adapter_preserves_canonical_question_blueprint_grounding_and_lineage() 
     )
 
     assert isinstance(validation_input, ValidationInput)
-    assert validation_input.candidate_id == str(result.request.identity.attempt_id)
+    assert validation_input.candidate_id == generation_result_fingerprint(result)
+    assert len(validation_input.candidate_id) == 64
     assert validation_input.blueprint is requirements
     assert validation_input.blueprint.slot_id == result.request.blueprint_slot.slot_id
     assert (
@@ -286,6 +288,114 @@ def test_adapter_preserves_canonical_question_blueprint_grounding_and_lineage() 
     assert sources["context-b"].source_version == "reviewed-v3"
     assert sources["context-b"].page_number == 7
     assert sources["context-b"].chunk_id == "chunk-b"
+
+
+def _alter_context(
+    result: GenerationResult,
+    *,
+    text: str | None = None,
+    source_version: str | None = None,
+) -> GenerationResult:
+    first, *remaining = result.request.context.items
+    provenance = replace(
+        first.provenance,
+        source_version=source_version or first.provenance.source_version,
+    )
+    context = ProvenanceContext(
+        items=(
+            replace(first, text=text or first.text, provenance=provenance),
+            *remaining,
+        )
+    )
+    return replace(result, request=replace(result.request, context=context))
+
+
+@pytest.mark.parametrize(
+    ("route", "alter"),
+    [
+        (
+            "identity",
+            lambda result: replace(
+                result,
+                request=replace(
+                    result.request,
+                    identity=replace(
+                        result.request.identity,
+                        attempt_id=UUID("00000000-0000-0000-0000-000000000799"),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "blueprint-version",
+            lambda result: replace(
+                result,
+                request=replace(
+                    result.request,
+                    blueprint_version=replace(
+                        result.request.blueprint_version,
+                        config_version="config-v99",
+                    ),
+                ),
+            ),
+        ),
+        (
+            "blueprint-slot",
+            lambda result: replace(
+                result,
+                request=replace(
+                    result.request,
+                    blueprint_slot=replace(
+                        result.request.blueprint_slot,
+                        slot_id="paper-01-section-a-q99",
+                    ),
+                ),
+            ),
+        ),
+        (
+            "structured-content",
+            lambda result: replace(
+                result,
+                question=replace(result.question, stem="What is 26 + 16?"),
+            ),
+        ),
+        (
+            "context-text",
+            lambda result: _alter_context(
+                result,
+                text="Regrouping the ones gives one additional ten.",
+            ),
+        ),
+        (
+            "context-provenance",
+            lambda result: _alter_context(result, source_version="reviewed-v99"),
+        ),
+        (
+            "version-route",
+            lambda result: replace(
+                result,
+                request=replace(
+                    result.request,
+                    versions=replace(
+                        result.request.versions,
+                        retrieval_version="hybrid-v99",
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_generation_fingerprint_binds_the_exact_validation_subject(
+    route: str,
+    alter: Callable[[GenerationResult], GenerationResult],
+) -> None:
+    result = _result()
+
+    fingerprint = generation_result_fingerprint(result)
+    altered_fingerprint = generation_result_fingerprint(alter(result))
+
+    assert altered_fingerprint != fingerprint, route
+    assert generation_result_fingerprint(_result()) == fingerprint
 
 
 @pytest.mark.parametrize(
@@ -379,6 +489,19 @@ def _with_blank_generated_stem() -> GenerationResult:
     result = _result()
     object.__setattr__(result.question, "stem", "")
     return result
+
+
+def test_fingerprint_fails_closed_for_a_tampered_nested_blueprint_value() -> None:
+    result = _result()
+    blueprint_version = replace(result.request.blueprint_version)
+    object.__setattr__(blueprint_version, "config_version", object())
+    tampered = replace(
+        result,
+        request=replace(result.request, blueprint_version=blueprint_version),
+    )
+
+    with pytest.raises(GenerationAdapterError, match="canonically fingerprinted"):
+        generation_result_fingerprint(tampered)
 
 
 @pytest.mark.parametrize(

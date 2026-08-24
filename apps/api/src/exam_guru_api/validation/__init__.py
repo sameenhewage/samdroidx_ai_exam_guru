@@ -24,6 +24,7 @@ from exam_guru_api.validation.domain import (
 from exam_guru_api.validation.generation_adapter import (
     GenerationAdapterError,
     adapt_generation_result,
+    generation_result_fingerprint,
     generation_result_to_validation_input,
 )
 from exam_guru_api.validation.pipeline import (
@@ -82,6 +83,7 @@ __all__ = [
     "build_default_pipeline",
     "canonical_text_sha256",
     "canonicalize_text",
+    "generation_result_fingerprint",
     "generation_result_to_validation_input",
     "validate_question",
 ]

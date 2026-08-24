@@ -1,5 +1,13 @@
 """Human review and immutable paper-publishing domain foundation."""
 
+from exam_guru_api.papers.adapters import (
+    GenerationValidationAdapterError,
+    GenerationValidationMismatch,
+    GenerationValidationMismatchError,
+    adapt_generation_validation,
+    build_generation_validation_input,
+    generation_result_fingerprint,
+)
 from exam_guru_api.papers.domain import (
     ArchivedPaperSnapshot,
     AssemblyViolation,
@@ -59,6 +67,9 @@ __all__ = [
     "ConcurrentVersionError",
     "EditCandidateCommand",
     "GenerationLineage",
+    "GenerationValidationAdapterError",
+    "GenerationValidationMismatch",
+    "GenerationValidationMismatchError",
     "InvalidCandidateTransitionError",
     "InvalidPaperTransitionError",
     "PaperAssemblyError",
@@ -83,10 +94,13 @@ __all__ = [
     "StartCandidateReviewCommand",
     "ValidationEvidence",
     "ValidationNotPassedError",
+    "adapt_generation_validation",
     "approve_candidate",
     "assemble_paper_draft",
+    "build_generation_validation_input",
     "create_generated_candidate",
     "edit_candidate",
+    "generation_result_fingerprint",
     "record_candidate_validation",
     "reject_candidate",
     "start_candidate_review",
