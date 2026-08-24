@@ -225,6 +225,8 @@ async def seed_trusted_source(
         document.extracted_character_count = len(text)
         document.native_text_page_ratio = 1.0
         document.needs_ocr = False
+        document.ocr_page_count = 0
+        document.extraction_config = {}
         document.extraction_completed_at = datetime.now(UTC)
         await session.flush()
         document.extraction_status = ExtractionStatus.IN_REVIEW

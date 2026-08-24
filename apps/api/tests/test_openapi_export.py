@@ -18,6 +18,13 @@ def test_openapi_export_is_deterministic(tmp_path: Path) -> None:
     schema = json.loads(first_export)
     assert schema["info"]["title"] == "AI Exam Guru API"
     assert "/api/v1/health/live" in schema["paths"]
+    document_properties = schema["components"]["schemas"]["SourceDocumentResponse"]["properties"]
+    page_properties = schema["components"]["schemas"]["SourcePageResponse"]["properties"]
+    block_properties = schema["components"]["schemas"]["ExtractedBlockResponse"]["properties"]
+    assert {"ocr_page_count", "extraction_config"} <= document_properties.keys()
+    assert {"extraction_config", "confidence"} <= page_properties.keys()
+    assert {"extraction_config", "confidence"} <= block_properties.keys()
+    assert block_properties["bbox"]["anyOf"][1] == {"type": "null"}
 
 
 def test_openapi_export_cli_accepts_an_output_path(

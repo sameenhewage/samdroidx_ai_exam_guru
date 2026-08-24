@@ -345,6 +345,23 @@ def test_only_requested_pages_are_rendered_and_keep_source_page_numbers(tmp_path
     ]
 
 
+def test_page_limit_caps_selected_subset_not_total_document_pages(tmp_path: Path) -> None:
+    runner = RecordingRunner(tsv=EMPTY_TSV)
+    adapter = adapter_with(runner, max_pages=2, batch_size=2)
+
+    result = adapter.extract(
+        request_for(pdf_bytes(20), page_numbers=(2, 20)),
+        temporary_directory=tmp_path,
+    )
+
+    assert tuple(page.page_number for page in result.pages) == (2, 20)
+    assert [Path(call.argv[1]).name for call in runner.calls[2:]] == [
+        "page-000002.png",
+        "page-000020.png",
+    ]
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_concurrent_calls_use_isolated_workspaces_and_cleanup(tmp_path: Path) -> None:
     barrier = threading.Barrier(2)
     runner = RecordingRunner(tsv=EMPTY_TSV)

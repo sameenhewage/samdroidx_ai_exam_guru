@@ -16,6 +16,8 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.extraction import (
+    ExtractedBlock,
+    ExtractedPage,
     ExtractionError,
     ExtractionViolation,
     NativeExtractionResult,
@@ -25,12 +27,14 @@ from exam_guru_api.documents.extraction_service import (
     ConcurrentReviewVersionError,
     DocumentExtractionService,
     ExtractionPersistenceResult,
+    OCRPipelineError,
 )
 from exam_guru_api.documents.models import (
     ExtractedBlockModel,
     SourceDocumentModel,
     SourcePageModel,
 )
+from exam_guru_api.documents.ocr import OCRBlock, OCRPage, OCRRequest, OCRResult
 from exam_guru_api.infrastructure.migrations import (
     assert_database_schema_current,
     upgrade_database,
@@ -94,6 +98,92 @@ class BarrierExtractor(CountingExtractor):
         self.calls += 1
         self._barrier.wait(timeout=10)
         return self._delegate.extract(data)
+
+
+class StaticNativeResultExtractor:
+    def __init__(self, result: NativeExtractionResult) -> None:
+        self.result = result
+        self.calls = 0
+
+    def extract(self, _data: bytes) -> NativeExtractionResult:
+        self.calls += 1
+        return self.result
+
+
+class RecordingFakeOCR:
+    def __init__(self, result: OCRResult) -> None:
+        self.result = result
+        self.requests: list[OCRRequest] = []
+
+    def extract(self, request: OCRRequest) -> OCRResult:
+        self.requests.append(request)
+        return self.result
+
+
+class FailOnceOCR(RecordingFakeOCR):
+    def extract(self, request: OCRRequest) -> OCRResult:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            raise RuntimeError("provider output and secrets must never be persisted")
+        return self.result
+
+
+class BarrierFakeOCR(RecordingFakeOCR):
+    def __init__(self, result: OCRResult) -> None:
+        super().__init__(result)
+        self._barrier = Barrier(2)
+
+    def extract(self, request: OCRRequest) -> OCRResult:
+        self.requests.append(request)
+        self._barrier.wait(timeout=10)
+        return self.result
+
+
+def mixed_native_result() -> NativeExtractionResult:
+    first_block = ExtractedBlock(
+        page_number=1,
+        reading_order=0,
+        bbox=(1.0, 2.0, 30.0, 40.0),
+        text="native first",
+    )
+    pages = (
+        ExtractedPage(page_number=1, text="native first", blocks=(first_block,)),
+        ExtractedPage(page_number=2, text="", blocks=()),
+    )
+    return NativeExtractionResult(
+        engine="pymupdf",
+        engine_version="1.28.2",
+        pages=pages,
+        page_count=2,
+        character_count=len("native first"),
+        native_text_page_ratio=0.5,
+        needs_ocr=True,
+        config={"max_pages": 10, "sort_blocks": True},
+    )
+
+
+def fake_ocr_result() -> OCRResult:
+    return OCRResult(
+        engine="fixture-ocr",
+        engine_version="2.1",
+        config={"dpi": 300, "language": "sin+eng", "output_format": "tsv"},
+        pages=(
+            OCRPage(
+                page_number=2,
+                text="OCR second",
+                blocks=(
+                    OCRBlock(
+                        page_number=2,
+                        reading_order=0,
+                        text="OCR second",
+                        bbox=None,
+                        confidence=0.91,
+                    ),
+                ),
+                confidence=0.91,
+            ),
+        ),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -258,6 +348,15 @@ def test_native_extraction_persists_ordered_provenance_metrics_and_is_idempotent
         )
         assert persisted_document.native_text_page_ratio == 1.0
         assert persisted_document.needs_ocr is False
+        assert persisted_document.ocr_page_count == 0
+        assert persisted_document.extraction_config == {
+            "mode": "native",
+            "native": {
+                "config": {"max_pages": 10, "sort_blocks": True},
+                "engine": "pymupdf",
+                "version": persisted_document.extractor_version,
+            },
+        }
         assert persisted_document.extraction_failure_code is None
         assert persisted_document.extraction_started_at is not None
         assert persisted_document.extraction_completed_at is not None
@@ -266,6 +365,10 @@ def test_native_extraction_persists_ordered_provenance_metrics_and_is_idempotent
         assert all(page.source_document_id == document_id for page in pages)
         assert all(page.extractor == "pymupdf" for page in pages)
         assert all(page.extractor_version == persisted_document.extractor_version for page in pages)
+        assert all(
+            page.extraction_config == {"max_pages": 10, "sort_blocks": True} for page in pages
+        )
+        assert all(page.confidence is None for page in pages)
         assert all(page.character_count == len(page.raw_text) for page in pages)
         assert all(page.block_count == 1 for page in pages)
         assert [page.version for page in pages] == [1, 0]
@@ -276,9 +379,13 @@ def test_native_extraction_persists_ordered_provenance_metrics_and_is_idempotent
         assert all(block.source_document_id == document_id for block in blocks)
         assert all(block.source_page_id == pages[block.page_number - 1].id for block in blocks)
         assert all(block.extractor == "pymupdf" for block in blocks)
+        assert all(
+            block.extraction_config == {"max_pages": 10, "sort_blocks": True} for block in blocks
+        )
+        assert all(block.confidence is None for block in blocks)
         assert all(block.character_count == len(block.raw_text) for block in blocks)
         assert [block.version for block in blocks] == [1, 0]
-        assert all(len(block.bbox) == 4 for block in blocks)
+        assert all(block.bbox is not None and len(block.bbox) == 4 for block in blocks)
         assert blocks[0].raw_text == "Grade 5 first page"
         assert blocks[0].reviewed_text == "Reviewed Grade 5 first page"
         assert actions == [
@@ -608,6 +715,8 @@ def test_database_rejects_noncontiguous_block_reading_order(
             document.extracted_character_count = 4
             document.native_text_page_ratio = 1.0
             document.needs_ocr = False
+            document.ocr_page_count = 0
+            document.extraction_config = {}
             document.extraction_completed_at = datetime.now(UTC)
             document.extraction_status = ExtractionStatus.EXTRACTED
             with pytest.raises(IntegrityError):
@@ -666,6 +775,333 @@ def test_database_rejects_invalid_state_skips_and_provenance_mutation(
             )
             assert block is not None
             block.raw_text = "silently rewritten"
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+        await engine.dispose()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_hybrid_ocr_pipeline_persists_exact_provenance_audit_and_idempotency(
+    extraction_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        data = pdf_bytes("storage identity fixture", "second")
+        document_id = UUID(int=81_007)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        extractor = StaticNativeResultExtractor(mixed_native_result())
+        ocr = RecordingFakeOCR(fake_ocr_result())
+
+        async with sessions() as session:
+            document = await add_uploaded_document(
+                session,
+                document_id=document_id,
+                filename="hybrid-source.pdf",
+                data=data,
+            )
+            storage = MemoryObjectStorage({document.object_key: data})
+            service = DocumentExtractionService(session, storage, extractor, ocr_port=ocr)
+            first = await service.extract_native(document_id, actor_id=EXTRACTION_ACTOR_ID)
+            duplicate = await service.extract_native(document_id, actor_id=EXTRACTION_ACTOR_ID)
+
+        async with sessions() as session:
+            persisted_document = await session.get(SourceDocumentModel, document_id)
+            pages = list(
+                await session.scalars(
+                    select(SourcePageModel)
+                    .where(SourcePageModel.source_document_id == document_id)
+                    .order_by(SourcePageModel.page_number)
+                )
+            )
+            blocks = list(
+                await session.scalars(
+                    select(ExtractedBlockModel)
+                    .where(ExtractedBlockModel.source_document_id == document_id)
+                    .order_by(ExtractedBlockModel.page_number, ExtractedBlockModel.reading_order)
+                )
+            )
+            extracted_event = await session.scalar(
+                select(AdminAuditEventModel).where(
+                    AdminAuditEventModel.resource_id == document_id,
+                    AdminAuditEventModel.action == "source_document.extracted",
+                )
+            )
+        await engine.dispose()
+
+        assert first.deduplicated is False
+        assert duplicate.deduplicated is True
+        assert extractor.calls == 1
+        assert len(ocr.requests) == 1
+        assert ocr.requests[0].source_document_id == str(document_id)
+        assert ocr.requests[0].source_checksum_sha256 == hashlib.sha256(data).hexdigest()
+        assert ocr.requests[0].content == data
+        assert ocr.requests[0].page_numbers == (2,)
+
+        assert persisted_document is not None
+        assert persisted_document.extractor == "hybrid"
+        assert persisted_document.extractor_version == "1"
+        assert persisted_document.ocr_page_count == 1
+        assert persisted_document.needs_ocr is False
+        assert persisted_document.extraction_config == {
+            "mode": "hybrid",
+            "native": {
+                "config": {"max_pages": 10, "sort_blocks": True},
+                "engine": "pymupdf",
+                "version": "1.28.2",
+            },
+            "ocr": {
+                "config": {"dpi": 300, "language": "sin+eng", "output_format": "tsv"},
+                "engine": "fixture-ocr",
+                "version": "2.1",
+            },
+            "ocr_page_numbers": [2],
+        }
+        assert [(item.page_number, item.extractor) for item in pages] == [
+            (1, "pymupdf"),
+            (2, "fixture-ocr"),
+        ]
+        assert pages[0].extraction_config == {"max_pages": 10, "sort_blocks": True}
+        assert pages[0].confidence is None
+        assert pages[1].extraction_config == {
+            "dpi": 300,
+            "language": "sin+eng",
+            "output_format": "tsv",
+        }
+        assert pages[1].confidence == pytest.approx(0.91)
+        assert [(item.page_number, item.extractor) for item in blocks] == [
+            (1, "pymupdf"),
+            (2, "fixture-ocr"),
+        ]
+        assert blocks[1].bbox is None
+        assert blocks[1].confidence == pytest.approx(0.91)
+        assert blocks[1].extraction_config == pages[1].extraction_config
+
+        assert extracted_event is not None
+        assert extracted_event.payload["mode"] == "hybrid"
+        assert extracted_event.payload["ocr_page_count"] == 1
+        assert extracted_event.payload["ocr_engine"] == "fixture-ocr"
+        assert extracted_event.payload["ocr_engine_version"] == "2.1"
+        assert "OCR second" not in repr(extracted_event.payload)
+        assert "sin+eng" not in repr(extracted_event.payload)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_concurrent_hybrid_ocr_calls_serialize_to_one_complete_result(
+    extraction_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        data = pdf_bytes("storage identity fixture", "second")
+        document_id = UUID(int=81_010)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        extractor = StaticNativeResultExtractor(mixed_native_result())
+        ocr = BarrierFakeOCR(fake_ocr_result())
+
+        async with sessions() as session:
+            document = await add_uploaded_document(
+                session,
+                document_id=document_id,
+                filename="concurrent-hybrid-source.pdf",
+                data=data,
+            )
+            object_key = document.object_key
+
+        async def extract_once(actor_id: UUID) -> ExtractionPersistenceResult:
+            async with sessions() as session:
+                return await DocumentExtractionService(
+                    session,
+                    MemoryObjectStorage({object_key: data}),
+                    extractor,
+                    ocr_port=ocr,
+                ).extract_native(document_id, actor_id=actor_id)
+
+        results = await asyncio.gather(
+            extract_once(UUID(int=8_021)),
+            extract_once(UUID(int=8_022)),
+        )
+
+        async with sessions() as session:
+            persisted_document = await session.get(SourceDocumentModel, document_id)
+            page_count = await session.scalar(
+                select(func.count(SourcePageModel.id)).where(
+                    SourcePageModel.source_document_id == document_id
+                )
+            )
+            block_count = await session.scalar(
+                select(func.count(ExtractedBlockModel.id)).where(
+                    ExtractedBlockModel.source_document_id == document_id
+                )
+            )
+            extracted_event_count = await session.scalar(
+                select(func.count(AdminAuditEventModel.id)).where(
+                    AdminAuditEventModel.resource_id == document_id,
+                    AdminAuditEventModel.action == "source_document.extracted",
+                )
+            )
+        await engine.dispose()
+
+        assert all(result.status is ExtractionStatus.EXTRACTED for result in results)
+        assert sorted(result.deduplicated for result in results) == [False, True]
+        assert extractor.calls == 2
+        assert len(ocr.requests) == 2
+        assert persisted_document is not None
+        assert persisted_document.extraction_attempt_count == 2
+        assert persisted_document.ocr_page_count == 1
+        assert page_count == block_count == 2
+        assert extracted_event_count == 1
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_ocr_failure_rolls_back_all_rows_and_manual_retry_recovers(
+    extraction_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        data = pdf_bytes("storage identity fixture", "second")
+        document_id = UUID(int=81_008)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        extractor = StaticNativeResultExtractor(mixed_native_result())
+        ocr = FailOnceOCR(fake_ocr_result())
+
+        async with sessions() as session:
+            document = await add_uploaded_document(
+                session,
+                document_id=document_id,
+                filename="ocr-retry-source.pdf",
+                data=data,
+            )
+            storage = MemoryObjectStorage({document.object_key: data})
+            with pytest.raises(OCRPipelineError) as raised:
+                await DocumentExtractionService(
+                    session,
+                    storage,
+                    extractor,
+                    ocr_port=ocr,
+                ).extract_native(document_id, actor_id=EXTRACTION_ACTOR_ID)
+            assert raised.value.failure_code == "ocr_process"
+
+        async with sessions() as session:
+            failed = await session.get(SourceDocumentModel, document_id)
+            page_count = await session.scalar(
+                select(func.count(SourcePageModel.id)).where(
+                    SourcePageModel.source_document_id == document_id
+                )
+            )
+            block_count = await session.scalar(
+                select(func.count(ExtractedBlockModel.id)).where(
+                    ExtractedBlockModel.source_document_id == document_id
+                )
+            )
+            assert failed is not None
+            assert failed.extraction_status is ExtractionStatus.FAILED
+            assert failed.extraction_failure_code == "ocr_process"
+            assert failed.extraction_config is None
+            assert failed.ocr_page_count is None
+            assert page_count == block_count == 0
+
+        async with sessions() as session:
+            failed = await session.get(SourceDocumentModel, document_id)
+            assert failed is not None
+            storage = MemoryObjectStorage({failed.object_key: data})
+            recovered = await DocumentExtractionService(
+                session,
+                storage,
+                extractor,
+                ocr_port=ocr,
+            ).extract_native(document_id, actor_id=EXTRACTION_ACTOR_ID)
+
+        async with sessions() as session:
+            recovered_document = await session.get(SourceDocumentModel, document_id)
+            page_count = await session.scalar(
+                select(func.count(SourcePageModel.id)).where(
+                    SourcePageModel.source_document_id == document_id
+                )
+            )
+            block_count = await session.scalar(
+                select(func.count(ExtractedBlockModel.id)).where(
+                    ExtractedBlockModel.source_document_id == document_id
+                )
+            )
+            failure_event = await session.scalar(
+                select(AdminAuditEventModel).where(
+                    AdminAuditEventModel.resource_id == document_id,
+                    AdminAuditEventModel.action == "source_document.extraction_failed",
+                )
+            )
+        await engine.dispose()
+
+        assert recovered.status is ExtractionStatus.EXTRACTED
+        assert len(ocr.requests) == 2
+        assert recovered_document is not None
+        assert recovered_document.extraction_attempt_count == 2
+        assert recovered_document.extraction_failure_code is None
+        assert page_count == block_count == 2
+        assert failure_event is not None
+        assert failure_event.payload == {"attempt": 1, "failure_code": "ocr_process"}
+        assert "provider output" not in repr(failure_event.payload)
+        assert "secrets" not in repr(failure_event.payload)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("document_integer", "config", "confidence"),
+    [
+        (81_011, {"nested": {"not": "scalar"}}, None),
+        (81_012, {"oversized": "x" * (64 * 1024)}, None),
+        (81_013, {}, 1.01),
+        (81_014, {}, float("nan")),
+    ],
+)
+def test_database_directly_rejects_unbounded_or_invalid_page_provenance(
+    extraction_database_url: str,
+    document_integer: int,
+    config: dict[str, object],
+    confidence: float | None,
+) -> None:
+    async def exercise() -> None:
+        data = pdf_bytes("constraint fixture")
+        document_id = UUID(int=document_integer)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with sessions() as session:
+            document = await add_uploaded_document(
+                session,
+                document_id=document_id,
+                filename=f"constraint-{document_integer}.pdf",
+                data=data,
+            )
+            document.extraction_status = ExtractionStatus.EXTRACTION_PENDING
+            document.extraction_attempt_count = 1
+            document.extraction_started_at = datetime.now(UTC)
+            document.updated_by = EXTRACTION_ACTOR_ID
+            await session.flush()
+            session.add(
+                SourcePageModel(
+                    id=UUID(int=document_integer + 100_000),
+                    source_document_id=document_id,
+                    page_number=1,
+                    extractor="fixture",
+                    extractor_version="1",
+                    extraction_config=config,
+                    confidence=confidence,
+                    raw_text="text",
+                    reviewed_text=None,
+                    character_count=4,
+                    block_count=0,
+                    created_by=EXTRACTION_ACTOR_ID,
+                    updated_by=EXTRACTION_ACTOR_ID,
+                )
+            )
             with pytest.raises(IntegrityError):
                 await session.commit()
 

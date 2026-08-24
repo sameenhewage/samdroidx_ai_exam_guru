@@ -87,6 +87,44 @@ def test_prompt_injection_is_preserved_as_opaque_ocr_data() -> None:
     assert extracted.pages[0].blocks[0].text == PROMPT_INJECTION
 
 
+def test_secret_looking_extracted_text_remains_opaque_document_data() -> None:
+    text = "Vocabulary exercise: api_key password credential token private_key secret."
+
+    extracted = DeterministicFakeOCRAdapter(result_with_text(text)).extract(request())
+
+    assert extracted.pages[0].text == text
+    assert extracted.pages[0].blocks[0].text == text
+
+
+@pytest.mark.parametrize(
+    "forbidden_key",
+    [
+        "secret",
+        "PASSWORD",
+        "database.credential",
+        "access-token",
+        "api_key",
+        "provider.APIKey",
+        "signing/privateKey",
+    ],
+)
+def test_result_rejects_sensitive_config_keys_without_echoing_value(
+    forbidden_key: str,
+) -> None:
+    sensitive_value = "must-never-reach-persisted-provenance"
+
+    with pytest.raises(OCRContractError) as raised:
+        OCRResult(
+            engine="fixture",
+            engine_version="1",
+            config={forbidden_key: sensitive_value},
+            pages=(),
+        )
+
+    assert forbidden_key not in str(raised.value)
+    assert sensitive_value not in str(raised.value)
+
+
 @pytest.mark.parametrize(
     "build",
     [
@@ -174,6 +212,7 @@ def test_ocr_request_rejects_malformed_input(build: Callable[[], object]) -> Non
             text="text",
             confidence=1.01,
         ),
+        lambda: OCRBlock(page_number=1, reading_order=0, text="unsafe\x00text"),
         lambda: OCRPage(page_number=cast(int, "1"), text="text"),
         lambda: OCRPage(page_number=0, text="text"),
         lambda: OCRPage(page_number=1, text=cast(str, None)),
@@ -195,8 +234,17 @@ def test_ocr_request_rejects_malformed_input(build: Callable[[], object]) -> Non
                 OCRBlock(page_number=1, reading_order=0, text="earlier"),
             ),
         ),
+        lambda: OCRPage(page_number=1, text="unsafe\u202etext"),
+        lambda: OCRPage(page_number=1, text="text", confidence=-0.01),
+        lambda: OCRPage(
+            page_number=1,
+            text="different page text",
+            blocks=(OCRBlock(page_number=1, reading_order=0, text="block text"),),
+        ),
         lambda: OCRResult(engine="", engine_version="1", config={}, pages=()),
+        lambda: OCRResult(engine="x" * 65, engine_version="1", config={}, pages=()),
         lambda: OCRResult(engine="fixture", engine_version="", config={}, pages=()),
+        lambda: OCRResult(engine="fixture", engine_version="v" * 129, config={}, pages=()),
         lambda: OCRResult(
             engine="fixture",
             engine_version="1",
@@ -219,6 +267,18 @@ def test_ocr_request_rejects_malformed_input(build: Callable[[], object]) -> Non
             engine="fixture",
             engine_version="1",
             config={"threshold": float("inf")},
+            pages=(),
+        ),
+        lambda: OCRResult(
+            engine="fixture",
+            engine_version="1",
+            config={"oversized": "x" * (64 * 1024)},
+            pages=(),
+        ),
+        lambda: OCRResult(
+            engine="fixture",
+            engine_version="1",
+            config={"unserializable_integer": 10**5_000},
             pages=(),
         ),
         lambda: OCRResult(

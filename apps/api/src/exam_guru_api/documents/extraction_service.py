@@ -1,8 +1,9 @@
 import hashlib
-from collections.abc import Sequence
-from dataclasses import dataclass
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
 from anyio import to_thread
@@ -12,15 +13,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.documents.extraction import (
+    ExtractedBlock,
+    ExtractedPage,
     ExtractionError,
+    ExtractionMode,
     InvalidExtractionTransitionError,
     NativeExtractionResult,
+    ocr_page_numbers,
     transition_extraction_status,
 )
 from exam_guru_api.documents.models import (
     ExtractedBlockModel,
     SourceDocumentModel,
     SourcePageModel,
+)
+from exam_guru_api.documents.ocr import (
+    MAX_OCR_CONFIG_JSON_BYTES,
+    MalformedOCROutputError,
+    OCRBlock,
+    OCRConfigError,
+    OCRContractError,
+    OCRInputError,
+    OCROutputLimitError,
+    OCRPage,
+    OCRPort,
+    OCRProcessError,
+    OCRRequest,
+    OCRResult,
+    OCRTimeoutError,
+    OCRUnavailableError,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 
@@ -39,6 +60,14 @@ class ExtractionSourceIntegrityError(RuntimeError):
     def __init__(self, document_id: UUID) -> None:
         self.document_id = document_id
         super().__init__(f"source object does not match document {document_id}")
+
+
+class OCRPipelineError(RuntimeError):
+    """Sanitized OCR pipeline failure safe for persistence and audit metadata."""
+
+    def __init__(self, failure_code: str) -> None:
+        self.failure_code = failure_code
+        super().__init__(failure_code)
 
 
 class ReviewNotActiveError(RuntimeError):
@@ -91,10 +120,13 @@ class DocumentExtractionService:
         session: AsyncSession,
         object_storage: ObjectStorage,
         extractor: NativeDocumentExtractor,
+        *,
+        ocr_port: OCRPort | None = None,
     ) -> None:
         self._session = session
         self._object_storage = object_storage
         self._extractor = extractor
+        self._ocr_port = ocr_port
 
     async def queue_extraction(
         self,
@@ -157,7 +189,13 @@ class DocumentExtractionService:
                 or hashlib.sha256(data).hexdigest() != claim_or_result.checksum_sha256
             ):
                 raise ExtractionSourceIntegrityError(document_id)
-            extraction = await to_thread.run_sync(self._extractor.extract, data)
+            native_extraction = await to_thread.run_sync(self._extractor.extract, data)
+            extraction = await self._complete_with_ocr(
+                document_id=document_id,
+                checksum_sha256=claim_or_result.checksum_sha256,
+                data=data,
+                native=native_extraction,
+            )
             return await self._persist_result(
                 document_id,
                 extraction,
@@ -167,6 +205,241 @@ class DocumentExtractionService:
             await self._session.rollback()
             await self._record_failure(document_id, error, actor_id=actor_id)
             raise
+
+    async def _complete_with_ocr(
+        self,
+        *,
+        document_id: UUID,
+        checksum_sha256: str,
+        data: bytes,
+        native: NativeExtractionResult,
+    ) -> NativeExtractionResult:
+        selected_pages = ocr_page_numbers(native.pages)
+        native_pages = tuple(self._with_native_provenance(page, native) for page in native.pages)
+        native_manifest = self._bounded_extraction_config(
+            {
+                "mode": ExtractionMode.NATIVE.value,
+                "native": {
+                    "config": dict(native.config),
+                    "engine": native.engine,
+                    "version": native.engine_version,
+                },
+            }
+        )
+        native_result = replace(
+            native,
+            pages=native_pages,
+            needs_ocr=bool(selected_pages),
+            mode=ExtractionMode.NATIVE,
+            ocr_page_count=0,
+            ocr_engine=None,
+            ocr_engine_version=None,
+            ocr_page_numbers=(),
+            extraction_config=native_manifest,
+        )
+        if not selected_pages or self._ocr_port is None:
+            return native_result
+
+        try:
+            request = OCRRequest(
+                source_document_id=str(document_id),
+                source_checksum_sha256=checksum_sha256,
+                content=data,
+                media_type="application/pdf",
+                page_numbers=selected_pages,
+            )
+            raw_result = await to_thread.run_sync(self._ocr_port.extract, request)
+        except Exception as error:
+            raise OCRPipelineError(self._ocr_failure_code(error)) from error
+
+        result = self._validated_ocr_result(raw_result)
+        result_page_numbers = tuple(page.page_number for page in result.pages)
+        if result_page_numbers != selected_pages:
+            raise OCRPipelineError("ocr_result_mismatch")
+        return self._merge_ocr_result(native_result, result)
+
+    @staticmethod
+    def _with_native_provenance(
+        page: ExtractedPage,
+        native: NativeExtractionResult,
+    ) -> ExtractedPage:
+        page_extractor = page.extractor or native.engine
+        page_extractor_version = page.extractor_version or native.engine_version
+        page_config = page.extraction_config or native.config
+        blocks = tuple(
+            replace(
+                block,
+                extractor=block.extractor or page_extractor,
+                extractor_version=block.extractor_version or page_extractor_version,
+                extraction_config=block.extraction_config or page_config,
+            )
+            for block in page.blocks
+        )
+        return replace(
+            page,
+            blocks=blocks,
+            extractor=page_extractor,
+            extractor_version=page_extractor_version,
+            extraction_config=page_config,
+        )
+
+    @classmethod
+    def _merge_ocr_result(
+        cls,
+        native: NativeExtractionResult,
+        ocr: OCRResult,
+    ) -> NativeExtractionResult:
+        selected_pages = tuple(page.page_number for page in ocr.pages)
+        selected_page_set = set(selected_pages)
+        ocr_by_page = {page.page_number: page for page in ocr.pages}
+        merged_pages: list[ExtractedPage] = []
+        for native_page in native.pages:
+            if native_page.page_number not in selected_page_set:
+                merged_pages.append(native_page)
+                continue
+            ocr_page = ocr_by_page[native_page.page_number]
+            blocks = tuple(
+                ExtractedBlock(
+                    page_number=block.page_number,
+                    reading_order=block.reading_order,
+                    bbox=block.bbox,
+                    text=block.text,
+                    extractor=ocr.engine,
+                    extractor_version=ocr.engine_version,
+                    extraction_config=ocr.config,
+                    confidence=block.confidence,
+                )
+                for block in ocr_page.blocks
+            )
+            merged_pages.append(
+                ExtractedPage(
+                    page_number=ocr_page.page_number,
+                    text=ocr_page.text,
+                    blocks=blocks,
+                    largest_image_coverage=native_page.largest_image_coverage,
+                    extractor=ocr.engine,
+                    extractor_version=ocr.engine_version,
+                    extraction_config=ocr.config,
+                    confidence=ocr_page.confidence,
+                )
+            )
+
+        mode = (
+            ExtractionMode.OCR
+            if len(selected_pages) == native.page_count
+            else ExtractionMode.HYBRID
+        )
+        engine = ocr.engine if mode is ExtractionMode.OCR else "hybrid"
+        engine_version = ocr.engine_version if mode is ExtractionMode.OCR else "1"
+        extraction_config = cls._bounded_extraction_config(
+            {
+                "mode": mode.value,
+                "native": {
+                    "config": dict(native.config),
+                    "engine": native.engine,
+                    "version": native.engine_version,
+                },
+                "ocr": {
+                    "config": dict(ocr.config),
+                    "engine": ocr.engine,
+                    "version": ocr.engine_version,
+                },
+                "ocr_page_numbers": list(selected_pages),
+            }
+        )
+        merged_page_tuple = tuple(merged_pages)
+        return NativeExtractionResult(
+            engine=engine,
+            engine_version=engine_version,
+            pages=merged_page_tuple,
+            page_count=native.page_count,
+            character_count=sum(len(page.text) for page in merged_page_tuple),
+            native_text_page_ratio=native.native_text_page_ratio,
+            needs_ocr=any(not ocr_by_page[page_number].text for page_number in selected_pages),
+            image_dominant_page_ratio=native.image_dominant_page_ratio,
+            config=ocr.config if mode is ExtractionMode.OCR else {},
+            mode=mode,
+            ocr_page_count=len(selected_pages),
+            ocr_engine=ocr.engine,
+            ocr_engine_version=ocr.engine_version,
+            ocr_page_numbers=selected_pages,
+            extraction_config=extraction_config,
+        )
+
+    @staticmethod
+    def _validated_ocr_result(result: object) -> OCRResult:
+        if not isinstance(result, OCRResult):
+            raise OCRPipelineError("ocr_malformed_output")
+        try:
+            pages = tuple(
+                OCRPage(
+                    page_number=page.page_number,
+                    text=page.text,
+                    blocks=tuple(
+                        OCRBlock(
+                            page_number=block.page_number,
+                            reading_order=block.reading_order,
+                            text=block.text,
+                            bbox=block.bbox,
+                            confidence=block.confidence,
+                        )
+                        for block in page.blocks
+                    ),
+                    confidence=page.confidence,
+                )
+                for page in result.pages
+            )
+            return OCRResult(
+                engine=result.engine,
+                engine_version=result.engine_version,
+                config=result.config,
+                pages=pages,
+            )
+        except OCRContractError as error:
+            raise OCRPipelineError("ocr_contract") from error
+        except (AttributeError, TypeError, ValueError) as error:
+            raise OCRPipelineError("ocr_malformed_output") from error
+
+    @staticmethod
+    def _bounded_extraction_config(config: Mapping[str, object]) -> dict[str, object]:
+        try:
+            encoded = json.dumps(
+                config,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError, OverflowError) as error:
+            raise OCRPipelineError("ocr_contract") from error
+        if len(encoded) > MAX_OCR_CONFIG_JSON_BYTES:
+            raise OCRPipelineError("ocr_contract")
+        decoded = json.loads(encoded)
+        if not isinstance(decoded, dict):
+            raise OCRPipelineError("ocr_contract")
+        return cast(dict[str, object], decoded)
+
+    @staticmethod
+    def _ocr_failure_code(error: Exception) -> str:
+        if isinstance(error, OCRPipelineError):
+            return error.failure_code
+        if isinstance(error, OCRConfigError):
+            return "ocr_config"
+        if isinstance(error, OCRInputError):
+            return "ocr_input"
+        if isinstance(error, OCRUnavailableError):
+            return "ocr_unavailable"
+        if isinstance(error, OCRTimeoutError):
+            return "ocr_timeout"
+        if isinstance(error, OCROutputLimitError):
+            return "ocr_output_limit"
+        if isinstance(error, MalformedOCROutputError):
+            return "ocr_malformed_output"
+        if isinstance(error, OCRContractError):
+            return "ocr_contract"
+        if isinstance(error, OCRProcessError):
+            return "ocr_process"
+        return "ocr_process"
 
     async def begin_review(
         self,
@@ -409,13 +682,18 @@ class DocumentExtractionService:
         blocks: list[ExtractedBlockModel] = []
         for extracted_page in extraction.pages:
             page_id = uuid5(document.id, f"source-page:{extracted_page.page_number}")
+            page_extractor = extracted_page.extractor or extraction.engine
+            page_extractor_version = extracted_page.extractor_version or extraction.engine_version
+            page_config = dict(extracted_page.extraction_config or extraction.config)
             pages.append(
                 SourcePageModel(
                     id=page_id,
                     source_document_id=document.id,
                     page_number=extracted_page.page_number,
-                    extractor=extraction.engine,
-                    extractor_version=extraction.engine_version,
+                    extractor=page_extractor,
+                    extractor_version=page_extractor_version,
+                    extraction_config=page_config,
+                    confidence=extracted_page.confidence,
                     raw_text=extracted_page.text,
                     reviewed_text=None,
                     character_count=len(extracted_page.text),
@@ -424,31 +702,40 @@ class DocumentExtractionService:
                     updated_by=actor_id,
                 )
             )
-            blocks.extend(
-                ExtractedBlockModel(
-                    id=uuid5(
-                        document.id,
-                        "source-page:"
-                        f"{extracted_block.page_number}:block:{extracted_block.reading_order}",
-                    ),
-                    source_page_id=page_id,
-                    source_document_id=document.id,
-                    page_number=extracted_block.page_number,
-                    reading_order=extracted_block.reading_order,
-                    extractor=extraction.engine,
-                    extractor_version=extraction.engine_version,
-                    bbox_x0=extracted_block.bbox[0],
-                    bbox_y0=extracted_block.bbox[1],
-                    bbox_x1=extracted_block.bbox[2],
-                    bbox_y1=extracted_block.bbox[3],
-                    raw_text=extracted_block.text,
-                    reviewed_text=None,
-                    character_count=len(extracted_block.text),
-                    created_by=actor_id,
-                    updated_by=actor_id,
+            for extracted_block in extracted_page.blocks:
+                block_extractor = extracted_block.extractor or page_extractor
+                block_extractor_version = (
+                    extracted_block.extractor_version or page_extractor_version
                 )
-                for extracted_block in extracted_page.blocks
-            )
+                block_config = dict(extracted_block.extraction_config or page_config)
+                bbox = extracted_block.bbox
+                blocks.append(
+                    ExtractedBlockModel(
+                        id=uuid5(
+                            document.id,
+                            "source-page:"
+                            f"{extracted_block.page_number}:block:"
+                            f"{extracted_block.reading_order}",
+                        ),
+                        source_page_id=page_id,
+                        source_document_id=document.id,
+                        page_number=extracted_block.page_number,
+                        reading_order=extracted_block.reading_order,
+                        extractor=block_extractor,
+                        extractor_version=block_extractor_version,
+                        extraction_config=block_config,
+                        confidence=extracted_block.confidence,
+                        bbox_x0=bbox[0] if bbox is not None else None,
+                        bbox_y0=bbox[1] if bbox is not None else None,
+                        bbox_x1=bbox[2] if bbox is not None else None,
+                        bbox_y1=bbox[3] if bbox is not None else None,
+                        raw_text=extracted_block.text,
+                        reviewed_text=None,
+                        character_count=len(extracted_block.text),
+                        created_by=actor_id,
+                        updated_by=actor_id,
+                    )
+                )
 
         self._session.add_all(pages)
         await self._session.flush()
@@ -462,6 +749,20 @@ class DocumentExtractionService:
         document.extracted_character_count = extraction.character_count
         document.native_text_page_ratio = extraction.native_text_page_ratio
         document.needs_ocr = extraction.needs_ocr
+        document.ocr_page_count = extraction.ocr_page_count
+        document.extraction_config = dict(
+            extraction.extraction_config
+            or self._bounded_extraction_config(
+                {
+                    "mode": extraction.mode.value,
+                    "native": {
+                        "config": dict(extraction.config),
+                        "engine": extraction.engine,
+                        "version": extraction.engine_version,
+                    },
+                }
+            )
+        )
         document.extraction_failure_code = None
         document.extraction_completed_at = datetime.now(UTC)
         document.extraction_status = transition_extraction_status(
@@ -479,8 +780,12 @@ class DocumentExtractionService:
                 "character_count": extraction.character_count,
                 "extractor": extraction.engine,
                 "extractor_version": extraction.engine_version,
+                "mode": extraction.mode.value,
                 "needs_ocr": extraction.needs_ocr,
                 "native_text_page_ratio": extraction.native_text_page_ratio,
+                "ocr_engine": extraction.ocr_engine,
+                "ocr_engine_version": extraction.ocr_engine_version,
+                "ocr_page_count": extraction.ocr_page_count,
                 "page_count": extraction.page_count,
             },
         )
@@ -499,6 +804,7 @@ class DocumentExtractionService:
             return
 
         failure_code = self._failure_code(error)
+        await self._delete_persisted_result(document.id)
         self._clear_result_metadata(document)
         document.extraction_status = transition_extraction_status(
             document.extraction_status,
@@ -545,6 +851,8 @@ class DocumentExtractionService:
         document.extracted_character_count = None
         document.native_text_page_ratio = None
         document.needs_ocr = None
+        document.ocr_page_count = None
+        document.extraction_config = None
 
     @staticmethod
     def _failure_code(error: Exception) -> str:
@@ -552,6 +860,8 @@ class DocumentExtractionService:
             return error.violation.value
         if isinstance(error, ExtractionSourceIntegrityError):
             return "source_object_integrity"
+        if isinstance(error, OCRPipelineError):
+            return error.failure_code
         return "unexpected_error"
 
     @staticmethod

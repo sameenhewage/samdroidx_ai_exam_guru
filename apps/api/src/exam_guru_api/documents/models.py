@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from exam_guru_api.curriculum.models import AuditColumns
@@ -28,13 +29,14 @@ _EXTRACTION_RESULT_COLUMNS_NULL_SQL = (
     "extractor IS NULL AND extractor_version IS NULL "
     "AND extracted_page_count IS NULL AND extracted_block_count IS NULL "
     "AND extracted_character_count IS NULL AND native_text_page_ratio IS NULL "
-    "AND needs_ocr IS NULL"
+    "AND needs_ocr IS NULL AND ocr_page_count IS NULL AND extraction_config IS NULL"
 )
 _EXTRACTION_RESULT_COLUMNS_PRESENT_SQL = (
     "extractor IS NOT NULL AND extractor_version IS NOT NULL "
     "AND extracted_page_count IS NOT NULL AND extracted_block_count IS NOT NULL "
     "AND extracted_character_count IS NOT NULL AND native_text_page_ratio IS NOT NULL "
-    "AND needs_ocr IS NOT NULL"
+    "AND needs_ocr IS NOT NULL AND ocr_page_count IS NOT NULL "
+    "AND extraction_config IS NOT NULL"
 )
 
 
@@ -67,6 +69,16 @@ class SourceDocumentModel(AuditColumns, Base):
             "AND (extracted_block_count IS NULL OR extracted_block_count >= 0) "
             "AND (extracted_character_count IS NULL OR extracted_character_count >= 0)",
             name="ck_source_document_extraction_metric_counts",
+        ),
+        CheckConstraint(
+            "ocr_page_count IS NULL OR (ocr_page_count >= 0 "
+            "AND extracted_page_count IS NOT NULL "
+            "AND ocr_page_count <= extracted_page_count)",
+            name="ck_source_document_ocr_page_count",
+        ),
+        CheckConstraint(
+            "extraction_config IS NULL OR ocr_extraction_config_is_bounded(extraction_config)",
+            name="ck_source_document_extraction_config",
         ),
         CheckConstraint(
             "(extractor IS NULL AND extractor_version IS NULL) OR "
@@ -150,6 +162,8 @@ class SourceDocumentModel(AuditColumns, Base):
     extracted_character_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     native_text_page_ratio: Mapped[float | None] = mapped_column(Double, nullable=True)
     needs_ocr: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    ocr_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extraction_config: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     extraction_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extraction_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
@@ -183,6 +197,14 @@ class SourcePageModel(AuditColumns, Base):
             name="ck_source_pages_extractor_metadata",
         ),
         CheckConstraint(
+            "ocr_scalar_config_is_bounded(extraction_config)",
+            name="ck_source_pages_extraction_config",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR confidence BETWEEN 0.0 AND 1.0",
+            name="ck_source_pages_confidence",
+        ),
+        CheckConstraint(
             "character_count = char_length(raw_text)",
             name="ck_source_pages_character_count",
         ),
@@ -199,6 +221,12 @@ class SourcePageModel(AuditColumns, Base):
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     extractor: Mapped[str] = mapped_column(String(64), nullable=False)
     extractor_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    extraction_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="{}",
+    )
+    confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     reviewed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     character_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -229,11 +257,22 @@ class ExtractedBlockModel(AuditColumns, Base):
             name="ck_extracted_blocks_extractor_metadata",
         ),
         CheckConstraint(
+            "ocr_scalar_config_is_bounded(extraction_config)",
+            name="ck_extracted_blocks_extraction_config",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR confidence BETWEEN 0.0 AND 1.0",
+            name="ck_extracted_blocks_confidence",
+        ),
+        CheckConstraint(
             "length(raw_text) > 0 AND character_count = char_length(raw_text)",
             name="ck_extracted_blocks_character_count",
         ),
         CheckConstraint(
-            "bbox_x0 <= bbox_x1 AND bbox_y0 <= bbox_y1",
+            "(bbox_x0 IS NULL AND bbox_y0 IS NULL AND bbox_x1 IS NULL AND bbox_y1 IS NULL) "
+            "OR (bbox_x0 IS NOT NULL AND bbox_y0 IS NOT NULL "
+            "AND bbox_x1 IS NOT NULL AND bbox_y1 IS NOT NULL "
+            "AND bbox_x0 <= bbox_x1 AND bbox_y0 <= bbox_y1)",
             name="ck_extracted_blocks_bbox",
         ),
         CheckConstraint("version >= 0", name="ck_extracted_blocks_version"),
@@ -252,15 +291,28 @@ class ExtractedBlockModel(AuditColumns, Base):
     reading_order: Mapped[int] = mapped_column(Integer, nullable=False)
     extractor: Mapped[str] = mapped_column(String(64), nullable=False)
     extractor_version: Mapped[str] = mapped_column(String(128), nullable=False)
-    bbox_x0: Mapped[float] = mapped_column(Double, nullable=False)
-    bbox_y0: Mapped[float] = mapped_column(Double, nullable=False)
-    bbox_x1: Mapped[float] = mapped_column(Double, nullable=False)
-    bbox_y1: Mapped[float] = mapped_column(Double, nullable=False)
+    extraction_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="{}",
+    )
+    confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
+    bbox_x0: Mapped[float | None] = mapped_column(Double, nullable=True)
+    bbox_y0: Mapped[float | None] = mapped_column(Double, nullable=True)
+    bbox_x1: Mapped[float | None] = mapped_column(Double, nullable=True)
+    bbox_y1: Mapped[float | None] = mapped_column(Double, nullable=True)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     reviewed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     character_count: Mapped[int] = mapped_column(Integer, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     @property
-    def bbox(self) -> tuple[float, float, float, float]:
+    def bbox(self) -> tuple[float, float, float, float] | None:
+        if (
+            self.bbox_x0 is None
+            or self.bbox_y0 is None
+            or self.bbox_x1 is None
+            or self.bbox_y1 is None
+        ):
+            return None
         return self.bbox_x0, self.bbox_y0, self.bbox_x1, self.bbox_y1

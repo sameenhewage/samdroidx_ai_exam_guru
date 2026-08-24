@@ -35,6 +35,7 @@ def test_native_pdf_extraction_preserves_page_and_block_provenance() -> None:
     assert "Grade 5 competency one" in result.pages[0].text
     assert result.pages[0].blocks[0].page_number == 1
     assert result.pages[0].blocks[0].reading_order == 0
+    assert result.pages[0].blocks[0].bbox is not None
     assert len(result.pages[0].blocks[0].bbox) == 4
 
 

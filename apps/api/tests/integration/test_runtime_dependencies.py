@@ -135,7 +135,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0016_published_papers"
+    assert migration_revision == "0017_ocr_worker_pipeline"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -596,6 +596,193 @@ def test_published_paper_migration_downgrades_cleanly_and_reapplies(database_url
     assert not asyncio.run(paper_tables_exist())
     upgrade_database(database_url)
     assert asyncio.run(paper_tables_exist())
+    assert_database_schema_current(database_url)
+
+
+@pytest.mark.integration
+def test_ocr_worker_migration_backfills_honest_legacy_provenance(database_url: str) -> None:
+    upgrade_database(database_url)
+    command.downgrade(_config_for_database(database_url), "0016_published_papers")
+    document_id = "00000000-0000-0000-0000-000000009171"
+    page_id = "00000000-0000-0000-0000-000000009172"
+    block_id = "00000000-0000-0000-0000-000000009173"
+    actor_id = "00000000-0000-0000-0000-000000009174"
+
+    async def seed_legacy_extraction() -> None:
+        engine = create_async_engine(database_url)
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO source_documents (id, checksum_sha256, object_key, "
+                    "original_filename, content_type, size_bytes, document_type, "
+                    "extraction_status, created_by, updated_by) VALUES "
+                    "(:document_id, :checksum, :object_key, 'legacy.pdf', 'application/pdf', "
+                    "10, 'syllabus', 'uploaded', :actor_id, :actor_id)"
+                ),
+                {
+                    "document_id": document_id,
+                    "checksum": "7" * 64,
+                    "object_key": "sources/legacy-0017.pdf",
+                    "actor_id": actor_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "UPDATE source_documents SET extraction_status = 'extraction_pending', "
+                    "extraction_attempt_count = 1, extraction_started_at = now(), "
+                    "updated_by = :actor_id WHERE id = :document_id"
+                ),
+                {"actor_id": actor_id, "document_id": document_id},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO source_pages (id, source_document_id, page_number, extractor, "
+                    "extractor_version, raw_text, character_count, block_count, created_by, "
+                    "updated_by) VALUES (:page_id, :document_id, 1, 'legacy-native', '1', "
+                    "'text', 4, 1, :actor_id, :actor_id)"
+                ),
+                {
+                    "page_id": page_id,
+                    "document_id": document_id,
+                    "actor_id": actor_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO extracted_blocks (id, source_page_id, source_document_id, "
+                    "page_number, reading_order, extractor, extractor_version, bbox_x0, "
+                    "bbox_y0, bbox_x1, bbox_y1, raw_text, character_count, created_by, "
+                    "updated_by) VALUES (:block_id, :page_id, :document_id, 1, 0, "
+                    "'legacy-native', '1', 0, 0, 1, 1, 'text', 4, :actor_id, :actor_id)"
+                ),
+                {
+                    "block_id": block_id,
+                    "page_id": page_id,
+                    "document_id": document_id,
+                    "actor_id": actor_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "UPDATE source_documents SET extraction_status = 'extracted', "
+                    "extractor = 'legacy-native', extractor_version = '1', "
+                    "extracted_page_count = 1, extracted_block_count = 1, "
+                    "extracted_character_count = 4, native_text_page_ratio = 1.0, "
+                    "needs_ocr = false, extraction_completed_at = now(), "
+                    "updated_by = :actor_id WHERE id = :document_id"
+                ),
+                {"actor_id": actor_id, "document_id": document_id},
+            )
+        await engine.dispose()
+
+    asyncio.run(seed_legacy_extraction())
+    upgrade_database(database_url)
+
+    async def inspect_backfill() -> tuple[object, object, object, object, object, object]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            document = (
+                await connection.execute(
+                    text(
+                        "SELECT ocr_page_count, extraction_config FROM source_documents "
+                        "WHERE id = :document_id"
+                    ),
+                    {"document_id": document_id},
+                )
+            ).one()
+            page = (
+                await connection.execute(
+                    text(
+                        "SELECT extraction_config, confidence FROM source_pages WHERE id = :page_id"
+                    ),
+                    {"page_id": page_id},
+                )
+            ).one()
+            block = (
+                await connection.execute(
+                    text(
+                        "SELECT extraction_config, confidence FROM extracted_blocks "
+                        "WHERE id = :block_id"
+                    ),
+                    {"block_id": block_id},
+                )
+            ).one()
+        await engine.dispose()
+        return document[0], document[1], page[0], page[1], block[0], block[1]
+
+    assert asyncio.run(inspect_backfill()) == (0, {}, {}, None, {}, None)
+    assert_database_schema_current(database_url)
+
+
+@pytest.mark.integration
+def test_ocr_worker_migration_has_bounded_provenance_columns_and_downgrades_cleanly(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+
+    async def inspect() -> tuple[set[str], set[str], set[str], set[str]]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            document_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'source_documents' "
+                        "AND column_name IN ('ocr_page_count', 'extraction_config')"
+                    )
+                )
+            )
+            page_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'source_pages' "
+                        "AND column_name IN ('extraction_config', 'confidence')"
+                    )
+                )
+            )
+            block_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'extracted_blocks' "
+                        "AND column_name IN ('extraction_config', 'confidence')"
+                    )
+                )
+            )
+            constraints = set(
+                await connection.scalars(
+                    text(
+                        "SELECT conname FROM pg_constraint WHERE conname IN ("
+                        "'ck_source_document_ocr_page_count', "
+                        "'ck_source_document_extraction_config', "
+                        "'ck_source_pages_extraction_config', "
+                        "'ck_source_pages_confidence', "
+                        "'ck_extracted_blocks_extraction_config', "
+                        "'ck_extracted_blocks_confidence')"
+                    )
+                )
+            )
+        await engine.dispose()
+        return document_columns, page_columns, block_columns, constraints
+
+    assert asyncio.run(inspect()) == (
+        {"ocr_page_count", "extraction_config"},
+        {"extraction_config", "confidence"},
+        {"extraction_config", "confidence"},
+        {
+            "ck_source_document_ocr_page_count",
+            "ck_source_document_extraction_config",
+            "ck_source_pages_extraction_config",
+            "ck_source_pages_confidence",
+            "ck_extracted_blocks_extraction_config",
+            "ck_extracted_blocks_confidence",
+        },
+    )
+
+    command.downgrade(_config_for_database(database_url), "0016_published_papers")
+    assert asyncio.run(inspect()) == (set(), set(), set(), set())
+    upgrade_database(database_url)
     assert_database_schema_current(database_url)
 
 

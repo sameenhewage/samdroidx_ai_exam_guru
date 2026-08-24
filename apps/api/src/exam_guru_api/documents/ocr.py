@@ -5,15 +5,32 @@ prompt or instruction.  The deterministic metrics are suitable for fixed test
 fixtures, but do not establish OCR quality for Sinhala or any other language.
 """
 
+import json
 import math
+import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from itertools import pairwise
 from types import MappingProxyType
 from typing import Protocol
 
 type OCRConfigValue = str | int | float | bool | None
 type OCRBoundingBox = tuple[float, float, float, float]
+
+MAX_OCR_CONFIG_JSON_BYTES = 64 * 1024
+MAX_OCR_ENGINE_CHARACTERS = 64
+MAX_OCR_ENGINE_VERSION_CHARACTERS = 128
+_MAX_OCR_CONFIG_KEY_CHARACTERS = 256
+_MAX_OCR_IDENTITY_CHARACTERS = 128
+_SECRET_CONFIG_KEY_SEGMENTS = frozenset({"apikey", "credential", "password", "secret", "token"})
+_SECRET_CONFIG_KEY_SEGMENT_PAIRS = frozenset({("api", "key"), ("private", "key")})
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CONFIG_KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
+_SAFE_TEXT_CONTROLS = frozenset("\t\n\r")
+_BIDI_CONTROL_CODEPOINTS = frozenset(
+    {0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069}
+)
 
 
 class OCRContractError(ValueError):
@@ -24,8 +41,106 @@ class MalformedOCROutputError(TypeError):
     """Raised when an adapter crosses the port with an untyped output."""
 
 
+class OCRConfigError(ValueError):
+    """Provider-independent invalid OCR configuration failure."""
+
+
+class OCRInputError(ValueError):
+    """Provider-independent unsafe or unsupported OCR input failure."""
+
+
+class OCRUnavailableError(RuntimeError):
+    """Provider-independent unavailable executable, model, or provider failure."""
+
+
+class OCRTimeoutError(TimeoutError):
+    """Provider-independent bounded OCR timeout."""
+
+
+class OCRProcessError(RuntimeError):
+    """Provider-independent OCR process/provider execution failure."""
+
+
+class OCROutputLimitError(RuntimeError):
+    """Provider-independent OCR output limit failure."""
+
+
 def _is_non_blank_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _contains_unsafe_text_character(text: str) -> bool:
+    return any(
+        (ord(character) < 32 and character not in _SAFE_TEXT_CONTROLS)
+        or 127 <= ord(character) <= 159
+        or ord(character) in _BIDI_CONTROL_CODEPOINTS
+        for character in text
+    )
+
+
+def _is_bounded_identity(value: object, *, maximum: int) -> bool:
+    return (
+        _is_non_blank_string(value)
+        and isinstance(value, str)
+        and value == value.strip()
+        and len(value) <= maximum
+        and not _contains_unsafe_text_character(value)
+    )
+
+
+def _contains_secret_bearing_config_key(key: str) -> bool:
+    expanded_key = _CAMEL_CASE_BOUNDARY.sub("_", key)
+    segments = tuple(
+        segment.casefold() for segment in _CONFIG_KEY_SEPARATOR.split(expanded_key) if segment
+    )
+    if any(segment in _SECRET_CONFIG_KEY_SEGMENTS for segment in segments):
+        return True
+    return any(pair in _SECRET_CONFIG_KEY_SEGMENT_PAIRS for pair in pairwise(segments))
+
+
+def _validate_confidence(confidence: object) -> None:
+    if confidence is not None and (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or not math.isfinite(confidence)
+        or not 0.0 <= confidence <= 1.0
+    ):
+        raise OCRContractError("confidence must be between zero and one")
+
+
+def snapshot_ocr_config(config: object) -> Mapping[str, OCRConfigValue]:
+    """Return an immutable, canonical-order snapshot of one bounded scalar config."""
+
+    if not isinstance(config, Mapping):
+        raise OCRContractError("config must be a mapping")
+    snapshot: dict[str, OCRConfigValue] = {}
+    for key, value in config.items():
+        if not _is_bounded_identity(key, maximum=_MAX_OCR_CONFIG_KEY_CHARACTERS) or not isinstance(
+            key, str
+        ):
+            raise OCRContractError("config keys must be bounded non-blank strings")
+        if _contains_secret_bearing_config_key(key):
+            raise OCRContractError("config key is not allowed")
+        if value is not None and not isinstance(value, (str, int, float, bool)):
+            raise OCRContractError("config values must be scalar")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise OCRContractError("floating-point config values must be finite")
+        snapshot[key] = value
+
+    ordered = dict(sorted(snapshot.items()))
+    try:
+        encoded = json.dumps(
+            ordered,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError):
+        raise OCRContractError("config must be a bounded scalar JSON object") from None
+    if len(encoded) > MAX_OCR_CONFIG_JSON_BYTES:
+        raise OCRContractError("config exceeds the JSON byte limit")
+    return MappingProxyType(ordered)
 
 
 def _validate_ordered_page_numbers(page_numbers: object, *, field_name: str) -> None:
@@ -51,8 +166,11 @@ class OCRRequest:
     page_numbers: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        if not _is_non_blank_string(self.source_document_id):
-            raise OCRContractError("source_document_id must be non-blank")
+        if not _is_bounded_identity(
+            self.source_document_id,
+            maximum=_MAX_OCR_IDENTITY_CHARACTERS,
+        ):
+            raise OCRContractError("source_document_id must be bounded non-blank text")
         if (
             not isinstance(self.source_checksum_sha256, str)
             or len(self.source_checksum_sha256) != 64
@@ -61,8 +179,8 @@ class OCRRequest:
             raise OCRContractError("source_checksum_sha256 must be a lowercase SHA-256 digest")
         if not isinstance(self.content, bytes) or not self.content:
             raise OCRContractError("content must be non-empty bytes")
-        if not _is_non_blank_string(self.media_type):
-            raise OCRContractError("media_type must be non-blank")
+        if not _is_bounded_identity(self.media_type, maximum=_MAX_OCR_IDENTITY_CHARACTERS):
+            raise OCRContractError("media_type must be bounded non-blank text")
         _validate_ordered_page_numbers(self.page_numbers, field_name="page_numbers")
 
 
@@ -87,6 +205,8 @@ class OCRBlock:
             raise OCRContractError("reading_order must be non-negative")
         if not _is_non_blank_string(self.text):
             raise OCRContractError("block text must be non-blank")
+        if _contains_unsafe_text_character(self.text):
+            raise OCRContractError("block text contains an unsafe control character")
         if self.bbox is not None:
             if not isinstance(self.bbox, tuple) or len(self.bbox) != 4:
                 raise OCRContractError("bbox must contain four coordinates")
@@ -100,13 +220,7 @@ class OCRBlock:
             x_min, y_min, x_max, y_max = self.bbox
             if x_min > x_max or y_min > y_max:
                 raise OCRContractError("bbox coordinates must be ordered")
-        if self.confidence is not None and (
-            not isinstance(self.confidence, (int, float))
-            or isinstance(self.confidence, bool)
-            or not math.isfinite(self.confidence)
-            or not 0.0 <= self.confidence <= 1.0
-        ):
-            raise OCRContractError("confidence must be between zero and one")
+        _validate_confidence(self.confidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +230,7 @@ class OCRPage:
     page_number: int
     text: str
     blocks: tuple[OCRBlock, ...] = ()
+    confidence: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.page_number, int) or isinstance(self.page_number, bool):
@@ -124,6 +239,8 @@ class OCRPage:
             raise OCRContractError("page_number must be positive")
         if not isinstance(self.text, str):
             raise OCRContractError("page text must be a string")
+        if _contains_unsafe_text_character(self.text):
+            raise OCRContractError("page text contains an unsafe control character")
         if not isinstance(self.blocks, tuple) or any(
             not isinstance(block, OCRBlock) for block in self.blocks
         ):
@@ -131,8 +248,11 @@ class OCRPage:
         if any(block.page_number != self.page_number for block in self.blocks):
             raise OCRContractError("every block must reference its containing page")
         reading_orders = tuple(block.reading_order for block in self.blocks)
-        if reading_orders != tuple(sorted(set(reading_orders))):
-            raise OCRContractError("block reading_order values must be unique and ascending")
+        if reading_orders != tuple(range(len(self.blocks))):
+            raise OCRContractError("block reading_order values must be contiguous and ascending")
+        if self.blocks and self.text != "\n".join(block.text for block in self.blocks):
+            raise OCRContractError("page text must match its ordered blocks")
+        _validate_confidence(self.confidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,22 +265,14 @@ class OCRResult:
     pages: tuple[OCRPage, ...]
 
     def __post_init__(self) -> None:
-        if not _is_non_blank_string(self.engine):
-            raise OCRContractError("engine must be non-blank")
-        if not _is_non_blank_string(self.engine_version):
-            raise OCRContractError("engine_version must be non-blank")
-        if not isinstance(self.config, Mapping):
-            raise OCRContractError("config must be a mapping")
-
-        config_snapshot: dict[str, OCRConfigValue] = {}
-        for key, value in self.config.items():
-            if not _is_non_blank_string(key):
-                raise OCRContractError("config keys must be non-blank strings")
-            if value is not None and not isinstance(value, (str, int, float, bool)):
-                raise OCRContractError("config values must be scalar")
-            if isinstance(value, float) and not math.isfinite(value):
-                raise OCRContractError("floating-point config values must be finite")
-            config_snapshot[key] = value
+        if not _is_bounded_identity(self.engine, maximum=MAX_OCR_ENGINE_CHARACTERS):
+            raise OCRContractError("engine must be bounded non-blank text")
+        if not _is_bounded_identity(
+            self.engine_version,
+            maximum=MAX_OCR_ENGINE_VERSION_CHARACTERS,
+        ):
+            raise OCRContractError("engine_version must be bounded non-blank text")
+        config_snapshot = snapshot_ocr_config(self.config)
 
         if not isinstance(self.pages, tuple) or any(
             not isinstance(page, OCRPage) for page in self.pages
@@ -169,11 +281,7 @@ class OCRResult:
         page_numbers = tuple(page.page_number for page in self.pages)
         _validate_ordered_page_numbers(page_numbers, field_name="result page numbers")
 
-        object.__setattr__(
-            self,
-            "config",
-            MappingProxyType(dict(sorted(config_snapshot.items()))),
-        )
+        object.__setattr__(self, "config", config_snapshot)
 
 
 class OCRPort(Protocol):

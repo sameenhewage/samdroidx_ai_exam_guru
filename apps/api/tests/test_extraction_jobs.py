@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from exam_guru_api.core.config import Settings
+from exam_guru_api.core.config import EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS, Settings
 from exam_guru_api.documents import jobs
 from exam_guru_api.documents.jobs import (
     EXTRACTION_MAX_BACKOFF_MS,
@@ -18,7 +18,9 @@ from exam_guru_api.documents.jobs import (
     DramatiqExtractionDispatcher,
     ExtractionDispatcher,
     create_extraction_dispatcher,
+    create_ocr_port,
 )
+from exam_guru_api.documents.tesseract_ocr import TesseractCliOCRAdapter
 
 DOCUMENT_ID = UUID("00000000-0000-0000-0000-000000000201")
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000202")
@@ -81,6 +83,40 @@ def test_api_dispatcher_factory_binds_actor_to_settings_valkey_broker() -> None:
     assert jobs.extract_document.actor_name in jobs.extract_document.broker.get_declared_actors()
 
 
+def test_ocr_factory_is_explicit_and_maps_every_bounded_tesseract_control() -> None:
+    assert create_ocr_port(Settings(environment="test")) is None
+
+    adapter = create_ocr_port(
+        Settings(
+            environment="test",
+            ocr_provider="tesseract",
+            ocr_tesseract_executable="fixture-tesseract",
+            ocr_tesseract_language="sin+eng",
+            ocr_tesseract_max_source_bytes=30_000_000,
+            ocr_tesseract_max_pages=16,
+            ocr_tesseract_dpi=240,
+            ocr_tesseract_batch_size=3,
+            ocr_tesseract_timeout_seconds=10.0,
+            ocr_tesseract_page_segmentation_mode=6,
+            ocr_tesseract_max_pixels_per_page=20_000_000,
+            ocr_tesseract_max_command_output_bytes=2_000_000,
+        )
+    )
+
+    assert isinstance(adapter, TesseractCliOCRAdapter)
+    assert adapter.config.executable == "fixture-tesseract"
+    assert adapter.config.language == "sin+eng"
+    assert adapter.config.allowed_languages == ("sin", "eng")
+    assert adapter.config.max_source_bytes == 30_000_000
+    assert adapter.config.max_pages == 16
+    assert adapter.config.dpi == 240
+    assert adapter.config.batch_size == 3
+    assert adapter.config.timeout_seconds == 10.0
+    assert adapter.config.page_segmentation_mode == 6
+    assert adapter.config.max_pixels_per_page == 20_000_000
+    assert adapter.config.max_command_output_bytes == 2_000_000
+
+
 def test_extraction_actor_uses_a_dedicated_queue_and_bounded_execution_policy() -> None:
     assert jobs.extract_document.queue_name == EXTRACTION_QUEUE_NAME
     assert jobs.extract_document.queue_name != "default"
@@ -92,7 +128,7 @@ def test_extraction_actor_uses_a_dedicated_queue_and_bounded_execution_policy() 
     }
     assert 0 < EXTRACTION_MAX_RETRIES <= 5
     assert 0 < EXTRACTION_MIN_BACKOFF_MS <= EXTRACTION_MAX_BACKOFF_MS
-    assert EXTRACTION_TIME_LIMIT_MS > 0
+    assert EXTRACTION_TIME_LIMIT_MS == EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS * 1_000
 
 
 def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
@@ -102,6 +138,7 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
     session = object()
     storage = object()
     extractor = object()
+    expected_ocr_port = object()
     resources = StubResources(session)
     calls: list[tuple[UUID, UUID]] = []
 
@@ -111,11 +148,15 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
             actual_session: object,
             actual_storage: object,
             actual_extractor: object,
+            *,
+            ocr_port: object,
         ) -> None:
-            assert (actual_session, actual_storage, actual_extractor) == (
+            actual_ocr_port = ocr_port
+            assert (actual_session, actual_storage, actual_extractor, actual_ocr_port) == (
                 session,
                 storage,
                 extractor,
+                expected_ocr_port,
             )
 
         async def extract_native(
@@ -144,6 +185,11 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
         lambda actual_settings: storage if actual_settings is settings else None,
     )
     monkeypatch.setattr(jobs, "PyMuPdfExtractor", create_extractor)
+    monkeypatch.setattr(
+        jobs,
+        "create_ocr_port",
+        lambda actual_settings: expected_ocr_port if actual_settings is settings else None,
+    )
     monkeypatch.setattr(jobs, "DocumentExtractionService", StubExtractionService)
 
     jobs.extract_document(str(DOCUMENT_ID), str(ACTOR_ID))
@@ -158,7 +204,7 @@ def test_extraction_actor_closes_resources_when_the_service_fails(
     resources = StubResources(object())
 
     class FailingExtractionService:
-        def __init__(self, *_dependencies: object) -> None:
+        def __init__(self, *_dependencies: object, **_named_dependencies: object) -> None:
             pass
 
         async def extract_native(

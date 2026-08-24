@@ -26,9 +26,15 @@ import pymupdf
 from exam_guru_api.documents.ocr import (
     MalformedOCROutputError,
     OCRBlock,
+    OCRConfigError,
+    OCRInputError,
+    OCROutputLimitError,
     OCRPage,
+    OCRProcessError,
     OCRRequest,
     OCRResult,
+    OCRTimeoutError,
+    OCRUnavailableError,
 )
 
 _MAX_CONFIG_SOURCE_BYTES = 100 * 1024 * 1024
@@ -79,7 +85,7 @@ _TSV_COLUMNS = (
 )
 
 
-class TesseractConfigError(ValueError):
+class TesseractConfigError(OCRConfigError):
     """Raised when an adapter configuration exceeds its production bounds."""
 
 
@@ -95,7 +101,7 @@ class TesseractInputViolation(StrEnum):
     RASTER_LIMIT_EXCEEDED = "raster_limit_exceeded"
 
 
-class TesseractInputError(ValueError):
+class TesseractInputError(OCRInputError):
     """Typed rejection of an unsafe or out-of-policy OCR source PDF."""
 
     def __init__(self, violation: TesseractInputViolation) -> None:
@@ -103,7 +109,7 @@ class TesseractInputError(ValueError):
         super().__init__(violation.value)
 
 
-class TesseractUnavailableError(RuntimeError):
+class TesseractUnavailableError(OCRUnavailableError):
     """Raised when Tesseract or selected traineddata is unavailable."""
 
     def __init__(self, *, missing_languages: tuple[str, ...] = ()) -> None:
@@ -114,7 +120,7 @@ class TesseractUnavailableError(RuntimeError):
         super().__init__(message)
 
 
-class TesseractTimeoutError(TimeoutError):
+class TesseractTimeoutError(OCRTimeoutError):
     """Raised when a bounded Tesseract command exceeds its deadline."""
 
     def __init__(self, *, operation: str, timeout_seconds: float) -> None:
@@ -123,7 +129,7 @@ class TesseractTimeoutError(TimeoutError):
         super().__init__(f"tesseract {operation} timed out after {timeout_seconds:g} seconds")
 
 
-class TesseractProcessError(RuntimeError):
+class TesseractProcessError(OCRProcessError):
     """Raised for a non-zero Tesseract process without retaining its output."""
 
     def __init__(self, *, operation: str, returncode: int) -> None:
@@ -132,7 +138,7 @@ class TesseractProcessError(RuntimeError):
         super().__init__(f"tesseract {operation} failed with exit code {returncode}")
 
 
-class TesseractOutputLimitError(RuntimeError):
+class TesseractOutputLimitError(OCROutputLimitError):
     """Raised when combined command output exceeds its configured byte ceiling."""
 
     def __init__(self, *, operation: str, max_output_bytes: int) -> None:
@@ -508,6 +514,10 @@ class TesseractCliOCRAdapter:
         self._config = config or TesseractOCRConfig()
         self._command_runner = command_runner or SubprocessCommandRunner()
 
+    @property
+    def config(self) -> TesseractOCRConfig:
+        return self._config
+
     def probe(self, *, temporary_directory: Path | None = None) -> TesseractProbe:
         """Verify the executable, version shape, and selected traineddata languages."""
 
@@ -592,11 +602,11 @@ class TesseractCliOCRAdapter:
                 raise TesseractInputError(TesseractInputViolation.ENCRYPTED_PDF)
             if document.page_count < 1:
                 raise TesseractInputError(TesseractInputViolation.MALFORMED_PDF)
-            if document.page_count > self._config.max_pages:
-                raise TesseractInputError(TesseractInputViolation.PAGE_LIMIT_EXCEEDED)
             page_numbers = request.page_numbers or tuple(range(1, document.page_count + 1))
             if any(page_number > document.page_count for page_number in page_numbers):
                 raise TesseractInputError(TesseractInputViolation.PAGE_OUT_OF_RANGE)
+            if len(page_numbers) > self._config.max_pages:
+                raise TesseractInputError(TesseractInputViolation.PAGE_LIMIT_EXCEEDED)
         except Exception:
             document.close()
             raise
@@ -872,8 +882,14 @@ class TesseractCliOCRAdapter:
             )
             for reading_order, accumulator in enumerate(blocks.values())
         )
+        page_confidences = tuple(
+            block.confidence for block in ocr_blocks if block.confidence is not None
+        )
         return OCRPage(
             page_number=rendered_page.page_number,
             text="\n".join(block.text for block in ocr_blocks),
             blocks=ocr_blocks,
+            confidence=(
+                sum(page_confidences) / len(page_confidences) if page_confidences else None
+            ),
         )

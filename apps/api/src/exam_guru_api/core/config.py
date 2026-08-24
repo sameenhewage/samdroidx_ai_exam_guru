@@ -10,6 +10,12 @@ LOCAL_DATABASE_URL = "postgresql+asyncpg://exam_guru@localhost:5432/exam_guru"
 LOCAL_VALKEY_URL = "redis://localhost:6379/0"
 LOCAL_STORAGE_ACCESS_KEY = "exam-guru-local"
 LOCAL_STORAGE_SECRET_KEY = ""
+EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS = 60
+OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
+    EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS - EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS
+)
+TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 GENERATION_PROVIDER_MAX_EXECUTION_SECONDS = 3 * 120 + 2 * 2
 MIN_GENERATION_WORKER_LEASE_SECONDS = (
@@ -39,6 +45,29 @@ class Settings(BaseSettings):
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
+    ocr_provider: Literal["tesseract"] | None = None
+    ocr_tesseract_executable: str = Field(default="tesseract", min_length=1, max_length=255)
+    ocr_tesseract_language: str = Field(default="sin+eng", min_length=1, max_length=64)
+    ocr_tesseract_max_source_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1,
+        le=100 * 1024 * 1024,
+    )
+    ocr_tesseract_max_pages: int = Field(default=16, ge=1, le=1_000)
+    ocr_tesseract_dpi: int = Field(default=300, ge=72, le=600)
+    ocr_tesseract_batch_size: int = Field(default=4, ge=1, le=16)
+    ocr_tesseract_timeout_seconds: float = Field(default=10.0, gt=0, le=300)
+    ocr_tesseract_page_segmentation_mode: int = Field(default=3, ge=1, le=13)
+    ocr_tesseract_max_pixels_per_page: int = Field(
+        default=40_000_000,
+        ge=1,
+        le=100_000_000,
+    )
+    ocr_tesseract_max_command_output_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=1,
+        le=64 * 1024 * 1024,
+    )
     retrieval_embedding_provider: Literal["deterministic"] | None = None
     generation_provider: Literal["deterministic", "openai"] | None = None
     generation_openai_api_key: SecretStr | None = None
@@ -85,6 +114,36 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_local_credentials_in_production(self) -> Self:
+        if (
+            self.ocr_tesseract_executable != self.ocr_tesseract_executable.strip()
+            or not self.ocr_tesseract_executable.isprintable()
+        ):
+            raise ValueError("Tesseract executable must be bounded control-free text")
+        selected_languages = tuple(self.ocr_tesseract_language.split("+"))
+        if (
+            not 1 <= len(selected_languages) <= 4
+            or len(set(selected_languages)) != len(selected_languages)
+            or any(
+                not language
+                or any(
+                    not (character.isascii() and (character.isalnum() or character == "_"))
+                    for character in language
+                )
+                for language in selected_languages
+            )
+        ):
+            raise ValueError("Tesseract language must contain unique safe language codes")
+        if self.ocr_tesseract_batch_size > self.ocr_tesseract_max_pages:
+            raise ValueError("Tesseract batch size cannot exceed its page limit")
+        if self.ocr_provider == "tesseract":
+            if self.ocr_tesseract_max_source_bytes < self.max_upload_bytes:
+                raise ValueError("configured OCR must accept the configured upload byte limit")
+            worst_case_ocr_seconds = (
+                self.ocr_tesseract_max_pages + TESSERACT_PROBE_COMMAND_COUNT
+            ) * self.ocr_tesseract_timeout_seconds
+            if worst_case_ocr_seconds > OCR_PROVIDER_MAX_EXECUTION_SECONDS:
+                raise ValueError("configured Tesseract commands exceed the OCR execution budget")
+
         deterministic_tokens = [
             token.get_secret_value()
             for token in (self.deterministic_admin_token, self.deterministic_reviewer_token)

@@ -27,6 +27,8 @@ class SourcePageResponse(BaseModel):
     page_number: int
     extractor: str
     extractor_version: str
+    extraction_config: dict[str, object]
+    confidence: float | None = Field(default=None, ge=0, le=1)
     raw_text: str
     reviewed_text: str | None
     character_count: int
@@ -46,7 +48,9 @@ class ExtractedBlockResponse(BaseModel):
     reading_order: int
     extractor: str
     extractor_version: str
-    bbox: tuple[float, float, float, float]
+    extraction_config: dict[str, object]
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    bbox: tuple[float, float, float, float] | None
     raw_text: str
     reviewed_text: str | None
     character_count: int
@@ -76,6 +80,8 @@ class SourceDocumentResponse(BaseModel):
     extracted_character_count: int | None
     native_text_page_ratio: float | None
     needs_ocr: bool | None
+    ocr_page_count: int | None
+    extraction_config: dict[str, object] | None
     extraction_failure_code: str | None
     extraction_started_at: datetime | None
     extraction_completed_at: datetime | None
