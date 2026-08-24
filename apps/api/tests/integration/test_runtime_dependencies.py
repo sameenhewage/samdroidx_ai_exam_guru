@@ -128,7 +128,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0012_paper_blueprints"
+    assert migration_revision == "0013_generation_runs"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -182,6 +182,100 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
         "ck_historical_questions_metadata_difficulty_evidence",
         "ck_historical_questions_metadata_difficulty_confidence",
     } <= metadata_constraints
+
+
+@pytest.mark.integration
+def test_generation_migration_has_durable_state_and_append_only_attempt_triggers(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+
+    async def inspect() -> tuple[set[str], set[str], set[str], set[str]]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            run_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'generation_runs'"
+                    )
+                )
+            )
+            attempt_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'generation_attempts'"
+                    )
+                )
+            )
+            job_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'generation_jobs'"
+                    )
+                )
+            )
+            triggers = set(
+                await connection.scalars(
+                    text(
+                        "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND "
+                        "tgrelid IN ('generation_runs'::regclass, "
+                        "'generation_attempts'::regclass, 'generation_jobs'::regclass)"
+                    )
+                )
+            )
+        await engine.dispose()
+        return run_columns, attempt_columns, job_columns, triggers
+
+    run_columns, attempt_columns, job_columns, triggers = asyncio.run(inspect())
+    assert {
+        "request_fingerprint",
+        "blueprint_snapshot",
+        "blueprint_slot_snapshot",
+        "context_snapshot",
+        "prompt_version",
+        "provider_version",
+        "model_version",
+        "retrieval_version",
+        "schema_version",
+        "pricing_version",
+        "max_attempts",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_cost_microusd",
+        "attempt_count",
+        "total_tokens",
+        "cost_microusd",
+        "latency_ms",
+        "status",
+        "version",
+        "failure_code",
+    } <= run_columns
+    assert {
+        "attempt_number",
+        "retry_of_attempt_id",
+        "provider_idempotency_key",
+        "failure_code",
+        "retry_after_ms",
+        "accounting_known",
+        "total_tokens",
+        "cost_microusd",
+        "latency_ms",
+        "candidate",
+    } <= attempt_columns
+    assert {"generation_run_id", "queue_message_id", "status", "version"} <= job_columns
+    assert triggers == {
+        "enforce_generation_run_insert_trigger",
+        "enforce_generation_run_update_trigger",
+        "reject_generation_run_delete_trigger",
+        "enforce_generation_attempt_insert_trigger",
+        "reject_generation_attempt_mutation_trigger",
+        "enforce_generation_job_insert_trigger",
+        "enforce_generation_job_update_trigger",
+        "reject_generation_job_delete_trigger",
+    }
 
 
 @pytest.mark.integration

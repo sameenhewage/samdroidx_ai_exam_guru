@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import ExtractionDispatcher
+from exam_guru_api.generation.jobs import GenerationDispatcher
+from exam_guru_api.generation.runtime import GenerationRuntimeRegistry
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.infrastructure.resources import ApplicationResources
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
@@ -30,6 +32,14 @@ def get_object_storage(request: Request) -> ObjectStorage:
 
 def get_extraction_dispatcher(request: Request) -> ExtractionDispatcher:
     return cast(ExtractionDispatcher, request.app.state.extraction_dispatcher)
+
+
+def get_generation_dispatcher(request: Request) -> GenerationDispatcher:
+    return cast(GenerationDispatcher, request.app.state.generation_dispatcher)
+
+
+def get_generation_runtime_registry(request: Request) -> GenerationRuntimeRegistry:
+    return cast(GenerationRuntimeRegistry, request.app.state.generation_runtime_registry)
 
 
 def get_embedding_provider_registry(request: Request) -> EmbeddingProviderRegistry:

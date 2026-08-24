@@ -1,4 +1,4 @@
-from typing import Literal, Self
+from typing import Literal, Self, cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
@@ -35,6 +35,37 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
     retrieval_embedding_provider: Literal["deterministic"] | None = None
+    generation_provider: Literal["deterministic", "openai"] | None = None
+    generation_openai_api_key: SecretStr | None = None
+    generation_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    generation_model_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    generation_pricing_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    generation_input_microusd_per_million_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000_000,
+    )
+    generation_output_microusd_per_million_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000_000,
+    )
+    generation_timeout_ms: int | None = Field(default=None, ge=1, le=120_000)
     deterministic_admin_token: SecretStr | None = None
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None
@@ -54,6 +85,41 @@ class Settings(BaseSettings):
             and self.retrieval_embedding_provider == "deterministic"
         ):
             raise ValueError("staging and production cannot use deterministic retrieval embeddings")
+        if (
+            self.environment in {"staging", "production"}
+            and self.generation_provider == "deterministic"
+        ):
+            raise ValueError("staging and production cannot use deterministic generation")
+        openai_generation_values = (
+            self.generation_openai_api_key,
+            self.generation_model,
+            self.generation_model_version,
+            self.generation_pricing_version,
+            self.generation_input_microusd_per_million_tokens,
+            self.generation_output_microusd_per_million_tokens,
+            self.generation_timeout_ms,
+        )
+        if self.generation_provider == "openai":
+            if self.environment == "test":
+                raise ValueError(
+                    "test configuration cannot use the paid OpenAI generation provider"
+                )
+            if any(value is None for value in openai_generation_values):
+                raise ValueError(
+                    "OpenAI generation requires explicit model, pricing, key, and timeout"
+                )
+            provider_key = cast(SecretStr, self.generation_openai_api_key).get_secret_value()
+            if (
+                not provider_key
+                or provider_key != provider_key.strip()
+                or len(provider_key) > 4_096
+                or any(
+                    character.isspace() or not character.isprintable() for character in provider_key
+                )
+            ):
+                raise ValueError("OpenAI generation API key must be bounded secret text")
+        elif any(value is not None for value in openai_generation_values):
+            raise ValueError("OpenAI generation settings require generation_provider=openai")
         if any(len(token) < 16 for token in deterministic_tokens):
             raise ValueError("deterministic identity tokens must contain at least 16 characters")
         if len(deterministic_tokens) != len(set(deterministic_tokens)):

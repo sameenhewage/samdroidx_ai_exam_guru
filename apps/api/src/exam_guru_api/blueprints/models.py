@@ -39,6 +39,11 @@ class PaperBlueprintModel(Base):
         ),
         UniqueConstraint("blueprint_id", name="uq_paper_blueprints_blueprint_id"),
         UniqueConstraint(
+            "id",
+            "curriculum_version_id",
+            name="uq_paper_blueprints_id_curriculum",
+        ),
+        UniqueConstraint(
             "input_fingerprint",
             name="uq_paper_blueprints_input_fingerprint",
         ),

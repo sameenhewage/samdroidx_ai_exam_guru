@@ -1,0 +1,1074 @@
+import asyncio
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
+from threading import Barrier
+from typing import Any, cast
+from uuid import UUID
+
+import pytest
+from dramatiq.brokers.redis import RedisBroker
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from redis.asyncio import Redis
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.community.postgres import PostgresContainer
+from testcontainers.community.redis import RedisContainer
+
+from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.blueprints.service import BlueprintGenerationService
+from exam_guru_api.core.config import Settings
+from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
+from exam_guru_api.curriculum.models import (
+    CurriculumVersionModel,
+    ExamConfigurationModel,
+    MediumModel,
+    TaxonomyNodeModel,
+)
+from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
+from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
+from exam_guru_api.generation import jobs as generation_jobs
+from exam_guru_api.generation.domain import (
+    GenerationAccounting,
+    GenerationRequest,
+    GenerationResult,
+)
+from exam_guru_api.generation.jobs import (
+    GENERATION_QUEUE_NAME,
+    DeterministicGenerationDispatcher,
+    GenerationDispatcher,
+    create_generation_dispatcher,
+)
+from exam_guru_api.generation.models import (
+    GenerationAttemptModel,
+    GenerationJobModel,
+    GenerationRunModel,
+)
+from exam_guru_api.generation.ports import GenerationProvider, ProviderError, ProviderFailureCode
+from exam_guru_api.generation.run_service import GenerationWorkerService
+from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
+from exam_guru_api.infrastructure.migrations import (
+    assert_database_schema_current,
+    upgrade_database,
+)
+from exam_guru_api.knowledge.domain import ChunkType, QuestionType, ReviewState
+from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
+from exam_guru_api.main import create_app
+from tests.test_blueprint_domain import (
+    COMPETENCY_A,
+    CURRICULUM_VERSION_ID,
+    SKILL_A,
+    make_uniform_specification,
+)
+
+PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
+VALKEY_IMAGE = "valkey/valkey:9.1.1-alpine3.24"
+ADMIN_ID = UUID(int=920_001)
+REVIEWER_ID = UUID(int=920_002)
+EXAM_ID = UUID(int=920_003)
+MEDIUM_ID = UUID(int=920_004)
+WRONG_COMPETENCY_ID = UUID(int=920_005)
+OTHER_CURRICULUM_ID = UUID(int=920_006)
+OTHER_EXAM_ID = UUID(int=920_007)
+OTHER_MEDIUM_ID = UUID(int=920_008)
+OTHER_COMPETENCY_ID = UUID(int=920_009)
+ALLOWED_CHUNK_ID = UUID(int=920_101)
+ALLOWED_QUESTION_ID = UUID(int=920_102)
+DRAFT_CHUNK_ID = UUID(int=920_103)
+WRONG_TAXONOMY_CHUNK_ID = UUID(int=920_104)
+CROSS_CURRICULUM_CHUNK_ID = UUID(int=920_105)
+ADMIN_HEADERS = {"Authorization": "Bearer admin-token"}
+REVIEWER_HEADERS = {"Authorization": "Bearer reviewer-token"}
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationSeed:
+    database_url: str
+    valkey_url: str
+    paper_blueprint_id: UUID
+    slot_id: str
+
+    @property
+    def base_path(self) -> str:
+        return f"/api/v1/admin/curricula/{CURRICULUM_VERSION_ID}/generation-runs"
+
+
+class StaticIdentityProvider:
+    async def authenticate(self, access_token: str) -> Principal:
+        if access_token == "admin-token":
+            return Principal(ADMIN_ID, frozenset({AdminRole.ADMIN}))
+        if access_token == "reviewer-token":
+            return Principal(REVIEWER_ID, frozenset({AdminRole.REVIEWER}))
+        if access_token == "no-role-token":
+            return Principal(UUID(int=920_010), frozenset())
+        raise AuthenticationError(AuthenticationFailureCode.INVALID)
+
+
+def settings_for(seed: GenerationSeed) -> Settings:
+    return Settings(
+        environment="test",
+        database_url=SecretStr(seed.database_url),
+        valkey_url=SecretStr(seed.valkey_url),
+    )
+
+
+@contextmanager
+def api_client(
+    seed: GenerationSeed,
+    dispatcher: GenerationDispatcher,
+    *,
+    runtime: GenerationRuntimeRegistry | None = None,
+) -> Iterator[TestClient]:
+    with TestClient(
+        create_app(
+            settings=settings_for(seed),
+            identity_provider=StaticIdentityProvider(),
+            generation_dispatcher=dispatcher,
+            generation_runtime_registry=runtime,
+        )
+    ) as client:
+        yield client
+
+
+def payload(
+    seed: GenerationSeed,
+    *,
+    slot_id: str | None = None,
+    chunk_ids: list[UUID] | None = None,
+    question_ids: list[UUID] | None = None,
+    paper_blueprint_id: UUID | None = None,
+) -> dict[str, Any]:
+    return {
+        "paper_blueprint_id": str(paper_blueprint_id or seed.paper_blueprint_id),
+        "slot_id": slot_id or seed.slot_id,
+        "knowledge_chunk_ids": [str(value) for value in (chunk_ids or [ALLOWED_CHUNK_ID])],
+        "historical_question_ids": [
+            str(value)
+            for value in (question_ids if question_ids is not None else [ALLOWED_QUESTION_ID])
+        ],
+    }
+
+
+async def seed_curricula(session: AsyncSession) -> None:
+    session.add_all(
+        [
+            ExamConfigurationModel(
+                id=EXAM_ID,
+                code="GEN-G5",
+                name="Generation Grade 5",
+                grade=5,
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            MediumModel(
+                id=MEDIUM_ID,
+                code="en",
+                name="English",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            ExamConfigurationModel(
+                id=OTHER_EXAM_ID,
+                code="GEN-G5-OTHER",
+                name="Other generation Grade 5",
+                grade=5,
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            MediumModel(
+                id=OTHER_MEDIUM_ID,
+                code="en-other",
+                name="Other English",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
+            CurriculumVersionModel(
+                id=CURRICULUM_VERSION_ID,
+                exam_configuration_id=EXAM_ID,
+                medium_id=MEDIUM_ID,
+                code="GEN-CUR",
+                title="Generation curriculum",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            CurriculumVersionModel(
+                id=OTHER_CURRICULUM_ID,
+                exam_configuration_id=OTHER_EXAM_ID,
+                medium_id=OTHER_MEDIUM_ID,
+                code="GEN-CUR-OTHER",
+                title="Other generation curriculum",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
+            TaxonomyNodeModel(
+                id=COMPETENCY_A,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                parent_id=None,
+                level=TaxonomyLevel.COMPETENCY,
+                code="C1",
+                title="Number competency",
+                active=True,
+                review_state=TaxonomyReviewState.REVIEWED,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            TaxonomyNodeModel(
+                id=SKILL_A,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                parent_id=COMPETENCY_A,
+                level=TaxonomyLevel.SKILL,
+                code="S1",
+                title="Number skill",
+                active=True,
+                review_state=TaxonomyReviewState.REVIEWED,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            TaxonomyNodeModel(
+                id=WRONG_COMPETENCY_ID,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                parent_id=None,
+                level=TaxonomyLevel.COMPETENCY,
+                code="C2",
+                title="Wrong competency",
+                active=True,
+                review_state=TaxonomyReviewState.REVIEWED,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            TaxonomyNodeModel(
+                id=OTHER_COMPETENCY_ID,
+                curriculum_version_id=OTHER_CURRICULUM_ID,
+                parent_id=None,
+                level=TaxonomyLevel.COMPETENCY,
+                code="OC1",
+                title="Other competency",
+                active=True,
+                review_state=TaxonomyReviewState.REVIEWED,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+        ]
+    )
+    await session.flush()
+
+
+async def seed_source(
+    session: AsyncSession,
+    *,
+    offset: int,
+    curriculum_version_id: UUID,
+    text: str,
+    document_type: SourceDocumentType = SourceDocumentType.SYLLABUS,
+    year: int | None = None,
+    paper_code: str | None = None,
+) -> tuple[UUID, UUID]:
+    document_id = UUID(int=921_000 + offset)
+    page_id = UUID(int=922_000 + offset)
+    block_id = UUID(int=923_000 + offset)
+    now = datetime.now(UTC)
+    document = SourceDocumentModel(
+        id=document_id,
+        checksum_sha256=sha256(f"generation-source-{offset}".encode()).hexdigest(),
+        object_key=f"sources/generation-{offset}.pdf",
+        original_filename=f"generation-{offset}.pdf",
+        content_type="application/pdf",
+        size_bytes=1_000 + offset,
+        document_type=document_type,
+        extraction_status=ExtractionStatus.EXTRACTION_PENDING,
+        curriculum_version_id=curriculum_version_id,
+        year=year,
+        paper_code=paper_code,
+        extraction_attempt_count=1,
+        extraction_started_at=now,
+        created_by=ADMIN_ID,
+        updated_by=ADMIN_ID,
+    )
+    session.add(document)
+    await session.flush()
+    session.add(
+        SourcePageModel(
+            id=page_id,
+            source_document_id=document_id,
+            page_number=1,
+            extractor="generation-fixture",
+            extractor_version="v1",
+            raw_text=text,
+            reviewed_text=text,
+            character_count=len(text),
+            block_count=1,
+            created_by=ADMIN_ID,
+            updated_by=ADMIN_ID,
+        )
+    )
+    await session.flush()
+    session.add(
+        ExtractedBlockModel(
+            id=block_id,
+            source_page_id=page_id,
+            source_document_id=document_id,
+            page_number=1,
+            reading_order=0,
+            extractor="generation-fixture",
+            extractor_version="v1",
+            bbox_x0=0.0,
+            bbox_y0=0.0,
+            bbox_x1=1.0,
+            bbox_y1=1.0,
+            raw_text=text,
+            reviewed_text=text,
+            character_count=len(text),
+            created_by=ADMIN_ID,
+            updated_by=ADMIN_ID,
+        )
+    )
+    await session.flush()
+    document.extraction_status = ExtractionStatus.EXTRACTED
+    document.extractor = "generation-fixture"
+    document.extractor_version = "v1"
+    document.extracted_page_count = 1
+    document.extracted_block_count = 1
+    document.extracted_character_count = len(text)
+    document.native_text_page_ratio = 1.0
+    document.needs_ocr = False
+    document.extraction_completed_at = now
+    await session.flush()
+    document.extraction_status = ExtractionStatus.IN_REVIEW
+    await session.flush()
+    document.extraction_status = ExtractionStatus.TRUSTED
+    await session.flush()
+    return document_id, block_id
+
+
+async def seed_context(session: AsyncSession) -> None:
+    document_id, block_id = await seed_source(
+        session,
+        offset=1,
+        curriculum_version_id=CURRICULUM_VERSION_ID,
+        text="Four is an even number because it is divisible by two.",
+    )
+    question_document_id, question_block_id = await seed_source(
+        session,
+        offset=3,
+        curriculum_version_id=CURRICULUM_VERSION_ID,
+        text="Which number is even?",
+        document_type=SourceDocumentType.PAST_PAPER,
+        year=2024,
+        paper_code="G5-2024",
+    )
+    session.add_all(
+        [
+            KnowledgeChunkModel(
+                id=ALLOWED_CHUNK_ID,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                chunk_type=ChunkType.EXPLANATION,
+                text="Four is an even number.",
+                educational_boundary="Grade 5 even numbers",
+                sequence=0,
+                source_document_id=document_id,
+                page_number=1,
+                source_block_id=block_id,
+                review_state=ReviewState.REVIEWED,
+                competency_id=COMPETENCY_A,
+                skill_id=SKILL_A,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            HistoricalQuestionModel(
+                id=ALLOWED_QUESTION_ID,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                year=2024,
+                paper_code="G5-2024",
+                question_number="1",
+                text="Which number is even?",
+                question_type=QuestionType.MULTIPLE_CHOICE,
+                marks=1,
+                source_document_id=question_document_id,
+                page_number=1,
+                source_block_id=question_block_id,
+                review_state=ReviewState.REVIEWED,
+                competency_id=COMPETENCY_A,
+                skill_id=SKILL_A,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            KnowledgeChunkModel(
+                id=DRAFT_CHUNK_ID,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                chunk_type=ChunkType.EXPLANATION,
+                text="Unreviewed draft text.",
+                educational_boundary="Draft",
+                sequence=1,
+                source_document_id=document_id,
+                page_number=1,
+                source_block_id=block_id,
+                review_state=ReviewState.DRAFT,
+                competency_id=COMPETENCY_A,
+                skill_id=SKILL_A,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+            KnowledgeChunkModel(
+                id=WRONG_TAXONOMY_CHUNK_ID,
+                curriculum_version_id=CURRICULUM_VERSION_ID,
+                chunk_type=ChunkType.EXPLANATION,
+                text="Reviewed but outside the blueprint target.",
+                educational_boundary="Wrong taxonomy",
+                sequence=2,
+                source_document_id=document_id,
+                page_number=1,
+                source_block_id=block_id,
+                review_state=ReviewState.REVIEWED,
+                competency_id=WRONG_COMPETENCY_ID,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
+        ]
+    )
+    other_document_id, other_block_id = await seed_source(
+        session,
+        offset=2,
+        curriculum_version_id=OTHER_CURRICULUM_ID,
+        text="Cross-curriculum reviewed text.",
+    )
+    session.add(
+        KnowledgeChunkModel(
+            id=CROSS_CURRICULUM_CHUNK_ID,
+            curriculum_version_id=OTHER_CURRICULUM_ID,
+            chunk_type=ChunkType.EXPLANATION,
+            text="Cross-curriculum reviewed text.",
+            educational_boundary="Other curriculum",
+            sequence=0,
+            source_document_id=other_document_id,
+            page_number=1,
+            source_block_id=other_block_id,
+            review_state=ReviewState.REVIEWED,
+            competency_id=OTHER_COMPETENCY_ID,
+            created_by=ADMIN_ID,
+            updated_by=ADMIN_ID,
+        )
+    )
+    await session.flush()
+
+
+@pytest.fixture(scope="module")
+def generation_seed() -> Iterator[GenerationSeed]:
+    credentials = ("exam_guru", "generation-integration-only")
+    with (
+        PostgresContainer(
+            image=PGVECTOR_IMAGE,
+            username=credentials[0],
+            password=credentials[1],  # pragma: allowlist secret
+            dbname="exam_guru_generation_test",
+            driver="asyncpg",
+        ) as postgres,
+        RedisContainer(image=VALKEY_IMAGE) as valkey,
+    ):
+        database_url = postgres.get_connection_url()
+        valkey_url = f"redis://{valkey.get_container_host_ip()}:{valkey.get_exposed_port(6379)}/0"
+        upgrade_database(database_url)
+        assert_database_schema_current(database_url)
+
+        async def seed() -> tuple[UUID, str]:
+            engine = create_async_engine(database_url)
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with sessions() as session:
+                    await seed_curricula(session)
+                    await seed_context(session)
+                    await session.commit()
+                    result = await BlueprintGenerationService(session).create_blueprint(
+                        CURRICULUM_VERSION_ID,
+                        make_uniform_specification((1,), 1),
+                        seed=920,
+                        analytics_run_id=None,
+                        actor_id=ADMIN_ID,
+                    )
+                    blueprint = result.record.blueprint
+                    slots = cast(list[dict[str, object]], blueprint["slots"])
+                    return result.record.id, str(slots[0]["slot_id"])
+            finally:
+                await engine.dispose()
+
+        paper_blueprint_id, slot_id = asyncio.run(seed())
+        yield GenerationSeed(database_url, valkey_url, paper_blueprint_id, slot_id)
+
+
+@pytest.mark.integration
+def test_generation_create_is_authorized_server_resolved_idempotent_and_spoof_safe(
+    generation_seed: GenerationSeed,
+) -> None:
+    dispatcher = DeterministicGenerationDispatcher("generation-message-1")
+    with api_client(generation_seed, dispatcher) as client:
+        unauthenticated = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+        )
+        assert unauthenticated.status_code == 401
+        reviewer = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**REVIEWER_HEADERS, "Idempotency-Key": "reviewer-create"},
+        )
+        assert reviewer.status_code == 403
+
+        headers = {**ADMIN_HEADERS, "Idempotency-Key": "generation-create-one"}
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers=headers,
+        )
+        duplicate = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers=headers,
+        )
+
+        assert created.status_code == duplicate.status_code == 202
+        assert created.json()["id"] == duplicate.json()["id"]
+        assert created.json()["generation_run_id"] == duplicate.json()["generation_run_id"]
+        assert created.json()["status"] == "queued"
+        assert created.json()["deduplicated"] is False
+        assert duplicate.json()["deduplicated"] is True
+        assert len(dispatcher.dispatched) == 1
+        run_id = UUID(created.json()["generation_run_id"])
+        job_id = UUID(created.json()["id"])
+
+        listed = client.get(generation_seed.base_path, headers=REVIEWER_HEADERS)
+        fetched = client.get(f"{generation_seed.base_path}/{run_id}", headers=REVIEWER_HEADERS)
+        attempts = client.get(
+            f"{generation_seed.base_path}/{run_id}/attempts",
+            headers=REVIEWER_HEADERS,
+        )
+        job = client.get(
+            f"/api/v1/admin/curricula/{CURRICULUM_VERSION_ID}/generation-jobs/{job_id}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert (
+            listed.status_code
+            == fetched.status_code
+            == attempts.status_code
+            == job.status_code
+            == 200
+        )
+        assert attempts.json() == []
+        assert fetched.json()["context"][0]["text"]
+        assert fetched.json()["context"][0]["trust"] == "untrusted_data"
+        assert "system_instructions" not in fetched.text
+        assert "api_key" not in fetched.text
+
+        changed = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed, question_ids=[]),
+            headers=headers,
+        )
+        assert changed.status_code == 409
+        assert changed.json()["detail"]["code"] == "generation_idempotency_conflict"
+
+        invalid_cases = (
+            (
+                payload(generation_seed, slot_id="missing-slot"),
+                "generation_slot_not_found",
+            ),
+            (
+                payload(generation_seed, chunk_ids=[DRAFT_CHUNK_ID], question_ids=[]),
+                "generation_context_not_reviewed",
+            ),
+            (
+                payload(
+                    generation_seed,
+                    chunk_ids=[WRONG_TAXONOMY_CHUNK_ID],
+                    question_ids=[],
+                ),
+                "generation_context_taxonomy_mismatch",
+            ),
+            (
+                payload(
+                    generation_seed,
+                    chunk_ids=[CROSS_CURRICULUM_CHUNK_ID],
+                    question_ids=[],
+                ),
+                "generation_context_cross_curriculum",
+            ),
+        )
+        for index, (invalid_payload, error_code) in enumerate(invalid_cases):
+            response = client.post(
+                generation_seed.base_path,
+                json=invalid_payload,
+                headers={**ADMIN_HEADERS, "Idempotency-Key": f"invalid-{index}"},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"]["code"] == error_code
+
+        cross_blueprint = client.post(
+            f"/api/v1/admin/curricula/{OTHER_CURRICULUM_ID}/generation-runs",
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "cross-blueprint"},
+        )
+        assert cross_blueprint.status_code == 404
+        assert cross_blueprint.json()["detail"]["code"] == "generation_blueprint_not_found"
+
+    async def verify() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            assert await session.scalar(select(func.count()).select_from(GenerationRunModel)) == 1
+            assert await session.scalar(select(func.count()).select_from(GenerationJobModel)) == 1
+            audits = tuple(
+                await session.scalars(
+                    select(AdminAuditEventModel).where(
+                        AdminAuditEventModel.resource_id == run_id,
+                        AdminAuditEventModel.action == "generation_run.created",
+                    )
+                )
+            )
+            assert len(audits) == 1
+            serialized = str(audits[0].payload)
+            assert "Four is an even number" not in serialized
+            assert "system_instructions" not in serialized
+        await engine.dispose()
+
+    asyncio.run(verify())
+
+
+@pytest.mark.integration
+def test_generation_create_race_converges_on_one_run_job_and_dispatch(
+    generation_seed: GenerationSeed,
+) -> None:
+    dispatcher = DeterministicGenerationDispatcher("generation-race-message")
+    barrier = Barrier(2)
+
+    def create_once() -> tuple[int, str, str]:
+        with api_client(generation_seed, dispatcher) as client:
+            barrier.wait()
+            response = client.post(
+                generation_seed.base_path,
+                json=payload(generation_seed),
+                headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-race"},
+            )
+            body = response.json()
+            return response.status_code, body["id"], body["generation_run_id"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(lambda _: create_once(), range(2)))
+
+    assert {item[0] for item in results} == {202}
+    assert len({item[1] for item in results}) == 1
+    assert len({item[2] for item in results}) == 1
+    assert len(dispatcher.dispatched) == 1
+
+    async def verify() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        async with engine.connect() as connection:
+            run_count = await connection.scalar(
+                select(func.count())
+                .select_from(GenerationRunModel)
+                .where(GenerationRunModel.id == UUID(results[0][2]))
+            )
+            assert run_count == 1
+        await engine.dispose()
+        redis = Redis.from_url(generation_seed.valkey_url)
+        assert await redis.ping()
+        await redis.aclose()
+
+    asyncio.run(verify())
+
+
+@pytest.mark.integration
+def test_generation_worker_persists_validation_required_result_accounting_and_immutable_attempt(
+    generation_seed: GenerationSeed,
+) -> None:
+    dispatcher = DeterministicGenerationDispatcher("generation-worker-message")
+    with api_client(generation_seed, dispatcher) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-worker-success"},
+        )
+        assert created.status_code == 202
+        run_id = UUID(created.json()["generation_run_id"])
+        job_id = UUID(created.json()["id"])
+
+    async def process() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            worker = GenerationWorkerService(
+                session,
+                create_generation_runtime(settings_for(generation_seed)),
+                sleep=lambda _: None,
+            )
+            assert await worker.process(job_id, run_id) is True
+            assert await worker.process(job_id, run_id) is False
+
+            attempt = await session.scalar(
+                select(GenerationAttemptModel).where(
+                    GenerationAttemptModel.generation_run_id == run_id
+                )
+            )
+            assert attempt is not None
+            attempt_id = attempt.id
+            original_candidate = attempt.candidate
+
+            async def mutate_attempt() -> None:
+                await session.execute(
+                    update(GenerationAttemptModel)
+                    .where(GenerationAttemptModel.id == attempt_id)
+                    .values(candidate={"stem": "mutated"})
+                )
+                await session.commit()
+
+            with pytest.raises(IntegrityError):
+                await mutate_attempt()
+            await session.rollback()
+
+            async def mutate_run() -> None:
+                await session.execute(
+                    update(GenerationRunModel)
+                    .where(GenerationRunModel.id == run_id)
+                    .values(slot_id="forged-slot", version=3)
+                )
+                await session.commit()
+
+            with pytest.raises(IntegrityError):
+                await mutate_run()
+            await session.rollback()
+            persisted_attempt = await session.get(GenerationAttemptModel, attempt_id)
+            assert persisted_attempt is not None
+            assert persisted_attempt.candidate == original_candidate
+        await engine.dispose()
+
+    asyncio.run(process())
+
+    with api_client(generation_seed, dispatcher) as client:
+        run = client.get(f"{generation_seed.base_path}/{run_id}", headers=REVIEWER_HEADERS)
+        attempts = client.get(
+            f"{generation_seed.base_path}/{run_id}/attempts",
+            headers=REVIEWER_HEADERS,
+        )
+        job = client.get(
+            f"/api/v1/admin/curricula/{CURRICULUM_VERSION_ID}/generation-jobs/{job_id}",
+            headers=REVIEWER_HEADERS,
+        )
+
+    assert run.status_code == attempts.status_code == job.status_code == 200
+    run_body = run.json()
+    assert run_body["status"] == "succeeded"
+    assert run_body["disposition"] == "requires_validation"
+    assert run_body["candidate"] is not None
+    assert "publish" not in run_body
+    assert run_body["prompt_id"] == "question-generation"
+    assert run_body["prompt_version"] == "1.0.0"
+    assert run_body["provider"] == "deterministic-fake"
+    assert run_body["provider_version"] == "1.0.0"
+    assert run_body["model"] == "fixture-model"
+    assert run_body["model_version"] == "2026-01"
+    assert run_body["retrieval_version"] == "reviewed-selected-context-v1"
+    assert run_body["schema_version"] == "question.v1"
+    assert run_body["pricing_version"] == "deterministic-pricing-v1"
+    assert run_body["attempt_count"] == 1
+    assert run_body["total_tokens"] == run_body["input_tokens"] + run_body["output_tokens"]
+    assert run_body["latency_ms"] >= 0
+    assert job.json()["status"] == "succeeded"
+    assert len(attempts.json()) == 1
+    attempt_body = attempts.json()[0]
+    assert attempt_body["status"] == "succeeded"
+    assert attempt_body["attempt_number"] == 1
+    assert attempt_body["retry_of_attempt_id"] is None
+    assert attempt_body["accounting_known"] is True
+    assert attempt_body["disposition"] == "requires_validation"
+    assert "secret" not in str(attempt_body).casefold()
+
+    async def verify_audit() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        async with engine.connect() as connection:
+            actions = tuple(
+                await connection.scalars(
+                    select(AdminAuditEventModel.action).where(
+                        AdminAuditEventModel.resource_id == run_id
+                    )
+                )
+            )
+            assert actions.count("generation_attempt.completed") == 1
+            assert actions.count("generation_run.succeeded") == 1
+        await engine.dispose()
+
+    asyncio.run(verify_audit())
+
+
+class ScriptedRuntimeProvider:
+    def __init__(
+        self,
+        delegate: GenerationProvider,
+        *,
+        failure_code: ProviderFailureCode | None = None,
+        fail_attempts: frozenset[int] = frozenset(),
+        retry_after_ms: int | None = None,
+        input_tokens: int | None = None,
+    ) -> None:
+        self._delegate = delegate
+        self._failure_code = failure_code
+        self._fail_attempts = fail_attempts
+        self._retry_after_ms = retry_after_ms
+        self._input_tokens = input_tokens
+
+    def generate(self, request: GenerationRequest) -> GenerationResult:
+        if request.identity.attempt_number in self._fail_attempts:
+            assert self._failure_code is not None
+            raise ProviderError(
+                self._failure_code,
+                identity=request.identity,
+                retry_after_ms=self._retry_after_ms,
+            )
+        result = self._delegate.generate(request)
+        if self._input_tokens is None:
+            return result
+        accounting = GenerationAccounting(
+            input_tokens=self._input_tokens,
+            output_tokens=result.accounting.output_tokens,
+            total_tokens=self._input_tokens + result.accounting.output_tokens,
+            cost_microusd=result.accounting.cost_microusd,
+            latency_ms=result.accounting.latency_ms,
+        )
+        return GenerationResult(
+            request=request,
+            question=result.question,
+            accounting=accounting,
+        )
+
+
+def scripted_runtime(
+    seed: GenerationSeed,
+    *,
+    failure_code: ProviderFailureCode | None = None,
+    fail_attempts: frozenset[int] = frozenset(),
+    retry_after_ms: int | None = None,
+    input_tokens: int | None = None,
+) -> GenerationRuntimeRegistry:
+    base = create_generation_runtime(settings_for(seed))
+    config = base.active_config
+    return GenerationRuntimeRegistry(
+        config,
+        provider_factory=lambda active: ScriptedRuntimeProvider(
+            base.build_provider(active),
+            failure_code=failure_code,
+            fail_attempts=fail_attempts,
+            retry_after_ms=retry_after_ms,
+            input_tokens=input_tokens,
+        ),
+    )
+
+
+@pytest.mark.integration
+def test_generation_worker_records_exact_retry_lineage_and_sanitized_provider_failure(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.TIMEOUT,
+        fail_attempts=frozenset({1}),
+        retry_after_ms=17,
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-retry-message")
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-provider-retry"},
+        )
+    run_id = UUID(created.json()["generation_run_id"])
+    job_id = UUID(created.json()["id"])
+
+    async def process() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            assert await GenerationWorkerService(
+                session,
+                runtime,
+                sleep=lambda _: None,
+            ).process(job_id, run_id)
+        await engine.dispose()
+
+    asyncio.run(process())
+
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        run = client.get(f"{generation_seed.base_path}/{run_id}", headers=REVIEWER_HEADERS)
+        attempts = client.get(
+            f"{generation_seed.base_path}/{run_id}/attempts",
+            headers=REVIEWER_HEADERS,
+        )
+
+    assert run.json()["status"] == "succeeded"
+    assert run.json()["attempt_count"] == 2
+    first, second = attempts.json()
+    assert first["status"] == "failed"
+    assert first["failure_code"] == "timeout"
+    assert first["retry_after_ms"] == 17
+    assert first["accounting_known"] is False
+    assert first["candidate"] is None
+    assert second["status"] == "succeeded"
+    assert second["retry_of_attempt_id"] == first["id"]
+    assert second["attempt_number"] == 2
+    assert second["provider_idempotency_key"] == first["provider_idempotency_key"]
+    assert "exception" not in str(first).casefold()
+
+
+@pytest.mark.integration
+def test_generation_worker_enforces_budget_and_manual_retry_creates_linked_run(
+    generation_seed: GenerationSeed,
+) -> None:
+    base = create_generation_runtime(settings_for(generation_seed))
+    over_budget_input = base.active_config.budgets.max_total_input_tokens + 1
+    budget_runtime = scripted_runtime(generation_seed, input_tokens=over_budget_input)
+    dispatcher = DeterministicGenerationDispatcher("generation-budget-message")
+    with api_client(generation_seed, dispatcher, runtime=budget_runtime) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-budget"},
+        )
+    run_id = UUID(created.json()["generation_run_id"])
+    job_id = UUID(created.json()["id"])
+
+    async def process() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            assert await GenerationWorkerService(
+                session,
+                budget_runtime,
+                sleep=lambda _: None,
+            ).process(job_id, run_id)
+        await engine.dispose()
+
+    asyncio.run(process())
+
+    with api_client(generation_seed, dispatcher, runtime=budget_runtime) as client:
+        run = client.get(f"{generation_seed.base_path}/{run_id}", headers=REVIEWER_HEADERS)
+        attempts = client.get(
+            f"{generation_seed.base_path}/{run_id}/attempts",
+            headers=REVIEWER_HEADERS,
+        )
+        retry = client.post(
+            f"{generation_seed.base_path}/{run_id}/retry",
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-budget-manual-retry"},
+        )
+        duplicate_retry = client.post(
+            f"{generation_seed.base_path}/{run_id}/retry",
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-budget-manual-retry"},
+        )
+
+    assert run.json()["status"] == "failed"
+    assert run.json()["failure_code"] == "budget_exceeded_input_tokens"
+    assert run.json()["candidate"] is None
+    assert run.json()["disposition"] is None
+    assert run.json()["attempt_count"] == 1
+    assert attempts.json()[0]["status"] == "succeeded"
+    assert attempts.json()[0]["candidate"] is not None
+    assert retry.status_code == duplicate_retry.status_code == 202
+    assert retry.json()["generation_run_id"] == duplicate_retry.json()["generation_run_id"]
+    assert duplicate_retry.json()["deduplicated"] is True
+
+    retry_run_id = UUID(retry.json()["generation_run_id"])
+    with api_client(generation_seed, dispatcher, runtime=budget_runtime) as client:
+        retry_run = client.get(
+            f"{generation_seed.base_path}/{retry_run_id}",
+            headers=REVIEWER_HEADERS,
+        )
+        invalid_retry = client.post(
+            f"{generation_seed.base_path}/{retry_run_id}/retry",
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "pending-retry-forbidden"},
+        )
+    assert retry_run.json()["retry_of_run_id"] == str(run_id)
+    assert retry_run.json()["request_fingerprint"] == run.json()["request_fingerprint"]
+    assert invalid_retry.status_code == 409
+    assert invalid_retry.json()["detail"]["code"] == "generation_retry_state_invalid"
+
+
+@pytest.mark.integration
+def test_generation_nonretryable_provider_failure_is_sanitized_and_not_retried(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.INVALID_RESPONSE,
+        fail_attempts=frozenset({1}),
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-failure-message")
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-provider-failure"},
+        )
+    run_id = UUID(created.json()["generation_run_id"])
+    job_id = UUID(created.json()["id"])
+
+    async def process() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            assert await GenerationWorkerService(
+                session,
+                runtime,
+                sleep=lambda _: None,
+            ).process(job_id, run_id)
+        await engine.dispose()
+
+    asyncio.run(process())
+
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        run = client.get(f"{generation_seed.base_path}/{run_id}", headers=REVIEWER_HEADERS)
+        attempts = client.get(
+            f"{generation_seed.base_path}/{run_id}/attempts",
+            headers=REVIEWER_HEADERS,
+        )
+    assert run.json()["status"] == "failed"
+    assert run.json()["failure_code"] == "provider_invalid_response"
+    assert run.json()["attempt_count"] == 1
+    assert [item["failure_code"] for item in attempts.json()] == ["invalid_response"]
+
+
+@pytest.mark.integration
+def test_generation_api_enqueues_the_durable_job_in_real_valkey(
+    generation_seed: GenerationSeed,
+) -> None:
+    dispatcher = create_generation_dispatcher(settings_for(generation_seed))
+    broker = cast(RedisBroker, generation_jobs.generate_question.broker)
+    assert broker.do_qsize(GENERATION_QUEUE_NAME) == 0
+    try:
+        with api_client(generation_seed, dispatcher) as client:
+            response = client.post(
+                generation_seed.base_path,
+                json=payload(generation_seed),
+                headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-real-valkey"},
+            )
+        assert response.status_code == 202
+        assert response.json()["queue_message_id"]
+        assert broker.do_qsize(GENERATION_QUEUE_NAME) == 1
+    finally:
+        broker.close()

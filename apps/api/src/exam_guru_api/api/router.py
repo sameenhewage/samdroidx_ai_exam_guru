@@ -5,6 +5,7 @@ from exam_guru_api.api.routes.audit import router as audit_router
 from exam_guru_api.api.routes.blueprints import router as blueprint_router
 from exam_guru_api.api.routes.configuration import router as configuration_router
 from exam_guru_api.api.routes.documents import router as document_router
+from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
@@ -26,6 +27,11 @@ api_router.include_router(
     tags=["admin-blueprints"],
 )
 api_router.include_router(retrieval_router, prefix="/admin", tags=["admin-retrieval"])
+api_router.include_router(
+    generation_router,
+    prefix="/admin/curricula",
+    tags=["admin-generation"],
+)
 api_router.include_router(
     knowledge_router,
     prefix="/admin/curricula",

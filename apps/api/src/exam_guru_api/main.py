@@ -10,6 +10,8 @@ from exam_guru_api.auth.adapters import build_identity_provider
 from exam_guru_api.auth.ports import IdentityProvider
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import ExtractionDispatcher, create_extraction_dispatcher
+from exam_guru_api.generation.jobs import GenerationDispatcher, create_generation_dispatcher
+from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
 from exam_guru_api.infrastructure.object_storage import ObjectStorage, create_object_storage
 from exam_guru_api.infrastructure.resources import (
     ApplicationResources,
@@ -31,6 +33,8 @@ def create_app(
     identity_provider: IdentityProvider | None = None,
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
+    generation_dispatcher: GenerationDispatcher | None = None,
+    generation_runtime_registry: GenerationRuntimeRegistry | None = None,
     embedding_provider_registry: EmbeddingProviderRegistry | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
@@ -69,6 +73,16 @@ def create_app(
         extraction_dispatcher
         if extraction_dispatcher is not None
         else create_extraction_dispatcher(resolved_settings)
+    )
+    application.state.generation_dispatcher = (
+        generation_dispatcher
+        if generation_dispatcher is not None
+        else create_generation_dispatcher(resolved_settings)
+    )
+    application.state.generation_runtime_registry = (
+        generation_runtime_registry
+        if generation_runtime_registry is not None
+        else create_generation_runtime(resolved_settings)
     )
     resolved_embedding_registry = (
         embedding_provider_registry

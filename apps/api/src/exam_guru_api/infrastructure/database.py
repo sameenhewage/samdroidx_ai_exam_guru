@@ -12,6 +12,7 @@ def get_metadata() -> MetaData:
     from exam_guru_api.blueprints import models as blueprint_models
     from exam_guru_api.curriculum import models as curriculum_models
     from exam_guru_api.documents import models as document_models
+    from exam_guru_api.generation import models as generation_models
     from exam_guru_api.knowledge import models as knowledge_models
 
     _ = (
@@ -19,6 +20,9 @@ def get_metadata() -> MetaData:
         auth_models.AdminAuditEventModel,
         blueprint_models.PaperBlueprintModel,
         document_models.SourceDocumentModel,
+        generation_models.GenerationRunModel,
+        generation_models.GenerationAttemptModel,
+        generation_models.GenerationJobModel,
         knowledge_models.KnowledgeEmbeddingModel,
     )
     return curriculum_models.TaxonomyNodeModel.metadata
