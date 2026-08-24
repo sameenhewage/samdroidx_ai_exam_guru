@@ -310,13 +310,22 @@ function fixtureApi(options: ApiFixtureOptions = {}) {
     if (request.method === "POST" && url.pathname.endsWith("/knowledge/questions")) {
       const body = (await request.json()) as components["schemas"]["HistoricalQuestionImportRequest"];
       const imported = question({
+        answer: body.answer ?? null,
+        difficulty_confidence: body.difficulty_confidence ?? null,
+        difficulty_label: body.difficulty_label ?? null,
+        difficulty_source: body.difficulty_source ?? null,
         embedding_configurations: [],
         embedding_status: "not_embedded",
+        marking_data: body.marking_data ?? null,
+        marking_guidance: body.marking_guidance ?? null,
+        media_references: body.media_references ?? null,
+        options: body.options ?? null,
         provenance: {
           page_number: body.page_number,
           source_block_id: body.source_block_id ?? null,
           source_document_id: body.source_document_id,
         },
+        question_archetype: body.question_archetype ?? null,
         question_number: body.question_number,
         text: body.text,
         version: 0,
@@ -401,6 +410,158 @@ describe("KnowledgeStudio", () => {
       year: 2025,
     });
     expect(screen.getByRole("heading", { name: "2025-I / Question 12" })).toBeInTheDocument();
+  });
+
+  it("imports optional historical metadata without defaults or answer inference", async () => {
+    const api = fixtureApi();
+    vi.stubGlobal("fetch", api.fetchMock);
+    render(<KnowledgeStudio role="admin" />);
+
+    await screen.findByRole("heading", { name: "Knowledge Studio" });
+    await selectProvenance(paper.original_filename);
+    fireEvent.change(screen.getByLabelText("Question number"), { target: { value: "13" } });
+    fireEvent.change(screen.getByLabelText("Marks"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Media references"), {
+      target: {
+        value: "source://page/1/figure/A\nsource://page/1/table/1",
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Options"), {
+      target: { value: "A. Triangle\nB. Square\nC. Circle" },
+    });
+    fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "B" } });
+    fireEvent.change(screen.getByLabelText("Marking guidance"), {
+      target: { value: "Award two marks for the source-labelled answer B." },
+    });
+    fireEvent.change(screen.getByLabelText("Marking data (JSON object)"), {
+      target: {
+        value: JSON.stringify({
+          alternative_answers: ["B"],
+          criteria: [{ description: "Selects the square.", marks: 2 }],
+        }),
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Question archetype"), {
+      target: { value: "single_best_answer" },
+    });
+    fireEvent.change(screen.getByLabelText("Difficulty label"), {
+      target: { value: "medium" },
+    });
+    fireEvent.change(screen.getByLabelText("Difficulty confidence"), {
+      target: { value: "0.85" },
+    });
+    fireEvent.change(screen.getByLabelText("Difficulty source"), {
+      target: { value: "reviewer_confirmed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import historical question" }));
+
+    expect(await screen.findByText("Historical question imported.")).toBeInTheDocument();
+    const post = api.requests.find(
+      (request) => request.method === "POST" && request.url.endsWith("/knowledge/questions"),
+    );
+    await expect(post?.json()).resolves.toEqual({
+      answer: "B",
+      difficulty_confidence: 0.85,
+      difficulty_label: "medium",
+      difficulty_source: "reviewer_confirmed",
+      marking_data: {
+        alternative_answers: ["B"],
+        criteria: [{ description: "Selects the square.", marks: 2 }],
+      },
+      marking_guidance: "Award two marks for the source-labelled answer B.",
+      marks: 2,
+      media_references: ["source://page/1/figure/A", "source://page/1/table/1"],
+      options: ["A. Triangle", "B. Square", "C. Circle"],
+      page_number: 1,
+      paper_code: "2025-I",
+      question_archetype: "single_best_answer",
+      question_number: "13",
+      question_type: "multiple_choice",
+      source_block_id: ids.block,
+      source_document_id: ids.paper,
+      text: "Which shape has exactly three sides?",
+      year: 2025,
+    });
+  });
+
+  it("rejects malformed, unbounded, or incomplete metadata before import", async () => {
+    const api = fixtureApi();
+    vi.stubGlobal("fetch", api.fetchMock);
+    render(<KnowledgeStudio role="admin" />);
+
+    await screen.findByRole("heading", { name: "Knowledge Studio" });
+    await selectProvenance(paper.original_filename);
+    fireEvent.change(screen.getByLabelText("Question number"), { target: { value: "14" } });
+    fireEvent.change(screen.getByLabelText("Marks"), { target: { value: "1" } });
+    const markingData = screen.getByLabelText("Marking data (JSON object)");
+
+    fireEvent.change(markingData, {
+      target: { value: '{"criterion": globalThis.__unsafe_call__()}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import historical question" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Marking data must be a valid JSON object.",
+    );
+
+    fireEvent.change(markingData, {
+      target: { value: JSON.stringify({ guidance: "é".repeat(33_000) }) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import historical question" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Marking data is limited to 64 KiB of UTF-8 JSON.",
+    );
+
+    fireEvent.change(markingData, { target: { value: '{"marks": 1}' } });
+    fireEvent.change(screen.getByLabelText("Difficulty label"), {
+      target: { value: "hard" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import historical question" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Difficulty label, confidence, and source must all be supplied or all left blank.",
+    );
+
+    expect(
+      api.requests.filter(
+        (request) => request.method === "POST" && request.url.endsWith("/knowledge/questions"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("shows reviewer metadata as safe text and never exposes response vectors", async () => {
+    const unsafeMarkup = '<img src=x onerror="globalThis.__unsafe_call__()">';
+    const richQuestion = {
+      ...question({
+        answer: "B",
+        difficulty_confidence: 0.85,
+        difficulty_label: "medium",
+        difficulty_source: "reviewer_confirmed",
+        marking_data: {
+          criteria: [{ description: unsafeMarkup, marks: 2 }],
+        },
+        marking_guidance: `Treat ${unsafeMarkup} as source text.`,
+        media_references: ["source://page/1/figure/A"],
+        options: ["A. Triangle", "B. Square"],
+        question_archetype: "single_best_answer",
+      }),
+      raw_vector: ["raw-vector-secret"],
+    } as HistoricalQuestion;
+    const api = fixtureApi({ questions: [richQuestion] });
+    vi.stubGlobal("fetch", api.fetchMock);
+    const { container } = render(<KnowledgeStudio role="reviewer" />);
+
+    const heading = await screen.findByRole("heading", { name: "Historical question metadata" });
+    const metadata = heading.closest("section");
+    expect(metadata).not.toBeNull();
+    expect(within(metadata as HTMLElement).getByText("source://page/1/figure/A")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("A. Triangle")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("B. Square")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("single_best_answer")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("medium")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("0.85")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("reviewer_confirmed")).toBeInTheDocument();
+    expect(metadata).toHaveTextContent(unsafeMarkup);
+    expect(metadata?.querySelector("img, script")).toBeNull();
+    expect(container).not.toHaveTextContent("raw-vector-secret");
   });
 
   it("supports chunk import, API-bounded filters, and empty pagination", async () => {
@@ -495,6 +656,14 @@ describe("KnowledgeStudio", () => {
     expect(screen.getByText(ids.block)).toBeInTheDocument();
     expect(screen.getByText("multilingual-e5-small")).toBeInTheDocument();
     expect(screen.getByText("sha256:fixture")).toBeInTheDocument();
+    const metadataHeading = screen.getByRole("heading", {
+      name: "Historical question metadata",
+    });
+    const metadata = metadataHeading.closest("section");
+    expect(metadata).not.toBeNull();
+    expect(within(metadata as HTMLElement).getAllByText("Not supplied").length).toBeGreaterThanOrEqual(
+      7,
+    );
 
     fireEvent.change(screen.getByLabelText("Competency"), { target: { value: ids.competency } });
     expect(screen.getByRole("option", { name: "S1 — Recognise polygons" })).toBeInTheDocument();
@@ -651,7 +820,24 @@ describe("KnowledgeStudio", () => {
   });
 
   it("has no automated accessibility violations", async () => {
-    const api = fixtureApi({ chunks: [chunk()], questions: [question()] });
+    const api = fixtureApi({
+      chunks: [chunk()],
+      questions: [
+        question({
+          answer: "B",
+          difficulty_confidence: 0.85,
+          difficulty_label: "medium",
+          difficulty_source: "reviewer_confirmed",
+          marking_data: {
+            criteria: [{ description: "Selects the square.", marks: 2 }],
+          },
+          marking_guidance: "Award two marks for B.",
+          media_references: ["source://page/1/figure/A"],
+          options: ["A. Triangle", "B. Square"],
+          question_archetype: "single_best_answer",
+        }),
+      ],
+    });
     vi.stubGlobal("fetch", api.fetchMock);
     const { container } = render(<KnowledgeStudio role="reviewer" />);
     await screen.findByRole("heading", { name: "2025-I / Question 12" });

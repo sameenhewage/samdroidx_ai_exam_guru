@@ -66,6 +66,13 @@ test("admin imports trusted question and chunk, then reviewer classifies and rev
   const boundary = `Geometry boundary ${unique}`;
   const competencyTitle = `Spatial competency ${unique}`;
   const skillTitle = `Polygon skill ${unique}`;
+  const mediaReference = `source://page/1/figure-${unique}`;
+  const optionA = "A. Triangle";
+  const optionB = "B. Square";
+  const answer = "B";
+  const markingGuidance = `Award two marks for source label B (${unique}).`;
+  const archetype = `single_best_answer_${unique}`;
+  const difficultySource = `reviewer_confirmed_${unique}`;
   const year = 2025;
   const paperCode = `P-${unique}`;
 
@@ -167,6 +174,20 @@ test("admin imports trusted question and chunk, then reviewer classifies and rev
   await page.getByLabel("Source block").selectOption({ index: 1 });
   await page.getByLabel("Question number").fill(questionNumber);
   await page.getByLabel("Marks").fill("2");
+  await page.getByLabel("Media references").fill(mediaReference);
+  await page.getByLabel("Options").fill(`${optionA}\n${optionB}`);
+  await page.getByLabel("Answer", { exact: true }).fill(answer);
+  await page.getByLabel("Marking guidance").fill(markingGuidance);
+  await page.getByLabel("Marking data (JSON object)").fill(
+    JSON.stringify({
+      alternative_answers: [answer],
+      criteria: [{ description: "Selects the square.", marks: 2 }],
+    }),
+  );
+  await page.getByLabel("Question archetype").fill(archetype);
+  await page.getByLabel("Difficulty label").selectOption("medium");
+  await page.getByLabel("Difficulty confidence").fill("0.91");
+  await page.getByLabel("Difficulty source").fill(difficultySource);
   await page.getByRole("button", { name: "Import historical question" }).click();
   await expect(page.getByText("Historical question imported.")).toBeVisible();
   await expect(page.getByRole("heading", { name: `${paperCode} / Question ${questionNumber}` })).toBeVisible();
@@ -212,6 +233,23 @@ test("admin imports trusted question and chunk, then reviewer classifies and rev
     }),
   });
   await expect(questionCard).toBeVisible();
+  const metadataHeading = questionCard.getByRole("heading", {
+    exact: true,
+    name: "Historical question metadata",
+  });
+  const metadataPanel = questionCard.locator("section").filter({ has: metadataHeading });
+  await expect(metadataPanel).toBeVisible();
+  await expect(metadataPanel.getByText(mediaReference, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(optionA, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(optionB, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(answer, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(markingGuidance, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(archetype, { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText("medium", { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText("0.91", { exact: true })).toBeVisible();
+  await expect(metadataPanel.getByText(difficultySource, { exact: true })).toBeVisible();
+  await expect(metadataPanel.locator("pre")).toContainText('"description": "Selects the square."');
+  await expect(metadataPanel.getByText("Not supplied")).toHaveCount(0);
   await questionCard
     .getByRole("combobox", { exact: true, name: "Competency" })
     .selectOption({ label: `C${unique} — ${competencyTitle}` });

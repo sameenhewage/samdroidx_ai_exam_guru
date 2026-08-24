@@ -31,9 +31,15 @@ type SourcePage = components["schemas"]["SourcePageResponse"];
 type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type HistoricalQuestion = components["schemas"]["HistoricalQuestionResponse"];
+type HistoricalQuestionImportRequest =
+  components["schemas"]["HistoricalQuestionImportRequest"];
+type HistoricalQuestionMarkingData = NonNullable<
+  HistoricalQuestionImportRequest["marking_data"]
+>;
 type KnowledgeChunk = components["schemas"]["KnowledgeChunkResponse"];
 type KnowledgeRecord = HistoricalQuestion | KnowledgeChunk;
 type Classification = components["schemas"]["KnowledgeClassificationRequest"];
+type DifficultyLabel = components["schemas"]["DifficultyLabel"];
 type ReviewState = components["schemas"]["ReviewState"];
 type QuestionType = components["schemas"]["QuestionType"];
 type ChunkType = components["schemas"]["ChunkType"];
@@ -54,15 +60,54 @@ type MutationOutcome = {
   notice?: string;
 };
 
+type HistoricalQuestionMetadata = Pick<
+  HistoricalQuestionImportRequest,
+  | "answer"
+  | "difficulty_confidence"
+  | "difficulty_label"
+  | "difficulty_source"
+  | "marking_data"
+  | "marking_guidance"
+  | "media_references"
+  | "options"
+  | "question_archetype"
+>;
+
+type ParsedValue<T> = {
+  error?: string;
+  value?: T;
+};
+
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const MAX_OFFSET = 100_000;
+const MAX_MEDIA_REFERENCES = 32;
+const MAX_MEDIA_REFERENCE_CHARACTERS = 2_048;
+const MIN_QUESTION_OPTIONS = 2;
+const MAX_QUESTION_OPTIONS = 8;
+const MAX_QUESTION_OPTION_CHARACTERS = 2_000;
+const MAX_ANSWER_CHARACTERS = 8_000;
+const MAX_MARKING_GUIDANCE_CHARACTERS = 16_000;
+const MAX_MARKING_DATA_BYTES = 65_536;
+const MAX_MARKING_DATA_DEPTH = 8;
+const MAX_MARKING_DATA_NODES = 1_024;
+const MAX_MARKING_DATA_COLLECTION_ITEMS = 128;
+const MAX_MARKING_DATA_KEY_CHARACTERS = 128;
+const MAX_MARKING_DATA_STRING_CHARACTERS = 16_000;
+const MAX_QUESTION_ARCHETYPE_CHARACTERS = 128;
+const MAX_DIFFICULTY_SOURCE_CHARACTERS = 128;
 const PAGE_SIZES = [10, 25, 50, 100] as const;
 
 const questionTypes: ReadonlyArray<{ label: string; value: QuestionType }> = [
   { label: "Multiple choice", value: "multiple_choice" },
   { label: "Short answer", value: "short_answer" },
   { label: "Structured", value: "structured" },
+];
+
+const difficultyLabels: ReadonlyArray<{ label: string; value: DifficultyLabel }> = [
+  { label: "Easy", value: "easy" },
+  { label: "Medium", value: "medium" },
+  { label: "Hard", value: "hard" },
 ];
 
 const chunkTypes: ReadonlyArray<{ label: string; value: ChunkType }> = [
@@ -145,6 +190,236 @@ function pageSize(value: FormDataEntryValue | null): number {
 function optionalString(value: FormDataEntryValue | null): string | undefined {
   const normalized = String(value ?? "").trim();
   return normalized || undefined;
+}
+
+function characterCount(value: string): number {
+  return Array.from(value).length;
+}
+
+function utf8ByteCount(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function parseOptionalLines(
+  value: FormDataEntryValue | null,
+  {
+    fieldName,
+    maximumCharacters,
+    maximumItems,
+    minimumItems,
+  }: {
+    fieldName: string;
+    maximumCharacters: number;
+    maximumItems: number;
+    minimumItems: number;
+  },
+): ParsedValue<string[]> {
+  const raw = String(value ?? "");
+  if (!raw.trim()) return {};
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < minimumItems || lines.length > maximumItems) {
+    return {
+      error: `${fieldName} must contain ${minimumItems} through ${maximumItems} non-blank lines, or be left blank.`,
+    };
+  }
+  if (lines.some((line) => characterCount(line) > maximumCharacters)) {
+    return {
+      error: `${fieldName} entries are limited to ${maximumCharacters.toLocaleString()} characters each.`,
+    };
+  }
+  if (new Set(lines).size !== lines.length) {
+    return { error: `${fieldName} entries must be unique.` };
+  }
+  return { value: lines };
+}
+
+function parseOptionalBoundedText(
+  value: FormDataEntryValue | null,
+  fieldName: string,
+  maximumCharacters: number,
+): ParsedValue<string> {
+  const normalized = optionalString(value);
+  if (normalized === undefined) return {};
+  if (characterCount(normalized) > maximumCharacters) {
+    return {
+      error: `${fieldName} is limited to ${maximumCharacters.toLocaleString()} characters.`,
+    };
+  }
+  return { value: normalized };
+}
+
+function validateMarkingDataValue(
+  value: unknown,
+  depth: number,
+  state: { nodes: number },
+): string | undefined {
+  state.nodes += 1;
+  if (state.nodes > MAX_MARKING_DATA_NODES) {
+    return `Marking data is limited to ${MAX_MARKING_DATA_NODES.toLocaleString()} JSON values.`;
+  }
+  if (depth > MAX_MARKING_DATA_DEPTH) {
+    return `Marking data is limited to a nesting depth of ${MAX_MARKING_DATA_DEPTH}.`;
+  }
+  if (value === null || typeof value === "boolean") return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? undefined : "Marking data numbers must be finite.";
+  }
+  if (typeof value === "string") {
+    return characterCount(value) <= MAX_MARKING_DATA_STRING_CHARACTERS
+      ? undefined
+      : `Marking data strings are limited to ${MAX_MARKING_DATA_STRING_CHARACTERS.toLocaleString()} characters.`;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_MARKING_DATA_COLLECTION_ITEMS) {
+      return `Marking data arrays are limited to ${MAX_MARKING_DATA_COLLECTION_ITEMS} items.`;
+    }
+    for (const item of value) {
+      const error = validateMarkingDataValue(item, depth + 1, state);
+      if (error) return error;
+    }
+    return undefined;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length > MAX_MARKING_DATA_COLLECTION_ITEMS) {
+      return `Marking data objects are limited to ${MAX_MARKING_DATA_COLLECTION_ITEMS} entries.`;
+    }
+    for (const [key, item] of entries) {
+      if (
+        !key ||
+        key !== key.trim() ||
+        characterCount(key) > MAX_MARKING_DATA_KEY_CHARACTERS
+      ) {
+        return `Marking data keys must be trimmed and no longer than ${MAX_MARKING_DATA_KEY_CHARACTERS} characters.`;
+      }
+      const error = validateMarkingDataValue(item, depth + 1, state);
+      if (error) return error;
+    }
+    return undefined;
+  }
+  return "Marking data may contain only JSON values.";
+}
+
+function parseMarkingData(
+  value: FormDataEntryValue | null,
+): ParsedValue<HistoricalQuestionMarkingData> {
+  const raw = String(value ?? "");
+  if (!raw.trim()) return {};
+  if (utf8ByteCount(raw) > MAX_MARKING_DATA_BYTES) {
+    return { error: "Marking data is limited to 64 KiB of UTF-8 JSON." };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return { error: "Marking data must be a valid JSON object." };
+  }
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    return { error: "Marking data must be a non-empty JSON object." };
+  }
+  if (!Object.keys(parsed).length) {
+    return { error: "Marking data must be a non-empty JSON object." };
+  }
+
+  const validationError = validateMarkingDataValue(parsed, 0, { nodes: 0 });
+  if (validationError) return { error: validationError };
+  const canonicalJson = JSON.stringify(parsed);
+  if (utf8ByteCount(canonicalJson) > MAX_MARKING_DATA_BYTES) {
+    return { error: "Marking data is limited to 64 KiB of UTF-8 JSON." };
+  }
+  return { value: parsed as HistoricalQuestionMarkingData };
+}
+
+function parseQuestionMetadata(form: FormData): ParsedValue<HistoricalQuestionMetadata> {
+  const mediaReferences = parseOptionalLines(form.get("media_references"), {
+    fieldName: "Media references",
+    maximumCharacters: MAX_MEDIA_REFERENCE_CHARACTERS,
+    maximumItems: MAX_MEDIA_REFERENCES,
+    minimumItems: 1,
+  });
+  if (mediaReferences.error) return { error: mediaReferences.error };
+
+  const options = parseOptionalLines(form.get("options"), {
+    fieldName: "Options",
+    maximumCharacters: MAX_QUESTION_OPTION_CHARACTERS,
+    maximumItems: MAX_QUESTION_OPTIONS,
+    minimumItems: MIN_QUESTION_OPTIONS,
+  });
+  if (options.error) return { error: options.error };
+
+  const answer = parseOptionalBoundedText(
+    form.get("answer"),
+    "Answer",
+    MAX_ANSWER_CHARACTERS,
+  );
+  if (answer.error) return { error: answer.error };
+  const markingGuidance = parseOptionalBoundedText(
+    form.get("marking_guidance"),
+    "Marking guidance",
+    MAX_MARKING_GUIDANCE_CHARACTERS,
+  );
+  if (markingGuidance.error) return { error: markingGuidance.error };
+  const markingData = parseMarkingData(form.get("marking_data"));
+  if (markingData.error) return { error: markingData.error };
+  const questionArchetype = parseOptionalBoundedText(
+    form.get("question_archetype"),
+    "Question archetype",
+    MAX_QUESTION_ARCHETYPE_CHARACTERS,
+  );
+  if (questionArchetype.error) return { error: questionArchetype.error };
+  const difficultySource = parseOptionalBoundedText(
+    form.get("difficulty_source"),
+    "Difficulty source",
+    MAX_DIFFICULTY_SOURCE_CHARACTERS,
+  );
+  if (difficultySource.error) return { error: difficultySource.error };
+
+  const difficultyLabel = optionalString(form.get("difficulty_label"));
+  const difficultyConfidence = optionalString(form.get("difficulty_confidence"));
+  const suppliedDifficultyFields = [
+    difficultyLabel,
+    difficultyConfidence,
+    difficultySource.value,
+  ].filter((item) => item !== undefined).length;
+  if (suppliedDifficultyFields !== 0 && suppliedDifficultyFields !== 3) {
+    return {
+      error:
+        "Difficulty label, confidence, and source must all be supplied or all left blank.",
+    };
+  }
+
+  const metadata: HistoricalQuestionMetadata = {};
+  if (mediaReferences.value !== undefined) metadata.media_references = mediaReferences.value;
+  if (options.value !== undefined) metadata.options = options.value;
+  if (answer.value !== undefined) metadata.answer = answer.value;
+  if (markingGuidance.value !== undefined) metadata.marking_guidance = markingGuidance.value;
+  if (markingData.value !== undefined) metadata.marking_data = markingData.value;
+  if (questionArchetype.value !== undefined) {
+    metadata.question_archetype = questionArchetype.value;
+  }
+
+  if (
+    suppliedDifficultyFields === 3 &&
+    difficultyLabel !== undefined &&
+    difficultyConfidence !== undefined &&
+    difficultySource.value !== undefined
+  ) {
+    const label = difficultyLabels.find((item) => item.value === difficultyLabel)?.value;
+    const confidence = Number(difficultyConfidence);
+    if (!label) return { error: "Choose a supported difficulty label." };
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      return { error: "Difficulty confidence must be a number from 0 through 1." };
+    }
+    metadata.difficulty_label = label;
+    metadata.difficulty_confidence = confidence;
+    metadata.difficulty_source = difficultySource.value;
+  }
+
+  return { value: metadata };
 }
 
 function displayState(state: ReviewState): string {
@@ -586,7 +861,16 @@ export function KnowledgeStudio({ role }: { role: Role }) {
       return;
     }
     const form = new FormData(event.currentTarget);
-    const request: components["schemas"]["HistoricalQuestionImportRequest"] = {
+    const metadata = parseQuestionMetadata(form);
+    if (metadata.error || !metadata.value) {
+      setImportError({
+        code: "invalid_historical_metadata",
+        message: metadata.error ?? "Historical metadata is invalid.",
+      });
+      setImportNotice("");
+      return;
+    }
+    const request: HistoricalQuestionImportRequest = {
       marks: Number(form.get("marks")),
       page_number: Number(selectedPageNumber),
       paper_code: selectedSource.paper_code,
@@ -596,6 +880,7 @@ export function KnowledgeStudio({ role }: { role: Role }) {
       source_document_id: selectedSource.id,
       text: normalizedText,
       year: selectedSource.year,
+      ...metadata.value,
     };
     setImportBusy(true);
     setImportError(null);
@@ -1348,11 +1633,22 @@ function QuestionImportFields({ selectedSource }: { selectedSource: SourceDocume
       <div className="grid gap-5 md:grid-cols-3">
         <label className={fieldClass} htmlFor="question-number">
           Question number
-          <input className={inputClass} id="question-number" maxLength={64} name="question_number" required />
+          <input
+            className={inputClass}
+            id="question-number"
+            maxLength={64}
+            name="question_number"
+            required
+          />
         </label>
         <label className={fieldClass} htmlFor="question-type">
           Question type
-          <select className={inputClass} defaultValue="multiple_choice" id="question-type" name="question_type">
+          <select
+            className={inputClass}
+            defaultValue="multiple_choice"
+            id="question-type"
+            name="question_type"
+          >
             {questionTypes.map((type) => (
               <option key={type.value} value={type.value}>
                 {type.label}
@@ -1362,9 +1658,162 @@ function QuestionImportFields({ selectedSource }: { selectedSource: SourceDocume
         </label>
         <label className={fieldClass} htmlFor="question-marks">
           Marks
-          <input className={inputClass} id="question-marks" max={1_000} min={1} name="marks" required type="number" />
+          <input
+            className={inputClass}
+            id="question-marks"
+            max={1_000}
+            min={1}
+            name="marks"
+            required
+            type="number"
+          />
         </label>
       </div>
+
+      <fieldset className="grid gap-5 rounded-xl border border-slate-300 bg-slate-50 p-4 sm:p-5">
+        <legend className="px-2 text-sm font-semibold text-slate-800">
+          Optional source metadata
+        </legend>
+        <p className="text-sm leading-6 text-slate-600">
+          Leave unavailable values blank. Labels and answer encodings are preserved exactly; the
+          studio does not infer missing metadata.
+        </p>
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className={fieldClass}>
+            <label htmlFor="question-media-references">Media references</label>
+            <textarea
+              aria-describedby="question-media-references-help"
+              className={`${inputClass} min-h-28 resize-y font-mono text-sm`}
+              id="question-media-references"
+              maxLength={MAX_MEDIA_REFERENCES * (MAX_MEDIA_REFERENCE_CHARACTERS + 1)}
+              name="media_references"
+            />
+            <p
+              className="font-normal leading-5 text-slate-500"
+              id="question-media-references-help"
+            >
+              One reference per line; up to {MAX_MEDIA_REFERENCES}. References are displayed as
+              source text, not opened as links.
+            </p>
+          </div>
+
+          <div className={fieldClass}>
+            <label htmlFor="question-options">Options</label>
+            <textarea
+              aria-describedby="question-options-help"
+              className={`${inputClass} min-h-28 resize-y`}
+              id="question-options"
+              maxLength={MAX_QUESTION_OPTIONS * (MAX_QUESTION_OPTION_CHARACTERS + 1)}
+              name="options"
+            />
+            <p className="font-normal leading-5 text-slate-500" id="question-options-help">
+              One option per line; {MIN_QUESTION_OPTIONS}–{MAX_QUESTION_OPTIONS} when supplied. Keep
+              source labels such as “A.” or “(1)” in each line.
+            </p>
+          </div>
+
+          <div className={fieldClass}>
+            <label htmlFor="question-answer">Answer</label>
+            <textarea
+              aria-describedby="question-answer-help"
+              className={`${inputClass} min-h-24 resize-y`}
+              id="question-answer"
+              maxLength={MAX_ANSWER_CHARACTERS}
+              name="answer"
+            />
+            <p className="font-normal leading-5 text-slate-500" id="question-answer-help">
+              Opaque source value. It is never matched to, rewritten from, or inferred from options.
+            </p>
+          </div>
+
+          <div className={fieldClass}>
+            <label htmlFor="question-archetype">Question archetype</label>
+            <input
+              aria-describedby="question-archetype-help"
+              className={inputClass}
+              id="question-archetype"
+              maxLength={MAX_QUESTION_ARCHETYPE_CHARACTERS}
+              name="question_archetype"
+            />
+            <p className="font-normal leading-5 text-slate-500" id="question-archetype-help">
+              Optional reviewed source classification; no default is applied.
+            </p>
+          </div>
+        </div>
+
+        <div className={fieldClass}>
+          <label htmlFor="question-marking-guidance">Marking guidance</label>
+          <textarea
+            className={`${inputClass} min-h-28 resize-y`}
+            id="question-marking-guidance"
+            maxLength={MAX_MARKING_GUIDANCE_CHARACTERS}
+            name="marking_guidance"
+          />
+        </div>
+
+        <div className={fieldClass}>
+          <label htmlFor="question-marking-data">Marking data (JSON object)</label>
+          <textarea
+            aria-describedby="question-marking-data-help"
+            className={`${inputClass} min-h-36 resize-y font-mono text-sm`}
+            id="question-marking-data"
+            maxLength={MAX_MARKING_DATA_BYTES}
+            name="marking_data"
+            spellCheck={false}
+          />
+          <p className="font-normal leading-5 text-slate-500" id="question-marking-data-help">
+            Optional non-empty JSON object, safely parsed without code execution. Limited to 64 KiB,
+            {` ${MAX_MARKING_DATA_DEPTH}`} nested levels, and bounded collections.
+          </p>
+        </div>
+
+        <fieldset className="grid gap-4 rounded-lg border border-slate-300 bg-white p-4 md:grid-cols-3">
+          <legend className="px-2 text-sm font-semibold text-slate-800">
+            Optional difficulty evidence
+          </legend>
+          <p className="text-sm text-slate-600 md:col-span-3">
+            Label, confidence, and source are all-or-none. Leave all three blank when not supplied.
+          </p>
+          <label className={fieldClass} htmlFor="question-difficulty-label">
+            Difficulty label
+            <select
+              className={inputClass}
+              defaultValue=""
+              id="question-difficulty-label"
+              name="difficulty_label"
+            >
+              <option value="">Not supplied</option>
+              {difficultyLabels.map((difficulty) => (
+                <option key={difficulty.value} value={difficulty.value}>
+                  {difficulty.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={fieldClass} htmlFor="question-difficulty-confidence">
+            Difficulty confidence
+            <input
+              className={inputClass}
+              id="question-difficulty-confidence"
+              max={1}
+              min={0}
+              name="difficulty_confidence"
+              step="any"
+              type="number"
+            />
+          </label>
+          <label className={fieldClass} htmlFor="question-difficulty-source">
+            Difficulty source
+            <input
+              className={inputClass}
+              id="question-difficulty-source"
+              maxLength={MAX_DIFFICULTY_SOURCE_CHARACTERS}
+              name="difficulty_source"
+            />
+          </label>
+        </fieldset>
+      </fieldset>
     </>
   );
 }
@@ -1685,6 +2134,121 @@ function FilterForm({
   );
 }
 
+function NotSupplied() {
+  return <span className="italic text-slate-500">Not supplied</span>;
+}
+
+function HistoricalQuestionMetadataPanel({ question }: { question: HistoricalQuestion }) {
+  const headingId = `historical-metadata-${question.id}`;
+  const markingData = question.marking_data
+    ? (JSON.stringify(question.marking_data, null, 2) ?? "Unable to display marking data.")
+    : null;
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="mt-6 rounded-lg border border-sky-200 bg-sky-50 p-4 sm:p-5"
+    >
+      <h4 className="font-semibold" id={headingId}>
+        Historical question metadata
+      </h4>
+      <p className="mt-1 text-sm leading-6 text-slate-600">
+        Source values are shown as supplied. Labels and answer encodings are not inferred or
+        rewritten.
+      </p>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <section className="rounded-md border border-sky-200 bg-white p-4">
+          <h5 className="text-sm font-semibold text-slate-800">Media references</h5>
+          {question.media_references ? (
+            <ul className="mt-2 grid gap-2 text-sm">
+              {question.media_references.map((reference, index) => (
+                <li className="break-all rounded bg-slate-100 px-3 py-2 font-mono text-xs" key={`${index}-${reference}`}>
+                  {reference}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm">
+              <NotSupplied />
+            </p>
+          )}
+        </section>
+
+        <section className="rounded-md border border-sky-200 bg-white p-4">
+          <h5 className="text-sm font-semibold text-slate-800">Options</h5>
+          {question.options ? (
+            <ul className="mt-2 grid gap-2 text-sm">
+              {question.options.map((option, index) => (
+                <li className="whitespace-pre-wrap rounded bg-slate-100 px-3 py-2" key={`${index}-${option}`}>
+                  {option}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm">
+              <NotSupplied />
+            </p>
+          )}
+        </section>
+      </div>
+
+      <dl className="mt-4 grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-3">
+        <div className="rounded-md border border-sky-200 bg-white p-4">
+          <dt className="text-xs font-semibold text-sky-800 uppercase">Answer</dt>
+          <dd className="mt-2 whitespace-pre-wrap break-words">
+            {question.answer ?? <NotSupplied />}
+          </dd>
+        </div>
+        <div className="rounded-md border border-sky-200 bg-white p-4">
+          <dt className="text-xs font-semibold text-sky-800 uppercase">Question archetype</dt>
+          <dd className="mt-2 break-words">
+            {question.question_archetype ?? <NotSupplied />}
+          </dd>
+        </div>
+        <div className="rounded-md border border-sky-200 bg-white p-4">
+          <dt className="text-xs font-semibold text-sky-800 uppercase">Difficulty label</dt>
+          <dd className="mt-2 break-words">
+            {question.difficulty_label ?? <NotSupplied />}
+          </dd>
+        </div>
+        <div className="rounded-md border border-sky-200 bg-white p-4">
+          <dt className="text-xs font-semibold text-sky-800 uppercase">Difficulty confidence</dt>
+          <dd className="mt-2 break-words">
+            {question.difficulty_confidence ?? <NotSupplied />}
+          </dd>
+        </div>
+        <div className="rounded-md border border-sky-200 bg-white p-4 md:col-span-2 xl:col-span-1">
+          <dt className="text-xs font-semibold text-sky-800 uppercase">Difficulty source</dt>
+          <dd className="mt-2 break-words">
+            {question.difficulty_source ?? <NotSupplied />}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <section className="rounded-md border border-sky-200 bg-white p-4">
+          <h5 className="text-xs font-semibold text-sky-800 uppercase">Marking guidance</h5>
+          <div className="mt-2 whitespace-pre-wrap break-words text-sm">
+            {question.marking_guidance ?? <NotSupplied />}
+          </div>
+        </section>
+        <section className="rounded-md border border-sky-200 bg-white p-4">
+          <h5 className="text-xs font-semibold text-sky-800 uppercase">Marking data</h5>
+          {markingData ? (
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 p-3 text-xs text-white">
+              {markingData}
+            </pre>
+          ) : (
+            <p className="mt-2 text-sm">
+              <NotSupplied />
+            </p>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function KnowledgeRecordCard({
   documents,
   kind,
@@ -1783,6 +2347,8 @@ function KnowledgeRecordCard({
           </dl>
         )}
       </section>
+
+      {isQuestion(record) && <HistoricalQuestionMetadataPanel question={record} />}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
