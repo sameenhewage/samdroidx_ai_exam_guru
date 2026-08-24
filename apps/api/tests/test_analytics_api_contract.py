@@ -38,9 +38,10 @@ def test_analytics_request_and_response_contracts_are_exact_and_do_not_claim_pre
 
     operation = schema["paths"][RUNS_PATH]["post"]
     assert operation["operationId"] == "create_analytics_run"
-    assert operation["responses"]["201"]["content"]["application/json"]["schema"] == {
-        "$ref": "#/components/schemas/AnalyticsRunResponse"
-    }
+    for status_code in ("200", "201"):
+        assert operation["responses"][status_code]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/AnalyticsRunResponse"
+        }
     for status_code in ("404", "409", "422"):
         assert operation["responses"][status_code]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/ApiErrorResponse"

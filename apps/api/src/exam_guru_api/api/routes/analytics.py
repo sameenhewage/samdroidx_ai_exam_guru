@@ -44,7 +44,10 @@ Offset = Annotated[int, Query(ge=0, le=100_000)]
     operation_id="create_analytics_run",
     response_model=AnalyticsRunResponse,
     responses={
-        status.HTTP_200_OK: {"description": "Existing identical analytics run returned"},
+        status.HTTP_200_OK: {
+            "description": "Existing identical analytics run returned",
+            "model": AnalyticsRunResponse,
+        },
         status.HTTP_201_CREATED: {"description": "Deterministic analytics run persisted"},
         status.HTTP_404_NOT_FOUND: {
             "description": "Curriculum version not found",
