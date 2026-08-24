@@ -375,16 +375,19 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] production identity-provider/login integration replaces the deterministic adapter and passes session/authentication security tests
 - [ ] security/adversarial review completed with regression tests for findings
 - [x] migrations verified from clean database
-- [ ] backup/restore or data recovery approach documented for critical source/question data
-- [ ] observability covers ingestion, jobs, retrieval, LLM calls, validation and publishing failures
-- [ ] AI cost metrics are observable
+- [x] backup/restore or data recovery approach documented for critical source/question data
+- [x] observability covers ingestion, jobs, retrieval, LLM calls, validation and publishing failures
+- [x] AI cost metrics are observable
 - [ ] representative Sinhala Grade 5 real-content quality review completed
 - [ ] known limitations documented
 - [ ] CI green on the release commit
 
 ### Evidence
 - `a7366bd` adds deployment-level recovery scheduling and closes extraction's commit-before-dispatch window. Migration `0019` persists bounded per-attempt extraction queue identity; same-request replay and a `FOR UPDATE SKIP LOCKED` recovery actor safely redrive pending/null outbox rows with sanitized audits. A long-running maintenance service enqueues extraction, generation and embedding recovery actors every bounded interval with monotonic timing, error isolation and clean shutdown. Compose/CI require the scheduler to be healthy; the real Compose service is verified healthy. Backend gate: 1,973 passed / 2 expected optional skips at 100% statements and branches.
-- Remaining repository hardening includes production identity integration, cross-process observability/cost export, backup/restore verification, object-storage orphan handling and final security acceptance. External evidence blockers remain the human Sinhala OCR/data review, representative P3-P5 real-data thresholds and executed paid P8 live baseline.
+- `a1a179e` adds validated web runtime configuration, production HTTPS/secure-cookie enforcement, CSP and defense-in-depth security headers, plus exact Origin/Fetch-Metadata rejection before cookie mutation or same-origin proxy calls. Malicious cross-site requests cannot reach upstream/cookie side effects; bearer-authenticated backend APIs remain outside browser-cookie CSRF semantics. Header, hydration and login acceptance passes in real Chrome.
+- `94f6d57` adds two production-readiness controls. First, a source-verified backup/restore runbook and guarded `pg_dump`/`pg_restore` scripts default to verification/dry-run, reject credential leakage and nonempty targets, and require exact destructive confirmation. A disposable PostgreSQL 18/pgvector source→target restore preserves critical extraction, knowledge/embedding, generation, validation, review, publication/hash and audit invariants; migration `0020` fixes a real empty-`search_path` restore defect in canonical publication hashing. Second, admin-only operations aggregation and content-free structured logs/manual OpenTelemetry spans cover extraction, embedding, retrieval, generation tokens/cost/latency, validation and publish/archive outcomes. Main backend gate: 2,039 passed / 2 expected skips / 1 isolated restore test at 100% statements and branches; the dedicated restore test passes separately.
+- `baab94c` adds the admin-only Operations dashboard with fixed UTC windows, exact integer microusd and lossless USD rendering, status/failure/token/latency/OCR/embedding/publication aggregates, explicit units and collector/dashboard limitations. Reviewer navigation is hidden and direct access is 403. Web gate: 152 tests at configured 100% coverage; full Chrome suite passes 8/8.
+- Remaining repository hardening includes production identity integration, object-storage orphan quarantine, abuse/rate controls, final security acceptance and release CI evidence. External blockers remain human Sinhala OCR/data review, representative P3-P5 real-data thresholds and the executed paid P8 live baseline.
 
 ### Priority gate
 **Priority 2 remains BLOCKED until P10 is DONE.**
