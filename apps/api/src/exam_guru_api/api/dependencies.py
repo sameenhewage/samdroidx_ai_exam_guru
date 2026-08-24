@@ -10,6 +10,7 @@ from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.infrastructure.resources import ApplicationResources
+from exam_guru_api.knowledge.embedding_jobs import EmbeddingDispatcher
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
 from exam_guru_api.retrieval.explorer import RetrievalExplorerService
 from exam_guru_api.validation.pipeline import ValidationPipeline
@@ -37,6 +38,10 @@ def get_extraction_dispatcher(request: Request) -> ExtractionDispatcher:
 
 def get_generation_dispatcher(request: Request) -> GenerationDispatcher:
     return cast(GenerationDispatcher, request.app.state.generation_dispatcher)
+
+
+def get_embedding_dispatcher(request: Request) -> EmbeddingDispatcher:
+    return cast(EmbeddingDispatcher, request.app.state.embedding_dispatcher)
 
 
 def get_generation_runtime_registry(request: Request) -> GenerationRuntimeRegistry:

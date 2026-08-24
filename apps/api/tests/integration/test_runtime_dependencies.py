@@ -135,7 +135,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0017_ocr_worker_pipeline"
+    assert migration_revision == "0018_embedding_jobs"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",

@@ -493,6 +493,39 @@ class SqlAlchemyKnowledgeRepository:
             raise EmbeddingSpaceConflictError(config)
         return existing, False
 
+    async def find_embedding(
+        self,
+        *,
+        historical_question_id: UUID | None,
+        knowledge_chunk_id: UUID | None,
+        config: EmbeddingConfig,
+    ) -> KnowledgeEmbeddingModel | None:
+        _, target_id = self._embedding_target(historical_question_id, knowledge_chunk_id)
+        configuration = await self._session.scalar(
+            select(EmbeddingConfigurationModel).where(
+                EmbeddingConfigurationModel.provider == config.provider,
+                EmbeddingConfigurationModel.model == config.model,
+                EmbeddingConfigurationModel.version == config.version,
+                EmbeddingConfigurationModel.config_fingerprint == config.config_fingerprint,
+            )
+        )
+        if configuration is None:
+            return None
+        if configuration.to_domain() != config:
+            raise EmbeddingSpaceConflictError(config)
+        target_clause = (
+            KnowledgeEmbeddingModel.historical_question_id == target_id
+            if historical_question_id is not None
+            else KnowledgeEmbeddingModel.knowledge_chunk_id == target_id
+        )
+        model = await self._session.scalar(
+            select(KnowledgeEmbeddingModel).where(
+                target_clause,
+                KnowledgeEmbeddingModel.embedding_configuration_id == configuration.id,
+            )
+        )
+        return model if isinstance(model, KnowledgeEmbeddingModel) else None
+
     async def store_embedding(
         self,
         *,

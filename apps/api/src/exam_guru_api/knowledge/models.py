@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Self
 from uuid import UUID
 
@@ -50,6 +51,17 @@ _REVIEW_STATES_SQL = ", ".join(f"'{state.value}'" for state in ReviewState)
 _QUESTION_TYPES_SQL = ", ".join(f"'{question_type.value}'" for question_type in QuestionType)
 _DIFFICULTY_LABELS_SQL = ", ".join(f"'{label.value}'" for label in DifficultyLabel)
 _CHUNK_TYPES_SQL = ", ".join(f"'{chunk_type.value}'" for chunk_type in ChunkType)
+_FINGERPRINT_SQL = "^[s][h][a]256:[0-9a-f]{64}$"
+
+
+class EmbeddingJobStatus(StrEnum):
+    QUEUED = "queued"
+    CLAIMED = "claimed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+_EMBEDDING_JOB_STATES_SQL = ", ".join(f"'{state.value}'" for state in EmbeddingJobStatus)
 
 
 def _enum(enum_type: type[Any], *, name: str, length: int) -> Enum:
@@ -596,3 +608,173 @@ class KnowledgeEmbeddingModel(Base):
     @property
     def vector(self) -> tuple[float, ...]:
         return tuple(float(value) for value in self.embedding)
+
+
+class EmbeddingJobModel(Base):
+    __tablename__ = "embedding_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["retry_of_job_id", "curriculum_version_id"],
+            ["embedding_jobs.id", "embedding_jobs.curriculum_version_id"],
+            name="fk_embedding_jobs_retry_curriculum",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "id",
+            "curriculum_version_id",
+            name="uq_embedding_jobs_id_curriculum",
+        ),
+        UniqueConstraint(
+            "created_by",
+            "idempotency_key_hash",
+            name="uq_embedding_jobs_actor_idempotency",
+        ),
+        CheckConstraint(
+            "retry_of_job_id IS NULL OR retry_of_job_id <> id",
+            name="ck_embedding_jobs_retry_not_self",
+        ),
+        CheckConstraint(
+            "embedding_job_uuid_array_valid(historical_question_ids, 100) AND "
+            "embedding_job_uuid_array_valid(knowledge_chunk_ids, 100) AND "
+            "jsonb_array_length(historical_question_ids) + "
+            "jsonb_array_length(knowledge_chunk_ids) BETWEEN 1 AND 100",
+            name="ck_embedding_jobs_record_ids",
+        ),
+        CheckConstraint(
+            f"idempotency_key_hash ~ '{_FINGERPRINT_SQL}' AND "
+            f"request_fingerprint ~ '{_FINGERPRINT_SQL}' AND "
+            f"source_fingerprint ~ '{_FINGERPRINT_SQL}'",
+            name="ck_embedding_jobs_fingerprints",
+        ),
+        *(
+            CheckConstraint(
+                f"{column_name} = btrim({column_name}) AND "
+                f"char_length({column_name}) BETWEEN 1 AND {maximum} AND "
+                f"{column_name} !~ '[[:space:][:cntrl:]]'",
+                name=f"ck_embedding_jobs_{column_name}",
+            )
+            for column_name, maximum in (
+                ("provider", 64),
+                ("model", 128),
+                ("embedding_version", 64),
+                ("config_fingerprint", 128),
+            )
+        ),
+        CheckConstraint("dimension BETWEEN 1 AND 4096", name="ck_embedding_jobs_dimension"),
+        CheckConstraint(
+            f"status IN ({_EMBEDDING_JOB_STATES_SQL}) AND version >= 0",
+            name="ck_embedding_jobs_status_version",
+        ),
+        CheckConstraint(
+            "queue_message_id IS NULL OR (queue_message_id = btrim(queue_message_id) AND "
+            "char_length(queue_message_id) BETWEEN 1 AND 128 AND "
+            "queue_message_id !~ '[[:space:][:cntrl:]]')",
+            name="ck_embedding_jobs_queue_message_id",
+        ),
+        CheckConstraint(
+            "failure_code IS NULL OR failure_code ~ '^[a-z][a-z0-9_]{0,63}$'",
+            name="ck_embedding_jobs_failure_code",
+        ),
+        CheckConstraint(
+            "requested_count = jsonb_array_length(historical_question_ids) + "
+            "jsonb_array_length(knowledge_chunk_ids) AND "
+            "requested_count BETWEEN 1 AND 100 AND "
+            "embedded_count BETWEEN 0 AND requested_count AND "
+            "deduplicated_count BETWEEN 0 AND requested_count AND "
+            "embedded_count + deduplicated_count <= requested_count",
+            name="ck_embedding_jobs_counts",
+        ),
+        CheckConstraint(
+            "updated_at >= created_at AND "
+            "(claimed_at IS NULL OR claimed_at >= created_at) AND "
+            "(completed_at IS NULL OR (claimed_at IS NOT NULL AND completed_at >= claimed_at))",
+            name="ck_embedding_jobs_timestamps",
+        ),
+        CheckConstraint(
+            "(status = 'queued' AND claimed_at IS NULL AND completed_at IS NULL AND "
+            "failure_code IS NULL AND embedded_count = 0 AND deduplicated_count = 0) OR "
+            "(status = 'claimed' AND claimed_at IS NOT NULL AND completed_at IS NULL AND "
+            "failure_code IS NULL) OR "
+            "(status = 'succeeded' AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND "
+            "failure_code IS NULL AND embedded_count + deduplicated_count = requested_count) OR "
+            "(status = 'failed' AND claimed_at IS NOT NULL AND completed_at IS NOT NULL AND "
+            "failure_code IS NOT NULL)",
+            name="ck_embedding_jobs_state_data",
+        ),
+        Index(
+            "ix_embedding_jobs_curriculum_created",
+            "curriculum_version_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_embedding_jobs_curriculum_status_created",
+            "curriculum_version_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        Index("ix_embedding_jobs_status_created", "status", "created_at", "id"),
+        Index("ix_embedding_jobs_retry_of", "retry_of_job_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    curriculum_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "curriculum_versions.id",
+            name="fk_embedding_jobs_curriculum_version",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    retry_of_job_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    historical_question_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    knowledge_chunk_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(71), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    queue_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    requested_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedded_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    deduplicated_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def embedding_config(self) -> EmbeddingConfig:
+        return EmbeddingConfig(
+            provider=self.provider,
+            model=self.model,
+            dimension=self.dimension,
+            version=self.embedding_version,
+            config_fingerprint=self.config_fingerprint,
+        )

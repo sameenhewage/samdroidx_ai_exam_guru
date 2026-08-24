@@ -17,6 +17,10 @@ from exam_guru_api.infrastructure.resources import (
     ApplicationResources,
     create_resources,
 )
+from exam_guru_api.knowledge.embedding_jobs import (
+    EmbeddingDispatcher,
+    create_embedding_dispatcher,
+)
 from exam_guru_api.observability import configure_observability
 from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
@@ -35,6 +39,7 @@ def create_app(
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
     generation_dispatcher: GenerationDispatcher | None = None,
+    embedding_dispatcher: EmbeddingDispatcher | None = None,
     generation_runtime_registry: GenerationRuntimeRegistry | None = None,
     validation_pipeline: ValidationPipeline | None = None,
     embedding_provider_registry: EmbeddingProviderRegistry | None = None,
@@ -80,6 +85,11 @@ def create_app(
         generation_dispatcher
         if generation_dispatcher is not None
         else create_generation_dispatcher(resolved_settings)
+    )
+    application.state.embedding_dispatcher = (
+        embedding_dispatcher
+        if embedding_dispatcher is not None
+        else create_embedding_dispatcher(resolved_settings)
     )
     application.state.generation_runtime_registry = (
         generation_runtime_registry

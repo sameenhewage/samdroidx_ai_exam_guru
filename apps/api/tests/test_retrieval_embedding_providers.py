@@ -11,9 +11,12 @@ from exam_guru_api.knowledge.embeddings import (
 )
 from exam_guru_api.main import create_app
 from exam_guru_api.retrieval.embeddings import (
+    DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG,
+    ActiveEmbeddingConfigUnavailableError,
     EmbeddingProvider,
     EmbeddingProviderRegistry,
     EmbeddingProviderUnavailableError,
+    create_active_embedding_config,
     create_embedding_provider_registry,
 )
 
@@ -178,3 +181,83 @@ def test_nonproduction_embedding_setting_is_explicit_and_production_rejects_fake
             object_storage_endpoint_url="https://storage.internal",
             valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
         )
+
+
+def test_server_owned_active_config_uses_documented_nonproduction_default() -> None:
+    for environment in ("local", "test"):
+        settings = Settings(environment=environment)
+
+        assert create_active_embedding_config(settings) == DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG
+
+
+def test_active_config_factory_normalizes_unexpected_contract_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.retrieval import embeddings as embedding_module
+
+    def fail(_config: EmbeddingConfig) -> EmbeddingConfig:
+        raise RuntimeError("unsafe internal validation detail")
+
+    monkeypatch.setattr(embedding_module, "validate_embedding_config", fail)
+    with pytest.raises(ActiveEmbeddingConfigUnavailableError) as raised:
+        create_active_embedding_config(Settings(environment="test"))
+    assert str(raised.value) == "active_embedding_config_unavailable"
+    assert "unsafe" not in str(raised.value)
+
+
+def test_server_owned_active_config_uses_only_bounded_settings_controls() -> None:
+    settings = Settings(
+        environment="test",
+        retrieval_embedding_provider="deterministic",
+        retrieval_embedding_model="grade5-custom",
+        retrieval_embedding_dimension=7,
+        retrieval_embedding_version="2026-03",
+        retrieval_embedding_config_fingerprint="sha256:" + "a" * 64,
+    )
+
+    assert create_active_embedding_config(settings) == EmbeddingConfig(
+        provider="deterministic",
+        model="grade5-custom",
+        dimension=7,
+        version="2026-03",
+        config_fingerprint="sha256:" + "a" * 64,
+    )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_server_owned_active_config_fails_closed_without_real_provider(
+    environment: str,
+) -> None:
+    kwargs: dict[str, object] = {"environment": environment}
+    if environment == "production":
+        kwargs.update(
+            database_url=SecretStr(
+                "postgresql+asyncpg://service:" + "database-credential" + "@db/app?ssl=require"
+            ),
+            object_storage_access_key=SecretStr("storage-access"),
+            object_storage_secret_key=SecretStr("storage-" + "credential"),
+            object_storage_endpoint_url="https://storage.internal",
+            valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
+        )
+
+    with pytest.raises(ActiveEmbeddingConfigUnavailableError) as raised:
+        create_active_embedding_config(Settings(**kwargs))  # type: ignore[arg-type]
+
+    assert str(raised.value) == "active_embedding_config_unavailable"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"retrieval_embedding_model": " model"},
+        {"retrieval_embedding_model": "x" * 129},
+        {"retrieval_embedding_dimension": 0},
+        {"retrieval_embedding_dimension": 4_097},
+        {"retrieval_embedding_version": "version with space"},
+        {"retrieval_embedding_config_fingerprint": "\x00"},
+        {"retrieval_embedding_config_fingerprint": "x" * 129},
+    ],
+)
+def test_embedding_config_settings_are_bounded(override: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="test", **override)  # type: ignore[arg-type]

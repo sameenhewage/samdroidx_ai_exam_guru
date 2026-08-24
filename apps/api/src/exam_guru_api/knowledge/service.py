@@ -26,6 +26,7 @@ from exam_guru_api.knowledge.embeddings import (
 )
 from exam_guru_api.knowledge.repository import (
     ConcurrentKnowledgeVersionError,
+    EmbeddingSourceConflictError,
     SqlAlchemyKnowledgeRepository,
 )
 
@@ -361,8 +362,47 @@ class KnowledgePersistenceService:
         *,
         actor_id: UUID,
     ) -> StoredEmbedding:
+        return await self._store_question_embedding(
+            question_id,
+            result,
+            curriculum_version_id=None,
+            actor_id=actor_id,
+        )
+
+    async def store_curriculum_question_embedding(
+        self,
+        curriculum_version_id: UUID,
+        question_id: UUID,
+        result: EmbeddingResult,
+        *,
+        actor_id: UUID,
+        commit: bool = True,
+    ) -> StoredEmbedding:
+        return await self._store_question_embedding(
+            question_id,
+            result,
+            curriculum_version_id=curriculum_version_id,
+            actor_id=actor_id,
+            commit=commit,
+        )
+
+    async def _store_question_embedding(
+        self,
+        question_id: UUID,
+        result: EmbeddingResult,
+        *,
+        curriculum_version_id: UUID | None,
+        actor_id: UUID,
+        commit: bool = True,
+    ) -> StoredEmbedding:
         self._validate_embedding(result)
-        question = (await self._repository.get_question(question_id, for_update=True)).to_domain()
+        question = (
+            await self._repository.get_question(
+                question_id,
+                curriculum_version_id=curriculum_version_id,
+                for_update=True,
+            )
+        ).to_domain()
         self._require_reviewed(question)
         return await self._store_embedding(
             historical_question_id=question.id,
@@ -372,6 +412,7 @@ class KnowledgePersistenceService:
             result=result,
             actor_id=actor_id,
             resource_type="historical_question",
+            commit=commit,
         )
 
     async def store_chunk_embedding(
@@ -381,8 +422,47 @@ class KnowledgePersistenceService:
         *,
         actor_id: UUID,
     ) -> StoredEmbedding:
+        return await self._store_chunk_embedding(
+            chunk_id,
+            result,
+            curriculum_version_id=None,
+            actor_id=actor_id,
+        )
+
+    async def store_curriculum_chunk_embedding(
+        self,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
+        result: EmbeddingResult,
+        *,
+        actor_id: UUID,
+        commit: bool = True,
+    ) -> StoredEmbedding:
+        return await self._store_chunk_embedding(
+            chunk_id,
+            result,
+            curriculum_version_id=curriculum_version_id,
+            actor_id=actor_id,
+            commit=commit,
+        )
+
+    async def _store_chunk_embedding(
+        self,
+        chunk_id: UUID,
+        result: EmbeddingResult,
+        *,
+        curriculum_version_id: UUID | None,
+        actor_id: UUID,
+        commit: bool = True,
+    ) -> StoredEmbedding:
         self._validate_embedding(result)
-        chunk = (await self._repository.get_chunk(chunk_id, for_update=True)).to_domain()
+        chunk = (
+            await self._repository.get_chunk(
+                chunk_id,
+                curriculum_version_id=curriculum_version_id,
+                for_update=True,
+            )
+        ).to_domain()
         self._require_reviewed(chunk)
         return await self._store_embedding(
             historical_question_id=None,
@@ -392,7 +472,77 @@ class KnowledgePersistenceService:
             result=result,
             actor_id=actor_id,
             resource_type="knowledge_chunk",
+            commit=commit,
         )
+
+    async def question_embedding_exists(
+        self,
+        curriculum_version_id: UUID,
+        question_id: UUID,
+        config: EmbeddingConfig,
+        *,
+        for_update: bool = False,
+    ) -> bool:
+        self._validate_embedding_config(config)
+        question = (
+            await self._repository.get_question(
+                question_id,
+                curriculum_version_id=curriculum_version_id,
+                for_update=for_update,
+            )
+        ).to_domain()
+        self._require_reviewed(question)
+        return await self._embedding_exists(
+            historical_question_id=question.id,
+            knowledge_chunk_id=None,
+            text=question.text,
+            config=config,
+        )
+
+    async def chunk_embedding_exists(
+        self,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
+        config: EmbeddingConfig,
+        *,
+        for_update: bool = False,
+    ) -> bool:
+        self._validate_embedding_config(config)
+        chunk = (
+            await self._repository.get_chunk(
+                chunk_id,
+                curriculum_version_id=curriculum_version_id,
+                for_update=for_update,
+            )
+        ).to_domain()
+        self._require_reviewed(chunk)
+        return await self._embedding_exists(
+            historical_question_id=None,
+            knowledge_chunk_id=chunk.id,
+            text=chunk.text,
+            config=config,
+        )
+
+    async def _embedding_exists(
+        self,
+        *,
+        historical_question_id: UUID | None,
+        knowledge_chunk_id: UUID | None,
+        text: str,
+        config: EmbeddingConfig,
+    ) -> bool:
+        existing = await self._repository.find_embedding(
+            historical_question_id=historical_question_id,
+            knowledge_chunk_id=knowledge_chunk_id,
+            config=config,
+        )
+        if existing is None:
+            return False
+        source_text_sha256 = hashlib.sha256(text.encode()).hexdigest()
+        if existing.source_text_sha256 != source_text_sha256:
+            record_id = cast(UUID, historical_question_id or knowledge_chunk_id)
+            raise EmbeddingSourceConflictError(record_id, existing.embedding_configuration_id)
+        return True
 
     async def _store_embedding(
         self,
@@ -404,6 +554,7 @@ class KnowledgePersistenceService:
         result: EmbeddingResult,
         actor_id: UUID,
         resource_type: str,
+        commit: bool,
     ) -> StoredEmbedding:
         config, _ = await self._repository.get_or_create_embedding_configuration(
             result.config,
@@ -437,7 +588,8 @@ class KnowledgePersistenceService:
                     "version": record_version,
                 },
             )
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
         return StoredEmbedding(
             id=stored.id,
             configuration_id=stored.configuration_id,
@@ -470,12 +622,26 @@ class KnowledgePersistenceService:
         ):
             raise KnowledgeSourceMetadataMismatchError(source_document_id)
 
-    @staticmethod
-    def _validate_embedding(result: EmbeddingResult) -> None:
+    @classmethod
+    def _validate_embedding(cls, result: EmbeddingResult) -> None:
         config = result.config
+        cls._validate_embedding_config(config)
+        if len(result.vector) != config.dimension:
+            raise EmbeddingDimensionMismatchError(config.dimension, len(result.vector))
+        if not all(math.isfinite(value) for value in result.vector):
+            raise EmbeddingContractError("embedding vector must contain only finite values")
+
+    @staticmethod
+    def _validate_embedding_config(config: EmbeddingConfig) -> None:
         fields = (config.provider, config.model, config.version, config.config_fingerprint)
         if (
-            any(not value.strip() or value != value.strip() for value in fields)
+            any(
+                not value.strip()
+                or value != value.strip()
+                or not value.isprintable()
+                or any(character.isspace() for character in value)
+                for value in fields
+            )
             or len(config.provider) > 64
             or len(config.model) > 128
             or len(config.version) > 64
@@ -483,10 +649,6 @@ class KnowledgePersistenceService:
             or not 1 <= config.dimension <= 4096
         ):
             raise EmbeddingContractError("embedding configuration is invalid")
-        if len(result.vector) != config.dimension:
-            raise EmbeddingDimensionMismatchError(config.dimension, len(result.vector))
-        if not all(math.isfinite(value) for value in result.vector):
-            raise EmbeddingContractError("embedding vector must contain only finite values")
 
     @staticmethod
     def _require_reviewed(record: HistoricalQuestion | KnowledgeChunk) -> None:

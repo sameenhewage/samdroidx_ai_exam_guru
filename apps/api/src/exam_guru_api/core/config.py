@@ -17,6 +17,8 @@ OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
 )
 TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+MIN_EMBEDDING_WORKER_LEASE_SECONDS = EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS + 1
 GENERATION_PROVIDER_MAX_EXECUTION_SECONDS = 3 * 120 + 2 * 2
 MIN_GENERATION_WORKER_LEASE_SECONDS = (
     max(GENERATION_ACTOR_MAX_EXECUTION_SECONDS, GENERATION_PROVIDER_MAX_EXECUTION_SECONDS) + 1
@@ -69,6 +71,32 @@ class Settings(BaseSettings):
         le=64 * 1024 * 1024,
     )
     retrieval_embedding_provider: Literal["deterministic"] | None = None
+    retrieval_embedding_model: str = Field(
+        default="grade5-deterministic-shake256",
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    retrieval_embedding_dimension: int = Field(default=32, ge=1, le=4_096)
+    retrieval_embedding_version: str = Field(
+        default="v1",
+        min_length=1,
+        max_length=64,
+        pattern=r"^\S+$",
+    )
+    retrieval_embedding_config_fingerprint: str = Field(
+        default="sha256:51c1987251b1c8d373ecb6d476c2d00ae60da5173aa544a2ff4524a9141d3d89",
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    embedding_recovery_batch_size: int = Field(default=50, ge=1, le=100)
+    embedding_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
+    embedding_worker_lease_seconds: int = Field(
+        default=600,
+        ge=MIN_EMBEDDING_WORKER_LEASE_SECONDS,
+        le=86_400,
+    )
     generation_provider: Literal["deterministic", "openai"] | None = None
     generation_openai_api_key: SecretStr | None = None
     generation_model: str | None = Field(
@@ -143,6 +171,19 @@ class Settings(BaseSettings):
             ) * self.ocr_tesseract_timeout_seconds
             if worst_case_ocr_seconds > OCR_PROVIDER_MAX_EXECUTION_SECONDS:
                 raise ValueError("configured Tesseract commands exceed the OCR execution budget")
+
+        embedding_identifiers = (
+            self.retrieval_embedding_model,
+            self.retrieval_embedding_version,
+            self.retrieval_embedding_config_fingerprint,
+        )
+        if any(
+            value != value.strip()
+            or not value.isprintable()
+            or any(character.isspace() for character in value)
+            for value in embedding_identifiers
+        ):
+            raise ValueError("embedding configuration identifiers must be bounded printable tokens")
 
         deterministic_tokens = [
             token.get_secret_value()

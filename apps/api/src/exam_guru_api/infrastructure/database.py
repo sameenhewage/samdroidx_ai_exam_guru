@@ -27,6 +27,7 @@ def get_metadata() -> MetaData:
         generation_models.GenerationAttemptModel,
         generation_models.GenerationJobModel,
         knowledge_models.KnowledgeEmbeddingModel,
+        knowledge_models.EmbeddingJobModel,
         paper_models.QuestionCandidateModel,
         paper_models.QuestionCandidateRevisionModel,
         paper_models.CandidateReviewEventModel,
