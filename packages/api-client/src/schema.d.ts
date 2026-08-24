@@ -833,8 +833,11 @@ export interface components {
             /** Question Number */
             question_number: string;
             question_type: components["schemas"]["QuestionType"];
-            /** Source Block Id */
-            source_block_id?: string | null;
+            /**
+             * Source Block Id
+             * Format: uuid
+             */
+            source_block_id: string;
             /**
              * Source Document Id
              * Format: uuid
@@ -901,8 +904,11 @@ export interface components {
             page_number: number;
             /** Sequence */
             sequence: number;
-            /** Source Block Id */
-            source_block_id?: string | null;
+            /**
+             * Source Block Id
+             * Format: uuid
+             */
+            source_block_id: string;
             /**
              * Source Document Id
              * Format: uuid

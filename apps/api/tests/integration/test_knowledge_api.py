@@ -626,7 +626,7 @@ def test_import_rejects_untrusted_cross_curriculum_and_missing_sources(
     missing = {
         **_question_payload("API-MISSING"),
         "source_document_id": str(UUID(int=999_999_999)),
-        "source_block_id": None,
+        "source_block_id": str(UUID(int=999_999_997)),
     }
     with api_client(knowledge_api_database_url) as client:
         untrusted_response = client.post(QUESTION_PATH, json=untrusted, headers=ADMIN_HEADERS)

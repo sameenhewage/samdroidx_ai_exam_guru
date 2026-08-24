@@ -585,16 +585,9 @@
             "$ref": "#/components/schemas/QuestionType"
           },
           "source_block_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Block Id"
+            "format": "uuid",
+            "title": "Source Block Id",
+            "type": "string"
           },
           "source_document_id": {
             "format": "uuid",
@@ -622,7 +615,8 @@
           "question_type",
           "marks",
           "source_document_id",
-          "page_number"
+          "page_number",
+          "source_block_id"
         ],
         "title": "HistoricalQuestionImportRequest",
         "type": "object"
@@ -747,16 +741,9 @@
             "type": "integer"
           },
           "source_block_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Block Id"
+            "format": "uuid",
+            "title": "Source Block Id",
+            "type": "string"
           },
           "source_document_id": {
             "format": "uuid",
@@ -776,7 +763,8 @@
           "educational_boundary",
           "sequence",
           "source_document_id",
-          "page_number"
+          "page_number",
+          "source_block_id"
         ],
         "title": "KnowledgeChunkImportRequest",
         "type": "object"

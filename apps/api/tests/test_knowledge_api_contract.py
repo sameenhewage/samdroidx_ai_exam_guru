@@ -68,6 +68,10 @@ def test_import_and_mutation_contracts_do_not_accept_ids_state_or_vectors() -> N
     assert {"source_document_id", "page_number", "source_block_id"} <= question_properties
     assert {"source_document_id", "page_number", "source_block_id"} <= chunk_properties
 
+    schema = create_app().openapi()
+    for schema_name in ("HistoricalQuestionImportRequest", "KnowledgeChunkImportRequest"):
+        assert "source_block_id" in schema["components"]["schemas"][schema_name]["required"]
+
     for path in (QUESTION_ITEM, CHUNK_ITEM):
         assert _request_properties(path + "/classification", "patch") == {
             "competency_id",

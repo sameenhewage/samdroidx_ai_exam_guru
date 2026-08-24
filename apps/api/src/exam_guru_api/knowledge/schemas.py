@@ -35,7 +35,7 @@ class HistoricalQuestionImportRequest(BaseModel):
     marks: int = Field(ge=1, le=1_000)
     source_document_id: UUID
     page_number: int = Field(ge=1, le=1_000_000)
-    source_block_id: UUID | None = None
+    source_block_id: UUID
 
 
 class KnowledgeChunkImportRequest(BaseModel):
@@ -47,7 +47,7 @@ class KnowledgeChunkImportRequest(BaseModel):
     sequence: int = Field(ge=0, le=2_147_483_647)
     source_document_id: UUID
     page_number: int = Field(ge=1, le=1_000_000)
-    source_block_id: UUID | None = None
+    source_block_id: UUID
 
 
 class KnowledgeClassificationRequest(BaseModel):
