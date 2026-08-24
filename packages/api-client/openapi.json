@@ -247,6 +247,15 @@
         "title": "DependencyChecks",
         "type": "object"
       },
+      "DifficultyLabel": {
+        "enum": [
+          "easy",
+          "medium",
+          "hard"
+        ],
+        "title": "DifficultyLabel",
+        "type": "string"
+      },
       "EmbeddingConfigurationMetadataResponse": {
         "properties": {
           "config_fingerprint": {
@@ -557,11 +566,125 @@
       "HistoricalQuestionImportRequest": {
         "additionalProperties": false,
         "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "difficulty_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Confidence"
+          },
+          "difficulty_label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DifficultyLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "difficulty_source": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Source"
+          },
+          "marking_data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "maxProperties": 128,
+                "minProperties": 1,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marking Data"
+          },
+          "marking_guidance": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marking Guidance"
+          },
           "marks": {
             "maximum": 1000.0,
             "minimum": 1.0,
             "title": "Marks",
             "type": "integer"
+          },
+          "media_references": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media References"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "minItems": 2,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
           },
           "page_number": {
             "maximum": 1000000.0,
@@ -574,6 +697,19 @@
             "minLength": 1,
             "title": "Paper Code",
             "type": "string"
+          },
+          "question_archetype": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Archetype"
           },
           "question_number": {
             "maxLength": 64,
@@ -623,6 +759,17 @@
       },
       "HistoricalQuestionResponse": {
         "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
           "classification": {
             "$ref": "#/components/schemas/KnowledgeClassificationResponse"
           },
@@ -641,6 +788,38 @@
             "title": "Deduplicated",
             "type": "boolean"
           },
+          "difficulty_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Confidence"
+          },
+          "difficulty_label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DifficultyLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "difficulty_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Source"
+          },
           "embedding_configurations": {
             "items": {
               "$ref": "#/components/schemas/EmbeddingConfigurationMetadataResponse"
@@ -656,9 +835,62 @@
             "title": "Id",
             "type": "string"
           },
+          "marking_data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marking Data"
+          },
+          "marking_guidance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marking Guidance"
+          },
           "marks": {
             "title": "Marks",
             "type": "integer"
+          },
+          "media_references": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media References"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
           },
           "paper_code": {
             "title": "Paper Code",
@@ -666,6 +898,17 @@
           },
           "provenance": {
             "$ref": "#/components/schemas/KnowledgeProvenanceResponse"
+          },
+          "question_archetype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Archetype"
           },
           "question_number": {
             "title": "Question Number",
@@ -704,6 +947,15 @@
           "text",
           "question_type",
           "marks",
+          "media_references",
+          "options",
+          "answer",
+          "marking_guidance",
+          "marking_data",
+          "question_archetype",
+          "difficulty_label",
+          "difficulty_confidence",
+          "difficulty_source",
           "provenance",
           "classification",
           "review_state",
@@ -716,6 +968,7 @@
         "title": "HistoricalQuestionResponse",
         "type": "object"
       },
+      "JsonValue": {},
       "KnowledgeChunkImportRequest": {
         "additionalProperties": false,
         "properties": {

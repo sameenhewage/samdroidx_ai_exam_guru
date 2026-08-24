@@ -86,6 +86,15 @@ async def import_historical_question(
                 page_number=request.page_number,
                 source_block_id=request.source_block_id,
             ),
+            media_references=request.media_references,
+            options=request.options,
+            answer=request.answer,
+            marking_guidance=request.marking_guidance,
+            marking_data=request.marking_data,
+            question_archetype=request.question_archetype,
+            difficulty_label=request.difficulty_label,
+            difficulty_confidence=request.difficulty_confidence,
+            difficulty_source=request.difficulty_source,
         )
     except KnowledgeContractError as error:
         raise HTTPException(

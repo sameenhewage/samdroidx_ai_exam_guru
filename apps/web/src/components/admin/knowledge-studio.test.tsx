@@ -186,6 +186,7 @@ const taxonomy = [
 
 function question(overrides: Partial<HistoricalQuestion> = {}): HistoricalQuestion {
   return {
+    answer: null,
     classification: {
       competency_id: null,
       learning_concept_id: null,
@@ -195,6 +196,9 @@ function question(overrides: Partial<HistoricalQuestion> = {}): HistoricalQuesti
     created_at: "2026-08-23T02:00:00Z",
     curriculum_version_id: ids.curriculum,
     deduplicated: false,
+    difficulty_confidence: null,
+    difficulty_label: null,
+    difficulty_source: null,
     embedding_configurations: [
       {
         config_fingerprint: "sha256:fixture",
@@ -207,13 +211,18 @@ function question(overrides: Partial<HistoricalQuestion> = {}): HistoricalQuesti
     ],
     embedding_status: "embedded",
     id: ids.question,
+    marking_data: null,
+    marking_guidance: null,
     marks: 2,
+    media_references: null,
+    options: null,
     paper_code: "2025-I",
     provenance: {
       page_number: 1,
       source_block_id: ids.block,
       source_document_id: ids.paper,
     },
+    question_archetype: null,
     question_number: "12",
     question_type: "multiple_choice",
     review_state: "draft",

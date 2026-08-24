@@ -27,6 +27,7 @@ from exam_guru_api.infrastructure.migrations import (
 )
 from exam_guru_api.knowledge.domain import (
     ChunkType,
+    DifficultyLabel,
     HistoricalQuestion,
     KnowledgeChunk,
     Provenance,
@@ -300,7 +301,18 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
         async with sessions() as session:
             seed = await seed_foundation(session, 1)
             service = KnowledgePersistenceService(session)
-            question = question_record(seed, record_id=UUID(int=180_001))
+            question = replace(
+                question_record(seed, record_id=UUID(int=180_001)),
+                media_references=("source://page/1/figure/1",),
+                options=("12", "14", "16", "18"),
+                answer="16",
+                marking_guidance="Award two marks for selecting sixteen.",
+                marking_data={"criteria": [{"description": "Selects sixteen.", "marks": 2}]},
+                question_archetype="single_best_answer",
+                difficulty_label=DifficultyLabel.MEDIUM,
+                difficulty_confidence=0.9,
+                difficulty_source="reviewer_confirmed",
+            )
             chunk = chunk_record(seed, record_id=UUID(int=190_001))
 
             imported_question = await service.import_question(question, actor_id=ACTOR_ID)
@@ -317,6 +329,15 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
             assert imported_question.deduplicated is False
             assert duplicate_question.deduplicated is True
             assert duplicate_question.record.id == question.id
+            assert duplicate_question.record.media_references == question.media_references
+            assert duplicate_question.record.options == question.options
+            assert duplicate_question.record.answer == question.answer
+            assert duplicate_question.record.marking_guidance == question.marking_guidance
+            assert duplicate_question.record.marking_data == question.marking_data
+            assert duplicate_question.record.question_archetype == question.question_archetype
+            assert duplicate_question.record.difficulty_label is DifficultyLabel.MEDIUM
+            assert duplicate_question.record.difficulty_confidence == 0.9
+            assert duplicate_question.record.difficulty_source == "reviewer_confirmed"
             assert imported_chunk.deduplicated is False
             assert duplicate_chunk.deduplicated is True
             assert duplicate_chunk.record.id == chunk.id
@@ -324,6 +345,11 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
             with pytest.raises(SourceImportConflictError):
                 await service.import_question(
                     replace(question, id=UUID(int=180_003), text="Conflicting source text"),
+                    actor_id=ACTOR_ID,
+                )
+            with pytest.raises(SourceImportConflictError):
+                await service.import_question(
+                    replace(question, id=UUID(int=180_004), answer="14"),
                     actor_id=ACTOR_ID,
                 )
             with pytest.raises(SourceImportConflictError):
@@ -670,6 +696,83 @@ def test_database_enforces_provenance_review_taxonomy_and_vector_space_invariant
                 version=1,
             )
             session.add(KnowledgeChunkModel.from_domain(nonzero_initial_version, ACTOR_ID))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+            metadata_draft = replace(
+                question_record(first, record_id=UUID(int=180_030)),
+                question_number="DB-META-1",
+                options=("A", "B"),
+                answer="A",
+            )
+            await service.import_question(metadata_draft, actor_id=ACTOR_ID)
+            metadata_model = await session.get(HistoricalQuestionModel, metadata_draft.id)
+            assert metadata_model is not None
+            metadata_model.answer = "B"
+            metadata_model.version += 1
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+            partial_difficulty = HistoricalQuestionModel.from_domain(
+                replace(
+                    question_record(first, record_id=UUID(int=180_031)),
+                    question_number="DB-META-2",
+                ),
+                ACTOR_ID,
+            )
+            partial_difficulty.difficulty_label = DifficultyLabel.EASY
+            session.add(partial_difficulty)
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+            duplicate_options = HistoricalQuestionModel.from_domain(
+                replace(
+                    metadata_draft,
+                    id=UUID(int=180_032),
+                    question_number="DB-META-3",
+                ),
+                ACTOR_ID,
+            )
+            duplicate_options.options = ["A", "A"]
+            session.add(duplicate_options)
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+            source_label_answer = HistoricalQuestionModel.from_domain(
+                replace(
+                    metadata_draft,
+                    id=UUID(int=180_033),
+                    question_number="DB-META-4",
+                ),
+                ACTOR_ID,
+            )
+            source_label_answer.answer = "C"
+            session.add(source_label_answer)
+            await session.commit()
+            persisted_source_label = await session.get(
+                HistoricalQuestionModel,
+                source_label_answer.id,
+            )
+            assert persisted_source_label is not None
+            assert persisted_source_label.answer == "C"
+
+            nonfinite_confidence = HistoricalQuestionModel.from_domain(
+                replace(
+                    metadata_draft,
+                    id=UUID(int=180_034),
+                    question_number="DB-META-5",
+                    difficulty_label=DifficultyLabel.HARD,
+                    difficulty_confidence=0.5,
+                    difficulty_source="reviewer_confirmed",
+                ),
+                ACTOR_ID,
+            )
+            nonfinite_confidence.difficulty_confidence = float("nan")
+            session.add(nonfinite_confidence)
             with pytest.raises(IntegrityError):
                 await session.commit()
             await session.rollback()

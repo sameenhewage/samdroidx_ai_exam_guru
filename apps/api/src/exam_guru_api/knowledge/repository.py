@@ -16,6 +16,7 @@ from exam_guru_api.knowledge.domain import (
     KnowledgeChunk,
     QuestionType,
     ReviewState,
+    marking_data_to_dict,
 )
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.knowledge.models import (
@@ -696,6 +697,17 @@ class SqlAlchemyKnowledgeRepository:
             "text": question.text,
             "question_type": question.question_type,
             "marks": question.marks,
+            "media_references": (
+                list(question.media_references) if question.media_references is not None else None
+            ),
+            "options": list(question.options) if question.options is not None else None,
+            "answer": question.answer,
+            "marking_guidance": question.marking_guidance,
+            "marking_data": marking_data_to_dict(question.marking_data),
+            "question_archetype": question.question_archetype,
+            "difficulty_label": question.difficulty_label,
+            "difficulty_confidence": question.difficulty_confidence,
+            "difficulty_source": question.difficulty_source,
             "source_document_id": question.provenance.source_document_id,
             "page_number": question.provenance.page_number,
             "source_block_id": question.provenance.source_block_id,
@@ -745,6 +757,15 @@ class SqlAlchemyKnowledgeRepository:
             persisted.text,
             persisted.question_type,
             persisted.marks,
+            persisted.media_references,
+            persisted.options,
+            persisted.answer,
+            persisted.marking_guidance,
+            persisted.marking_data,
+            persisted.question_archetype,
+            persisted.difficulty_label,
+            persisted.difficulty_confidence,
+            persisted.difficulty_source,
             persisted.provenance,
         ) == (
             candidate.curriculum_version_id,
@@ -754,6 +775,15 @@ class SqlAlchemyKnowledgeRepository:
             candidate.text,
             candidate.question_type,
             candidate.marks,
+            candidate.media_references,
+            candidate.options,
+            candidate.answer,
+            candidate.marking_guidance,
+            candidate.marking_data,
+            candidate.question_archetype,
+            candidate.difficulty_label,
+            candidate.difficulty_confidence,
+            candidate.difficulty_source,
             candidate.provenance,
         )
 

@@ -2,16 +2,37 @@ from datetime import datetime
 from typing import Annotated, Self, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    JsonValue,
+    StringConstraints,
+    model_validator,
+)
 
 from exam_guru_api.knowledge.domain import (
+    MAX_ANSWER_CHARACTERS,
+    MAX_DIFFICULTY_SOURCE_CHARACTERS,
+    MAX_MARKING_DATA_COLLECTION_ITEMS,
+    MAX_MARKING_GUIDANCE_CHARACTERS,
+    MAX_MEDIA_REFERENCE_CHARACTERS,
+    MAX_MEDIA_REFERENCES,
+    MAX_QUESTION_ARCHETYPE_CHARACTERS,
+    MAX_QUESTION_OPTION_CHARACTERS,
+    MAX_QUESTION_OPTIONS,
+    MIN_QUESTION_OPTIONS,
     ChunkType,
+    DifficultyLabel,
     EmbeddingConfigurationMetadata,
     EmbeddingStatus,
     HistoricalQuestion,
+    HistoricalQuestionMarkingData,
     KnowledgeChunk,
     QuestionType,
     ReviewState,
+    marking_data_to_dict,
 )
 
 TrimmedCode = Annotated[
@@ -22,6 +43,31 @@ TrimmedBoundary = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=512),
 ]
+BoundedMediaReference = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_MEDIA_REFERENCE_CHARACTERS),
+]
+BoundedQuestionOption = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_QUESTION_OPTION_CHARACTERS),
+]
+BoundedAnswer = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_ANSWER_CHARACTERS),
+]
+BoundedMarkingGuidance = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_MARKING_GUIDANCE_CHARACTERS),
+]
+BoundedQuestionArchetype = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_QUESTION_ARCHETYPE_CHARACTERS),
+]
+BoundedDifficultySource = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_DIFFICULTY_SOURCE_CHARACTERS),
+]
+DifficultyConfidence = Annotated[FiniteFloat, Field(ge=0.0, le=1.0)]
 
 
 class HistoricalQuestionImportRequest(BaseModel):
@@ -36,6 +82,43 @@ class HistoricalQuestionImportRequest(BaseModel):
     source_document_id: UUID
     page_number: int = Field(ge=1, le=1_000_000)
     source_block_id: UUID
+    media_references: tuple[BoundedMediaReference, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_MEDIA_REFERENCES,
+    )
+    options: tuple[BoundedQuestionOption, ...] | None = Field(
+        default=None,
+        min_length=MIN_QUESTION_OPTIONS,
+        max_length=MAX_QUESTION_OPTIONS,
+    )
+    answer: BoundedAnswer | None = None
+    marking_guidance: BoundedMarkingGuidance | None = None
+    marking_data: dict[str, JsonValue] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_MARKING_DATA_COLLECTION_ITEMS,
+    )
+    question_archetype: BoundedQuestionArchetype | None = None
+    difficulty_label: DifficultyLabel | None = None
+    difficulty_confidence: DifficultyConfidence | None = None
+    difficulty_source: BoundedDifficultySource | None = None
+
+    @model_validator(mode="after")
+    def validate_metadata_invariants(self) -> Self:
+        difficulty_values = (
+            self.difficulty_label,
+            self.difficulty_confidence,
+            self.difficulty_source,
+        )
+        supplied_difficulty_fields = sum(value is not None for value in difficulty_values)
+        if supplied_difficulty_fields not in {0, len(difficulty_values)}:
+            raise ValueError("difficulty evidence must be absent or complete")
+        if self.options is not None and len(set(self.options)) != len(self.options):
+            raise ValueError("options must be unique")
+        if self.marking_data is not None:
+            HistoricalQuestionMarkingData.from_value(self.marking_data)
+        return self
 
 
 class KnowledgeChunkImportRequest(BaseModel):
@@ -118,6 +201,15 @@ class HistoricalQuestionResponse(BaseModel):
     text: str
     question_type: QuestionType
     marks: int
+    media_references: list[str] | None
+    options: list[str] | None
+    answer: str | None
+    marking_guidance: str | None
+    marking_data: dict[str, JsonValue] | None
+    question_archetype: str | None
+    difficulty_label: DifficultyLabel | None
+    difficulty_confidence: float | None
+    difficulty_source: str | None
     provenance: KnowledgeProvenanceResponse
     classification: KnowledgeClassificationResponse
     review_state: ReviewState
@@ -144,6 +236,20 @@ class HistoricalQuestionResponse(BaseModel):
             text=question.text,
             question_type=question.question_type,
             marks=question.marks,
+            media_references=(
+                list(question.media_references) if question.media_references is not None else None
+            ),
+            options=list(question.options) if question.options is not None else None,
+            answer=question.answer,
+            marking_guidance=question.marking_guidance,
+            marking_data=cast(
+                dict[str, JsonValue] | None,
+                marking_data_to_dict(question.marking_data),
+            ),
+            question_archetype=question.question_archetype,
+            difficulty_label=question.difficulty_label,
+            difficulty_confidence=question.difficulty_confidence,
+            difficulty_source=question.difficulty_source,
             provenance=KnowledgeProvenanceResponse(
                 source_document_id=question.provenance.source_document_id,
                 page_number=question.provenance.page_number,

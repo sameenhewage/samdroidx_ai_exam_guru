@@ -676,6 +676,11 @@ export interface components {
              */
             valkey: "ok" | "unavailable";
         };
+        /**
+         * DifficultyLabel
+         * @enum {string}
+         */
+        DifficultyLabel: "easy" | "medium" | "hard";
         /** EmbeddingConfigurationMetadataResponse */
         EmbeddingConfigurationMetadataResponse: {
             /** Config Fingerprint */
@@ -824,12 +829,31 @@ export interface components {
         };
         /** HistoricalQuestionImportRequest */
         HistoricalQuestionImportRequest: {
+            /** Answer */
+            answer?: string | null;
+            /** Difficulty Confidence */
+            difficulty_confidence?: number | null;
+            difficulty_label?: components["schemas"]["DifficultyLabel"] | null;
+            /** Difficulty Source */
+            difficulty_source?: string | null;
+            /** Marking Data */
+            marking_data?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Marking Guidance */
+            marking_guidance?: string | null;
             /** Marks */
             marks: number;
+            /** Media References */
+            media_references?: string[] | null;
+            /** Options */
+            options?: string[] | null;
             /** Page Number */
             page_number: number;
             /** Paper Code */
             paper_code: string;
+            /** Question Archetype */
+            question_archetype?: string | null;
             /** Question Number */
             question_number: string;
             question_type: components["schemas"]["QuestionType"];
@@ -850,6 +874,8 @@ export interface components {
         };
         /** HistoricalQuestionResponse */
         HistoricalQuestionResponse: {
+            /** Answer */
+            answer: string | null;
             classification: components["schemas"]["KnowledgeClassificationResponse"];
             /**
              * Created At
@@ -866,6 +892,11 @@ export interface components {
              * @default false
              */
             deduplicated: boolean;
+            /** Difficulty Confidence */
+            difficulty_confidence: number | null;
+            difficulty_label: components["schemas"]["DifficultyLabel"] | null;
+            /** Difficulty Source */
+            difficulty_source: string | null;
             /** Embedding Configurations */
             embedding_configurations: components["schemas"]["EmbeddingConfigurationMetadataResponse"][];
             embedding_status: components["schemas"]["EmbeddingStatus"];
@@ -874,11 +905,23 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Marking Data */
+            marking_data: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Marking Guidance */
+            marking_guidance: string | null;
             /** Marks */
             marks: number;
+            /** Media References */
+            media_references: string[] | null;
+            /** Options */
+            options: string[] | null;
             /** Paper Code */
             paper_code: string;
             provenance: components["schemas"]["KnowledgeProvenanceResponse"];
+            /** Question Archetype */
+            question_archetype: string | null;
             /** Question Number */
             question_number: string;
             question_type: components["schemas"]["QuestionType"];
@@ -895,6 +938,7 @@ export interface components {
             /** Year */
             year: number;
         };
+        JsonValue: unknown;
         /** KnowledgeChunkImportRequest */
         KnowledgeChunkImportRequest: {
             chunk_type: components["schemas"]["ChunkType"];

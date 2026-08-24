@@ -1,13 +1,16 @@
 import asyncio
+from dataclasses import replace
 from typing import cast
 from uuid import UUID
 
 import pytest
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.knowledge.domain import (
     ChunkType,
+    DifficultyLabel,
     HistoricalQuestion,
     KnowledgeChunk,
     Provenance,
@@ -46,6 +49,21 @@ class ScriptedScalarSession:
         return self.responses.pop(0)
 
 
+class EmptyRows:
+    def all(self) -> list[object]:
+        return []
+
+
+class EmptyListSession:
+    async def scalars(self, statement: object) -> tuple[()]:
+        del statement
+        return ()
+
+    async def execute(self, statement: object) -> EmptyRows:
+        del statement
+        return EmptyRows()
+
+
 def test_question_and_chunk_models_round_trip_domain_records() -> None:
     provenance = Provenance(
         source_document_id=UUID(int=1),
@@ -62,6 +80,15 @@ def test_question_and_chunk_models_round_trip_domain_records() -> None:
         question_type=QuestionType.MULTIPLE_CHOICE,
         marks=2,
         provenance=provenance,
+        media_references=("source://page/2/figure/1",),
+        options=("A", "B", "C", "D"),
+        answer="B",
+        marking_guidance="Award full marks for B.",
+        marking_data={"criteria": [{"description": "Selects B.", "marks": 2}]},
+        question_archetype="single_best_answer",
+        difficulty_label=DifficultyLabel.MEDIUM,
+        difficulty_confidence=0.9,
+        difficulty_source="reviewer_confirmed",
         review_state=ReviewState.REVIEWED,
         competency_id=UUID(int=12),
         skill_id=UUID(int=13),
@@ -86,9 +113,60 @@ def test_question_and_chunk_models_round_trip_domain_records() -> None:
     assert chunk_model.to_domain() == chunk
     assert question_model.created_by == question_model.updated_by == ACTOR_ID
     assert chunk_model.created_by == chunk_model.updated_by == ACTOR_ID
+    assert question_model.media_references == ["source://page/2/figure/1"]
+    assert question_model.options == ["A", "B", "C", "D"]
+    assert question_model.marking_data == {"criteria": [{"description": "Selects B.", "marks": 2}]}
     assert question_model.version == chunk_model.version == 0
     assert HistoricalQuestionModel.__table__.c.version.server_default is not None
     assert KnowledgeChunkModel.__table__.c.version.server_default is not None
+    for column_name in ("media_references", "options", "marking_data"):
+        json_type = HistoricalQuestionModel.__table__.c[column_name].type
+        assert isinstance(json_type, JSONB)
+        assert json_type.none_as_null is True
+
+
+def test_question_import_comparison_includes_every_source_metadata_field() -> None:
+    question = HistoricalQuestion(
+        id=UUID(int=30),
+        curriculum_version_id=UUID(int=31),
+        year=2020,
+        paper_code="P1",
+        question_number="1",
+        text="Historical question",
+        question_type=QuestionType.MULTIPLE_CHOICE,
+        marks=2,
+        provenance=Provenance(UUID(int=32), 1, UUID(int=33)),
+        media_references=("source://page/1/figure/1",),
+        options=("A", "B", "C", "D"),
+        answer="B",
+        marking_guidance="Award two marks for B.",
+        marking_data={"criteria": [{"description": "Selects B.", "marks": 2}]},
+        question_archetype="single_best_answer",
+        difficulty_label=DifficultyLabel.MEDIUM,
+        difficulty_confidence=0.9,
+        difficulty_source="reviewer_confirmed",
+    )
+    model = HistoricalQuestionModel.from_domain(question, ACTOR_ID)
+    candidates = (
+        replace(question, media_references=("source://page/1/figure/2",)),
+        replace(question, options=("A", "B", "C", "D", "E")),
+        replace(question, answer="C"),
+        replace(question, marking_guidance="Different guidance."),
+        replace(question, marking_data={"criteria": [{"marks": 1}]}),
+        replace(question, question_archetype="classification"),
+        replace(question, difficulty_label=DifficultyLabel.HARD),
+        replace(question, difficulty_confidence=0.8),
+        replace(question, difficulty_source="model_assisted"),
+    )
+
+    assert SqlAlchemyKnowledgeRepository._same_question_import(
+        model,
+        replace(question, id=UUID(int=34)),
+    )
+    assert all(
+        not SqlAlchemyKnowledgeRepository._same_question_import(model, candidate)
+        for candidate in candidates
+    )
 
 
 def test_embedding_configuration_round_trip_and_vector_column_use_pgvector() -> None:
@@ -111,6 +189,35 @@ def test_embedding_configuration_round_trip_and_vector_column_use_pgvector() -> 
     vector_type = KnowledgeEmbeddingModel.__table__.c.embedding.type
     assert isinstance(vector_type, Vector)
     assert vector_type.dim is None
+
+
+def test_repository_lists_empty_question_and_chunk_collections() -> None:
+    async def exercise() -> None:
+        repository = SqlAlchemyKnowledgeRepository(cast(AsyncSession, EmptyListSession()))
+        questions = await repository.list_questions(
+            UUID(int=100),
+            review_state=None,
+            source_document_id=None,
+            competency_id=None,
+            question_type=None,
+            year=None,
+            paper_code=None,
+            limit=50,
+            offset=0,
+        )
+        chunks = await repository.list_chunks(
+            UUID(int=100),
+            review_state=None,
+            source_document_id=None,
+            competency_id=None,
+            chunk_type=None,
+            limit=50,
+            offset=0,
+        )
+        assert questions == ()
+        assert chunks == ()
+
+    asyncio.run(exercise())
 
 
 def test_repository_reports_missing_records_and_invalid_embedding_targets() -> None:

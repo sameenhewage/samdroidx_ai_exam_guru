@@ -353,7 +353,21 @@ def _chunk_payload(sequence: int) -> dict[str, object]:
 def test_question_import_is_server_identified_authorized_scoped_and_idempotent(
     knowledge_api_database_url: str,
 ) -> None:
-    payload = _question_payload("API-1")
+    payload = {
+        **_question_payload("API-1"),
+        "media_references": ["source://page/1/figure/1"],
+        "options": ["12", "14", "16", "18"],
+        "answer": "16",
+        "marking_guidance": "Award two marks for selecting sixteen.",
+        "marking_data": {
+            "criteria": [{"description": "Selects sixteen.", "marks": 2}],
+            "alternative_answers": ["16"],
+        },
+        "question_archetype": "single_best_answer",
+        "difficulty_label": "medium",
+        "difficulty_confidence": 0.9,
+        "difficulty_source": "reviewer_confirmed",
+    }
     with api_client(knowledge_api_database_url) as client:
         unauthenticated = client.post(QUESTION_PATH, json=payload)
         forbidden = client.post(QUESTION_PATH, json=payload, headers=REVIEWER_HEADERS)
@@ -366,7 +380,39 @@ def test_question_import_is_server_identified_authorized_scoped_and_idempotent(
         duplicate = client.post(QUESTION_PATH, json=payload, headers=ADMIN_HEADERS)
         conflict = client.post(
             QUESTION_PATH,
-            json={**payload, "text": "Conflicting source normalization"},
+            json={**payload, "answer": "14"},
+            headers=ADMIN_HEADERS,
+        )
+        duplicate_options = client.post(
+            QUESTION_PATH,
+            json={**_question_payload("API-DUPLICATE-OPTIONS"), "options": ["A", "A"]},
+            headers=ADMIN_HEADERS,
+        )
+        source_label_answer = client.post(
+            QUESTION_PATH,
+            json={
+                **_question_payload("API-SOURCE-LABEL-ANSWER"),
+                "options": ["Twelve", "Fourteen"],
+                "answer": "B",
+            },
+            headers=ADMIN_HEADERS,
+        )
+        partial_difficulty = client.post(
+            QUESTION_PATH,
+            json={
+                **_question_payload("API-PARTIAL-DIFFICULTY"),
+                "difficulty_label": "easy",
+            },
+            headers=ADMIN_HEADERS,
+        )
+        unbounded_confidence = client.post(
+            QUESTION_PATH,
+            json={
+                **_question_payload("API-UNBOUNDED-CONFIDENCE"),
+                "difficulty_label": "easy",
+                "difficulty_confidence": 1.01,
+                "difficulty_source": "reviewer_confirmed",
+            },
             headers=ADMIN_HEADERS,
         )
         listed = client.get(
@@ -420,6 +466,18 @@ def test_question_import_is_server_identified_authorized_scoped_and_idempotent(
         "sub_skill_id": None,
         "learning_concept_id": None,
     }
+    assert body["media_references"] == ["source://page/1/figure/1"]
+    assert body["options"] == ["12", "14", "16", "18"]
+    assert body["answer"] == "16"
+    assert body["marking_guidance"] == "Award two marks for selecting sixteen."
+    assert body["marking_data"] == {
+        "alternative_answers": ["16"],
+        "criteria": [{"description": "Selects sixteen.", "marks": 2}],
+    }
+    assert body["question_archetype"] == "single_best_answer"
+    assert body["difficulty_label"] == "medium"
+    assert body["difficulty_confidence"] == 0.9
+    assert body["difficulty_source"] == "reviewer_confirmed"
     assert body["created_at"] == body["updated_at"]
     assert body["embedding_status"] == "not_embedded"
     assert body["embedding_configurations"] == []
@@ -432,6 +490,11 @@ def test_question_import_is_server_identified_authorized_scoped_and_idempotent(
     assert duplicate.json()["deduplicated"] is True
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "source_import_conflict"
+    assert duplicate_options.status_code == 422
+    assert source_label_answer.status_code == 201
+    assert source_label_answer.json()["answer"] == "B"
+    assert partial_difficulty.status_code == 422
+    assert unbounded_confidence.status_code == 422
     assert listed.status_code == 200
     assert listed.json() == [{**body, "deduplicated": False}]
     assert fetched.status_code == 200
@@ -510,6 +573,17 @@ def test_question_classification_and_review_use_expected_version_and_forward_tra
         )
 
     assert created.status_code == 201
+    assert {
+        "media_references": None,
+        "options": None,
+        "answer": None,
+        "marking_guidance": None,
+        "marking_data": None,
+        "question_archetype": None,
+        "difficulty_label": None,
+        "difficulty_confidence": None,
+        "difficulty_source": None,
+    }.items() <= created.json().items()
     assert classified.status_code == 200
     assert classified.json()["version"] == 1
     assert classified.json()["classification"]["skill_id"] == str(SKILL_ID)
@@ -667,10 +741,27 @@ def test_knowledge_api_audits_every_successful_write(knowledge_api_database_url:
 
     events = asyncio.run(read_events())
     actions = [event.action for event in events]
-    assert actions.count("knowledge.question.imported") == 2
+    assert actions.count("knowledge.question.imported") == 3
     assert actions.count("knowledge.question.classified") == 1
     assert actions.count("knowledge.question.review_state_changed") == 2
     assert actions.count("knowledge.chunk.imported") == 2
     assert actions.count("knowledge.chunk.classified") == 1
     assert actions.count("knowledge.chunk.review_state_changed") == 2
     assert all("version" in event.payload for event in events)
+    rich_import = next(
+        event
+        for event in events
+        if event.action == "knowledge.question.imported"
+        and event.payload.get("question_number") == "API-1"
+    )
+    assert rich_import.payload["historical_metadata"] == {
+        "media_reference_count": 1,
+        "option_count": 4,
+        "answer_available": True,
+        "marking_guidance_available": True,
+        "marking_data_available": True,
+        "question_archetype": "single_best_answer",
+        "difficulty_label": "medium",
+        "difficulty_confidence": 0.9,
+        "difficulty_source": "reviewer_confirmed",
+    }

@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Double,
     Enum,
     ForeignKey,
     ForeignKeyConstraint,
@@ -18,22 +19,36 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from exam_guru_api.curriculum.models import AuditColumns
 from exam_guru_api.infrastructure.database import Base
 from exam_guru_api.knowledge.domain import (
+    MAX_ANSWER_CHARACTERS,
+    MAX_DIFFICULTY_SOURCE_CHARACTERS,
+    MAX_MARKING_DATA_BYTES,
+    MAX_MARKING_GUIDANCE_CHARACTERS,
+    MAX_MEDIA_REFERENCE_CHARACTERS,
+    MAX_MEDIA_REFERENCES,
+    MAX_QUESTION_ARCHETYPE_CHARACTERS,
+    MAX_QUESTION_OPTION_CHARACTERS,
+    MAX_QUESTION_OPTIONS,
+    MIN_QUESTION_OPTIONS,
     ChunkType,
+    DifficultyLabel,
     HistoricalQuestion,
     KnowledgeChunk,
     Provenance,
     QuestionType,
     ReviewState,
+    marking_data_to_dict,
 )
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 
 _REVIEW_STATES_SQL = ", ".join(f"'{state.value}'" for state in ReviewState)
 _QUESTION_TYPES_SQL = ", ".join(f"'{question_type.value}'" for question_type in QuestionType)
+_DIFFICULTY_LABELS_SQL = ", ".join(f"'{label.value}'" for label in DifficultyLabel)
 _CHUNK_TYPES_SQL = ", ".join(f"'{chunk_type.value}'" for chunk_type in ChunkType)
 
 
@@ -111,6 +126,55 @@ class HistoricalQuestionModel(AuditColumns, Base):
             name="ck_historical_questions_text",
         ),
         CheckConstraint("marks > 0", name="ck_historical_questions_marks"),
+        CheckConstraint(
+            "media_references IS NULL OR historical_question_text_array_valid("
+            f"media_references, 1, {MAX_MEDIA_REFERENCES}, "
+            f"{MAX_MEDIA_REFERENCE_CHARACTERS})",
+            name="ck_historical_questions_metadata_media_references",
+        ),
+        CheckConstraint(
+            "options IS NULL OR historical_question_text_array_valid("
+            f"options, {MIN_QUESTION_OPTIONS}, {MAX_QUESTION_OPTIONS}, "
+            f"{MAX_QUESTION_OPTION_CHARACTERS})",
+            name="ck_historical_questions_metadata_options",
+        ),
+        CheckConstraint(
+            "answer IS NULL OR (answer = btrim(answer) AND "
+            f"char_length(answer) BETWEEN 1 AND {MAX_ANSWER_CHARACTERS})",
+            name="ck_historical_questions_metadata_answer",
+        ),
+        CheckConstraint(
+            "marking_guidance IS NULL OR (marking_guidance = btrim(marking_guidance) AND "
+            "char_length(marking_guidance) BETWEEN 1 AND "
+            f"{MAX_MARKING_GUIDANCE_CHARACTERS})",
+            name="ck_historical_questions_metadata_marking_guidance",
+        ),
+        CheckConstraint(
+            "marking_data IS NULL OR (jsonb_typeof(marking_data) = 'object' AND "
+            "marking_data <> '{}'::jsonb AND "
+            f"pg_column_size(marking_data) <= {MAX_MARKING_DATA_BYTES})",
+            name="ck_historical_questions_metadata_marking_data",
+        ),
+        CheckConstraint(
+            "question_archetype IS NULL OR (question_archetype = btrim(question_archetype) AND "
+            f"char_length(question_archetype) BETWEEN 1 AND {MAX_QUESTION_ARCHETYPE_CHARACTERS})",
+            name="ck_historical_questions_metadata_question_archetype",
+        ),
+        CheckConstraint(
+            "(difficulty_label IS NULL AND difficulty_confidence IS NULL AND "
+            "difficulty_source IS NULL) OR (difficulty_label IS NOT NULL AND "
+            "difficulty_confidence IS NOT NULL AND difficulty_source IS NOT NULL AND "
+            f"difficulty_label IN ({_DIFFICULTY_LABELS_SQL}) AND "
+            "difficulty_source = btrim(difficulty_source) AND "
+            f"char_length(difficulty_source) BETWEEN 1 AND {MAX_DIFFICULTY_SOURCE_CHARACTERS})",
+            name="ck_historical_questions_metadata_difficulty_evidence",
+        ),
+        CheckConstraint(
+            "difficulty_confidence IS NULL OR (difficulty_confidence BETWEEN 0.0 AND 1.0 AND "
+            "difficulty_confidence NOT IN ('NaN'::double precision, "
+            "'Infinity'::double precision, '-Infinity'::double precision))",
+            name="ck_historical_questions_metadata_difficulty_confidence",
+        ),
         CheckConstraint("page_number > 0", name="ck_historical_questions_page_number"),
         CheckConstraint("version >= 0", name="ck_historical_questions_version"),
         CheckConstraint(
@@ -140,6 +204,26 @@ class HistoricalQuestionModel(AuditColumns, Base):
         nullable=False,
     )
     marks: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_references: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    options: Mapped[list[str] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marking_guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marking_data: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    question_archetype: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    difficulty_label: Mapped[DifficultyLabel | None] = mapped_column(
+        _enum(
+            DifficultyLabel,
+            name="historical_question_difficulty_label",
+            length=16,
+        ),
+        nullable=True,
+    )
+    difficulty_confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
+    difficulty_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     source_block_id: Mapped[UUID | None] = mapped_column(
@@ -169,6 +253,17 @@ class HistoricalQuestionModel(AuditColumns, Base):
             text=question.text,
             question_type=question.question_type,
             marks=question.marks,
+            media_references=(
+                list(question.media_references) if question.media_references is not None else None
+            ),
+            options=list(question.options) if question.options is not None else None,
+            answer=question.answer,
+            marking_guidance=question.marking_guidance,
+            marking_data=marking_data_to_dict(question.marking_data),
+            question_archetype=question.question_archetype,
+            difficulty_label=question.difficulty_label,
+            difficulty_confidence=question.difficulty_confidence,
+            difficulty_source=question.difficulty_source,
             source_document_id=question.provenance.source_document_id,
             page_number=question.provenance.page_number,
             source_block_id=question.provenance.source_block_id,
@@ -192,6 +287,17 @@ class HistoricalQuestionModel(AuditColumns, Base):
             text=self.text,
             question_type=self.question_type,
             marks=self.marks,
+            media_references=(
+                tuple(self.media_references) if self.media_references is not None else None
+            ),
+            options=tuple(self.options) if self.options is not None else None,
+            answer=self.answer,
+            marking_guidance=self.marking_guidance,
+            marking_data=self.marking_data,
+            question_archetype=self.question_archetype,
+            difficulty_label=self.difficulty_label,
+            difficulty_confidence=self.difficulty_confidence,
+            difficulty_source=self.difficulty_source,
             provenance=Provenance(
                 source_document_id=self.source_document_id,
                 page_number=self.page_number,

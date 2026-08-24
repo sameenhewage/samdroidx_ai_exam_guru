@@ -134,6 +134,7 @@ class KnowledgePersistenceService:
                         result.record.provenance.source_block_id
                     ),
                     "question_number": result.record.question_number,
+                    "historical_metadata": self._historical_metadata_audit_payload(result.record),
                     "version": result.record.version,
                 },
             )
@@ -509,6 +510,24 @@ class KnowledgePersistenceService:
             replace(record, review_state=target)
         except KnowledgeContractError as error:
             raise KnowledgeRecordNotReadyError(record.id) from error
+
+    @staticmethod
+    def _historical_metadata_audit_payload(question: HistoricalQuestion) -> dict[str, object]:
+        return {
+            "media_reference_count": (
+                len(question.media_references) if question.media_references is not None else None
+            ),
+            "option_count": len(question.options) if question.options is not None else None,
+            "answer_available": question.answer is not None,
+            "marking_guidance_available": question.marking_guidance is not None,
+            "marking_data_available": question.marking_data is not None,
+            "question_archetype": question.question_archetype,
+            "difficulty_label": (
+                question.difficulty_label.value if question.difficulty_label is not None else None
+            ),
+            "difficulty_confidence": question.difficulty_confidence,
+            "difficulty_source": question.difficulty_source,
+        }
 
     @staticmethod
     def _classification(

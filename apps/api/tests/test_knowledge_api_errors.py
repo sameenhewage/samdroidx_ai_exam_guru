@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, Response
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,7 @@ from exam_guru_api.api.routes.knowledge import (
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.knowledge.domain import (
     ChunkType,
+    DifficultyLabel,
     EmbeddingConfigurationMetadata,
     HistoricalQuestion,
     KnowledgeChunk,
@@ -85,6 +87,15 @@ def question() -> HistoricalQuestion:
         question_type=QuestionType.MULTIPLE_CHOICE,
         marks=2,
         provenance=Provenance(SOURCE_ID, 1, BLOCK_ID),
+        media_references=("source://page/1/figure/1",),
+        options=("A", "B", "C", "D"),
+        answer="B",
+        marking_guidance="Award two marks for B.",
+        marking_data={"criteria": [{"description": "Selects B.", "marks": 2}]},
+        question_archetype="single_best_answer",
+        difficulty_label=DifficultyLabel.MEDIUM,
+        difficulty_confidence=0.9,
+        difficulty_source="reviewer_confirmed",
         competency_id=UUID(int=7),
         version=1,
         created_at=TIMESTAMP,
@@ -118,6 +129,39 @@ def chunk() -> KnowledgeChunk:
     )
 
 
+def test_historical_question_request_rejects_cross_field_metadata_invariants() -> None:
+    base: dict[str, object] = {
+        "year": 2021,
+        "paper_code": "P1",
+        "question_number": "1",
+        "text": "Question text",
+        "question_type": "multiple_choice",
+        "marks": 2,
+        "source_document_id": SOURCE_ID,
+        "page_number": 1,
+        "source_block_id": BLOCK_ID,
+    }
+    invalid_metadata: tuple[dict[str, object], ...] = (
+        {"options": ["A", "A"]},
+        {"difficulty_label": "easy"},
+        {"marking_data": {"score": float("nan")}},
+    )
+
+    for metadata in invalid_metadata:
+        with pytest.raises(ValidationError):
+            HistoricalQuestionImportRequest.model_validate({**base, **metadata})
+
+    constructed = HistoricalQuestionImportRequest.model_validate(
+        {
+            **base,
+            "question_type": "short_answer",
+            "options": ["14", "fourteen"],
+            "answer": "Any equivalent expression equal to fourteen",
+        }
+    )
+    assert constructed.answer == "Any equivalent expression equal to fourteen"
+
+
 def test_knowledge_route_wrappers_return_typed_responses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -128,12 +172,21 @@ def test_knowledge_route_wrappers_return_typed_responses(
 
     async def import_question(
         _service: KnowledgePersistenceService,
-        _question: HistoricalQuestion,
+        imported: HistoricalQuestion,
         *,
         actor_id: UUID,
     ) -> SourceImportResult[HistoricalQuestion]:
         nonlocal question_import_calls
         assert actor_id == ACTOR_ID
+        assert imported.media_references == ("source://page/1/figure/1",)
+        assert imported.options == ("A", "B", "C", "D")
+        assert imported.answer == "B"
+        assert imported.marking_guidance == "Award two marks for B."
+        assert imported.marking_data is not None
+        assert imported.question_archetype == "single_best_answer"
+        assert imported.difficulty_label is DifficultyLabel.MEDIUM
+        assert imported.difficulty_confidence == 0.9
+        assert imported.difficulty_source == "reviewer_confirmed"
         question_import_calls += 1
         return SourceImportResult(
             question_record,
@@ -208,6 +261,15 @@ def test_knowledge_route_wrappers_return_typed_responses(
         source_document_id=SOURCE_ID,
         page_number=1,
         source_block_id=BLOCK_ID,
+        media_references=("source://page/1/figure/1",),
+        options=("A", "B", "C", "D"),
+        answer="B",
+        marking_guidance="Award two marks for B.",
+        marking_data={"criteria": [{"description": "Selects B.", "marks": 2}]},
+        question_archetype="single_best_answer",
+        difficulty_label=DifficultyLabel.MEDIUM,
+        difficulty_confidence=0.9,
+        difficulty_source="reviewer_confirmed",
     )
     chunk_request = KnowledgeChunkImportRequest(
         chunk_type=ChunkType.EXPLANATION,
@@ -317,6 +379,17 @@ def test_knowledge_route_wrappers_return_typed_responses(
         assert second_chunk_response.status_code == 200
         assert imported_question.embedding_status.value == "embedded"
         assert imported_question.embedding_configurations[0].provider == "fixture"
+        assert imported_question.media_references == ["source://page/1/figure/1"]
+        assert imported_question.options == ["A", "B", "C", "D"]
+        assert imported_question.answer == "B"
+        assert imported_question.marking_guidance == "Award two marks for B."
+        assert imported_question.marking_data == {
+            "criteria": [{"description": "Selects B.", "marks": 2}]
+        }
+        assert imported_question.question_archetype == "single_best_answer"
+        assert imported_question.difficulty_label is DifficultyLabel.MEDIUM
+        assert imported_question.difficulty_confidence == 0.9
+        assert imported_question.difficulty_source == "reviewer_confirmed"
         assert duplicate_question.deduplicated is True
         assert imported_chunk.id == duplicate_chunk.id == CHUNK_ID
         assert listed_questions == [fetched_question]
@@ -350,6 +423,7 @@ def test_import_route_rejects_domain_invalid_whitespace(
                     marks=1,
                     source_document_id=SOURCE_ID,
                     page_number=1,
+                    source_block_id=BLOCK_ID,
                 ),
                 Response(),
                 PRINCIPAL,
@@ -365,6 +439,7 @@ def test_import_route_rejects_domain_invalid_whitespace(
                     sequence=0,
                     source_document_id=SOURCE_ID,
                     page_number=1,
+                    source_block_id=BLOCK_ID,
                 ),
                 Response(),
                 PRINCIPAL,

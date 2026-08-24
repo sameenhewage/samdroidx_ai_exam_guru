@@ -1,3 +1,5 @@
+from typing import cast
+
 from fastapi.routing import APIRoute
 
 from exam_guru_api.main import create_app
@@ -19,6 +21,17 @@ def _request_properties(path: str, method: str) -> set[str]:
     request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
     reference = request_schema["$ref"].split("/")[-1]
     return set(schema["components"]["schemas"][reference]["properties"])
+
+
+def _nonnull_schema(property_schema: dict[str, object]) -> dict[str, object]:
+    alternatives = property_schema.get("anyOf")
+    if not isinstance(alternatives, list):
+        return property_schema
+    return next(
+        alternative
+        for alternative in alternatives
+        if isinstance(alternative, dict) and alternative.get("type") != "null"
+    )
 
 
 def test_knowledge_openapi_exposes_curriculum_scoped_authorized_resources() -> None:
@@ -66,6 +79,17 @@ def test_import_and_mutation_contracts_do_not_accept_ids_state_or_vectors() -> N
     assert not question_properties & forbidden
     assert not chunk_properties & forbidden
     assert {"source_document_id", "page_number", "source_block_id"} <= question_properties
+    assert {
+        "media_references",
+        "options",
+        "answer",
+        "marking_guidance",
+        "marking_data",
+        "question_archetype",
+        "difficulty_label",
+        "difficulty_confidence",
+        "difficulty_source",
+    } <= question_properties
     assert {"source_document_id", "page_number", "source_block_id"} <= chunk_properties
 
     schema = create_app().openapi()
@@ -92,6 +116,45 @@ def test_knowledge_mutation_versions_are_bounded_to_database_integer_range() -> 
         version = schema["components"]["schemas"][schema_name]["properties"]["expected_version"]
         assert version["minimum"] == 0
         assert version["maximum"] == 2_147_483_647
+
+
+def test_historical_question_metadata_openapi_is_optional_typed_and_bounded() -> None:
+    schema = create_app().openapi()
+    request = schema["components"]["schemas"]["HistoricalQuestionImportRequest"]
+    properties = request["properties"]
+    metadata_fields = {
+        "media_references",
+        "options",
+        "answer",
+        "marking_guidance",
+        "marking_data",
+        "question_archetype",
+        "difficulty_label",
+        "difficulty_confidence",
+        "difficulty_source",
+    }
+
+    assert not metadata_fields & set(request["required"])
+    media_references = _nonnull_schema(properties["media_references"])
+    options = _nonnull_schema(properties["options"])
+    confidence = _nonnull_schema(properties["difficulty_confidence"])
+    marking_data = _nonnull_schema(properties["marking_data"])
+    assert media_references["type"] == "array"
+    assert media_references["minItems"] == 1
+    assert media_references["maxItems"] == 32
+    assert cast(dict[str, object], media_references["items"])["maxLength"] == 2_048
+    assert options["type"] == "array"
+    assert options["minItems"] == 2
+    assert options["maxItems"] == 8
+    assert cast(dict[str, object], options["items"])["maxLength"] == 2_000
+    assert confidence["minimum"] == 0.0
+    assert confidence["maximum"] == 1.0
+    assert marking_data["type"] == "object"
+    assert schema["components"]["schemas"]["DifficultyLabel"]["enum"] == [
+        "easy",
+        "medium",
+        "hard",
+    ]
 
 
 def test_knowledge_list_bounds_and_response_metadata_are_documented() -> None:
@@ -121,3 +184,18 @@ def test_knowledge_list_bounds_and_response_metadata_are_documented() -> None:
         assert "embedding" not in properties
         assert "vector" not in properties
         assert "raw_vector" not in properties
+
+    question_properties = schema["components"]["schemas"]["HistoricalQuestionResponse"][
+        "properties"
+    ]
+    assert {
+        "media_references",
+        "options",
+        "answer",
+        "marking_guidance",
+        "marking_data",
+        "question_archetype",
+        "difficulty_label",
+        "difficulty_confidence",
+        "difficulty_source",
+    } <= set(question_properties)

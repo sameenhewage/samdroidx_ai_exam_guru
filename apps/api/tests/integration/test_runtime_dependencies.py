@@ -44,7 +44,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     upgrade_database(database_url)
     assert_database_schema_current(database_url)
 
-    async def read_database_state() -> tuple[str | None, str | None]:
+    async def read_database_state() -> tuple[str | None, str | None, set[str], set[str]]:
         engine = create_async_engine(database_url)
         async with engine.connect() as connection:
             vector_version = await connection.scalar(
@@ -53,13 +53,56 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
             migration_revision = await connection.scalar(
                 text("SELECT version_num FROM alembic_version")
             )
+            metadata_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'historical_questions' "
+                        "AND column_name IN ('media_references', 'options', 'answer', "
+                        "'marking_guidance', 'marking_data', 'question_archetype', "
+                        "'difficulty_label', 'difficulty_confidence', 'difficulty_source')"
+                    )
+                )
+            )
+            metadata_constraints = set(
+                await connection.scalars(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'historical_questions'::regclass "
+                        "AND conname LIKE 'ck_historical_questions_metadata_%'"
+                    )
+                )
+            )
         await engine.dispose()
-        return vector_version, migration_revision
+        return vector_version, migration_revision, metadata_columns, metadata_constraints
 
-    vector_version, migration_revision = asyncio.run(read_database_state())
+    vector_version, migration_revision, metadata_columns, metadata_constraints = asyncio.run(
+        read_database_state()
+    )
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0008_knowledge_record_versions"
+    assert migration_revision == "0010_historical_answer_encoding"
+    assert metadata_columns == {
+        "media_references",
+        "options",
+        "answer",
+        "marking_guidance",
+        "marking_data",
+        "question_archetype",
+        "difficulty_label",
+        "difficulty_confidence",
+        "difficulty_source",
+    }
+    assert {
+        "ck_historical_questions_metadata_media_references",
+        "ck_historical_questions_metadata_options",
+        "ck_historical_questions_metadata_answer",
+        "ck_historical_questions_metadata_marking_guidance",
+        "ck_historical_questions_metadata_marking_data",
+        "ck_historical_questions_metadata_question_archetype",
+        "ck_historical_questions_metadata_difficulty_evidence",
+        "ck_historical_questions_metadata_difficulty_confidence",
+    } <= metadata_constraints
 
 
 @pytest.mark.integration
