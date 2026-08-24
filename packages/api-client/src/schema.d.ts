@@ -885,6 +885,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operations/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a fixed operational and AI-cost summary
+         * @description Aggregates persisted operational state over a half-open UTC window. The default window is 24 hours and the maximum is 31 days. Dimensions are fixed server-side; content, vectors, prompts, secrets, and high-cardinality resource identifiers are never returned.
+         */
+        get: operations["get_operations_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/retrieval/explore": {
         parameters: {
             query?: never;
@@ -1779,11 +1799,36 @@ export interface components {
          * @enum {string}
          */
         EmbeddingJobStatus: "queued" | "claimed" | "succeeded" | "failed";
+        /** EmbeddingOperationsResponse */
+        EmbeddingOperationsResponse: {
+            /** Deduplicated Count */
+            deduplicated_count: number;
+            /** Embedded Count */
+            embedded_count: number;
+            /** Failure Codes */
+            failure_codes: components["schemas"]["FailureCodeCountResponse"][];
+            /** Job Count */
+            job_count: number;
+            /** Requested Count */
+            requested_count: number;
+            status_counts: components["schemas"]["EmbeddingStatusCountsResponse"];
+        };
         /**
          * EmbeddingStatus
          * @enum {string}
          */
         EmbeddingStatus: "not_embedded" | "embedded";
+        /** EmbeddingStatusCountsResponse */
+        EmbeddingStatusCountsResponse: {
+            /** Claimed */
+            claimed: number;
+            /** Failed */
+            failed: number;
+            /** Queued */
+            queued: number;
+            /** Succeeded */
+            succeeded: number;
+        };
         /** ExactFraction */
         ExactFraction: {
             /** Denominator */
@@ -1902,11 +1947,43 @@ export interface components {
             message_id: string;
             status: components["schemas"]["ExtractionStatus"];
         };
+        /** ExtractionOperationsResponse */
+        ExtractionOperationsResponse: {
+            /** Document Count */
+            document_count: number;
+            /** Failure Codes */
+            failure_codes: components["schemas"]["FailureCodeCountResponse"][];
+            /** Ocr Page Count */
+            ocr_page_count: number;
+            status_counts: components["schemas"]["ExtractionStatusCountsResponse"];
+        };
         /**
          * ExtractionStatus
          * @enum {string}
          */
         ExtractionStatus: "uploaded" | "extraction_pending" | "extracted" | "in_review" | "trusted" | "failed";
+        /** ExtractionStatusCountsResponse */
+        ExtractionStatusCountsResponse: {
+            /** Extracted */
+            extracted: number;
+            /** Extraction Pending */
+            extraction_pending: number;
+            /** Failed */
+            failed: number;
+            /** In Review */
+            in_review: number;
+            /** Trusted */
+            trusted: number;
+            /** Uploaded */
+            uploaded: number;
+        };
+        /** FailureCodeCountResponse */
+        FailureCodeCountResponse: {
+            /** Code */
+            code: string;
+            /** Count */
+            count: number;
+        };
         /** FusedRetrievalCandidateResponse */
         FusedRetrievalCandidateResponse: {
             /**
@@ -2071,6 +2148,25 @@ export interface components {
             retrieval_version: string;
             /** Schema Version */
             schema_version: string;
+        };
+        /** GenerationOperationsResponse */
+        GenerationOperationsResponse: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Cost Microusd */
+            cost_microusd: number;
+            /** Failure Codes */
+            failure_codes: components["schemas"]["FailureCodeCountResponse"][];
+            /** Input Tokens */
+            input_tokens: number;
+            latency_ms: components["schemas"]["LatencyMillisecondsResponse"];
+            /** Output Tokens */
+            output_tokens: number;
+            /** Run Count */
+            run_count: number;
+            status_counts: components["schemas"]["GenerationStatusCountsResponse"];
+            /** Total Tokens */
+            total_tokens: number;
         };
         /** GenerationPolicyRequest */
         GenerationPolicyRequest: {
@@ -2284,6 +2380,17 @@ export interface components {
             total_tokens: number;
             /** Version */
             version: number;
+        };
+        /** GenerationStatusCountsResponse */
+        GenerationStatusCountsResponse: {
+            /** Failed */
+            failed: number;
+            /** Pending */
+            pending: number;
+            /** Running */
+            running: number;
+            /** Succeeded */
+            succeeded: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2549,6 +2656,15 @@ export interface components {
             expected_version: number;
             target: components["schemas"]["ReviewState"];
         };
+        /** LatencyMillisecondsResponse */
+        LatencyMillisecondsResponse: {
+            /** Average */
+            average: number;
+            /** Maximum */
+            maximum: number;
+            /** Total */
+            total: number;
+        };
         /** LeakageAuditResponse */
         LeakageAuditResponse: {
             /** Heldout Observation Ids */
@@ -2599,6 +2715,76 @@ export interface components {
         MediumUpdate: {
             /** Name */
             name: string;
+        };
+        /** OperationsDataBoundsResponse */
+        OperationsDataBoundsResponse: {
+            /** Earliest Observed At */
+            earliest_observed_at: string | null;
+            /** Latest Observed At */
+            latest_observed_at: string | null;
+        };
+        /** OperationsSummaryResponse */
+        OperationsSummaryResponse: {
+            data_bounds: components["schemas"]["OperationsDataBoundsResponse"];
+            embedding: components["schemas"]["EmbeddingOperationsResponse"];
+            extraction: components["schemas"]["ExtractionOperationsResponse"];
+            generation: components["schemas"]["GenerationOperationsResponse"];
+            practice_papers: components["schemas"]["PracticePaperOperationsResponse"];
+            units: components["schemas"]["OperationsUnitsResponse"];
+            validation: components["schemas"]["ValidationOperationsResponse"];
+            window: components["schemas"]["OperationsWindowResponse"];
+        };
+        /** OperationsUnitsResponse */
+        OperationsUnitsResponse: {
+            /**
+             * Cost
+             * @default microusd
+             * @constant
+             */
+            cost: "microusd";
+            /**
+             * Counts
+             * @default count
+             * @constant
+             */
+            counts: "count";
+            /**
+             * Latency
+             * @default millisecond
+             * @constant
+             */
+            latency: "millisecond";
+            /**
+             * Timestamps
+             * @default UTC
+             * @constant
+             */
+            timestamps: "UTC";
+            /**
+             * Tokens
+             * @default token
+             * @constant
+             */
+            tokens: "token";
+        };
+        /** OperationsWindowResponse */
+        OperationsWindowResponse: {
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /**
+             * Semantics
+             * @default start_inclusive_end_exclusive
+             * @constant
+             */
+            semantics: "start_inclusive_end_exclusive";
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
         };
         /** PaperAggregateResponse */
         PaperAggregateResponse: {
@@ -2946,6 +3132,25 @@ export interface components {
              * Format: uuid
              */
             updated_by: string;
+        };
+        /** PracticePaperOperationsResponse */
+        PracticePaperOperationsResponse: {
+            /** Archive Count */
+            archive_count: number;
+            /** Paper Count */
+            paper_count: number;
+            /** Publication Count */
+            publication_count: number;
+            state_counts: components["schemas"]["PracticePaperStateCountsResponse"];
+        };
+        /** PracticePaperStateCountsResponse */
+        PracticePaperStateCountsResponse: {
+            /** Archived */
+            archived: number;
+            /** Draft */
+            draft: number;
+            /** Published */
+            published: number;
         };
         /** PracticePriorityFeaturesResponse */
         PracticePriorityFeaturesResponse: {
@@ -4299,6 +4504,15 @@ export interface components {
             /** Validator Version */
             validator_version: string;
         };
+        /** ValidationOperationsResponse */
+        ValidationOperationsResponse: {
+            /** Finding Count */
+            finding_count: number;
+            finding_status_counts: components["schemas"]["ValidationStatusCountsResponse"];
+            /** Run Count */
+            run_count: number;
+            run_status_counts: components["schemas"]["ValidationStatusCountsResponse"];
+        };
         /**
          * ValidationRunCreateRequest
          * @description The generation identity is the only client-selected validation input.
@@ -4449,6 +4663,15 @@ export interface components {
             report_fingerprint: string;
             /** Validator Count */
             validator_count: number;
+        };
+        /** ValidationStatusCountsResponse */
+        ValidationStatusCountsResponse: {
+            /** Fail */
+            fail: number;
+            /** Pass */
+            pass: number;
+            /** Warn */
+            warn: number;
         };
         /** PracticePriorityResponse */
         exam_guru_api__analytics__schemas__PracticePriorityResponse: {
@@ -7448,6 +7671,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_operations_summary: {
+        parameters: {
+            query?: {
+                /** @description Inclusive UTC window start */
+                start?: string | null;
+                /** @description Exclusive UTC window end */
+                end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSummaryResponse"];
+                };
+            };
+            /** @description The authenticated principal cannot read operational aggregates */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The UTC operations window is invalid or unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

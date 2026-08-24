@@ -1828,6 +1828,51 @@
         "title": "EmbeddingJobStatus",
         "type": "string"
       },
+      "EmbeddingOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deduplicated_count": {
+            "minimum": 0.0,
+            "title": "Deduplicated Count",
+            "type": "integer"
+          },
+          "embedded_count": {
+            "minimum": 0.0,
+            "title": "Embedded Count",
+            "type": "integer"
+          },
+          "failure_codes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureCodeCountResponse"
+            },
+            "title": "Failure Codes",
+            "type": "array"
+          },
+          "job_count": {
+            "minimum": 0.0,
+            "title": "Job Count",
+            "type": "integer"
+          },
+          "requested_count": {
+            "minimum": 0.0,
+            "title": "Requested Count",
+            "type": "integer"
+          },
+          "status_counts": {
+            "$ref": "#/components/schemas/EmbeddingStatusCountsResponse"
+          }
+        },
+        "required": [
+          "job_count",
+          "status_counts",
+          "failure_codes",
+          "requested_count",
+          "embedded_count",
+          "deduplicated_count"
+        ],
+        "title": "EmbeddingOperationsResponse",
+        "type": "object"
+      },
       "EmbeddingStatus": {
         "enum": [
           "not_embedded",
@@ -1835,6 +1880,39 @@
         ],
         "title": "EmbeddingStatus",
         "type": "string"
+      },
+      "EmbeddingStatusCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "claimed": {
+            "minimum": 0.0,
+            "title": "Claimed",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "queued": {
+            "minimum": 0.0,
+            "title": "Queued",
+            "type": "integer"
+          },
+          "succeeded": {
+            "minimum": 0.0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queued",
+          "claimed",
+          "succeeded",
+          "failed"
+        ],
+        "title": "EmbeddingStatusCountsResponse",
+        "type": "object"
       },
       "ExactFraction": {
         "additionalProperties": false,
@@ -2104,6 +2182,39 @@
         "title": "ExtractionJobResponse",
         "type": "object"
       },
+      "ExtractionOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "document_count": {
+            "minimum": 0.0,
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "failure_codes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureCodeCountResponse"
+            },
+            "title": "Failure Codes",
+            "type": "array"
+          },
+          "ocr_page_count": {
+            "minimum": 0.0,
+            "title": "Ocr Page Count",
+            "type": "integer"
+          },
+          "status_counts": {
+            "$ref": "#/components/schemas/ExtractionStatusCountsResponse"
+          }
+        },
+        "required": [
+          "document_count",
+          "status_counts",
+          "failure_codes",
+          "ocr_page_count"
+        ],
+        "title": "ExtractionOperationsResponse",
+        "type": "object"
+      },
       "ExtractionStatus": {
         "enum": [
           "uploaded",
@@ -2115,6 +2226,74 @@
         ],
         "title": "ExtractionStatus",
         "type": "string"
+      },
+      "ExtractionStatusCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "extracted": {
+            "minimum": 0.0,
+            "title": "Extracted",
+            "type": "integer"
+          },
+          "extraction_pending": {
+            "minimum": 0.0,
+            "title": "Extraction Pending",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_review": {
+            "minimum": 0.0,
+            "title": "In Review",
+            "type": "integer"
+          },
+          "trusted": {
+            "minimum": 0.0,
+            "title": "Trusted",
+            "type": "integer"
+          },
+          "uploaded": {
+            "minimum": 0.0,
+            "title": "Uploaded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "uploaded",
+          "extraction_pending",
+          "extracted",
+          "in_review",
+          "trusted",
+          "failed"
+        ],
+        "title": "ExtractionStatusCountsResponse",
+        "type": "object"
+      },
+      "FailureCodeCountResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "title": "Code",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "count"
+        ],
+        "title": "FailureCodeCountResponse",
+        "type": "object"
       },
       "FusedRetrievalCandidateResponse": {
         "properties": {
@@ -2551,6 +2730,67 @@
           "provenance"
         ],
         "title": "GenerationLineageResponse",
+        "type": "object"
+      },
+      "GenerationOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "minimum": 0.0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "cost_microusd": {
+            "minimum": 0.0,
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "failure_codes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureCodeCountResponse"
+            },
+            "title": "Failure Codes",
+            "type": "array"
+          },
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "$ref": "#/components/schemas/LatencyMillisecondsResponse"
+          },
+          "output_tokens": {
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "run_count": {
+            "minimum": 0.0,
+            "title": "Run Count",
+            "type": "integer"
+          },
+          "status_counts": {
+            "$ref": "#/components/schemas/GenerationStatusCountsResponse"
+          },
+          "total_tokens": {
+            "minimum": 0.0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_count",
+          "status_counts",
+          "failure_codes",
+          "attempt_count",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "cost_microusd",
+          "latency_ms"
+        ],
+        "title": "GenerationOperationsResponse",
         "type": "object"
       },
       "GenerationPolicyRequest": {
@@ -3113,6 +3353,39 @@
           "completed_at"
         ],
         "title": "GenerationRunSummaryResponse",
+        "type": "object"
+      },
+      "GenerationStatusCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "pending": {
+            "minimum": 0.0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "running": {
+            "minimum": 0.0,
+            "title": "Running",
+            "type": "integer"
+          },
+          "succeeded": {
+            "minimum": 0.0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "GenerationStatusCountsResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -3961,6 +4234,33 @@
         "title": "KnowledgeReviewTransitionRequest",
         "type": "object"
       },
+      "LatencyMillisecondsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "average": {
+            "minimum": 0.0,
+            "title": "Average",
+            "type": "integer"
+          },
+          "maximum": {
+            "minimum": 0.0,
+            "title": "Maximum",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "average",
+          "maximum"
+        ],
+        "title": "LatencyMillisecondsResponse",
+        "type": "object"
+      },
       "LeakageAuditResponse": {
         "properties": {
           "heldout_observation_ids": {
@@ -4090,6 +4390,146 @@
           "name"
         ],
         "title": "MediumUpdate",
+        "type": "object"
+      },
+      "OperationsDataBoundsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "earliest_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Observed At"
+          },
+          "latest_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Observed At"
+          }
+        },
+        "required": [
+          "earliest_observed_at",
+          "latest_observed_at"
+        ],
+        "title": "OperationsDataBoundsResponse",
+        "type": "object"
+      },
+      "OperationsSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data_bounds": {
+            "$ref": "#/components/schemas/OperationsDataBoundsResponse"
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingOperationsResponse"
+          },
+          "extraction": {
+            "$ref": "#/components/schemas/ExtractionOperationsResponse"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationOperationsResponse"
+          },
+          "practice_papers": {
+            "$ref": "#/components/schemas/PracticePaperOperationsResponse"
+          },
+          "units": {
+            "$ref": "#/components/schemas/OperationsUnitsResponse"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/ValidationOperationsResponse"
+          },
+          "window": {
+            "$ref": "#/components/schemas/OperationsWindowResponse"
+          }
+        },
+        "required": [
+          "window",
+          "data_bounds",
+          "units",
+          "generation",
+          "validation",
+          "extraction",
+          "embedding",
+          "practice_papers"
+        ],
+        "title": "OperationsSummaryResponse",
+        "type": "object"
+      },
+      "OperationsUnitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cost": {
+            "const": "microusd",
+            "default": "microusd",
+            "title": "Cost",
+            "type": "string"
+          },
+          "counts": {
+            "const": "count",
+            "default": "count",
+            "title": "Counts",
+            "type": "string"
+          },
+          "latency": {
+            "const": "millisecond",
+            "default": "millisecond",
+            "title": "Latency",
+            "type": "string"
+          },
+          "timestamps": {
+            "const": "UTC",
+            "default": "UTC",
+            "title": "Timestamps",
+            "type": "string"
+          },
+          "tokens": {
+            "const": "token",
+            "default": "token",
+            "title": "Tokens",
+            "type": "string"
+          }
+        },
+        "title": "OperationsUnitsResponse",
+        "type": "object"
+      },
+      "OperationsWindowResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "semantics": {
+            "const": "start_inclusive_end_exclusive",
+            "default": "start_inclusive_end_exclusive",
+            "title": "Semantics",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "OperationsWindowResponse",
         "type": "object"
       },
       "PaperAggregateResponse": {
@@ -4827,6 +5267,64 @@
           "latest_publication_hash"
         ],
         "title": "PaperSummaryResponse",
+        "type": "object"
+      },
+      "PracticePaperOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archive_count": {
+            "minimum": 0.0,
+            "title": "Archive Count",
+            "type": "integer"
+          },
+          "paper_count": {
+            "minimum": 0.0,
+            "title": "Paper Count",
+            "type": "integer"
+          },
+          "publication_count": {
+            "minimum": 0.0,
+            "title": "Publication Count",
+            "type": "integer"
+          },
+          "state_counts": {
+            "$ref": "#/components/schemas/PracticePaperStateCountsResponse"
+          }
+        },
+        "required": [
+          "paper_count",
+          "state_counts",
+          "publication_count",
+          "archive_count"
+        ],
+        "title": "PracticePaperOperationsResponse",
+        "type": "object"
+      },
+      "PracticePaperStateCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "minimum": 0.0,
+            "title": "Archived",
+            "type": "integer"
+          },
+          "draft": {
+            "minimum": 0.0,
+            "title": "Draft",
+            "type": "integer"
+          },
+          "published": {
+            "minimum": 0.0,
+            "title": "Published",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft",
+          "published",
+          "archived"
+        ],
+        "title": "PracticePaperStateCountsResponse",
         "type": "object"
       },
       "PracticePriorityFeaturesResponse": {
@@ -8385,6 +8883,35 @@
         "title": "ValidationFindingResponse",
         "type": "object"
       },
+      "ValidationOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "finding_count": {
+            "minimum": 0.0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "finding_status_counts": {
+            "$ref": "#/components/schemas/ValidationStatusCountsResponse"
+          },
+          "run_count": {
+            "minimum": 0.0,
+            "title": "Run Count",
+            "type": "integer"
+          },
+          "run_status_counts": {
+            "$ref": "#/components/schemas/ValidationStatusCountsResponse"
+          }
+        },
+        "required": [
+          "run_count",
+          "run_status_counts",
+          "finding_count",
+          "finding_status_counts"
+        ],
+        "title": "ValidationOperationsResponse",
+        "type": "object"
+      },
       "ValidationRunCreateRequest": {
         "additionalProperties": false,
         "description": "The generation identity is the only client-selected validation input.",
@@ -8654,6 +9181,33 @@
           "created_at"
         ],
         "title": "ValidationRunSummaryResponse",
+        "type": "object"
+      },
+      "ValidationStatusCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "fail": {
+            "minimum": 0.0,
+            "title": "Fail",
+            "type": "integer"
+          },
+          "pass": {
+            "minimum": 0.0,
+            "title": "Pass",
+            "type": "integer"
+          },
+          "warn": {
+            "minimum": 0.0,
+            "title": "Warn",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pass",
+          "warn",
+          "fail"
+        ],
+        "title": "ValidationStatusCountsResponse",
         "type": "object"
       },
       "exam_guru_api__analytics__schemas__PracticePriorityResponse": {
@@ -13946,6 +14500,93 @@
         "summary": "Deactivate Medium",
         "tags": [
           "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/operations/summary": {
+      "get": {
+        "description": "Aggregates persisted operational state over a half-open UTC window. The default window is 24 hours and the maximum is 31 days. Dimensions are fixed server-side; content, vectors, prompts, secrets, and high-cardinality resource identifiers are never returned.",
+        "operationId": "get_operations_summary",
+        "parameters": [
+          {
+            "description": "Inclusive UTC window start",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive UTC window start",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "Exclusive UTC window end",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exclusive UTC window end",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The authenticated principal cannot read operational aggregates"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The UTC operations window is invalid or unsupported"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read a fixed operational and AI-cost summary",
+        "tags": [
+          "admin-operations"
         ]
       }
     },
