@@ -622,6 +622,363 @@
         "title": "BacktestWindowResponse",
         "type": "object"
       },
+      "BaselinePracticePriorityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_evidence_refs": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Baseline Evidence Refs",
+            "type": "array"
+          },
+          "baseline_score": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Baseline Score",
+            "type": "integer"
+          },
+          "baseline_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Baseline Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseline_score",
+          "baseline_version",
+          "baseline_evidence_refs"
+        ],
+        "title": "BaselinePracticePriorityRequest",
+        "type": "object"
+      },
+      "BlueprintCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "analytics_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analytics Run Id"
+          },
+          "seed": {
+            "default": 0,
+            "maximum": 9.223372036854776e+18,
+            "minimum": -9.223372036854776e+18,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "specification": {
+            "$ref": "#/components/schemas/BlueprintSpecificationRequest"
+          }
+        },
+        "required": [
+          "specification"
+        ],
+        "title": "BlueprintCreateRequest",
+        "type": "object"
+      },
+      "BlueprintSectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          },
+          "slot_count": {
+            "title": "Slot Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "title",
+          "marks",
+          "slot_count"
+        ],
+        "title": "BlueprintSectionResponse",
+        "type": "object"
+      },
+      "BlueprintSlotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archetype": {
+            "title": "Archetype",
+            "type": "string"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/SlotEvidenceResponse"
+          },
+          "generation_constraints": {
+            "$ref": "#/components/schemas/SlotGenerationConstraintsResponse"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "paper_code": {
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          },
+          "rationale": {
+            "$ref": "#/components/schemas/SlotRationaleResponse"
+          },
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          },
+          "section_ordinal": {
+            "title": "Section Ordinal",
+            "type": "integer"
+          },
+          "section_title": {
+            "title": "Section Title",
+            "type": "string"
+          },
+          "slot_id": {
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "taxonomy_target": {
+            "$ref": "#/components/schemas/TaxonomyTargetResponse"
+          }
+        },
+        "required": [
+          "slot_id",
+          "ordinal",
+          "paper_code",
+          "section_id",
+          "section_title",
+          "section_ordinal",
+          "taxonomy_target",
+          "question_type",
+          "archetype",
+          "difficulty",
+          "marks",
+          "generation_constraints",
+          "rationale",
+          "evidence"
+        ],
+        "title": "BlueprintSlotResponse",
+        "type": "object"
+      },
+      "BlueprintSpecificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Config Version",
+            "type": "string"
+          },
+          "curriculum_scope": {
+            "$ref": "#/components/schemas/CurriculumScopeRequest"
+          },
+          "difficulty_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/DifficultyAllocationRequest"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Difficulty Allocations",
+            "type": "array"
+          },
+          "generation_policy": {
+            "$ref": "#/components/schemas/GenerationPolicyRequest"
+          },
+          "paper_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "question_type_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionTypeAllocationRequest"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Question Type Allocations",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SectionSpecificationRequest"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Sections",
+            "type": "array"
+          },
+          "taxonomy_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyRequirementRequest"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Taxonomy Requirements",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "total_marks": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "config_version",
+          "paper_code",
+          "title",
+          "total_marks",
+          "curriculum_scope",
+          "sections",
+          "question_type_allocations",
+          "difficulty_allocations",
+          "taxonomy_requirements",
+          "generation_policy"
+        ],
+        "title": "BlueprintSpecificationRequest",
+        "type": "object"
+      },
+      "BlueprintSpecificationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "config_version": {
+            "title": "Config Version",
+            "type": "string"
+          },
+          "curriculum_scope": {
+            "$ref": "#/components/schemas/CurriculumScopeResponse"
+          },
+          "difficulty_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/DifficultyAllocationResponse"
+            },
+            "title": "Difficulty Allocations",
+            "type": "array"
+          },
+          "generation_policy": {
+            "$ref": "#/components/schemas/GenerationPolicyResponse"
+          },
+          "paper_code": {
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "question_type_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionTypeAllocationResponse"
+            },
+            "title": "Question Type Allocations",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SectionSpecificationResponse"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "taxonomy_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyRequirementResponse"
+            },
+            "title": "Taxonomy Requirements",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "config_version",
+          "paper_code",
+          "title",
+          "total_marks",
+          "curriculum_scope",
+          "sections",
+          "question_type_allocations",
+          "difficulty_allocations",
+          "taxonomy_requirements",
+          "generation_policy"
+        ],
+        "title": "BlueprintSpecificationResponse",
+        "type": "object"
+      },
+      "BlueprintVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "config_version": {
+            "title": "Config Version",
+            "type": "string"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blueprint_id",
+          "schema_version",
+          "algorithm_version",
+          "config_version",
+          "input_fingerprint"
+        ],
+        "title": "BlueprintVersionResponse",
+        "type": "object"
+      },
       "Body_upload_source_document": {
         "properties": {
           "curriculum_version_id": {
@@ -696,6 +1053,61 @@
         ],
         "title": "ContextTrust",
         "type": "string"
+      },
+      "CurriculumScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "grade": {
+            "maximum": 13.0,
+            "minimum": 1.0,
+            "title": "Grade",
+            "type": "integer"
+          },
+          "medium": {
+            "maxLength": 16,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9-]+$",
+            "title": "Medium",
+            "type": "string"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "grade",
+          "medium"
+        ],
+        "title": "CurriculumScopeRequest",
+        "type": "object"
+      },
+      "CurriculumScopeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "grade",
+          "medium"
+        ],
+        "title": "CurriculumScopeResponse",
+        "type": "object"
       },
       "CurriculumVersionCreate": {
         "additionalProperties": false,
@@ -826,6 +1238,78 @@
           "valkey"
         ],
         "title": "DependencyChecks",
+        "type": "object"
+      },
+      "Difficulty": {
+        "enum": [
+          "easy",
+          "medium",
+          "hard"
+        ],
+        "title": "Difficulty",
+        "type": "string"
+      },
+      "DifficultyAllocationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "exact_marks": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Marks"
+          },
+          "exact_slots": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Exact Slots",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "difficulty",
+          "exact_slots"
+        ],
+        "title": "DifficultyAllocationRequest",
+        "type": "object"
+      },
+      "DifficultyAllocationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "exact_marks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Marks"
+          },
+          "exact_slots": {
+            "title": "Exact Slots",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "difficulty",
+          "exact_slots",
+          "exact_marks"
+        ],
+        "title": "DifficultyAllocationResponse",
         "type": "object"
       },
       "DifficultyLabel": {
@@ -1330,6 +1814,104 @@
           "scope"
         ],
         "title": "FusedRetrievalCandidateResponse",
+        "type": "object"
+      },
+      "GenerationPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_requirements": {
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Answer Requirements",
+            "type": "array"
+          },
+          "instructions": {
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Instructions",
+            "type": "array"
+          },
+          "response_language": {
+            "maxLength": 16,
+            "minLength": 2,
+            "title": "Response Language",
+            "type": "string"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "uniqueness": {
+            "$ref": "#/components/schemas/UniquenessPolicyRequest"
+          }
+        },
+        "required": [
+          "response_language",
+          "instructions",
+          "answer_requirements",
+          "retrieval_query_hints",
+          "uniqueness"
+        ],
+        "title": "GenerationPolicyRequest",
+        "type": "object"
+      },
+      "GenerationPolicyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_requirements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answer Requirements",
+            "type": "array"
+          },
+          "instructions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Instructions",
+            "type": "array"
+          },
+          "response_language": {
+            "title": "Response Language",
+            "type": "string"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "uniqueness": {
+            "$ref": "#/components/schemas/UniquenessPolicyResponse"
+          }
+        },
+        "required": [
+          "response_language",
+          "instructions",
+          "answer_requirements",
+          "retrieval_query_hints",
+          "uniqueness"
+        ],
+        "title": "GenerationPolicyResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2309,6 +2891,306 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "PaperBlueprintResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "analytics_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analytics Run Id"
+          },
+          "blueprint": {
+            "$ref": "#/components/schemas/PaperBlueprintSnapshotResponse"
+          },
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "config_version": {
+            "title": "Config Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "result_fingerprint": {
+            "title": "Result Fingerprint",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "slot_count": {
+            "title": "Slot Count",
+            "type": "integer"
+          },
+          "specification": {
+            "$ref": "#/components/schemas/BlueprintSpecificationResponse"
+          },
+          "specification_fingerprint": {
+            "title": "Specification Fingerprint",
+            "type": "string"
+          },
+          "taxonomy_snapshot": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewedTaxonomyNodeSnapshotResponse"
+            },
+            "title": "Taxonomy Snapshot",
+            "type": "array"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "analytics_run_id",
+          "blueprint_id",
+          "schema_version",
+          "algorithm_version",
+          "config_version",
+          "seed",
+          "total_marks",
+          "slot_count",
+          "specification_fingerprint",
+          "input_fingerprint",
+          "result_fingerprint",
+          "specification",
+          "blueprint",
+          "taxonomy_snapshot",
+          "created_by",
+          "created_at"
+        ],
+        "title": "PaperBlueprintResponse",
+        "type": "object"
+      },
+      "PaperBlueprintSnapshotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_scope": {
+            "$ref": "#/components/schemas/CurriculumScopeResponse"
+          },
+          "difficulty_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/DifficultyAllocationResponse"
+            },
+            "title": "Difficulty Allocations",
+            "type": "array"
+          },
+          "paper_code": {
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "question_type_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionTypeAllocationResponse"
+            },
+            "title": "Question Type Allocations",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/BlueprintSectionResponse"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/BlueprintSlotResponse"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "taxonomy_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyRequirementResponse"
+            },
+            "title": "Taxonomy Requirements",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          },
+          "version": {
+            "$ref": "#/components/schemas/BlueprintVersionResponse"
+          }
+        },
+        "required": [
+          "version",
+          "paper_code",
+          "title",
+          "seed",
+          "total_marks",
+          "curriculum_scope",
+          "sections",
+          "question_type_allocations",
+          "difficulty_allocations",
+          "taxonomy_requirements",
+          "slots"
+        ],
+        "title": "PaperBlueprintSnapshotResponse",
+        "type": "object"
+      },
+      "PaperBlueprintSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm_version": {
+            "title": "Algorithm Version",
+            "type": "string"
+          },
+          "analytics_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analytics Run Id"
+          },
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "config_version": {
+            "title": "Config Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "paper_code": {
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "result_fingerprint": {
+            "title": "Result Fingerprint",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "slot_count": {
+            "title": "Slot Count",
+            "type": "integer"
+          },
+          "specification_fingerprint": {
+            "title": "Specification Fingerprint",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "analytics_run_id",
+          "blueprint_id",
+          "schema_version",
+          "algorithm_version",
+          "config_version",
+          "paper_code",
+          "title",
+          "seed",
+          "total_marks",
+          "slot_count",
+          "specification_fingerprint",
+          "input_fingerprint",
+          "result_fingerprint",
+          "created_by",
+          "created_at"
+        ],
+        "title": "PaperBlueprintSummaryResponse",
+        "type": "object"
+      },
       "PracticePriorityFeaturesResponse": {
         "properties": {
           "evidence_marks": {
@@ -2363,49 +3245,6 @@
         "title": "PracticePriorityMethod",
         "type": "string"
       },
-      "PracticePriorityResponse": {
-        "properties": {
-          "competency_id": {
-            "format": "uuid",
-            "title": "Competency Id",
-            "type": "string"
-          },
-          "evidence_language": {
-            "title": "Evidence Language",
-            "type": "string"
-          },
-          "features": {
-            "$ref": "#/components/schemas/PracticePriorityFeaturesResponse"
-          },
-          "practice_share": {
-            "$ref": "#/components/schemas/ExactFraction"
-          },
-          "rank": {
-            "title": "Rank",
-            "type": "integer"
-          },
-          "skill_id": {
-            "format": "uuid",
-            "title": "Skill Id",
-            "type": "string"
-          },
-          "skill_title": {
-            "title": "Skill Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "rank",
-          "competency_id",
-          "skill_id",
-          "skill_title",
-          "practice_share",
-          "features",
-          "evidence_language"
-        ],
-        "title": "PracticePriorityResponse",
-        "type": "object"
-      },
       "PracticePriorityRunResponse": {
         "properties": {
           "algorithm_version": {
@@ -2452,7 +3291,7 @@
           },
           "priorities": {
             "items": {
-              "$ref": "#/components/schemas/PracticePriorityResponse"
+              "$ref": "#/components/schemas/exam_guru_api__analytics__schemas__PracticePriorityResponse"
             },
             "title": "Priorities",
             "type": "array"
@@ -2535,6 +3374,15 @@
         "title": "PracticeRecommendationResponse",
         "type": "object"
       },
+      "PriorityMode": {
+        "enum": [
+          "baseline_only",
+          "baseline_fallback",
+          "forecast"
+        ],
+        "title": "PriorityMode",
+        "type": "string"
+      },
       "PriorityWeightsResponse": {
         "properties": {
           "frequency": {
@@ -2567,6 +3415,89 @@
         ],
         "title": "QuestionType",
         "type": "string"
+      },
+      "QuestionTypeAllocationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "archetypes": {
+            "items": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Archetypes",
+            "type": "array"
+          },
+          "exact_marks": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Marks"
+          },
+          "exact_slots": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Exact Slots",
+            "type": "integer"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          }
+        },
+        "required": [
+          "question_type",
+          "exact_slots",
+          "archetypes"
+        ],
+        "title": "QuestionTypeAllocationRequest",
+        "type": "object"
+      },
+      "QuestionTypeAllocationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archetypes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Archetypes",
+            "type": "array"
+          },
+          "exact_marks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact Marks"
+          },
+          "exact_slots": {
+            "title": "Exact Slots",
+            "type": "integer"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          }
+        },
+        "required": [
+          "question_type",
+          "exact_slots",
+          "archetypes",
+          "exact_marks"
+        ],
+        "title": "QuestionTypeAllocationResponse",
+        "type": "object"
       },
       "ReadinessResponse": {
         "properties": {
@@ -3215,6 +4146,75 @@
         "title": "ReviewState",
         "type": "string"
       },
+      "ReviewedTaxonomyNodeSnapshotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/TaxonomyLevel"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "review_state": {
+            "$ref": "#/components/schemas/TaxonomyReviewState"
+          },
+          "reviewed_at": {
+            "format": "date-time",
+            "title": "Reviewed At",
+            "type": "string"
+          },
+          "reviewed_by": {
+            "format": "uuid",
+            "title": "Reviewed By",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "parent_id",
+          "level",
+          "code",
+          "title",
+          "active",
+          "review_state",
+          "reviewed_at",
+          "reviewed_by"
+        ],
+        "title": "ReviewedTaxonomyNodeSnapshotResponse",
+        "type": "object"
+      },
       "ReviewedTextUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -3294,6 +4294,353 @@
           "recommended_run"
         ],
         "title": "RollingBacktestResponse",
+        "type": "object"
+      },
+      "SectionSpecificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_difficulties": {
+            "default": [
+              "easy",
+              "medium",
+              "hard"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Difficulty"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Allowed Difficulties",
+            "type": "array"
+          },
+          "allowed_marks_per_slot": {
+            "items": {
+              "maximum": 10000.0,
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Allowed Marks Per Slot",
+            "type": "array"
+          },
+          "allowed_question_types": {
+            "default": [
+              "multiple_choice",
+              "short_answer",
+              "structured"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/QuestionType"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Allowed Question Types",
+            "type": "array"
+          },
+          "allowed_taxonomy_targets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyTargetRequest"
+            },
+            "maxItems": 200,
+            "title": "Allowed Taxonomy Targets",
+            "type": "array"
+          },
+          "marks": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Marks",
+            "type": "integer"
+          },
+          "question_count": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "retrieval_query_hints": {
+            "default": [],
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "section_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Section Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "title",
+          "marks",
+          "question_count",
+          "allowed_marks_per_slot"
+        ],
+        "title": "SectionSpecificationRequest",
+        "type": "object"
+      },
+      "SectionSpecificationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_difficulties": {
+            "items": {
+              "$ref": "#/components/schemas/Difficulty"
+            },
+            "title": "Allowed Difficulties",
+            "type": "array"
+          },
+          "allowed_marks_per_slot": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Allowed Marks Per Slot",
+            "type": "array"
+          },
+          "allowed_question_types": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionType"
+            },
+            "title": "Allowed Question Types",
+            "type": "array"
+          },
+          "allowed_taxonomy_targets": {
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyTargetResponse"
+            },
+            "title": "Allowed Taxonomy Targets",
+            "type": "array"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "question_count": {
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "title",
+          "marks",
+          "question_count",
+          "allowed_marks_per_slot",
+          "allowed_question_types",
+          "allowed_difficulties",
+          "allowed_taxonomy_targets",
+          "retrieval_query_hints"
+        ],
+        "title": "SectionSpecificationResponse",
+        "type": "object"
+      },
+      "SlotEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_backtest_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Backtest Score"
+          },
+          "baseline_score": {
+            "title": "Baseline Score",
+            "type": "integer"
+          },
+          "baseline_version": {
+            "title": "Baseline Version",
+            "type": "string"
+          },
+          "config_version": {
+            "title": "Config Version",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "forecast_backtest_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Backtest Score"
+          },
+          "forecast_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Score"
+          },
+          "forecast_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Version"
+          },
+          "minimum_backtest_improvement": {
+            "title": "Minimum Backtest Improvement",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "config_version",
+          "baseline_version",
+          "baseline_score",
+          "evidence_refs",
+          "forecast_version",
+          "forecast_score",
+          "baseline_backtest_score",
+          "forecast_backtest_score",
+          "minimum_backtest_improvement"
+        ],
+        "title": "SlotEvidenceResponse",
+        "type": "object"
+      },
+      "SlotGenerationConstraintsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_requirements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answer Requirements",
+            "type": "array"
+          },
+          "curriculum_scope": {
+            "$ref": "#/components/schemas/CurriculumScopeResponse"
+          },
+          "diversity_key": {
+            "title": "Diversity Key",
+            "type": "string"
+          },
+          "exact_marks": {
+            "title": "Exact Marks",
+            "type": "integer"
+          },
+          "instructions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Instructions",
+            "type": "array"
+          },
+          "required_archetype": {
+            "title": "Required Archetype",
+            "type": "string"
+          },
+          "required_difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "required_question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          },
+          "response_language": {
+            "title": "Response Language",
+            "type": "string"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "taxonomy_target": {
+            "$ref": "#/components/schemas/TaxonomyTargetResponse"
+          },
+          "uniqueness": {
+            "$ref": "#/components/schemas/UniquenessPolicyResponse"
+          }
+        },
+        "required": [
+          "curriculum_scope",
+          "taxonomy_target",
+          "required_question_type",
+          "required_archetype",
+          "required_difficulty",
+          "exact_marks",
+          "response_language",
+          "instructions",
+          "answer_requirements",
+          "retrieval_query_hints",
+          "uniqueness",
+          "diversity_key"
+        ],
+        "title": "SlotGenerationConstraintsResponse",
+        "type": "object"
+      },
+      "SlotRationaleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_priority_score": {
+            "title": "Effective Priority Score",
+            "type": "integer"
+          },
+          "priority_mode": {
+            "$ref": "#/components/schemas/PriorityMode"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "priority_mode",
+          "effective_priority_score",
+          "summary"
+        ],
+        "title": "SlotRationaleResponse",
         "type": "object"
       },
       "SourceDocumentResponse": {
@@ -3810,6 +5157,136 @@
         "title": "TaxonomyNodeUpdate",
         "type": "object"
       },
+      "TaxonomyRequirementRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_section_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Allowed Section Ids",
+            "type": "array"
+          },
+          "generation_instructions": {
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Generation Instructions",
+            "type": "array"
+          },
+          "maximum_slots": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Slots"
+          },
+          "minimum_slots": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Minimum Slots",
+            "type": "integer"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/BaselinePracticePriorityRequest"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TaxonomyTargetRequest"
+          }
+        },
+        "required": [
+          "target",
+          "minimum_slots",
+          "priority",
+          "retrieval_query_hints",
+          "generation_instructions"
+        ],
+        "title": "TaxonomyRequirementRequest",
+        "type": "object"
+      },
+      "TaxonomyRequirementResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_section_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Section Ids",
+            "type": "array"
+          },
+          "generation_instructions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Generation Instructions",
+            "type": "array"
+          },
+          "maximum_slots": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Slots"
+          },
+          "minimum_slots": {
+            "title": "Minimum Slots",
+            "type": "integer"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/exam_guru_api__blueprints__schemas__PracticePriorityResponse"
+          },
+          "retrieval_query_hints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Retrieval Query Hints",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TaxonomyTargetResponse"
+          }
+        },
+        "required": [
+          "target",
+          "minimum_slots",
+          "priority",
+          "retrieval_query_hints",
+          "generation_instructions",
+          "maximum_slots",
+          "allowed_section_ids"
+        ],
+        "title": "TaxonomyRequirementResponse",
+        "type": "object"
+      },
       "TaxonomyReviewState": {
         "enum": [
           "draft",
@@ -3818,6 +5295,171 @@
         ],
         "title": "TaxonomyReviewState",
         "type": "string"
+      },
+      "TaxonomyTargetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "competency_id"
+        ],
+        "title": "TaxonomyTargetRequest",
+        "type": "object"
+      },
+      "TaxonomyTargetResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "competency_id",
+          "skill_id",
+          "sub_skill_id",
+          "learning_concept_id"
+        ],
+        "title": "TaxonomyTargetResponse",
+        "type": "object"
+      },
+      "UniquenessPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "forbid_duplicate_stems": {
+            "default": true,
+            "title": "Forbid Duplicate Stems",
+            "type": "boolean"
+          },
+          "forbid_verbatim_sources": {
+            "default": true,
+            "title": "Forbid Verbatim Sources",
+            "type": "boolean"
+          },
+          "max_similarity_basis_points": {
+            "default": 8500,
+            "maximum": 9999.0,
+            "minimum": 0.0,
+            "title": "Max Similarity Basis Points",
+            "type": "integer"
+          },
+          "minimum_distinct_contexts": {
+            "default": 1,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Minimum Distinct Contexts",
+            "type": "integer"
+          }
+        },
+        "title": "UniquenessPolicyRequest",
+        "type": "object"
+      },
+      "UniquenessPolicyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "forbid_duplicate_stems": {
+            "title": "Forbid Duplicate Stems",
+            "type": "boolean"
+          },
+          "forbid_verbatim_sources": {
+            "title": "Forbid Verbatim Sources",
+            "type": "boolean"
+          },
+          "max_similarity_basis_points": {
+            "title": "Max Similarity Basis Points",
+            "type": "integer"
+          },
+          "minimum_distinct_contexts": {
+            "title": "Minimum Distinct Contexts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "forbid_duplicate_stems",
+          "forbid_verbatim_sources",
+          "max_similarity_basis_points",
+          "minimum_distinct_contexts"
+        ],
+        "title": "UniquenessPolicyResponse",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -3857,6 +5499,137 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "exam_guru_api__analytics__schemas__PracticePriorityResponse": {
+        "properties": {
+          "competency_id": {
+            "format": "uuid",
+            "title": "Competency Id",
+            "type": "string"
+          },
+          "evidence_language": {
+            "title": "Evidence Language",
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/PracticePriorityFeaturesResponse"
+          },
+          "practice_share": {
+            "$ref": "#/components/schemas/ExactFraction"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "skill_id": {
+            "format": "uuid",
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "skill_title": {
+            "title": "Skill Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "competency_id",
+          "skill_id",
+          "skill_title",
+          "practice_share",
+          "features",
+          "evidence_language"
+        ],
+        "title": "PracticePriorityResponse",
+        "type": "object"
+      },
+      "exam_guru_api__blueprints__schemas__PracticePriorityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_backtest_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Backtest Score"
+          },
+          "baseline_evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Baseline Evidence Refs",
+            "type": "array"
+          },
+          "baseline_score": {
+            "title": "Baseline Score",
+            "type": "integer"
+          },
+          "baseline_version": {
+            "title": "Baseline Version",
+            "type": "string"
+          },
+          "forecast_backtest_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Backtest Score"
+          },
+          "forecast_evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forecast Evidence Refs",
+            "type": "array"
+          },
+          "forecast_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Score"
+          },
+          "forecast_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Version"
+          },
+          "minimum_backtest_improvement": {
+            "title": "Minimum Backtest Improvement",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "baseline_score",
+          "baseline_version",
+          "baseline_evidence_refs",
+          "forecast_score",
+          "forecast_version",
+          "baseline_backtest_score",
+          "forecast_backtest_score",
+          "minimum_backtest_improvement",
+          "forecast_evidence_refs"
+        ],
+        "title": "PracticePriorityResponse",
         "type": "object"
       }
     },
@@ -4181,6 +5954,246 @@
         "summary": "Get one persisted historical analysis run",
         "tags": [
           "admin-analytics"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/blueprints": {
+      "get": {
+        "operationId": "list_paper_blueprints",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PaperBlueprintSummaryResponse"
+                  },
+                  "title": "Response List Paper Blueprints",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List persisted paper blueprints",
+        "tags": [
+          "admin-blueprints"
+        ]
+      },
+      "post": {
+        "operationId": "create_paper_blueprint",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlueprintCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperBlueprintResponse"
+                }
+              }
+            },
+            "description": "Existing identical blueprint returned"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperBlueprintResponse"
+                }
+              }
+            },
+            "description": "Deterministic blueprint persisted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable blueprint identity conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid or impossible blueprint specification"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate and persist a deterministic paper blueprint",
+        "tags": [
+          "admin-blueprints"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/blueprints/{paper_blueprint_id}": {
+      "get": {
+        "operationId": "get_paper_blueprint",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "paper_blueprint_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Blueprint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperBlueprintResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version or paper blueprint not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one immutable paper blueprint snapshot",
+        "tags": [
+          "admin-blueprints"
         ]
       }
     },

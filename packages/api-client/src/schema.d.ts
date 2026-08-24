@@ -56,6 +56,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/blueprints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List persisted paper blueprints */
+        get: operations["list_paper_blueprints"];
+        put?: never;
+        /** Generate and persist a deterministic paper blueprint */
+        post: operations["create_paper_blueprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/blueprints/{paper_blueprint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one immutable paper blueprint snapshot */
+        get: operations["get_paper_blueprint"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks": {
         parameters: {
             query?: never;
@@ -865,6 +900,117 @@ export interface components {
             /** Training Years */
             training_years: number[];
         };
+        /** BaselinePracticePriorityRequest */
+        BaselinePracticePriorityRequest: {
+            /** Baseline Evidence Refs */
+            baseline_evidence_refs: string[];
+            /** Baseline Score */
+            baseline_score: number;
+            /** Baseline Version */
+            baseline_version: string;
+        };
+        /** BlueprintCreateRequest */
+        BlueprintCreateRequest: {
+            /** Analytics Run Id */
+            analytics_run_id?: string | null;
+            /**
+             * Seed
+             * @default 0
+             */
+            seed: number;
+            specification: components["schemas"]["BlueprintSpecificationRequest"];
+        };
+        /** BlueprintSectionResponse */
+        BlueprintSectionResponse: {
+            /** Marks */
+            marks: number;
+            /** Section Id */
+            section_id: string;
+            /** Slot Count */
+            slot_count: number;
+            /** Title */
+            title: string;
+        };
+        /** BlueprintSlotResponse */
+        BlueprintSlotResponse: {
+            /** Archetype */
+            archetype: string;
+            difficulty: components["schemas"]["Difficulty"];
+            evidence: components["schemas"]["SlotEvidenceResponse"];
+            generation_constraints: components["schemas"]["SlotGenerationConstraintsResponse"];
+            /** Marks */
+            marks: number;
+            /** Ordinal */
+            ordinal: number;
+            /** Paper Code */
+            paper_code: string;
+            question_type: components["schemas"]["QuestionType"];
+            rationale: components["schemas"]["SlotRationaleResponse"];
+            /** Section Id */
+            section_id: string;
+            /** Section Ordinal */
+            section_ordinal: number;
+            /** Section Title */
+            section_title: string;
+            /** Slot Id */
+            slot_id: string;
+            taxonomy_target: components["schemas"]["TaxonomyTargetResponse"];
+        };
+        /** BlueprintSpecificationRequest */
+        BlueprintSpecificationRequest: {
+            /** Config Version */
+            config_version: string;
+            curriculum_scope: components["schemas"]["CurriculumScopeRequest"];
+            /** Difficulty Allocations */
+            difficulty_allocations: components["schemas"]["DifficultyAllocationRequest"][];
+            generation_policy: components["schemas"]["GenerationPolicyRequest"];
+            /** Paper Code */
+            paper_code: string;
+            /** Question Type Allocations */
+            question_type_allocations: components["schemas"]["QuestionTypeAllocationRequest"][];
+            /** Sections */
+            sections: components["schemas"]["SectionSpecificationRequest"][];
+            /** Taxonomy Requirements */
+            taxonomy_requirements: components["schemas"]["TaxonomyRequirementRequest"][];
+            /** Title */
+            title: string;
+            /** Total Marks */
+            total_marks: number;
+        };
+        /** BlueprintSpecificationResponse */
+        BlueprintSpecificationResponse: {
+            /** Config Version */
+            config_version: string;
+            curriculum_scope: components["schemas"]["CurriculumScopeResponse"];
+            /** Difficulty Allocations */
+            difficulty_allocations: components["schemas"]["DifficultyAllocationResponse"][];
+            generation_policy: components["schemas"]["GenerationPolicyResponse"];
+            /** Paper Code */
+            paper_code: string;
+            /** Question Type Allocations */
+            question_type_allocations: components["schemas"]["QuestionTypeAllocationResponse"][];
+            /** Sections */
+            sections: components["schemas"]["SectionSpecificationResponse"][];
+            /** Taxonomy Requirements */
+            taxonomy_requirements: components["schemas"]["TaxonomyRequirementResponse"][];
+            /** Title */
+            title: string;
+            /** Total Marks */
+            total_marks: number;
+        };
+        /** BlueprintVersionResponse */
+        BlueprintVersionResponse: {
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Config Version */
+            config_version: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Schema Version */
+            schema_version: string;
+        };
         /** Body_upload_source_document */
         Body_upload_source_document: {
             /** Curriculum Version Id */
@@ -888,6 +1034,30 @@ export interface components {
          * @enum {string}
          */
         ContextTrust: "untrusted_source_data";
+        /** CurriculumScopeRequest */
+        CurriculumScopeRequest: {
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Grade */
+            grade: number;
+            /** Medium */
+            medium: string;
+        };
+        /** CurriculumScopeResponse */
+        CurriculumScopeResponse: {
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Grade */
+            grade: number;
+            /** Medium */
+            medium: string;
+        };
         /** CurriculumVersionCreate */
         CurriculumVersionCreate: {
             /** Code */
@@ -956,6 +1126,27 @@ export interface components {
              * @enum {string}
              */
             valkey: "ok" | "unavailable";
+        };
+        /**
+         * Difficulty
+         * @enum {string}
+         */
+        Difficulty: "easy" | "medium" | "hard";
+        /** DifficultyAllocationRequest */
+        DifficultyAllocationRequest: {
+            difficulty: components["schemas"]["Difficulty"];
+            /** Exact Marks */
+            exact_marks?: number | null;
+            /** Exact Slots */
+            exact_slots: number;
+        };
+        /** DifficultyAllocationResponse */
+        DifficultyAllocationResponse: {
+            difficulty: components["schemas"]["Difficulty"];
+            /** Exact Marks */
+            exact_marks: number | null;
+            /** Exact Slots */
+            exact_slots: number;
         };
         /**
          * DifficultyLabel
@@ -1163,6 +1354,30 @@ export interface components {
             trust: components["schemas"]["ContextTrust"];
             /** Vector Rank */
             vector_rank: number | null;
+        };
+        /** GenerationPolicyRequest */
+        GenerationPolicyRequest: {
+            /** Answer Requirements */
+            answer_requirements: string[];
+            /** Instructions */
+            instructions: string[];
+            /** Response Language */
+            response_language: string;
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            uniqueness: components["schemas"]["UniquenessPolicyRequest"];
+        };
+        /** GenerationPolicyResponse */
+        GenerationPolicyResponse: {
+            /** Answer Requirements */
+            answer_requirements: string[];
+            /** Instructions */
+            instructions: string[];
+            /** Response Language */
+            response_language: string;
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            uniqueness: components["schemas"]["UniquenessPolicyResponse"];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1479,6 +1694,132 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** PaperBlueprintResponse */
+        PaperBlueprintResponse: {
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Analytics Run Id */
+            analytics_run_id: string | null;
+            blueprint: components["schemas"]["PaperBlueprintSnapshotResponse"];
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Config Version */
+            config_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Result Fingerprint */
+            result_fingerprint: string;
+            /** Schema Version */
+            schema_version: string;
+            /** Seed */
+            seed: number;
+            /** Slot Count */
+            slot_count: number;
+            specification: components["schemas"]["BlueprintSpecificationResponse"];
+            /** Specification Fingerprint */
+            specification_fingerprint: string;
+            /** Taxonomy Snapshot */
+            taxonomy_snapshot: components["schemas"]["ReviewedTaxonomyNodeSnapshotResponse"][];
+            /** Total Marks */
+            total_marks: number;
+        };
+        /** PaperBlueprintSnapshotResponse */
+        PaperBlueprintSnapshotResponse: {
+            curriculum_scope: components["schemas"]["CurriculumScopeResponse"];
+            /** Difficulty Allocations */
+            difficulty_allocations: components["schemas"]["DifficultyAllocationResponse"][];
+            /** Paper Code */
+            paper_code: string;
+            /** Question Type Allocations */
+            question_type_allocations: components["schemas"]["QuestionTypeAllocationResponse"][];
+            /** Sections */
+            sections: components["schemas"]["BlueprintSectionResponse"][];
+            /** Seed */
+            seed: number;
+            /** Slots */
+            slots: components["schemas"]["BlueprintSlotResponse"][];
+            /** Taxonomy Requirements */
+            taxonomy_requirements: components["schemas"]["TaxonomyRequirementResponse"][];
+            /** Title */
+            title: string;
+            /** Total Marks */
+            total_marks: number;
+            version: components["schemas"]["BlueprintVersionResponse"];
+        };
+        /** PaperBlueprintSummaryResponse */
+        PaperBlueprintSummaryResponse: {
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Analytics Run Id */
+            analytics_run_id: string | null;
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Config Version */
+            config_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Paper Code */
+            paper_code: string;
+            /** Result Fingerprint */
+            result_fingerprint: string;
+            /** Schema Version */
+            schema_version: string;
+            /** Seed */
+            seed: number;
+            /** Slot Count */
+            slot_count: number;
+            /** Specification Fingerprint */
+            specification_fingerprint: string;
+            /** Title */
+            title: string;
+            /** Total Marks */
+            total_marks: number;
+        };
         /** PracticePriorityFeaturesResponse */
         PracticePriorityFeaturesResponse: {
             /** Evidence Marks */
@@ -1497,27 +1838,6 @@ export interface components {
          * @enum {string}
          */
         PracticePriorityMethod: "historical_evidence" | "syllabus_balanced";
-        /** PracticePriorityResponse */
-        PracticePriorityResponse: {
-            /**
-             * Competency Id
-             * Format: uuid
-             */
-            competency_id: string;
-            /** Evidence Language */
-            evidence_language: string;
-            features: components["schemas"]["PracticePriorityFeaturesResponse"];
-            practice_share: components["schemas"]["ExactFraction"];
-            /** Rank */
-            rank: number;
-            /**
-             * Skill Id
-             * Format: uuid
-             */
-            skill_id: string;
-            /** Skill Title */
-            skill_title: string;
-        };
         /** PracticePriorityRunResponse */
         PracticePriorityRunResponse: {
             /** Algorithm Version */
@@ -1537,7 +1857,7 @@ export interface components {
             input_observation_ids: string[];
             method: components["schemas"]["PracticePriorityMethod"];
             /** Priorities */
-            priorities: components["schemas"]["PracticePriorityResponse"][];
+            priorities: components["schemas"]["exam_guru_api__analytics__schemas__PracticePriorityResponse"][];
             /** Random Seed */
             random_seed: null;
             recommendation: components["schemas"]["PracticeRecommendation"];
@@ -1562,6 +1882,11 @@ export interface components {
             observed_baseline_delta: components["schemas"]["ExactFraction"];
             selected_method: components["schemas"]["PracticePriorityMethod"];
         };
+        /**
+         * PriorityMode
+         * @enum {string}
+         */
+        PriorityMode: "baseline_only" | "baseline_fallback" | "forecast";
         /** PriorityWeightsResponse */
         PriorityWeightsResponse: {
             frequency: components["schemas"]["ExactFraction"];
@@ -1574,6 +1899,26 @@ export interface components {
          * @enum {string}
          */
         QuestionType: "multiple_choice" | "short_answer" | "structured";
+        /** QuestionTypeAllocationRequest */
+        QuestionTypeAllocationRequest: {
+            /** Archetypes */
+            archetypes: string[];
+            /** Exact Marks */
+            exact_marks?: number | null;
+            /** Exact Slots */
+            exact_slots: number;
+            question_type: components["schemas"]["QuestionType"];
+        };
+        /** QuestionTypeAllocationResponse */
+        QuestionTypeAllocationResponse: {
+            /** Archetypes */
+            archetypes: string[];
+            /** Exact Marks */
+            exact_marks: number | null;
+            /** Exact Slots */
+            exact_slots: number;
+            question_type: components["schemas"]["QuestionType"];
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             checks: components["schemas"]["DependencyChecks"];
@@ -1812,6 +2157,39 @@ export interface components {
          * @enum {string}
          */
         ReviewState: "draft" | "in_review" | "reviewed" | "rejected";
+        /** ReviewedTaxonomyNodeSnapshotResponse */
+        ReviewedTaxonomyNodeSnapshotResponse: {
+            /** Active */
+            active: boolean;
+            /** Code */
+            code: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            level: components["schemas"]["TaxonomyLevel"];
+            /** Parent Id */
+            parent_id: string | null;
+            review_state: components["schemas"]["TaxonomyReviewState"];
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
+            /**
+             * Reviewed By
+             * Format: uuid
+             */
+            reviewed_by: string;
+            /** Title */
+            title: string;
+        };
         /** ReviewedTextUpdate */
         ReviewedTextUpdate: {
             /** Expected Version */
@@ -1836,6 +2214,119 @@ export interface components {
             sources: components["schemas"]["SourceVersionResponse"][];
             /** Windows */
             windows: components["schemas"]["BacktestWindowResponse"][];
+        };
+        /** SectionSpecificationRequest */
+        SectionSpecificationRequest: {
+            /**
+             * Allowed Difficulties
+             * @default [
+             *       "easy",
+             *       "medium",
+             *       "hard"
+             *     ]
+             */
+            allowed_difficulties: components["schemas"]["Difficulty"][];
+            /** Allowed Marks Per Slot */
+            allowed_marks_per_slot: number[];
+            /**
+             * Allowed Question Types
+             * @default [
+             *       "multiple_choice",
+             *       "short_answer",
+             *       "structured"
+             *     ]
+             */
+            allowed_question_types: components["schemas"]["QuestionType"][];
+            /**
+             * Allowed Taxonomy Targets
+             * @default []
+             */
+            allowed_taxonomy_targets: components["schemas"]["TaxonomyTargetRequest"][];
+            /** Marks */
+            marks: number;
+            /** Question Count */
+            question_count: number;
+            /**
+             * Retrieval Query Hints
+             * @default []
+             */
+            retrieval_query_hints: string[];
+            /** Section Id */
+            section_id: string;
+            /** Title */
+            title: string;
+        };
+        /** SectionSpecificationResponse */
+        SectionSpecificationResponse: {
+            /** Allowed Difficulties */
+            allowed_difficulties: components["schemas"]["Difficulty"][];
+            /** Allowed Marks Per Slot */
+            allowed_marks_per_slot: number[];
+            /** Allowed Question Types */
+            allowed_question_types: components["schemas"]["QuestionType"][];
+            /** Allowed Taxonomy Targets */
+            allowed_taxonomy_targets: components["schemas"]["TaxonomyTargetResponse"][];
+            /** Marks */
+            marks: number;
+            /** Question Count */
+            question_count: number;
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            /** Section Id */
+            section_id: string;
+            /** Title */
+            title: string;
+        };
+        /** SlotEvidenceResponse */
+        SlotEvidenceResponse: {
+            /** Baseline Backtest Score */
+            baseline_backtest_score: number | null;
+            /** Baseline Score */
+            baseline_score: number;
+            /** Baseline Version */
+            baseline_version: string;
+            /** Config Version */
+            config_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /** Forecast Backtest Score */
+            forecast_backtest_score: number | null;
+            /** Forecast Score */
+            forecast_score: number | null;
+            /** Forecast Version */
+            forecast_version: string | null;
+            /** Minimum Backtest Improvement */
+            minimum_backtest_improvement: number;
+        };
+        /** SlotGenerationConstraintsResponse */
+        SlotGenerationConstraintsResponse: {
+            /** Answer Requirements */
+            answer_requirements: string[];
+            curriculum_scope: components["schemas"]["CurriculumScopeResponse"];
+            /** Diversity Key */
+            diversity_key: string;
+            /** Exact Marks */
+            exact_marks: number;
+            /** Instructions */
+            instructions: string[];
+            /** Required Archetype */
+            required_archetype: string;
+            required_difficulty: components["schemas"]["Difficulty"];
+            required_question_type: components["schemas"]["QuestionType"];
+            /** Response Language */
+            response_language: string;
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            taxonomy_target: components["schemas"]["TaxonomyTargetResponse"];
+            uniqueness: components["schemas"]["UniquenessPolicyResponse"];
+        };
+        /** SlotRationaleResponse */
+        SlotRationaleResponse: {
+            /** Effective Priority Score */
+            effective_priority_score: number;
+            priority_mode: components["schemas"]["PriorityMode"];
+            /** Summary */
+            summary: string;
         };
         /** SourceDocumentResponse */
         SourceDocumentResponse: {
@@ -2026,11 +2517,106 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** TaxonomyRequirementRequest */
+        TaxonomyRequirementRequest: {
+            /**
+             * Allowed Section Ids
+             * @default []
+             */
+            allowed_section_ids: string[];
+            /** Generation Instructions */
+            generation_instructions: string[];
+            /** Maximum Slots */
+            maximum_slots?: number | null;
+            /** Minimum Slots */
+            minimum_slots: number;
+            priority: components["schemas"]["BaselinePracticePriorityRequest"];
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            target: components["schemas"]["TaxonomyTargetRequest"];
+        };
+        /** TaxonomyRequirementResponse */
+        TaxonomyRequirementResponse: {
+            /** Allowed Section Ids */
+            allowed_section_ids: string[];
+            /** Generation Instructions */
+            generation_instructions: string[];
+            /** Maximum Slots */
+            maximum_slots: number | null;
+            /** Minimum Slots */
+            minimum_slots: number;
+            priority: components["schemas"]["exam_guru_api__blueprints__schemas__PracticePriorityResponse"];
+            /** Retrieval Query Hints */
+            retrieval_query_hints: string[];
+            target: components["schemas"]["TaxonomyTargetResponse"];
+        };
         /**
          * TaxonomyReviewState
          * @enum {string}
          */
         TaxonomyReviewState: "draft" | "reviewed" | "deprecated";
+        /** TaxonomyTargetRequest */
+        TaxonomyTargetRequest: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Learning Concept Id */
+            learning_concept_id?: string | null;
+            /** Skill Id */
+            skill_id?: string | null;
+            /** Sub Skill Id */
+            sub_skill_id?: string | null;
+        };
+        /** TaxonomyTargetResponse */
+        TaxonomyTargetResponse: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Learning Concept Id */
+            learning_concept_id: string | null;
+            /** Skill Id */
+            skill_id: string | null;
+            /** Sub Skill Id */
+            sub_skill_id: string | null;
+        };
+        /** UniquenessPolicyRequest */
+        UniquenessPolicyRequest: {
+            /**
+             * Forbid Duplicate Stems
+             * @default true
+             */
+            forbid_duplicate_stems: boolean;
+            /**
+             * Forbid Verbatim Sources
+             * @default true
+             */
+            forbid_verbatim_sources: boolean;
+            /**
+             * Max Similarity Basis Points
+             * @default 8500
+             */
+            max_similarity_basis_points: number;
+            /**
+             * Minimum Distinct Contexts
+             * @default 1
+             */
+            minimum_distinct_contexts: number;
+        };
+        /** UniquenessPolicyResponse */
+        UniquenessPolicyResponse: {
+            /** Forbid Duplicate Stems */
+            forbid_duplicate_stems: boolean;
+            /** Forbid Verbatim Sources */
+            forbid_verbatim_sources: boolean;
+            /** Max Similarity Basis Points */
+            max_similarity_basis_points: number;
+            /** Minimum Distinct Contexts */
+            minimum_distinct_contexts: number;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -2043,6 +2629,48 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** PracticePriorityResponse */
+        exam_guru_api__analytics__schemas__PracticePriorityResponse: {
+            /**
+             * Competency Id
+             * Format: uuid
+             */
+            competency_id: string;
+            /** Evidence Language */
+            evidence_language: string;
+            features: components["schemas"]["PracticePriorityFeaturesResponse"];
+            practice_share: components["schemas"]["ExactFraction"];
+            /** Rank */
+            rank: number;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /** Skill Title */
+            skill_title: string;
+        };
+        /** PracticePriorityResponse */
+        exam_guru_api__blueprints__schemas__PracticePriorityResponse: {
+            /** Baseline Backtest Score */
+            baseline_backtest_score: number | null;
+            /** Baseline Evidence Refs */
+            baseline_evidence_refs: string[];
+            /** Baseline Score */
+            baseline_score: number;
+            /** Baseline Version */
+            baseline_version: string;
+            /** Forecast Backtest Score */
+            forecast_backtest_score: number | null;
+            /** Forecast Evidence Refs */
+            forecast_evidence_refs: string[];
+            /** Forecast Score */
+            forecast_score: number | null;
+            /** Forecast Version */
+            forecast_version: string | null;
+            /** Minimum Backtest Improvement */
+            minimum_backtest_improvement: number;
         };
     };
     responses: never;
@@ -2212,6 +2840,152 @@ export interface operations {
                 };
             };
             /** @description Curriculum version or analytics run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_paper_blueprints: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperBlueprintSummaryResponse"][];
+                };
+            };
+            /** @description Curriculum version not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_paper_blueprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlueprintCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing identical blueprint returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperBlueprintResponse"];
+                };
+            };
+            /** @description Deterministic blueprint persisted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperBlueprintResponse"];
+                };
+            };
+            /** @description Curriculum version not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable blueprint identity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid or impossible blueprint specification */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_paper_blueprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                paper_blueprint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperBlueprintResponse"];
+                };
+            };
+            /** @description Curriculum version or paper blueprint not found */
             404: {
                 headers: {
                     [name: string]: unknown;
