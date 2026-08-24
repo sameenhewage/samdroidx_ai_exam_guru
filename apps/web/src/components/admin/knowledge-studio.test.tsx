@@ -64,6 +64,14 @@ function sourceDocument(
     extracted_page_count: 1,
     extraction_attempt_count: 1,
     extraction_completed_at: "2026-08-23T00:01:00Z",
+    extraction_config: {
+      mode: "native",
+      native: {
+        config: {},
+        engine: "pymupdf",
+        version: "1.26.4",
+      },
+    },
     extraction_failure_code: null,
     extraction_started_at: "2026-08-23T00:00:30Z",
     extraction_status: "trusted",
@@ -71,6 +79,7 @@ function sourceDocument(
     extractor_version: "1.26.4",
     native_text_page_ratio: 1,
     needs_ocr: false,
+    ocr_page_count: 0,
     paper_code: null,
     size_bytes: 512,
     year: null,
@@ -110,7 +119,9 @@ const crossDocument = sourceDocument({
 const sourcePage = {
   block_count: 1,
   character_count: 42,
+  confidence: null,
   created_at: "2026-08-23T00:00:00Z",
+  extraction_config: {},
   extractor: "pymupdf",
   extractor_version: "1.26.4",
   id: ids.page,
@@ -124,9 +135,11 @@ const sourcePage = {
 
 function blockFor(documentId: string): ExtractedBlock {
   return {
-    bbox: [0, 0, 100, 20],
+    bbox: null,
     character_count: 35,
+    confidence: null,
     created_at: "2026-08-23T00:00:00Z",
+    extraction_config: {},
     extractor: "pymupdf",
     extractor_version: "1.26.4",
     id: ids.block,
