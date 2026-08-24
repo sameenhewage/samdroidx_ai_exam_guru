@@ -12,6 +12,7 @@ from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.infrastructure.resources import ApplicationResources
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
 from exam_guru_api.retrieval.explorer import RetrievalExplorerService
+from exam_guru_api.validation.pipeline import ValidationPipeline
 
 
 class SessionResources(Protocol):
@@ -40,6 +41,10 @@ def get_generation_dispatcher(request: Request) -> GenerationDispatcher:
 
 def get_generation_runtime_registry(request: Request) -> GenerationRuntimeRegistry:
     return cast(GenerationRuntimeRegistry, request.app.state.generation_runtime_registry)
+
+
+def get_validation_pipeline(request: Request) -> ValidationPipeline:
+    return cast(ValidationPipeline, request.app.state.validation_pipeline)
 
 
 def get_embedding_provider_registry(request: Request) -> EmbeddingProviderRegistry:

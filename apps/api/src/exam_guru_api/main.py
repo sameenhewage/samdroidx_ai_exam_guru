@@ -22,6 +22,7 @@ from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
     create_embedding_provider_registry,
 )
+from exam_guru_api.validation.pipeline import ValidationPipeline, build_default_pipeline
 
 ResourceFactory = Callable[[Settings], ApplicationResources]
 
@@ -35,6 +36,7 @@ def create_app(
     extraction_dispatcher: ExtractionDispatcher | None = None,
     generation_dispatcher: GenerationDispatcher | None = None,
     generation_runtime_registry: GenerationRuntimeRegistry | None = None,
+    validation_pipeline: ValidationPipeline | None = None,
     embedding_provider_registry: EmbeddingProviderRegistry | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
@@ -83,6 +85,9 @@ def create_app(
         generation_runtime_registry
         if generation_runtime_registry is not None
         else create_generation_runtime(resolved_settings)
+    )
+    application.state.validation_pipeline = (
+        validation_pipeline if validation_pipeline is not None else build_default_pipeline()
     )
     resolved_embedding_registry = (
         embedding_provider_registry

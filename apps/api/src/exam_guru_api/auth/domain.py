@@ -25,6 +25,8 @@ class Permission(StrEnum):
     BLUEPRINT_GENERATE = "blueprint:generate"
     GENERATION_READ = "generation:read"
     GENERATION_RUN = "generation:run"
+    VALIDATION_READ = "validation:read"
+    VALIDATION_RUN = "validation:run"
     PAPER_PUBLISH = "paper:publish"
 
 
@@ -39,6 +41,7 @@ _ROLE_PERMISSIONS = {
             Permission.ANALYTICS_READ,
             Permission.BLUEPRINT_READ,
             Permission.GENERATION_READ,
+            Permission.VALIDATION_READ,
             Permission.CONTENT_REVIEW,
         }
     ),

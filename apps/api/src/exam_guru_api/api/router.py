@@ -10,6 +10,7 @@ from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
+from exam_guru_api.api.routes.validation import router as validation_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/health", tags=["health"])
@@ -31,6 +32,11 @@ api_router.include_router(
     generation_router,
     prefix="/admin/curricula",
     tags=["admin-generation"],
+)
+api_router.include_router(
+    validation_router,
+    prefix="/admin/curricula",
+    tags=["admin-validation"],
 )
 api_router.include_router(
     knowledge_router,
