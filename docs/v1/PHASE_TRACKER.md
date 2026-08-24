@@ -129,7 +129,8 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - `7274ae7` adds deterministic metadata-only local inventory tooling. The ignored operator dataset contains 90 PDFs / 859 pages: 1 Sinhala teacher guide (293 pages), 51 English documents (77 pages), 13 Maths documents (397 pages), 6 Parisaraya scan-dominant activities (17 pages), and 19 Sinhala activities (75 pages), with zero malformed files.
 - Four real local PDFs were checksum-verified against the inventory and preserved through the API/MinIO pipeline. A five-page Unicode Sinhala Maths source was extracted by PyMuPDF `1.28.2` into 39 provenance blocks / 1,109 characters with native-text ratio `1.0` and remains queued for human trust review; scan-dominant Parisaraya and overlay-heavy Sinhala sources remain untrusted OCR candidates.
 - `5e31dda` adds a real-data regression that detects sparse native overlays over near-full-page raster images: the representative Parisaraya file reports image-dominant ratio `1.0` and `needs_ocr=true`; the Sinhala activity reports `0.25` and `needs_ocr=true`; the teacher guide remains flagged separately for nonstandard font-mapping review. Backend gate: 297 tests pass with 100% statements and branches.
-- P2 remains IN_PROGRESS because representative scanned Sinhala pages now exist locally but do not yet have human-adjudicated ground truth, and no Sinhala-capable OCR engine is installed/configured for a defensible benchmark. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, and lifecycle/tagged orphan cleanup remains P10 reliability hardening.
+- `14c0c42` adds a bounded open-source Tesseract CLI adapter behind the OCR port: exact PDF/checksum validation, page/DPI/pixel/language/time/output limits, isolated temporary raster batches, argv-only execution with a secret-free child environment, typed availability/process/timeout/output failures, TSV block/bbox/confidence mapping, and reproducible engine/config provenance. `655cb47` applies the same control/bidi-text rejection to native extraction while preserving Sinhala joiners. The adapter gate is 107 tests with 100% statements and branches; its live integration is explicitly skipped because this host has no Tesseract executable or Sinhala traineddata.
+- P2 remains IN_PROGRESS because representative scanned Sinhala pages do not yet have human-adjudicated ground truth, no Sinhala-capable OCR executable/traineddata is installed for a defensible benchmark, and the new adapter is not yet wired into the persisted worker state machine. No OCR quality claim is made. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, and lifecycle/tagged orphan cleanup remains P10 reliability hardening.
 
 ---
 
@@ -147,19 +148,22 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - duplicate source import protection
 
 ### Exit criteria
-- [ ] past-paper questions are stored as structured records
-- [ ] curriculum content is chunked by meaningful educational boundaries, not blind character windows alone
-- [ ] questions can be linked to competency/skill/sub-skill/source
-- [ ] reviewer can correct classifications
-- [ ] embeddings are versioned by provider/model/config
-- [ ] re-embedding is safe/idempotent
+- [x] past-paper questions are stored as structured records
+- [x] curriculum content is chunked by meaningful educational boundaries, not blind character windows alone
+- [x] questions can be linked to competency/skill/sub-skill/source
+- [x] reviewer can correct classifications
+- [x] embeddings are versioned by provider/model/config
+- [x] re-embedding is safe/idempotent
 - [ ] representative data-quality tests pass
 
 ### Evidence
 - `8325efe` starts P3 with strict historical-question and educational-boundary chunk contracts, immutable source document/page/block provenance, forward-only review states, taxonomy classification requirements for reviewed records, and a provider/model/dimension/version/config-fingerprint-aware deterministic embedding port.
 - `d654bf4` adds PostgreSQL/pgvector persistence, trusted-source and same-curriculum provenance enforcement, taxonomy hierarchy validation, immutable forward review-state triggers, atomic duplicate import handling, immutable versioned embedding configurations, source-text hash binding, idempotent re-embedding, transactional audit events, and real PostgreSQL 18/pgvector integration tests.
 - `502198f` keeps the isolated integration credential scanner-safe. The unified backend gate is 984 tests with 100% statements and branches; all 35 integration tests, Ruff check/format, strict mypy, local-data boundary checks, and the committed-file secret scan pass.
-- Remaining: authorized reviewer classification API/UI with optimistic concurrency, representative real reviewed chunk/question records, and generated-client/browser acceptance evidence.
+- `021f772` and `d085769` add curriculum-scoped authorized import/list/get/classification/review APIs, bounded list filters, server identities, required trusted source-block provenance, version-zero inserts, atomic optimistic CAS, stable errors, audit events and vector-free embedding status/configuration responses. Migration `0008` enforces initial/incrementing versions at the database boundary.
+- `eaa40f5` adds backward-compatible historical media/options/source-encoded answer/marking/archetype/difficulty-evidence persistence through migrations `0009`/`0010`, bounded JSON snapshots and full import-conflict identity without inventing unavailable metadata.
+- `3bb15d7` and `908d84d` add the generated-client Knowledge Studio: admin import only from selectable trusted document/page/block provenance, reviewer taxonomy correction and forward review transitions with conflict refresh, metadata/embedding inspection, terminal locks, loading/error/empty/permission states and accessibility coverage. A real Compose/PostgreSQL/MinIO/worker Chromium journey imports both record types and completes reviewer classification/review; synthetic fixture content proves mechanics only.
+- Remaining: human-reviewed representative real Grade 5 chunks/questions and associated data-quality evidence. The preserved database confirms all real local sources remain `EXTRACTED`, not `TRUSTED`; no real-review claim is made.
 
 ---
 
