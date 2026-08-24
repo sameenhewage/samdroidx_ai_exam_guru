@@ -277,10 +277,14 @@ test("admin runs a real held-out report; reviewer reads it and sees actionable R
   await expect(page.getByText("Analysis run created.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Analysis report" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Historical distributions" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Rolling held-out windows" })).toBeVisible();
-  await expect(page.getByText("Leakage audit passed")).toBeVisible();
-  await expect(page.getByText("2019", { exact: false }).first()).toBeVisible();
-  await expect(page.getByText("2020", { exact: false }).first()).toBeVisible();
+  const heldoutWindows = page
+    .getByRole("heading", { name: "Rolling held-out windows" })
+    .locator("..")
+    .locator("..");
+  await expect(heldoutWindows).toBeVisible();
+  await expect(heldoutWindows.getByText("Leakage audit passed")).toBeVisible();
+  await expect(heldoutWindows.getByText("Training years: 2019")).toBeVisible();
+  await expect(heldoutWindows.getByRole("heading", { name: "Holdout 2020" })).toBeVisible();
   await expect(page.getByText(evidence2019.sourceId, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(evidence2020.sourceId, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/does not predict future exam questions/i)).toBeVisible();

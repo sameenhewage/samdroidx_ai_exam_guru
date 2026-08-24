@@ -5,6 +5,7 @@ type AdminArea =
   | "blueprints"
   | "curriculum"
   | "documents"
+  | "generation"
   | "knowledge"
   | "retrieval";
 type Role = "admin" | "reviewer";
@@ -16,6 +17,7 @@ const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
   { href: "/admin/retrieval", id: "retrieval", label: "RAG Explorer" },
   { href: "/admin/analytics", id: "analytics", label: "Analytics" },
   { href: "/admin/blueprints", id: "blueprints", label: "Blueprints" },
+  { href: "/admin/generation", id: "generation", label: "Generation" },
 ];
 
 export function AdminHeader({ current, role }: { current: AdminArea; role: Role }) {

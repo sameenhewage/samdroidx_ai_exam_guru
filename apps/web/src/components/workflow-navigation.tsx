@@ -25,7 +25,9 @@ export function WorkflowNavigation() {
                           ? "/admin/analytics"
                           : area.id === "blueprints"
                             ? "/admin/blueprints"
-                            : `#${area.id}`
+                            : area.id === "generation"
+                              ? "/admin/generation"
+                              : `#${area.id}`
               }
             >
               <span className="mr-3 font-mono text-xs text-slate-500 group-hover:text-amber-300">

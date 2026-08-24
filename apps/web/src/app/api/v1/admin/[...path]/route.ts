@@ -13,6 +13,21 @@ export function bodyLimitForRequest(method: string, path: string[], contentType:
     : MAX_BODY_BYTES;
 }
 
+export function upstreamHeadersForRequest(
+  requestHeaders: Headers,
+  token: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": requestHeaders.get("Content-Type") ?? "application/json",
+  };
+  const idempotencyKey = requestHeaders.get("Idempotency-Key");
+  if (idempotencyKey && /^\S{1,128}$/.test(idempotencyKey)) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
+  return headers;
+}
+
 type RouteContext = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: RouteContext) {
@@ -42,10 +57,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const response = await fetch(upstream, {
     body,
     cache: "no-store",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": request.headers.get("Content-Type") ?? "application/json",
-    },
+    headers: upstreamHeadersForRequest(request.headers, token),
     method: request.method,
   });
 
