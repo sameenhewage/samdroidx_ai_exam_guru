@@ -139,6 +139,31 @@ def test_zero_area_page_cannot_report_image_coverage() -> None:
     assert page.largest_image_coverage == 0.0
 
 
+@pytest.mark.parametrize("unsafe_text", ["text\x00value", "text\x1b[31mvalue", "text\u202evalue"])
+def test_page_extraction_rejects_unsafe_control_text(unsafe_text: str) -> None:
+    class FakePage:
+        def get_text(self, _mode: str, *, sort: bool) -> list[tuple[object, ...]]:
+            assert sort
+            return [(0, 0, 10, 10, unsafe_text, 0, 0)]
+
+    with pytest.raises(ExtractionError) as raised:
+        PyMuPdfExtractor._extract_page(FakePage(), 1)
+
+    assert raised.value.violation is ExtractionViolation.UNSAFE_TEXT
+
+
+def test_page_extraction_preserves_sinhala_joiners_and_safe_whitespace() -> None:
+    class FakePage:
+        @staticmethod
+        def get_text(_mode: str, *, sort: bool) -> list[tuple[object, ...]]:
+            assert sort
+            return [(0, 0, 10, 10, "සිංහල\u200d පෙළ\tඅගය", 0, 0)]
+
+    page = PyMuPdfExtractor._extract_page(FakePage(), 1)
+
+    assert page.text == "සිංහල\u200d පෙළ\tඅගය"
+
+
 def test_page_extraction_ignores_non_text_blocks() -> None:
     class FakePage:
         def get_text(self, _mode: str, *, sort: bool) -> list[tuple[object, ...]]:

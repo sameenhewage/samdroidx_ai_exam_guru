@@ -8,6 +8,10 @@ from exam_guru_api.documents.domain import ExtractionStatus
 
 _IMAGE_DOMINANT_COVERAGE = 0.8
 _SPARSE_OVERLAY_CHARACTER_LIMIT = 200
+_SAFE_TEXT_CONTROLS = frozenset("\t\n\r")
+_BIDI_CONTROL_CODEPOINTS = frozenset(
+    {0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069}
+)
 
 _ALLOWED_EXTRACTION_TRANSITIONS = frozenset(
     {
@@ -37,10 +41,20 @@ def transition_extraction_status(
     return target
 
 
+def _contains_unsafe_text_character(text: str) -> bool:
+    return any(
+        (ord(character) < 32 and character not in _SAFE_TEXT_CONTROLS)
+        or 127 <= ord(character) <= 159
+        or ord(character) in _BIDI_CONTROL_CODEPOINTS
+        for character in text
+    )
+
+
 class ExtractionViolation(StrEnum):
     MALFORMED_PDF = "malformed_pdf"
     ENCRYPTED_PDF = "encrypted_pdf"
     PAGE_LIMIT_EXCEEDED = "page_limit_exceeded"
+    UNSAFE_TEXT = "unsafe_text"
 
 
 class ExtractionError(ValueError):
@@ -132,6 +146,8 @@ class PyMuPdfExtractor:
             block_type = int(raw_block[6])
             if block_type != 0 or not text:
                 continue
+            if _contains_unsafe_text_character(text):
+                raise ExtractionError(ExtractionViolation.UNSAFE_TEXT)
             blocks.append(
                 ExtractedBlock(
                     page_number=page_number,
