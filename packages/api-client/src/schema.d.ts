@@ -384,6 +384,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/validation-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable validation runs */
+        get: operations["list_validation_runs"];
+        put?: never;
+        /** Run and persist canonical validation for a succeeded generation */
+        post: operations["create_validation_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/validation-runs/{validation_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an immutable validation input and report */
+        get: operations["get_validation_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/validation-runs/{validation_run_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List bounded append-only findings for a validation run */
+        get: operations["list_validation_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curriculum-versions": {
         parameters: {
             query?: never;
@@ -3009,6 +3061,196 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** ValidationFindingResponse */
+        ValidationFindingResponse: {
+            /** Code */
+            code: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence */
+            evidence: {
+                [key: string]: string;
+            }[];
+            /** Evidence Count */
+            evidence_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Message */
+            message: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "warn" | "fail";
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Validator Id */
+            validator_id: string;
+            /** Validator Version */
+            validator_version: string;
+        };
+        /**
+         * ValidationRunCreateRequest
+         * @description The generation identity is the only client-selected validation input.
+         */
+        ValidationRunCreateRequest: {
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+        };
+        /** ValidationRunResponse */
+        ValidationRunResponse: {
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Duplicate Reference Count */
+            duplicate_reference_count: number;
+            /** Finding Count */
+            finding_count: number;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /** Generation Result Fingerprint */
+            generation_result_fingerprint: string;
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /** Grounding Source Count */
+            grounding_source_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Input Schema Version */
+            input_schema_version: string;
+            /** Input Snapshot */
+            input_snapshot: {
+                [key: string]: unknown;
+            };
+            /** Limitations */
+            limitations: string[];
+            /**
+             * Overall Status
+             * @enum {string}
+             */
+            overall_status: "pass" | "warn" | "fail";
+            /** Pipeline Fingerprint */
+            pipeline_fingerprint: string;
+            /** Pipeline Version */
+            pipeline_version: string;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Report Schema Version */
+            report_schema_version: string;
+            /** Validator Count */
+            validator_count: number;
+            /** Validator Lineage */
+            validator_lineage: {
+                [key: string]: string;
+            }[];
+        };
+        /** ValidationRunSummaryResponse */
+        ValidationRunSummaryResponse: {
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Duplicate Reference Count */
+            duplicate_reference_count: number;
+            /** Finding Count */
+            finding_count: number;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /** Generation Result Fingerprint */
+            generation_result_fingerprint: string;
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /** Grounding Source Count */
+            grounding_source_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /**
+             * Overall Status
+             * @enum {string}
+             */
+            overall_status: "pass" | "warn" | "fail";
+            /** Pipeline Fingerprint */
+            pipeline_fingerprint: string;
+            /** Pipeline Version */
+            pipeline_version: string;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Validator Count */
+            validator_count: number;
+        };
         /** PracticePriorityResponse */
         exam_guru_api__analytics__schemas__PracticePriorityResponse: {
             /**
@@ -4304,6 +4546,214 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_validation_runs: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationRunSummaryResponse"][];
+                };
+            };
+            /** @description Validation resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Generation, pipeline, or persistence integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation input exceeds a deterministic resource bound */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_validation_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValidationRunCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationRunResponse"];
+                };
+            };
+            /** @description Validation resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Generation, pipeline, or persistence integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation input exceeds a deterministic resource bound */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_validation_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                validation_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationRunResponse"];
+                };
+            };
+            /** @description Validation resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Generation, pipeline, or persistence integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation input exceeds a deterministic resource bound */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_validation_findings: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                validation_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationFindingResponse"][];
+                };
+            };
+            /** @description Validation resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Generation, pipeline, or persistence integrity conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation input exceeds a deterministic resource bound */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
