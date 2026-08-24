@@ -40,7 +40,9 @@ from exam_guru_api.papers.publication_service import (
     PaperPublicationService,
     PaperStateConflictError,
     PaperVersionConflictError,
+    _paper_failure_code,
 )
+from tests.test_operational_telemetry import telemetry
 from tests.test_paper_domain import approved_candidate, assembled_draft, validated_candidate
 
 CURRICULUM_ID = UUID(int=997_001)
@@ -212,6 +214,25 @@ def make_published(repository: FakeRepository) -> StoredPublication:
     return publication
 
 
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (PaperIdempotencyConflictError(), "paper_idempotency_conflict"),
+        (PaperVersionConflictError(), "paper_version_conflict"),
+        (PaperStateConflictError(), "paper_state_conflict"),
+        (PaperCandidateSelectionResourceLimitError(2, 1), "paper_resource_limit"),
+        (PaperCandidateSelectionError(), "paper_candidate_selection_invalid"),
+        (PaperIntegrityError(), "paper_integrity_error"),
+        (PaperCommandInvalidError(), "paper_command_invalid"),
+        (PermissionError("raw permission detail"), "permission_denied"),
+        (RuntimeError("raw paper secret"), "paper_internal_error"),
+    ],
+)
+def test_paper_failure_codes_are_fixed(error: Exception, code: str) -> None:
+    assert _paper_failure_code(error) == code
+    assert "secret" not in code
+
+
 def test_create_draft_is_deterministic_order_independent_audited_and_conflict_safe() -> None:
     async def exercise() -> None:
         service, session, repository = service_with()
@@ -275,6 +296,8 @@ def test_publish_requires_admin_and_duplicate_current_publication_is_safe() -> N
             )
 
         service, session, repository = service_with()
+        operational, telemetry_logger, _tracer = telemetry()
+        service._telemetry = operational
         result = await service.publish(
             CURRICULUM_ID,
             repository.paper.id,
@@ -286,6 +309,20 @@ def test_publish_requires_admin_and_duplicate_current_publication_is_safe() -> N
         assert repository.last_transition["expected_state"] is PaperState.DRAFT
         assert repository.last_transition["state"] is PaperState.PUBLISHED
         assert session.commits == 1
+        assert telemetry_logger.records == [
+            (
+                "Operational event",
+                {
+                    "event_name": "paper.published",
+                    "outcome": "succeeded",
+                    "failure_code": None,
+                    "version": 1,
+                    "question_count": 2,
+                    "deduplicated": False,
+                },
+            )
+        ]
+        assert str(repository.paper.id) not in str(telemetry_logger.records)
 
         repository.paper.state = "published"
         repository.publication = result.record
@@ -558,6 +595,8 @@ def test_archive_success_duplicate_terminal_and_failure_paths() -> None:
     async def exercise() -> None:
         service, session, repository = service_with()
         publication = make_published(repository)
+        operational, telemetry_logger, _tracer = telemetry()
+        service._telemetry = operational
         archived = await service.archive(
             CURRICULUM_ID,
             repository.paper.id,
@@ -569,6 +608,19 @@ def test_archive_success_duplicate_terminal_and_failure_paths() -> None:
         assert archived.record.publication is publication
         assert repository.added_archives
         assert session.commits == 1
+        assert telemetry_logger.records == [
+            (
+                "Operational event",
+                {
+                    "event_name": "paper.archived",
+                    "outcome": "succeeded",
+                    "failure_code": None,
+                    "version": 1,
+                    "question_count": 2,
+                    "deduplicated": False,
+                },
+            )
+        ]
 
         repository.paper.state = PaperState.ARCHIVED.value
         duplicate = await service.archive(

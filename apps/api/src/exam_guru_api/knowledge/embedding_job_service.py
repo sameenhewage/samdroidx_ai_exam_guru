@@ -28,6 +28,7 @@ from exam_guru_api.knowledge.service import (
     EmbeddingRequiresReviewedRecordError,
     KnowledgePersistenceService,
 )
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.retrieval.embeddings import (
     ActiveEmbeddingConfigUnavailableError,
     EmbeddingProviderRegistry,
@@ -391,10 +392,13 @@ class EmbeddingWorkerService:
         session: AsyncSession,
         providers: EmbeddingProviderRegistry,
         active_config: EmbeddingConfig | None,
+        *,
+        telemetry: OperationalTelemetry | None = None,
     ) -> None:
         self._session = session
         self._providers = providers
         self._active_config = active_config
+        self._telemetry = telemetry or get_operational_telemetry()
         self._repository = SqlAlchemyEmbeddingJobRepository(session)
 
     async def process(self, job_id: UUID) -> bool:
@@ -559,6 +563,13 @@ class EmbeddingWorkerService:
             )
         )
         await self._session.commit()
+        self._telemetry.embedding_terminal(
+            status=terminal.status,
+            failure_code=terminal.failure_code,
+            requested_count=terminal.requested_count,
+            embedded_count=terminal.embedded_count,
+            deduplicated_count=terminal.deduplicated_count,
+        )
         return True
 
 

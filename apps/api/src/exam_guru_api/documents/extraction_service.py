@@ -48,6 +48,7 @@ from exam_guru_api.documents.ocr import (
     OCRUnavailableError,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 
 
 class NativeDocumentExtractor(Protocol):
@@ -127,11 +128,13 @@ class DocumentExtractionService:
         extractor: NativeDocumentExtractor,
         *,
         ocr_port: OCRPort | None = None,
+        telemetry: OperationalTelemetry | None = None,
     ) -> None:
         self._session = session
         self._object_storage = object_storage
         self._extractor = extractor
         self._ocr_port = ocr_port
+        self._telemetry = telemetry or get_operational_telemetry()
         self._outbox_repository = SqlAlchemyExtractionOutboxRepository(session)
 
     async def queue_extraction(
@@ -860,6 +863,14 @@ class DocumentExtractionService:
             },
         )
         await self._session.commit()
+        self._telemetry.extraction_terminal(
+            status=document.extraction_status.value,
+            failure_code=None,
+            attempt_count=document.extraction_attempt_count,
+            page_count=document.extracted_page_count or 0,
+            block_count=document.extracted_block_count or 0,
+            ocr_page_count=document.ocr_page_count or 0,
+        )
         return self._result_from_document(document, deduplicated=False)
 
     async def _record_failure(
@@ -893,6 +904,14 @@ class DocumentExtractionService:
             },
         )
         await self._session.commit()
+        self._telemetry.extraction_terminal(
+            status=document.extraction_status.value,
+            failure_code=failure_code,
+            attempt_count=document.extraction_attempt_count,
+            page_count=0,
+            block_count=0,
+            ocr_page_count=0,
+        )
 
     async def _get_locked_document(self, document_id: UUID) -> SourceDocumentModel:
         document = await self._session.get(

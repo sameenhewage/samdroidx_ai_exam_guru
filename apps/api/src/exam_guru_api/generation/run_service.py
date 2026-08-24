@@ -63,6 +63,7 @@ from exam_guru_api.generation.service import (
     RetryScheduler,
 )
 from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 
 _GENERATION_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/generation-runs")
 
@@ -761,10 +762,12 @@ class GenerationWorkerService:
         runtime: GenerationRuntimeRegistry,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        telemetry: OperationalTelemetry | None = None,
     ) -> None:
         self._session = session
         self._runtime = runtime
         self._sleep = sleep
+        self._telemetry = telemetry or get_operational_telemetry()
         self._repository = SqlAlchemyGenerationRepository(session)
 
     async def process(self, job_id: UUID, run_id: UUID) -> bool:
@@ -1050,6 +1053,16 @@ class GenerationWorkerService:
             )
         )
         await self._session.commit()
+        self._telemetry.generation_terminal(
+            status=terminal_run.status,
+            failure_code=terminal_run.failure_code,
+            attempt_count=terminal_run.attempt_count,
+            input_tokens=terminal_run.input_tokens,
+            output_tokens=terminal_run.output_tokens,
+            total_tokens=terminal_run.total_tokens,
+            cost_microusd=terminal_run.cost_microusd,
+            latency_ms=terminal_run.latency_ms,
+        )
         return True
 
 

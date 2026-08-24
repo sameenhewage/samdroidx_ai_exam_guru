@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from exam_guru_api.curriculum.models import (
 )
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.knowledge.models import EmbeddingConfigurationModel
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.retrieval.context import (
     MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_ITEM_CHARACTERS,
@@ -31,6 +33,7 @@ from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScop
 from exam_guru_api.retrieval.embeddings import (
     MAX_EMBEDDING_QUERY_CHARACTERS,
     EmbeddingProviderRegistry,
+    EmbeddingProviderUnavailableError,
 )
 from exam_guru_api.retrieval.fusion import MAX_FUSION_RESULTS, FusionConfig
 from exam_guru_api.retrieval.repository import PostgresHybridRetrievalRepository
@@ -167,6 +170,18 @@ def _elapsed_ms(start: float, end: float) -> float:
     return round(max(0.0, (end - start) * 1_000), 6)
 
 
+def _retrieval_failure_code(error: Exception) -> str:
+    if isinstance(error, EmbeddingConfigurationNotFoundError):
+        return "embedding_configuration_not_found"
+    if isinstance(error, RetrievalScopeNotFoundError):
+        return "retrieval_scope_not_found"
+    if isinstance(error, EmbeddingProviderUnavailableError):
+        return "embedding_provider_unavailable"
+    if isinstance(error, RetrievalContractError):
+        return "invalid_retrieval_request"
+    return "retrieval_internal_error"
+
+
 class RetrievalExplorerService:
     """Validate exact metadata, embed server-side, and run read-only hybrid retrieval."""
 
@@ -177,6 +192,7 @@ class RetrievalExplorerService:
         *,
         repository_factory: RetrievalRepositoryFactory = _postgres_repository_factory,
         clock: Callable[[], float] = perf_counter,
+        telemetry: OperationalTelemetry | None = None,
     ) -> None:
         if not isinstance(embedding_providers, EmbeddingProviderRegistry):
             raise RetrievalContractError("embedding_providers must be an EmbeddingProviderRegistry")
@@ -188,6 +204,7 @@ class RetrievalExplorerService:
         self._embedding_providers = embedding_providers
         self._repository_factory = repository_factory
         self._clock = clock
+        self._telemetry = telemetry or get_operational_telemetry()
 
     async def explore(
         self,
@@ -210,54 +227,98 @@ class RetrievalExplorerService:
         if not isinstance(limits, RetrievalExploreLimits):
             raise RetrievalContractError("limits must be RetrievalExploreLimits")
 
-        total_started = self._clock()
-        self._embedding_providers.ensure_provider(embedding_config)
-        persisted_config = await self._resolve_embedding_configuration(embedding_config)
-        if not await self._scope_exists(scope):
-            raise RetrievalScopeNotFoundError
-        validation_finished = self._clock()
+        query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        trace_attributes = {
+            "retrieval.query.sha256": query_sha256,
+            "retrieval.scope.grade": scope.grade,
+            "retrieval.scope.medium_id": str(scope.medium_id),
+            "retrieval.scope.curriculum_version_id": str(scope.curriculum_version_id),
+        }
+        with self._telemetry.span("retrieval.explore", attributes=trace_attributes) as span:
+            total_started = self._clock()
+            validation_finished = total_started
+            embedding_finished = total_started
+            try:
+                self._embedding_providers.ensure_provider(embedding_config)
+                persisted_config = await self._resolve_embedding_configuration(embedding_config)
+                if not await self._scope_exists(scope):
+                    raise RetrievalScopeNotFoundError
+                validation_finished = self._clock()
 
-        embedding_result = self._embedding_providers.embed_query(query, persisted_config)
-        embedding_finished = self._clock()
+                embedding_result = self._embedding_providers.embed_query(query, persisted_config)
+                embedding_finished = self._clock()
 
-        repository = self._repository_factory(
-            self._session,
-            embedding_config=persisted_config,
-            candidate_limit=limits.candidate_limit,
-        )
-        retrieval = await HybridRetrievalService(
-            repository,
-            fusion_config=FusionConfig(
-                limit=limits.top_k,
-                max_candidates_per_channel=limits.candidate_limit,
-            ),
-            context_limits=ContextLimits(
-                max_items=limits.max_context_items,
-                max_total_characters=limits.max_context_characters,
-                max_item_characters=limits.max_context_item_characters,
-            ),
-            clock=self._clock,
-        ).retrieve(
-            query=query,
-            query_vector=embedding_result.vector,
-            filters=scope,
-        )
-        total_finished = self._clock()
-        return RetrievalExplorationResult(
-            query=query,
-            scope=scope,
-            embedding_config=persisted_config,
-            limits=limits,
-            retrieval=retrieval,
-            latency=RetrievalExplorationLatency(
-                validation_ms=_elapsed_ms(total_started, validation_finished),
-                embedding_ms=_elapsed_ms(validation_finished, embedding_finished),
-                candidate_retrieval_ms=retrieval.latency.candidate_retrieval_ms,
-                fusion_ms=retrieval.latency.fusion_ms,
-                context_building_ms=retrieval.latency.context_building_ms,
-                total_ms=_elapsed_ms(total_started, total_finished),
-            ),
-        )
+                repository = self._repository_factory(
+                    self._session,
+                    embedding_config=persisted_config,
+                    candidate_limit=limits.candidate_limit,
+                )
+                retrieval = await HybridRetrievalService(
+                    repository,
+                    fusion_config=FusionConfig(
+                        limit=limits.top_k,
+                        max_candidates_per_channel=limits.candidate_limit,
+                    ),
+                    context_limits=ContextLimits(
+                        max_items=limits.max_context_items,
+                        max_total_characters=limits.max_context_characters,
+                        max_item_characters=limits.max_context_item_characters,
+                    ),
+                    clock=self._clock,
+                ).retrieve(
+                    query=query,
+                    query_vector=embedding_result.vector,
+                    filters=scope,
+                )
+            except Exception as error:
+                total_finished = self._clock()
+                self._telemetry.retrieval_completed(
+                    span=span,
+                    query_sha256=query_sha256,
+                    outcome="failed",
+                    failure_code=_retrieval_failure_code(error),
+                    candidate_count=0,
+                    context_count=0,
+                    validation_latency_ms=_elapsed_ms(total_started, validation_finished),
+                    embedding_latency_ms=_elapsed_ms(validation_finished, embedding_finished),
+                    candidate_retrieval_latency_ms=0.0,
+                    fusion_latency_ms=0.0,
+                    context_building_latency_ms=0.0,
+                    total_latency_ms=_elapsed_ms(total_started, total_finished),
+                )
+                raise
+
+            total_finished = self._clock()
+            result = RetrievalExplorationResult(
+                query=query,
+                scope=scope,
+                embedding_config=persisted_config,
+                limits=limits,
+                retrieval=retrieval,
+                latency=RetrievalExplorationLatency(
+                    validation_ms=_elapsed_ms(total_started, validation_finished),
+                    embedding_ms=_elapsed_ms(validation_finished, embedding_finished),
+                    candidate_retrieval_ms=retrieval.latency.candidate_retrieval_ms,
+                    fusion_ms=retrieval.latency.fusion_ms,
+                    context_building_ms=retrieval.latency.context_building_ms,
+                    total_ms=_elapsed_ms(total_started, total_finished),
+                ),
+            )
+            self._telemetry.retrieval_completed(
+                span=span,
+                query_sha256=query_sha256,
+                outcome="succeeded",
+                failure_code=None,
+                candidate_count=len(retrieval.ranked_candidates),
+                context_count=len(retrieval.context.items),
+                validation_latency_ms=result.latency.validation_ms,
+                embedding_latency_ms=result.latency.embedding_ms,
+                candidate_retrieval_latency_ms=result.latency.candidate_retrieval_ms,
+                fusion_latency_ms=result.latency.fusion_ms,
+                context_building_latency_ms=result.latency.context_building_ms,
+                total_latency_ms=result.latency.total_ms,
+            )
+            return result
 
     async def _resolve_embedding_configuration(
         self,

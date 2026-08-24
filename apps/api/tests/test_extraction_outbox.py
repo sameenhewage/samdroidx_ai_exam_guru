@@ -11,6 +11,7 @@ from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.extraction_outbox import (
     ExtractionQueueAttachment,
     ExtractionRecoveryPolicy,
+    ExtractionRecoveryResult,
     ExtractionRecoveryService,
     SqlAlchemyExtractionOutboxRepository,
     validate_extraction_queue_message_id,
@@ -234,5 +235,56 @@ def test_outbox_repository_reports_a_disappeared_document_after_lost_attach_cas(
         repository = SqlAlchemyExtractionOutboxRepository(cast(AsyncSession, MissingSession()))
         with pytest.raises(LookupError, match=str(UUID(int=999))):
             await repository.attach_queue_message(UUID(int=999), "message-id")
+
+    asyncio.run(exercise())
+
+
+def test_extraction_recovery_continues_after_attachment_loses_its_cas() -> None:
+    class RecordingDispatcher:
+        def __init__(self) -> None:
+            self.calls: list[tuple[UUID, UUID]] = []
+
+        def dispatch(self, document_id: UUID, *, actor_id: UUID) -> str:
+            self.calls.append((document_id, actor_id))
+            return f"message-{document_id}"
+
+    class LostThenAttachedRepository(RecoveryRepository):
+        def __init__(self, documents: tuple[SourceDocumentModel, ...]) -> None:
+            super().__init__(documents)
+            self.attach_calls = 0
+
+        async def attach_queue_message(
+            self,
+            document_id: UUID,
+            message_id: str,
+        ) -> ExtractionQueueAttachment:
+            self.attach_calls += 1
+            document = next(item for item in self.documents if item.id == document_id)
+            if self.attach_calls == 1:
+                return ExtractionQueueAttachment(document=document, attached=False)
+            return await super().attach_queue_message(document_id, message_id)
+
+    async def exercise() -> None:
+        first = pending_document(880_010, 881_010)
+        second = pending_document(880_011, 881_011)
+        repository = LostThenAttachedRepository((first, second))
+        session = RecoverySession()
+        dispatcher = RecordingDispatcher()
+        service = ExtractionRecoveryService(
+            cast(AsyncSession, session),
+            dispatcher,
+            ExtractionRecoveryPolicy(batch_size=2, outbox_min_age_seconds=5),
+        )
+        service._repository = cast(object, repository)  # type: ignore[assignment]
+
+        result = await service.recover(now=NOW)
+
+        assert result == ExtractionRecoveryResult(scanned=2, dispatched=1, failures=0)
+        assert repository.attach_calls == 2
+        assert dispatcher.calls == [
+            (first.id, first.updated_by),
+            (second.id, second.updated_by),
+        ]
+        assert session.commits == 1
 
     asyncio.run(exercise())

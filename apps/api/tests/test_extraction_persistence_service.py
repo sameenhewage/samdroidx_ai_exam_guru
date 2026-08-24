@@ -28,6 +28,7 @@ from exam_guru_api.documents.extraction_service import (
 )
 from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
 from exam_guru_api.infrastructure.object_storage import ObjectStorage, StoredObject
+from tests.test_operational_telemetry import telemetry
 
 ACTOR_ID = UUID(int=82_000)
 DOCUMENT_ID = UUID(int=82_001)
@@ -341,10 +342,13 @@ def test_source_read_failures_are_safely_persisted(
 ) -> None:
     model = document(ExtractionStatus.UPLOADED)
     session = StubSession(model)
+    extraction_service = service(session, StaticStorage(storage_value))
+    operational, telemetry_logger, _tracer = telemetry()
+    extraction_service._telemetry = operational
 
     with pytest.raises(error_type):
         asyncio.run(
-            service(session, StaticStorage(storage_value)).extract_native(
+            extraction_service.extract_native(
                 DOCUMENT_ID,
                 actor_id=ACTOR_ID,
             )
@@ -356,6 +360,22 @@ def test_source_read_failures_are_safely_persisted(
     assert model.extraction_completed_at is not None
     assert session.rollbacks == 1
     assert session.commits == 2
+    assert telemetry_logger.records == [
+        (
+            "Operational event",
+            {
+                "event_name": "extraction.terminal",
+                "outcome": "failed",
+                "failure_code": failure_code,
+                "status": "failed",
+                "attempt_count": 1,
+                "page_count": 0,
+                "block_count": 0,
+                "ocr_page_count": 0,
+            },
+        )
+    ]
+    assert "storage unavailable" not in str(telemetry_logger.records)
 
 
 def test_begin_review_retry_is_idempotent() -> None:

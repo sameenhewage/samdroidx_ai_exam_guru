@@ -28,6 +28,7 @@ class Permission(StrEnum):
     VALIDATION_READ = "validation:read"
     VALIDATION_RUN = "validation:run"
     PAPER_PUBLISH = "paper:publish"
+    OPERATIONS_READ = "operations:read"
 
 
 _ROLE_PERMISSIONS = {

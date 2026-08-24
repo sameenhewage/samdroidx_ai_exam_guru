@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -26,6 +27,7 @@ from exam_guru_api.retrieval.explorer import (
     RetrievalExploreLimits,
     RetrievalExplorerService,
     RetrievalScopeNotFoundError,
+    _retrieval_failure_code,
 )
 from exam_guru_api.retrieval.repository import RetrievalCandidateSet
 from exam_guru_api.retrieval.schemas import RetrievalExploreResponse
@@ -34,6 +36,7 @@ from exam_guru_api.retrieval.service import (
     HybridRetrievalResult,
     HybridRetrievalService,
 )
+from tests.test_operational_telemetry import telemetry
 from tests.test_retrieval_fixtures import (
     EMBEDDING_FINGERPRINT,
     OTHER_MEDIUM_ID,
@@ -160,11 +163,13 @@ def test_explorer_resolves_metadata_embeds_server_side_and_returns_inspectable_p
 
     session = ScalarSession((_configuration_model(), UUID(int=700)))
     ticks = iter((1.000, 1.001, 1.002, 1.003, 1.005, 1.006, 1.009, 1.010, 1.014, 1.020))
+    operational, telemetry_logger, telemetry_tracer = telemetry()
     service = RetrievalExplorerService(
         cast(AsyncSession, session),
         _registry(),
         repository_factory=repository_factory,
         clock=lambda: next(ticks),
+        telemetry=operational,
     )
 
     result = asyncio.run(
@@ -225,6 +230,36 @@ def test_explorer_resolves_metadata_embeds_server_side_and_returns_inspectable_p
         "context_character_count": 40,
         "omitted_fused_candidate_count": 0,
     }
+    assert telemetry_logger.records == [
+        (
+            "Operational event",
+            {
+                "event_name": "retrieval.completed",
+                "outcome": "succeeded",
+                "failure_code": None,
+                "query_sha256": hashlib.sha256(b"square perimeter").hexdigest(),
+                "candidate_count": 2,
+                "context_count": 2,
+                "validation_latency_ms": 1.0,
+                "embedding_latency_ms": 1.0,
+                "candidate_retrieval_latency_ms": 2.0,
+                "fusion_latency_ms": 3.0,
+                "context_building_latency_ms": 4.0,
+                "total_latency_ms": 20.0,
+            },
+        )
+    ]
+    scope = grade_five_filter()
+    assert telemetry_tracer.calls[0]["attributes"] == {
+        "retrieval.query.sha256": hashlib.sha256(b"square perimeter").hexdigest(),
+        "retrieval.scope.grade": 5,
+        "retrieval.scope.medium_id": str(scope.medium_id),
+        "retrieval.scope.curriculum_version_id": str(scope.curriculum_version_id),
+    }
+    assert PROMPT_INJECTION_TEXT not in str(telemetry_logger.records)
+    assert PROMPT_INJECTION_TEXT not in str(telemetry_tracer.calls)
+    assert "square perimeter" not in str(telemetry_logger.records)
+    assert "square perimeter" not in str(telemetry_tracer.calls)
     assert str(forbidden.chunk_id) not in str(body)
     assert "query_vector" not in str(body)
     assert "embedding_values" not in str(body)
@@ -239,18 +274,26 @@ def test_scope_validation_accepts_a_complete_active_taxonomy_chain() -> None:
 
 
 @pytest.mark.parametrize(
-    ("values", "error"),
+    ("values", "error", "failure_code"),
     [
-        ((None,), EmbeddingConfigurationNotFoundError),
-        ((_configuration_model(), None), RetrievalScopeNotFoundError),
+        ((None,), EmbeddingConfigurationNotFoundError, "embedding_configuration_not_found"),
+        ((_configuration_model(), None), RetrievalScopeNotFoundError, "retrieval_scope_not_found"),
     ],
 )
-def test_explorer_returns_stable_not_found_errors(
+def test_explorer_returns_stable_not_found_errors_with_sanitized_telemetry(
     values: tuple[object, ...],
     error: type[Exception],
+    failure_code: str,
 ) -> None:
     session = ScalarSession(values)
-    service = RetrievalExplorerService(cast(AsyncSession, session), _registry())
+    operational, telemetry_logger, _tracer = telemetry()
+    ticks = iter((1.0, 1.001))
+    service = RetrievalExplorerService(
+        cast(AsyncSession, session),
+        _registry(),
+        clock=lambda: next(ticks),
+        telemetry=operational,
+    )
 
     with pytest.raises(error):
         asyncio.run(
@@ -261,6 +304,29 @@ def test_explorer_returns_stable_not_found_errors(
                 limits=LIMITS,
             )
         )
+
+    event = telemetry_logger.records[0][1]
+    assert event["outcome"] == "failed"
+    assert event["failure_code"] == failure_code
+    assert event["query_sha256"] == hashlib.sha256(b"square").hexdigest()
+    assert event["candidate_count"] == 0
+    assert event["context_count"] == 0
+    assert "square" not in str(telemetry_logger.records)
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (RetrievalContractError("invalid"), "invalid_retrieval_request"),
+        (RuntimeError("raw source secret"), "retrieval_internal_error"),
+    ],
+)
+def test_retrieval_failure_codes_never_use_exception_messages(
+    error: Exception,
+    code: str,
+) -> None:
+    assert _retrieval_failure_code(error) == code
+    assert "secret" not in code
 
 
 def test_explorer_fails_closed_before_database_access_without_provider() -> None:

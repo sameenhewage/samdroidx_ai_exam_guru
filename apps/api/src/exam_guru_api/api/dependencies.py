@@ -11,6 +11,7 @@ from exam_guru_api.generation.runtime import GenerationRuntimeRegistry
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.infrastructure.resources import ApplicationResources
 from exam_guru_api.knowledge.embedding_jobs import EmbeddingDispatcher
+from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
 from exam_guru_api.retrieval.explorer import RetrievalExplorerService
 from exam_guru_api.validation.pipeline import ValidationPipeline
@@ -56,6 +57,10 @@ def get_embedding_provider_registry(request: Request) -> EmbeddingProviderRegist
     return cast(EmbeddingProviderRegistry, request.app.state.embedding_provider_registry)
 
 
+def get_operational_telemetry(request: Request) -> OperationalTelemetry:
+    return cast(OperationalTelemetry, request.app.state.operational_telemetry)
+
+
 async def get_database_session(request: Request) -> AsyncIterator[AsyncSession]:
     resources = cast(SessionResources, request.app.state.resources)
     async with resources.session_factory() as session:
@@ -65,5 +70,6 @@ async def get_database_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_retrieval_explorer_service(
     session: Annotated[AsyncSession, Depends(get_database_session)],
     providers: Annotated[EmbeddingProviderRegistry, Depends(get_embedding_provider_registry)],
+    telemetry: Annotated[OperationalTelemetry, Depends(get_operational_telemetry)],
 ) -> RetrievalExplorerService:
-    return RetrievalExplorerService(session, providers)
+    return RetrievalExplorerService(session, providers, telemetry=telemetry)

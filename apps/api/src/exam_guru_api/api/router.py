@@ -9,6 +9,7 @@ from exam_guru_api.api.routes.embedding_jobs import router as embedding_job_rout
 from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
+from exam_guru_api.api.routes.operations import router as operations_router
 from exam_guru_api.api.routes.papers import router as paper_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.review_candidates import router as review_candidate_router
@@ -18,6 +19,7 @@ from exam_guru_api.api.routes.validation import router as validation_router
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/health", tags=["health"])
 api_router.include_router(audit_router, prefix="/admin", tags=["admin-audit"])
+api_router.include_router(operations_router, prefix="/admin", tags=["admin-operations"])
 api_router.include_router(configuration_router, prefix="/admin", tags=["admin-configuration"])
 api_router.include_router(document_router, prefix="/admin", tags=["admin-documents"])
 api_router.include_router(

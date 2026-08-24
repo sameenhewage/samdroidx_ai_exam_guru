@@ -32,6 +32,7 @@ REVIEWER_ID = UUID(int=2)
         Permission.BLUEPRINT_READ,
         Permission.BLUEPRINT_GENERATE,
         Permission.PAPER_PUBLISH,
+        Permission.OPERATIONS_READ,
     ],
 )
 def test_admin_has_every_priority_one_permission(permission: Permission) -> None:
@@ -69,6 +70,7 @@ def test_reviewer_has_read_and_review_permissions(permission: Permission) -> Non
         Permission.ANALYTICS_RUN,
         Permission.BLUEPRINT_GENERATE,
         Permission.PAPER_PUBLISH,
+        Permission.OPERATIONS_READ,
     ],
 )
 def test_reviewer_cannot_manage_taxonomy_or_publish(permission: Permission) -> None:

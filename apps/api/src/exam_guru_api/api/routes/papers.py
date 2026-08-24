@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, stat
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exam_guru_api.api.dependencies import get_database_session
+from exam_guru_api.api.dependencies import get_database_session, get_operational_telemetry
 from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.papers.domain import (
     MAX_PAPER_VERSIONS,
     CandidateInvariantError,
@@ -59,6 +60,7 @@ PublishPrincipal = Annotated[
     Depends(require_permission(Permission.PAPER_PUBLISH)),
 ]
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
+Telemetry = Annotated[OperationalTelemetry | None, Depends(get_operational_telemetry)]
 IdempotencyKey = Annotated[
     str,
     Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^\S+$"),
@@ -265,10 +267,16 @@ async def publish_practice_paper(
     request: PaperPublishRequest,
     principal: PublishPrincipal,
     session: DatabaseSession,
+    telemetry: Telemetry = None,
 ) -> PublishedPaperVersionResponse:
+    service = (
+        PaperPublicationService(session)
+        if telemetry is None
+        else PaperPublicationService(session, telemetry=telemetry)
+    )
     result = await _execute_paper_operation(
         session,
-        lambda: PaperPublicationService(session).publish(
+        lambda: service.publish(
             curriculum_version_id,
             paper_id,
             expected_version=request.expected_version,
@@ -348,10 +356,16 @@ async def archive_practice_paper(
     request: PaperArchiveRequest,
     principal: PublishPrincipal,
     session: DatabaseSession,
+    telemetry: Telemetry = None,
 ) -> PaperArchiveResponse:
+    service = (
+        PaperPublicationService(session)
+        if telemetry is None
+        else PaperPublicationService(session, telemetry=telemetry)
+    )
     result = await _execute_paper_operation(
         session,
-        lambda: PaperPublicationService(session).archive(
+        lambda: service.archive(
             curriculum_version_id,
             paper_id,
             expected_version=request.expected_version,

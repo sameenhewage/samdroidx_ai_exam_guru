@@ -37,6 +37,7 @@ from tests.test_generation_run_service import (
     build_service,
     create,
 )
+from tests.test_operational_telemetry import telemetry
 
 JOB_ID = UUID(int=970_001)
 RUN_ID = UUID(int=970_002)
@@ -199,6 +200,71 @@ def test_worker_rolls_back_when_terminal_completion_cas_is_lost() -> None:
                 failure_code="generation_internal_error",
             )
         assert session.rollbacks == 1
+
+    asyncio.run(exercise())
+
+
+def test_worker_emits_persisted_terminal_accounting_without_run_identifiers() -> None:
+    async def exercise() -> None:
+        active_run = run_model()
+        active_run.status = "running"
+        active_run.version = 1
+        active_job = job_model()
+        active_job.status = "claimed"
+        active_job.version = 1
+        terminal_run = run_model()
+        terminal_run.status = "failed"
+        terminal_run.failure_code = "provider_timeout"
+        terminal_run.attempt_count = 2
+        terminal_run.input_tokens = 10
+        terminal_run.output_tokens = 4
+        terminal_run.total_tokens = 14
+        terminal_run.cost_microusd = 9
+        terminal_run.latency_ms = 20
+        terminal_job = job_model()
+        terminal_job.status = "failed"
+        terminal_job.failure_code = "provider_timeout"
+
+        class ActiveRepository:
+            async def lock_active_completion(
+                self,
+                run_id: UUID,
+                job_id: UUID,
+            ) -> GenerationClaimRecord:
+                assert (run_id, job_id) == (active_run.id, active_job.id)
+                return GenerationClaimRecord(run=active_run, job=active_job)
+
+        operational, telemetry_logger, _tracer = telemetry()
+        session = ClaimSession((terminal_run, terminal_job))
+        worker = GenerationWorkerService(
+            cast(AsyncSession, session),
+            create_generation_runtime(Settings(environment="test")),
+            sleep=lambda _: None,
+            telemetry=operational,
+        )
+        worker._repository = cast(object, ActiveRepository())  # type: ignore[assignment]
+
+        assert await worker._complete(
+            active_run,
+            active_job.id,
+            (),
+            result=None,
+            failure_code="provider_timeout",
+        )
+        assert telemetry_logger.records[0][1] == {
+            "event_name": "generation.worker_terminal",
+            "outcome": "failed",
+            "failure_code": "provider_timeout",
+            "status": "failed",
+            "attempt_count": 2,
+            "input_tokens": 10,
+            "output_tokens": 4,
+            "total_tokens": 14,
+            "cost_microusd": 9,
+            "latency_ms": 20,
+        }
+        assert str(active_run.id) not in str(telemetry_logger.records)
+        assert str(active_job.id) not in str(telemetry_logger.records)
 
     asyncio.run(exercise())
 

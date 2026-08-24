@@ -109,6 +109,7 @@ def create_app(
     application.state.embedding_provider_registry = resolved_embedding_registry
     application.include_router(api_router, prefix="/api/v1")
     observability_runtime = configure_observability(application, resolved_settings)
+    application.state.operational_telemetry = observability_runtime.operational_telemetry
     return application
 
 

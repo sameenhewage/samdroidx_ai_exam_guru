@@ -56,6 +56,7 @@ from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
     EmbeddingProviderUnavailableError,
 )
+from tests.test_operational_telemetry import telemetry
 
 CURRICULUM_ID = UUID(int=1_832_001)
 OTHER_CURRICULUM_ID = UUID(int=1_832_002)
@@ -621,6 +622,52 @@ def test_worker_handles_config_source_progress_and_claim_completion_cas_failures
         assert not await worker._complete_failure(JOB_ID, "embedding_internal_error")
         assert not await worker._complete(base_job, succeeded=True, failure_code=None)
         assert session.rollbacks >= 3
+
+    asyncio.run(exercise())
+
+
+def test_embedding_worker_emits_terminal_counts_after_commit() -> None:
+    async def exercise() -> None:
+        session = FakeSession()
+        terminal = _job(
+            status=EmbeddingJobStatus.SUCCEEDED.value,
+            version=3,
+            requested_count=4,
+            embedded_count=3,
+            deduplicated_count=1,
+        )
+
+        class Repository:
+            async def complete(self, *args: object, **kwargs: object) -> EmbeddingJobModel:
+                del args, kwargs
+                return terminal
+
+        operational, telemetry_logger, _tracer = telemetry()
+        worker = EmbeddingWorkerService(
+            cast(AsyncSession, session),
+            EmbeddingProviderRegistry({}),
+            None,
+            telemetry=operational,
+        )
+        worker._repository = cast(object, Repository())  # type: ignore[assignment]
+
+        assert await worker._complete(terminal, succeeded=True, failure_code=None)
+        assert session.commits == 1
+        assert telemetry_logger.records == [
+            (
+                "Operational event",
+                {
+                    "event_name": "embedding.terminal",
+                    "outcome": "succeeded",
+                    "failure_code": None,
+                    "status": "succeeded",
+                    "requested_count": 4,
+                    "embedded_count": 3,
+                    "deduplicated_count": 1,
+                },
+            )
+        ]
+        assert str(terminal.id) not in str(telemetry_logger.records)
 
     asyncio.run(exercise())
 

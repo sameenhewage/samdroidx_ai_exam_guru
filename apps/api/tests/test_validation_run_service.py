@@ -66,9 +66,11 @@ from exam_guru_api.validation.service import (
     _question_from_snapshot,
     _request_fingerprint_payload,
     _text,
+    _validation_creation_failure_code,
     reconstruct_generation_result,
     reconstruct_validation_report,
 )
+from tests.test_operational_telemetry import telemetry
 from tests.test_validation_generation_integration import _PAPER, _result
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -837,6 +839,8 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
         record, _ = generation_record()
         repository = FakeRepository(record)
         service, session = service_with_fake(repository)
+        operational, telemetry_logger, _tracer = telemetry()
+        service._telemetry = operational
 
         created = await service.create(
             CURRICULUM_ID,
@@ -851,6 +855,19 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
         assert repository.run_values["generation_result_fingerprint"]
         assert len(session.added) == 1
         assert session.commits == 1
+        assert telemetry_logger.records == [
+            (
+                "Operational event",
+                {
+                    "event_name": "validation.creation",
+                    "outcome": "succeeded",
+                    "failure_code": None,
+                    "overall_status": "pass",
+                    "finding_count": 13,
+                    "deduplicated": False,
+                },
+            )
+        ]
         assert await service.get_run(CURRICULUM_ID, created.run.id) is repository.listed_run
         assert await service.list_runs(CURRICULUM_ID, limit=10, offset=0) == (
             repository.listed_run,
@@ -866,6 +883,61 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
         missing_service, _ = service_with_fake(missing_repository)
         with pytest.raises(ValidationCurriculumNotFoundError):
             await missing_service.list_runs(CURRICULUM_ID, limit=10, offset=0)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (ValidationCurriculumNotFoundError(), "validation_curriculum_not_found"),
+        (ValidationGenerationNotSucceededError(), "validation_generation_not_succeeded"),
+        (ValidationGenerationIntegrityError(), "validation_generation_integrity"),
+        (ValidationPipelineVersionConflictError(), "validation_pipeline_conflict"),
+        (ValidationIdempotencyConflictError(), "validation_idempotency_conflict"),
+        (ValidationResourceLimitError(), "validation_resource_limit"),
+        (ValidationReportIntegrityError(), "validation_report_integrity"),
+        (RuntimeError("raw candidate secret"), "validation_internal_error"),
+    ],
+)
+def test_validation_creation_failure_codes_are_fixed(error: Exception, code: str) -> None:
+    assert _validation_creation_failure_code(error) == code
+    assert "secret" not in code
+
+
+def test_validation_service_sanitizes_failed_creation_telemetry() -> None:
+    async def exercise() -> None:
+        record, _ = generation_record()
+        service, _session = service_with_fake(FakeRepository(record))
+        operational, telemetry_logger, _tracer = telemetry()
+        service._telemetry = operational
+
+        async def crash(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("raw candidate and source secret")
+
+        service._repository.get_generation = crash  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="raw candidate"):
+            await service.create(
+                CURRICULUM_ID,
+                generation_run_id=RUN_ID,
+                actor_id=ACTOR_ID,
+            )
+
+        assert telemetry_logger.records == [
+            (
+                "Operational event",
+                {
+                    "event_name": "validation.creation",
+                    "outcome": "failed",
+                    "failure_code": "validation_internal_error",
+                    "overall_status": None,
+                    "finding_count": 0,
+                    "deduplicated": False,
+                },
+            )
+        ]
+        assert "source secret" not in str(telemetry_logger.records)
 
     asyncio.run(exercise())
 

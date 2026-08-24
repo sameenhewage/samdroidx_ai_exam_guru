@@ -67,6 +67,7 @@ untyped_calls_exclude = ["dramatiq", "pymupdf"]
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra"]
 markers = [
+    "backup_restore: bounded PostgreSQL custom dump/restore recovery evidence",
     "integration: requires Docker-backed external services",
     "live_openai: opt-in paid OpenAI contract telemetry; never a normal-CI quality gate",
 ]

@@ -36,6 +36,7 @@ from exam_guru_api.generation.models import (
     GenerationRunModel,
     GenerationRunStatus,
 )
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.validation.domain import (
     MAX_DUPLICATE_TEXT_CHARACTERS,
     REPORT_SCHEMA_VERSION,
@@ -103,6 +104,24 @@ class ValidationResourceLimitError(RuntimeError):
 
 class ValidationReportIntegrityError(RuntimeError):
     pass
+
+
+def _validation_creation_failure_code(error: Exception) -> str:
+    if isinstance(error, ValidationCurriculumNotFoundError):
+        return "validation_curriculum_not_found"
+    if isinstance(error, ValidationGenerationNotSucceededError):
+        return "validation_generation_not_succeeded"
+    if isinstance(error, ValidationGenerationIntegrityError):
+        return "validation_generation_integrity"
+    if isinstance(error, ValidationPipelineVersionConflictError):
+        return "validation_pipeline_conflict"
+    if isinstance(error, ValidationIdempotencyConflictError):
+        return "validation_idempotency_conflict"
+    if isinstance(error, ValidationResourceLimitError):
+        return "validation_resource_limit"
+    if isinstance(error, ValidationReportIntegrityError):
+        return "validation_report_integrity"
+    return "validation_internal_error"
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,6 +753,8 @@ class ValidationRunService:
         self,
         session: AsyncSession,
         pipeline: ValidationPipeline,
+        *,
+        telemetry: OperationalTelemetry | None = None,
     ) -> None:
         if not isinstance(pipeline, ValidationPipeline):
             raise TypeError("pipeline must be ValidationPipeline")
@@ -741,9 +762,43 @@ class ValidationRunService:
             raise ValidationResourceLimitError("validation validator count exceeds its bound")
         self._session = session
         self._pipeline = pipeline
+        self._telemetry = telemetry or get_operational_telemetry()
         self._repository = SqlAlchemyValidationRepository(session)
 
     async def create(
+        self,
+        curriculum_version_id: UUID,
+        *,
+        generation_run_id: UUID,
+        actor_id: UUID,
+    ) -> ValidationCreationResult:
+        try:
+            result = await self._create(
+                curriculum_version_id,
+                generation_run_id=generation_run_id,
+                actor_id=actor_id,
+            )
+        except Exception as error:
+            self._telemetry.validation_creation(
+                outcome="failed",
+                failure_code=_validation_creation_failure_code(error),
+                overall_status=None,
+                finding_count=0,
+                deduplicated=False,
+            )
+            raise
+        overall_status = result.run.overall_status
+        finding_count = result.run.finding_count
+        self._telemetry.validation_creation(
+            outcome="succeeded",
+            failure_code=None,
+            overall_status=overall_status if isinstance(overall_status, str) else None,
+            finding_count=finding_count if isinstance(finding_count, int) else 0,
+            deduplicated=result.deduplicated,
+        )
+        return result
+
+    async def _create(
         self,
         curriculum_version_id: UUID,
         *,

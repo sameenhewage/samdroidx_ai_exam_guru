@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.domain import Permission, Principal, authorize
 from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.papers.domain import (
     AssemblyViolation,
     ConcurrentVersionError,
@@ -81,6 +82,26 @@ class PaperCommandInvalidError(PaperPublicationError):
     pass
 
 
+def _paper_failure_code(error: Exception) -> str:
+    if isinstance(error, PaperIdempotencyConflictError):
+        return "paper_idempotency_conflict"
+    if isinstance(error, PaperVersionConflictError):
+        return "paper_version_conflict"
+    if isinstance(error, PaperStateConflictError):
+        return "paper_state_conflict"
+    if isinstance(error, PaperCandidateSelectionResourceLimitError):
+        return "paper_resource_limit"
+    if isinstance(error, PaperCandidateSelectionError):
+        return "paper_candidate_selection_invalid"
+    if isinstance(error, PaperIntegrityError):
+        return "paper_integrity_error"
+    if isinstance(error, PaperCommandInvalidError):
+        return "paper_command_invalid"
+    if isinstance(error, PermissionError):
+        return "permission_denied"
+    return "paper_internal_error"
+
+
 @dataclass(frozen=True, slots=True)
 class PaperDraftCreationResult:
     record: StoredPaperDraft
@@ -100,8 +121,14 @@ class PaperArchiveResult:
 
 
 class PaperPublicationService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        telemetry: OperationalTelemetry | None = None,
+    ) -> None:
         self._session = session
+        self._telemetry = telemetry or get_operational_telemetry()
         self._repository = SqlAlchemyPaperPublicationRepository(session)
         self._workflow = PaperWorkflowService()
 
@@ -349,6 +376,41 @@ class PaperPublicationService:
         expected_version: int,
         principal: Principal,
     ) -> PaperPublicationResult:
+        try:
+            result = await self._publish(
+                curriculum_version_id,
+                paper_id,
+                expected_version=expected_version,
+                principal=principal,
+            )
+        except Exception as error:
+            self._telemetry.paper_transition(
+                action="published",
+                outcome="failed",
+                failure_code=_paper_failure_code(error),
+                version=None,
+                question_count=None,
+                deduplicated=False,
+            )
+            raise
+        self._telemetry.paper_transition(
+            action="published",
+            outcome="succeeded",
+            failure_code=None,
+            version=result.record.domain.version,
+            question_count=len(result.record.domain.questions),
+            deduplicated=result.deduplicated,
+        )
+        return result
+
+    async def _publish(
+        self,
+        curriculum_version_id: UUID,
+        paper_id: UUID,
+        *,
+        expected_version: int,
+        principal: Principal,
+    ) -> PaperPublicationResult:
         authorize(principal, Permission.PAPER_PUBLISH)
         try:
             paper = await self._repository.get_paper(
@@ -433,6 +495,43 @@ class PaperPublicationService:
             raise
 
     async def archive(
+        self,
+        curriculum_version_id: UUID,
+        paper_id: UUID,
+        *,
+        expected_version: int,
+        reason: str,
+        principal: Principal,
+    ) -> PaperArchiveResult:
+        try:
+            result = await self._archive(
+                curriculum_version_id,
+                paper_id,
+                expected_version=expected_version,
+                reason=reason,
+                principal=principal,
+            )
+        except Exception as error:
+            self._telemetry.paper_transition(
+                action="archived",
+                outcome="failed",
+                failure_code=_paper_failure_code(error),
+                version=None,
+                question_count=None,
+                deduplicated=False,
+            )
+            raise
+        self._telemetry.paper_transition(
+            action="archived",
+            outcome="succeeded",
+            failure_code=None,
+            version=result.record.archive.version,
+            question_count=len(result.record.publication.domain.questions),
+            deduplicated=result.deduplicated,
+        )
+        return result
+
+    async def _archive(
         self,
         curriculum_version_id: UUID,
         paper_id: UUID,

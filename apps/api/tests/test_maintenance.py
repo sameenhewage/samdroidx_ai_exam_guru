@@ -269,3 +269,39 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
     assert calls == ["extraction", "generation", "embedding"]
     assert handlers == [handlers[0], previous_handler]
     assert broker.closed is True
+
+
+def test_scheduler_loop_exits_naturally_when_wait_sets_stop_flag() -> None:
+    class NaturalStopSignal:
+        def __init__(self) -> None:
+            self.stopped = False
+            self.waits: list[float] = []
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def set(self) -> None:
+            self.stopped = True
+
+        def wait(self, timeout: float) -> bool:
+            self.waits.append(timeout)
+            self.stopped = True
+            return False
+
+    stop = NaturalStopSignal()
+    calls = 0
+
+    def tick() -> MaintenanceTickResult:
+        nonlocal calls
+        calls += 1
+        return MaintenanceTickResult(enqueued=3, failures=0)
+
+    run_maintenance_loop(
+        tick,
+        interval_seconds=5,
+        stop_signal=stop,
+        monotonic=monotonic_clock(10.0, 11.0),
+    )
+
+    assert calls == 1
+    assert stop.waits == [4.0]

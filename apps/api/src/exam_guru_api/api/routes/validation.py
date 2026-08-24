@@ -6,10 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exam_guru_api.api.dependencies import get_database_session, get_validation_pipeline
+from exam_guru_api.api.dependencies import (
+    get_database_session,
+    get_operational_telemetry,
+    get_validation_pipeline,
+)
 from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.validation.pipeline import ValidationPipeline
 from exam_guru_api.validation.repository import (
     ValidationGenerationNotFoundError,
@@ -42,6 +47,7 @@ ReadPrincipal = Annotated[
 ]
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 ActivePipeline = Annotated[ValidationPipeline, Depends(get_validation_pipeline)]
+Telemetry = Annotated[OperationalTelemetry | None, Depends(get_operational_telemetry)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0, le=100_000)]
 FindingOffset = Annotated[int, Query(ge=0, le=10_000)]
@@ -76,10 +82,16 @@ async def create_validation_run(
     principal: RunPrincipal,
     session: DatabaseSession,
     pipeline: ActivePipeline,
+    telemetry: Telemetry = None,
 ) -> ValidationRunResponse:
+    service = (
+        ValidationRunService(session, pipeline)
+        if telemetry is None
+        else ValidationRunService(session, pipeline, telemetry=telemetry)
+    )
     result = await _execute_validation_operation(
         session,
-        lambda: ValidationRunService(session, pipeline).create(
+        lambda: service.create(
             curriculum_version_id,
             generation_run_id=request.generation_run_id,
             actor_id=principal.subject_id,
