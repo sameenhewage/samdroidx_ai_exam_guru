@@ -157,13 +157,14 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 
 ### Evidence
 - `8325efe` starts P3 with strict historical-question and educational-boundary chunk contracts, immutable source document/page/block provenance, forward-only review states, taxonomy classification requirements for reviewed records, and a provider/model/dimension/version/config-fingerprint-aware deterministic embedding port.
-- Fifteen focused domain tests pass with 100% statements and branches. The complete backend gate after real-data inventory and overlay hardening is 312 tests with 100% statements and branches; Ruff check/format and strict mypy pass.
-- Remaining: PostgreSQL/pgvector persistence and migration, idempotent source import, reviewer classification API/UI, real reviewed chunk/question records, and embedding/re-embedding integration evidence.
+- `d654bf4` adds PostgreSQL/pgvector persistence, trusted-source and same-curriculum provenance enforcement, taxonomy hierarchy validation, immutable forward review-state triggers, atomic duplicate import handling, immutable versioned embedding configurations, source-text hash binding, idempotent re-embedding, transactional audit events, and real PostgreSQL 18/pgvector integration tests.
+- `502198f` keeps the isolated integration credential scanner-safe. The unified backend gate is 984 tests with 100% statements and branches; all 35 integration tests, Ruff check/format, strict mypy, local-data boundary checks, and the committed-file secret scan pass.
+- Remaining: authorized reviewer classification API/UI with optimistic concurrency, representative real reviewed chunk/question records, and generated-client/browser acceptance evidence.
 
 ---
 
 ## P4 — RAG Retrieval & Grounding
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - metadata filters
@@ -185,12 +186,14 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] adversarial/irrelevant queries are handled safely
 
 ### Evidence
-TBD
+- `1c1a80d` starts P4 with exact grade/exam/medium/curriculum/taxonomy boundaries applied before ranking, embedding-space validation, deterministic weighted reciprocal-rank fusion, Unicode-normalized deduplication, bounded opaque context with complete provenance, and fixed identifier-based Recall@K, Precision@K, MRR, nDCG and leakage metrics.
+- One hundred thirty focused retrieval tests pass with 100% statements and branches, including stronger-scoring forbidden scopes, mixed vector spaces, prompt-injection source text, irrelevant queries, duplicate poisoning, control-character rejection and context amplification limits.
+- Remaining: real PostgreSQL lexical/pgvector adapter integration, representative fixed Grade 5 eval records and baseline thresholds, authorized RAG Explorer API/UI, and runtime latency evidence.
 
 ---
 
 ## P5 — Historical Exam Intelligence, Forecasting & Backtesting
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - deterministic historical statistics
@@ -211,12 +214,14 @@ TBD
 - [ ] no UI/API claims exact future-exam certainty
 
 ### Evidence
-TBD
+- `04a391d` starts P5 with provenance-backed historical observations, exact deterministic competency/skill/type/difficulty/marks distributions, syllabus-balanced baseline and practice-priority methods, explicit pre-holdout leakage rejection, expanding rolling held-out windows, baseline deltas/variance/limitations, and safe baseline fallback when improvement is not meaningful.
+- Fifty-seven focused analytics/backtest tests pass with 100% statements and branches. Synthetic fixed fixtures prove mechanics only; no future-exam prediction claim is made.
+- Remaining: persistence and APIs, reviewed multi-year real Grade 5 question records, stored visible baseline reports, and admin visualization/browser acceptance.
 
 ---
 
 ## P6 — Deterministic Paper Blueprint Engine
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - paper structure rules
@@ -235,12 +240,14 @@ TBD
 - [ ] admin can inspect a blueprint before generation
 
 ### Evidence
-TBD
+- `7a04c3a` starts P6 with a deterministic versioned blueprint constraint solver, exact paper/section marks, question-type/difficulty/taxonomy allocations, impossible-constraint diagnostics, baseline-safe forecast priorities and self-contained generation slots with scope, rationale and evidence.
+- One hundred twenty-six focused blueprint tests pass with 100% statements and branches across deterministic seeds, boundary distributions, conflicts, backtracking and forged aggregate invariants.
+- Remaining: persisted blueprint versions, direct P5 backtest integration, authorized API and admin inspection/browser acceptance.
 
 ---
 
 ## P7 — LLM Provider Layer & Question Generation
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - provider-independent LLM interface
@@ -263,12 +270,14 @@ TBD
 - [ ] generation uses blueprint + grounded context, not a generic "make a paper" prompt
 
 ### Evidence
-TBD
+- `e9a3d3b` starts P7 with provider-independent typed contracts, canonical P6 blueprint-slot integration, bounded untrusted provenance context, strict structured question/answer/marking schemas, prompt/provider/model/blueprint/retrieval/schema versions, token/cost/latency accounting, typed failures, deterministic fakes, idempotency identity and append-only prompt version registration.
+- The generation boundary has no SDK dependency or publish authority; all candidates require validation. Prompt templates reject reserved context interpolation while retrieved prompt-injection text remains opaque data. Generation and blueprint integration tests pass with 100% generation-package statements and branches.
+- Remaining: bounded retry/cumulative-budget orchestration, persistence/jobs/API, initial provider adapter, opt-in live-model eval/cost evidence, and admin generation inspection.
 
 ---
 
 ## P8 — Automated Validation, Evals & Duplicate Detection
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - curriculum-scope checks
@@ -291,12 +300,14 @@ TBD
 - [ ] live-model eval baseline exists for the chosen generation configuration
 
 ### Evidence
-TBD
+- `f0f45b8` starts P8 with immutable versioned validation inputs/reports/findings, stable pass/warn/fail codes, bounded non-leaking evidence, deterministic schema/blueprint/option/answer/marks/grounding/injection/language/age indicators and exact/hash duplicate checks composed through a canonical pipeline.
+- Ninety-four focused validator tests pass with 100% statements and branches. Reports explicitly state that deterministic success does not prove semantic correctness, factual grounding, age appropriateness, fluency or paraphrase uniqueness.
+- Remaining: canonical P7 adapter, persisted/auditable runs and findings, stronger semantic/paraphrase and deterministic subject solvers where feasible, fixed real-content evals, live-model baseline, APIs and admin inspection.
 
 ---
 
 ## P9 — Human Review, Question Bank & Paper Publishing
-**Status:** NOT_STARTED
+**Status:** IN_PROGRESS
 
 ### Scope
 - reviewer queue
@@ -316,7 +327,9 @@ TBD
 - [ ] complete Grade 5 practice paper can be generated, reviewed and published end-to-end
 
 ### Evidence
-TBD
+- `279c4b7` starts P9 with a strict generated→validated→in-review→approved/rejected candidate lifecycle, immutable generation/provenance/validation lineage and reviewer revisions, optimistic command versions, approved-only exact-slot paper assembly, explicit publish authorization, deterministic immutable published snapshots/content hashes and forward-only archive contracts.
+- One hundred fourteen focused paper tests pass with 100% statements and branches, including direct publish construction, forged states, stale commands, prompt-like authorization text, duplicate slots, unapproved candidates and publication mutation attempts.
+- Remaining: canonical generation/validation adapters, persistence and database bypass triggers, append-only audit events, authorized APIs, reviewer/admin UI, approved question bank, and complete browser-tested Grade 5 paper publication.
 
 ---
 
