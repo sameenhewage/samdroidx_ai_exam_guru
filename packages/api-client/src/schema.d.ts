@@ -91,6 +91,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/embedding-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List curriculum embedding jobs */
+        get: operations["list_embedding_jobs"];
+        put?: never;
+        /** Queue reviewed curriculum records for server-owned embedding */
+        post: operations["create_embedding_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/embedding-jobs/{embedding_job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a durable curriculum embedding job */
+        get: operations["get_embedding_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/generation-jobs/{generation_job_id}": {
         parameters: {
             query?: never;
@@ -1645,6 +1680,105 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** EmbeddingConfigurationResponse */
+        EmbeddingConfigurationResponse: {
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Dimension */
+            dimension: number;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Version */
+            version: string;
+        };
+        /** EmbeddingJobCountsResponse */
+        EmbeddingJobCountsResponse: {
+            /** Deduplicated */
+            deduplicated: number;
+            /** Embedded */
+            embedded: number;
+            /** Requested */
+            requested: number;
+        };
+        /**
+         * EmbeddingJobCreateRequest
+         * @description Record selection only; source text, vectors, and configuration remain server-owned.
+         */
+        EmbeddingJobCreateRequest: {
+            /**
+             * Historical Question Ids
+             * @default []
+             */
+            historical_question_ids: string[];
+            /**
+             * Knowledge Chunk Ids
+             * @default []
+             */
+            knowledge_chunk_ids: string[];
+        };
+        /** EmbeddingJobResponse */
+        EmbeddingJobResponse: {
+            /** Claimed At */
+            claimed_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            configuration: components["schemas"]["EmbeddingConfigurationResponse"];
+            counts: components["schemas"]["EmbeddingJobCountsResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Historical Question Ids */
+            historical_question_ids: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Knowledge Chunk Ids */
+            knowledge_chunk_ids: string[];
+            /** Queue Message Id */
+            queue_message_id: string | null;
+            /** Retry Of Job Id */
+            retry_of_job_id: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "claimed" | "succeeded" | "failed";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * EmbeddingJobStatus
+         * @enum {string}
+         */
+        EmbeddingJobStatus: "queued" | "claimed" | "succeeded" | "failed";
         /**
          * EmbeddingStatus
          * @enum {string}
@@ -4685,6 +4819,191 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_embedding_jobs: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["EmbeddingJobStatus"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingJobResponse"][];
+                };
+            };
+            /** @description Embedding job, curriculum, or selected source not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding idempotency, source identity, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Selected source is not reviewed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding configuration, provider, or queue unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_embedding_job: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingJobCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingJobResponse"];
+                };
+            };
+            /** @description Embedding job, curriculum, or selected source not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding idempotency, source identity, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Selected source is not reviewed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding configuration, provider, or queue unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_embedding_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                embedding_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingJobResponse"];
+                };
+            };
+            /** @description Embedding job, curriculum, or selected source not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding idempotency, source identity, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Selected source is not reviewed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Embedding configuration, provider, or queue unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };
