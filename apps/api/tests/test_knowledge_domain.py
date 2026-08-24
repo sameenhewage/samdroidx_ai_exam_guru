@@ -1,9 +1,12 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 
 from exam_guru_api.knowledge.domain import (
     ChunkType,
+    EmbeddingConfigurationMetadata,
+    EmbeddingStatus,
     HistoricalQuestion,
     KnowledgeChunk,
     KnowledgeContractError,
@@ -153,6 +156,84 @@ def test_review_state_machine_is_forward_only() -> None:
 
     with pytest.raises(KnowledgeContractError):
         transition_review_state(ReviewState.REVIEWED, ReviewState.DRAFT)
+
+
+def test_persisted_knowledge_metadata_tracks_version_timestamps_and_embedding_status() -> None:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    configuration = EmbeddingConfigurationMetadata(
+        id=UUID(int=30),
+        provider="fixture-provider",
+        model="fixture-model",
+        dimension=3,
+        version="v1",
+        config_fingerprint="fixture-space-v1",
+    )
+    question = HistoricalQuestion(
+        id=UUID(int=10),
+        curriculum_version_id=UUID(int=11),
+        year=2020,
+        paper_code="P1",
+        question_number="1",
+        text="Persisted question",
+        question_type=QuestionType.MULTIPLE_CHOICE,
+        marks=2,
+        provenance=provenance(),
+        version=4,
+        created_at=timestamp,
+        updated_at=timestamp,
+        embedding_configurations=(configuration,),
+    )
+    chunk = KnowledgeChunk(
+        id=UUID(int=20),
+        curriculum_version_id=UUID(int=11),
+        chunk_type=ChunkType.EXPLANATION,
+        text="Persisted chunk",
+        educational_boundary="Unit",
+        sequence=0,
+        provenance=provenance(),
+    )
+
+    embedded_chunk = KnowledgeChunk(
+        id=UUID(int=21),
+        curriculum_version_id=UUID(int=11),
+        chunk_type=ChunkType.EXPLANATION,
+        text="Embedded chunk",
+        educational_boundary="Unit",
+        sequence=1,
+        provenance=provenance(),
+        embedding_configurations=(configuration,),
+    )
+
+    assert question.embedding_status is EmbeddingStatus.EMBEDDED
+    assert chunk.embedding_status is EmbeddingStatus.NOT_EMBEDDED
+    assert embedded_chunk.embedding_status is EmbeddingStatus.EMBEDDED
+    assert question.version == 4
+    assert question.created_at == question.updated_at == timestamp
+
+    with pytest.raises(KnowledgeContractError, match="version"):
+        HistoricalQuestion(
+            id=UUID(int=40),
+            curriculum_version_id=UUID(int=11),
+            year=2020,
+            paper_code="P1",
+            question_number="2",
+            text="Invalid version",
+            question_type=QuestionType.SHORT_ANSWER,
+            marks=1,
+            provenance=provenance(),
+            version=-1,
+        )
+    with pytest.raises(KnowledgeContractError, match="version"):
+        KnowledgeChunk(
+            id=UUID(int=41),
+            curriculum_version_id=UUID(int=11),
+            chunk_type=ChunkType.EXPLANATION,
+            text="Invalid version",
+            educational_boundary="Unit",
+            sequence=0,
+            provenance=provenance(),
+            version=-1,
+        )
 
 
 def test_deterministic_embedding_is_versioned_bounded_and_repeatable() -> None:

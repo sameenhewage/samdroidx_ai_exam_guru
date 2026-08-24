@@ -7,9 +7,15 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.curriculum.models import CurriculumVersionModel
+from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
+from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import (
+    ChunkType,
     HistoricalQuestion,
     KnowledgeChunk,
+    KnowledgeContractError,
+    QuestionType,
     ReviewState,
     transition_review_state,
 )
@@ -19,6 +25,7 @@ from exam_guru_api.knowledge.embeddings import (
     EmbeddingResult,
 )
 from exam_guru_api.knowledge.repository import (
+    ConcurrentKnowledgeVersionError,
     SqlAlchemyKnowledgeRepository,
 )
 
@@ -28,6 +35,45 @@ class FinalKnowledgeRecordError(RuntimeError):
         self.record_id = record_id
         self.state = state
         super().__init__(f"cannot change classification of {state.value} record {record_id}")
+
+
+class KnowledgeCurriculumNotFoundError(LookupError):
+    def __init__(self, curriculum_version_id: UUID) -> None:
+        self.curriculum_version_id = curriculum_version_id
+        super().__init__(f"curriculum version not found: {curriculum_version_id}")
+
+
+class KnowledgeSourceDocumentNotFoundError(LookupError):
+    def __init__(self, source_document_id: UUID) -> None:
+        self.source_document_id = source_document_id
+        super().__init__(f"source document not found: {source_document_id}")
+
+
+class KnowledgeSourceCurriculumMismatchError(ValueError):
+    def __init__(self, source_document_id: UUID, curriculum_version_id: UUID) -> None:
+        self.source_document_id = source_document_id
+        self.curriculum_version_id = curriculum_version_id
+        super().__init__(
+            f"source document {source_document_id} does not belong to {curriculum_version_id}"
+        )
+
+
+class TrustedKnowledgeSourceRequiredError(ValueError):
+    def __init__(self, source_document_id: UUID) -> None:
+        self.source_document_id = source_document_id
+        super().__init__(f"trusted source document required: {source_document_id}")
+
+
+class KnowledgeSourceMetadataMismatchError(ValueError):
+    def __init__(self, source_document_id: UUID) -> None:
+        self.source_document_id = source_document_id
+        super().__init__(f"historical question metadata does not match {source_document_id}")
+
+
+class KnowledgeRecordNotReadyError(ValueError):
+    def __init__(self, record_id: UUID) -> None:
+        self.record_id = record_id
+        super().__init__(f"knowledge record is not ready for review: {record_id}")
 
 
 class EmbeddingDimensionMismatchError(ValueError):
@@ -71,6 +117,8 @@ class KnowledgePersistenceService:
         *,
         actor_id: UUID,
     ) -> SourceImportResult[HistoricalQuestion]:
+        await self._ensure_curriculum_exists(question.curriculum_version_id)
+        await self._validate_source(question)
         result = await self._repository.import_question(question, actor_id=actor_id)
         if result.created:
             self._audit(
@@ -82,8 +130,11 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
-                    "source_block_id": str(result.record.provenance.source_block_id),
+                    "source_block_id": self._optional_uuid(
+                        result.record.provenance.source_block_id
+                    ),
                     "question_number": result.record.question_number,
+                    "version": result.record.version,
                 },
             )
             await self._session.commit()
@@ -95,6 +146,8 @@ class KnowledgePersistenceService:
         *,
         actor_id: UUID,
     ) -> SourceImportResult[KnowledgeChunk]:
+        await self._ensure_curriculum_exists(chunk.curriculum_version_id)
+        await self._validate_source(chunk)
         result = await self._repository.import_chunk(chunk, actor_id=actor_id)
         if result.created:
             self._audit(
@@ -106,112 +159,199 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
-                    "source_block_id": str(result.record.provenance.source_block_id),
+                    "source_block_id": self._optional_uuid(
+                        result.record.provenance.source_block_id
+                    ),
                     "sequence": result.record.sequence,
+                    "version": result.record.version,
                 },
             )
             await self._session.commit()
         return SourceImportResult(record=result.record, deduplicated=not result.created)
 
+    async def list_questions(
+        self,
+        curriculum_version_id: UUID,
+        *,
+        review_state: ReviewState | None = None,
+        source_document_id: UUID | None = None,
+        competency_id: UUID | None = None,
+        question_type: QuestionType | None = None,
+        year: int | None = None,
+        paper_code: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[HistoricalQuestion, ...]:
+        await self._ensure_curriculum_exists(curriculum_version_id)
+        return await self._repository.list_questions(
+            curriculum_version_id,
+            review_state=review_state,
+            source_document_id=source_document_id,
+            competency_id=competency_id,
+            question_type=question_type,
+            year=year,
+            paper_code=paper_code,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_chunks(
+        self,
+        curriculum_version_id: UUID,
+        *,
+        review_state: ReviewState | None = None,
+        source_document_id: UUID | None = None,
+        competency_id: UUID | None = None,
+        chunk_type: ChunkType | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[KnowledgeChunk, ...]:
+        await self._ensure_curriculum_exists(curriculum_version_id)
+        return await self._repository.list_chunks(
+            curriculum_version_id,
+            review_state=review_state,
+            source_document_id=source_document_id,
+            competency_id=competency_id,
+            chunk_type=chunk_type,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_question(
+        self,
+        curriculum_version_id: UUID,
+        question_id: UUID,
+    ) -> HistoricalQuestion:
+        await self._ensure_curriculum_exists(curriculum_version_id)
+        return await self._repository.get_question_record(curriculum_version_id, question_id)
+
+    async def get_chunk(
+        self,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
+    ) -> KnowledgeChunk:
+        await self._ensure_curriculum_exists(curriculum_version_id)
+        return await self._repository.get_chunk_record(curriculum_version_id, chunk_id)
+
     async def classify_question(
         self,
+        curriculum_version_id: UUID,
         question_id: UUID,
         *,
         competency_id: UUID | None,
         skill_id: UUID | None,
         sub_skill_id: UUID | None,
         learning_concept_id: UUID | None,
+        expected_version: int,
         actor_id: UUID,
     ) -> HistoricalQuestion:
-        model = await self._repository.get_question(question_id, for_update=True)
-        current = model.to_domain()
+        current = await self.get_question(curriculum_version_id, question_id)
+        self._require_expected_version(current, expected_version)
         classification = (competency_id, skill_id, sub_skill_id, learning_concept_id)
         if self._classification(current) == classification:
             return current
         self._ensure_classification_mutable(current)
         updated = await self._repository.update_question_classification(
-            model,
+            curriculum_version_id,
+            question_id,
             competency_id=competency_id,
             skill_id=skill_id,
             sub_skill_id=sub_skill_id,
             learning_concept_id=learning_concept_id,
+            expected_version=expected_version,
             actor_id=actor_id,
         )
-        self._audit_classification(current, updated, actor_id=actor_id)
+        enriched = await self._repository.get_question_record(curriculum_version_id, updated.id)
+        self._audit_classification(current, enriched, actor_id=actor_id)
         await self._session.commit()
-        return updated
+        return enriched
 
     async def classify_chunk(
         self,
+        curriculum_version_id: UUID,
         chunk_id: UUID,
         *,
         competency_id: UUID | None,
         skill_id: UUID | None,
         sub_skill_id: UUID | None,
         learning_concept_id: UUID | None,
+        expected_version: int,
         actor_id: UUID,
     ) -> KnowledgeChunk:
-        model = await self._repository.get_chunk(chunk_id, for_update=True)
-        current = model.to_domain()
+        current = await self.get_chunk(curriculum_version_id, chunk_id)
+        self._require_expected_version(current, expected_version)
         classification = (competency_id, skill_id, sub_skill_id, learning_concept_id)
         if self._classification(current) == classification:
             return current
         self._ensure_classification_mutable(current)
         updated = await self._repository.update_chunk_classification(
-            model,
+            curriculum_version_id,
+            chunk_id,
             competency_id=competency_id,
             skill_id=skill_id,
             sub_skill_id=sub_skill_id,
             learning_concept_id=learning_concept_id,
+            expected_version=expected_version,
             actor_id=actor_id,
         )
-        self._audit_classification(current, updated, actor_id=actor_id)
+        enriched = await self._repository.get_chunk_record(curriculum_version_id, updated.id)
+        self._audit_classification(current, enriched, actor_id=actor_id)
         await self._session.commit()
-        return updated
+        return enriched
 
     async def transition_question_review(
         self,
+        curriculum_version_id: UUID,
         question_id: UUID,
         target: ReviewState,
         *,
+        expected_version: int,
         actor_id: UUID,
     ) -> HistoricalQuestion:
-        model = await self._repository.get_question(question_id, for_update=True)
-        current = model.to_domain()
+        current = await self.get_question(curriculum_version_id, question_id)
+        self._require_expected_version(current, expected_version)
         transitioned = transition_review_state(current.review_state, target)
         if transitioned is current.review_state:
             return current
-        candidate = replace(current, review_state=transitioned)
+        self._ensure_review_candidate(current, transitioned)
         updated = await self._repository.update_question_review(
-            model,
-            candidate.review_state,
+            curriculum_version_id,
+            question_id,
+            transitioned,
+            expected_version=expected_version,
             actor_id=actor_id,
         )
-        self._audit_review_transition(current, updated, actor_id=actor_id)
+        enriched = await self._repository.get_question_record(curriculum_version_id, updated.id)
+        self._audit_review_transition(current, enriched, actor_id=actor_id)
         await self._session.commit()
-        return updated
+        return enriched
 
     async def transition_chunk_review(
         self,
+        curriculum_version_id: UUID,
         chunk_id: UUID,
         target: ReviewState,
         *,
+        expected_version: int,
         actor_id: UUID,
     ) -> KnowledgeChunk:
-        model = await self._repository.get_chunk(chunk_id, for_update=True)
-        current = model.to_domain()
+        current = await self.get_chunk(curriculum_version_id, chunk_id)
+        self._require_expected_version(current, expected_version)
         transitioned = transition_review_state(current.review_state, target)
         if transitioned is current.review_state:
             return current
-        candidate = replace(current, review_state=transitioned)
+        self._ensure_review_candidate(current, transitioned)
         updated = await self._repository.update_chunk_review(
-            model,
-            candidate.review_state,
+            curriculum_version_id,
+            chunk_id,
+            transitioned,
+            expected_version=expected_version,
             actor_id=actor_id,
         )
-        self._audit_review_transition(current, updated, actor_id=actor_id)
+        enriched = await self._repository.get_chunk_record(curriculum_version_id, updated.id)
+        self._audit_review_transition(current, enriched, actor_id=actor_id)
         await self._session.commit()
-        return updated
+        return enriched
 
     async def store_question_embedding(
         self,
@@ -227,6 +367,7 @@ class KnowledgePersistenceService:
             historical_question_id=question.id,
             knowledge_chunk_id=None,
             text=question.text,
+            record_version=question.version,
             result=result,
             actor_id=actor_id,
             resource_type="historical_question",
@@ -246,6 +387,7 @@ class KnowledgePersistenceService:
             historical_question_id=None,
             knowledge_chunk_id=chunk.id,
             text=chunk.text,
+            record_version=chunk.version,
             result=result,
             actor_id=actor_id,
             resource_type="knowledge_chunk",
@@ -257,6 +399,7 @@ class KnowledgePersistenceService:
         historical_question_id: UUID | None,
         knowledge_chunk_id: UUID | None,
         text: str,
+        record_version: int,
         result: EmbeddingResult,
         actor_id: UUID,
         resource_type: str,
@@ -287,9 +430,10 @@ class KnowledgePersistenceService:
                     "provider": config.provider,
                     "model": config.model,
                     "dimension": config.dimension,
-                    "version": config.version,
+                    "embedding_version": config.version,
                     "config_fingerprint": config.config_fingerprint,
                     "source_text_sha256": stored.source_text_sha256,
+                    "version": record_version,
                 },
             )
             await self._session.commit()
@@ -301,6 +445,29 @@ class KnowledgePersistenceService:
             vector=stored.vector,
             deduplicated=not stored.created,
         )
+
+    async def _ensure_curriculum_exists(self, curriculum_version_id: UUID) -> None:
+        if await self._session.get(CurriculumVersionModel, curriculum_version_id) is None:
+            raise KnowledgeCurriculumNotFoundError(curriculum_version_id)
+
+    async def _validate_source(self, record: HistoricalQuestion | KnowledgeChunk) -> None:
+        source_document_id = record.provenance.source_document_id
+        document = await self._session.get(SourceDocumentModel, source_document_id)
+        if document is None:
+            raise KnowledgeSourceDocumentNotFoundError(source_document_id)
+        if document.curriculum_version_id != record.curriculum_version_id:
+            raise KnowledgeSourceCurriculumMismatchError(
+                source_document_id,
+                record.curriculum_version_id,
+            )
+        if document.extraction_status is not ExtractionStatus.TRUSTED:
+            raise TrustedKnowledgeSourceRequiredError(source_document_id)
+        if isinstance(record, HistoricalQuestion) and (
+            document.document_type is not SourceDocumentType.PAST_PAPER
+            or document.year != record.year
+            or document.paper_code != record.paper_code
+        ):
+            raise KnowledgeSourceMetadataMismatchError(source_document_id)
 
     @staticmethod
     def _validate_embedding(result: EmbeddingResult) -> None:
@@ -324,6 +491,24 @@ class KnowledgePersistenceService:
     def _require_reviewed(record: HistoricalQuestion | KnowledgeChunk) -> None:
         if record.review_state is not ReviewState.REVIEWED:
             raise EmbeddingRequiresReviewedRecordError(record.id, record.review_state)
+
+    @staticmethod
+    def _require_expected_version(
+        record: HistoricalQuestion | KnowledgeChunk,
+        expected_version: int,
+    ) -> None:
+        if record.version != expected_version:
+            raise ConcurrentKnowledgeVersionError(expected_version, record.version)
+
+    @staticmethod
+    def _ensure_review_candidate(
+        record: HistoricalQuestion | KnowledgeChunk,
+        target: ReviewState,
+    ) -> None:
+        try:
+            replace(record, review_state=target)
+        except KnowledgeContractError as error:
+            raise KnowledgeRecordNotReadyError(record.id) from error
 
     @staticmethod
     def _classification(
@@ -357,6 +542,8 @@ class KnowledgePersistenceService:
             payload={
                 "from": self._classification_payload(previous),
                 "to": self._classification_payload(updated),
+                "previous_version": previous.version,
+                "version": updated.version,
             },
         )
 
@@ -376,6 +563,8 @@ class KnowledgePersistenceService:
             payload={
                 "from": previous.review_state.value,
                 "to": updated.review_state.value,
+                "previous_version": previous.version,
+                "version": updated.version,
             },
         )
 
@@ -384,13 +573,17 @@ class KnowledgePersistenceService:
         record: HistoricalQuestion | KnowledgeChunk,
     ) -> dict[str, str | None]:
         return {
-            "competency_id": str(record.competency_id) if record.competency_id else None,
-            "skill_id": str(record.skill_id) if record.skill_id else None,
-            "sub_skill_id": str(record.sub_skill_id) if record.sub_skill_id else None,
-            "learning_concept_id": (
-                str(record.learning_concept_id) if record.learning_concept_id else None
+            "competency_id": KnowledgePersistenceService._optional_uuid(record.competency_id),
+            "skill_id": KnowledgePersistenceService._optional_uuid(record.skill_id),
+            "sub_skill_id": KnowledgePersistenceService._optional_uuid(record.sub_skill_id),
+            "learning_concept_id": KnowledgePersistenceService._optional_uuid(
+                record.learning_concept_id
             ),
         }
+
+    @staticmethod
+    def _optional_uuid(value: UUID | None) -> str | None:
+        return str(value) if value is not None else None
 
     @staticmethod
     def _resource_type(record: HistoricalQuestion | KnowledgeChunk) -> str:

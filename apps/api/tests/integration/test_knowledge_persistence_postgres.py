@@ -50,6 +50,7 @@ from exam_guru_api.knowledge.service import (
     EmbeddingRequiresReviewedRecordError,
     FinalKnowledgeRecordError,
     KnowledgePersistenceService,
+    TrustedKnowledgeSourceRequiredError,
 )
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
@@ -332,74 +333,94 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
                 )
 
             classified_question = await service.classify_question(
+                seed.curriculum_version_id,
                 question.id,
                 competency_id=seed.competency_id,
                 skill_id=seed.skill_id,
                 sub_skill_id=None,
                 learning_concept_id=None,
+                expected_version=0,
                 actor_id=ACTOR_ID,
             )
             classified_chunk = await service.classify_chunk(
+                seed.curriculum_version_id,
                 chunk.id,
                 competency_id=seed.competency_id,
                 skill_id=seed.skill_id,
                 sub_skill_id=None,
                 learning_concept_id=None,
+                expected_version=0,
                 actor_id=ACTOR_ID,
             )
             assert classified_question.competency_id == seed.competency_id
             assert classified_chunk.skill_id == seed.skill_id
             assert (
                 await service.classify_question(
+                    seed.curriculum_version_id,
                     question.id,
                     competency_id=seed.competency_id,
                     skill_id=seed.skill_id,
                     sub_skill_id=None,
                     learning_concept_id=None,
+                    expected_version=1,
                     actor_id=ACTOR_ID,
                 )
                 == classified_question
             )
             assert (
                 await service.classify_chunk(
+                    seed.curriculum_version_id,
                     chunk.id,
                     competency_id=seed.competency_id,
                     skill_id=seed.skill_id,
                     sub_skill_id=None,
                     learning_concept_id=None,
+                    expected_version=1,
                     actor_id=ACTOR_ID,
                 )
                 == classified_chunk
             )
 
             await service.transition_question_review(
+                seed.curriculum_version_id,
                 question.id,
                 ReviewState.IN_REVIEW,
+                expected_version=1,
                 actor_id=ACTOR_ID,
             )
             reviewed_question = await service.transition_question_review(
+                seed.curriculum_version_id,
                 question.id,
                 ReviewState.REVIEWED,
+                expected_version=2,
                 actor_id=ACTOR_ID,
             )
             await service.transition_chunk_review(
+                seed.curriculum_version_id,
                 chunk.id,
                 ReviewState.IN_REVIEW,
+                expected_version=1,
                 actor_id=ACTOR_ID,
             )
             reviewed_chunk = await service.transition_chunk_review(
+                seed.curriculum_version_id,
                 chunk.id,
                 ReviewState.REVIEWED,
+                expected_version=2,
                 actor_id=ACTOR_ID,
             )
             repeated_review = await service.transition_chunk_review(
+                seed.curriculum_version_id,
                 chunk.id,
                 ReviewState.REVIEWED,
+                expected_version=3,
                 actor_id=ACTOR_ID,
             )
             repeated_question_review = await service.transition_question_review(
+                seed.curriculum_version_id,
                 question.id,
                 ReviewState.REVIEWED,
+                expected_version=3,
                 actor_id=ACTOR_ID,
             )
             assert reviewed_question.review_state is ReviewState.REVIEWED
@@ -408,11 +429,13 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
             assert repeated_review == reviewed_chunk
             with pytest.raises(FinalKnowledgeRecordError):
                 await service.classify_question(
+                    seed.curriculum_version_id,
                     question.id,
                     competency_id=seed.competency_id,
                     skill_id=None,
                     sub_skill_id=None,
                     learning_concept_id=None,
+                    expected_version=3,
                     actor_id=ACTOR_ID,
                 )
 
@@ -451,6 +474,14 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
                 vector_v1,
                 actor_id=ACTOR_ID,
             )
+            question_with_metadata = await service.get_question(
+                seed.curriculum_version_id,
+                question.id,
+            )
+            chunk_with_metadata = await service.get_chunk(
+                seed.curriculum_version_id,
+                chunk.id,
+            )
 
             assert first_embedding.deduplicated is False
             assert repeated_embedding.deduplicated is True
@@ -458,6 +489,10 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
             assert versioned_embedding.id != first_embedding.id
             assert versioned_embedding.configuration_id != first_embedding.configuration_id
             assert question_embedding.deduplicated is False
+            assert len(question_with_metadata.embedding_configurations) == 1
+            assert question_with_metadata.embedding_configurations[0].provider == "fixture-provider"
+            assert len(chunk_with_metadata.embedding_configurations) == 2
+            assert chunk_with_metadata.embedding_status.value == "embedded"
 
             with pytest.raises(EmbeddingDimensionMismatchError):
                 await service.store_chunk_embedding(
@@ -485,14 +520,18 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
                 )
             with pytest.raises(KnowledgeRecordNotFoundError):
                 await service.transition_question_review(
+                    seed.curriculum_version_id,
                     UUID(int=999_001),
                     ReviewState.IN_REVIEW,
+                    expected_version=0,
                     actor_id=ACTOR_ID,
                 )
             with pytest.raises(KnowledgeRecordNotFoundError):
                 await service.transition_chunk_review(
+                    seed.curriculum_version_id,
                     UUID(int=999_002),
                     ReviewState.IN_REVIEW,
+                    expected_version=0,
                     actor_id=ACTOR_ID,
                 )
 
@@ -609,8 +648,30 @@ def test_database_enforces_provenance_review_taxonomy_and_vector_space_invariant
                     source_block_id=pending_block_id,
                 ),
             )
-            with pytest.raises(IntegrityError):
+            with pytest.raises(TrustedKnowledgeSourceRequiredError):
                 await service.import_chunk(untrusted_chunk, actor_id=ACTOR_ID)
+            await session.rollback()
+
+            versioned_draft = chunk_record(
+                first,
+                record_id=UUID(int=190_013),
+                sequence=2,
+            )
+            await service.import_chunk(versioned_draft, actor_id=ACTOR_ID)
+            draft_model = await session.get(KnowledgeChunkModel, versioned_draft.id)
+            assert draft_model is not None
+            draft_model.text = "Unversioned direct mutation"
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+
+            nonzero_initial_version = replace(
+                chunk_record(first, record_id=UUID(int=190_014), sequence=3),
+                version=1,
+            )
+            session.add(KnowledgeChunkModel.from_domain(nonzero_initial_version, ACTOR_ID))
+            with pytest.raises(IntegrityError):
+                await session.commit()
             await session.rollback()
 
             reviewed = replace(

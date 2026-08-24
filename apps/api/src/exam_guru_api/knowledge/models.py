@@ -112,6 +112,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
         ),
         CheckConstraint("marks > 0", name="ck_historical_questions_marks"),
         CheckConstraint("page_number > 0", name="ck_historical_questions_page_number"),
+        CheckConstraint("version >= 0", name="ck_historical_questions_version"),
         CheckConstraint(
             "review_state <> 'reviewed' OR "
             "(source_block_id IS NOT NULL AND competency_id IS NOT NULL)",
@@ -155,6 +156,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
     skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     sub_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     learning_concept_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     @classmethod
     def from_domain(cls, question: HistoricalQuestion, actor_id: UUID) -> Self:
@@ -175,6 +177,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
             skill_id=question.skill_id,
             sub_skill_id=question.sub_skill_id,
             learning_concept_id=question.learning_concept_id,
+            version=question.version,
             created_by=actor_id,
             updated_by=actor_id,
         )
@@ -199,6 +202,9 @@ class HistoricalQuestionModel(AuditColumns, Base):
             skill_id=self.skill_id,
             sub_skill_id=self.sub_skill_id,
             learning_concept_id=self.learning_concept_id,
+            version=self.version,
+            created_at=getattr(self, "created_at", None),
+            updated_at=getattr(self, "updated_at", None),
         )
 
 
@@ -256,6 +262,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
         ),
         CheckConstraint("sequence >= 0", name="ck_knowledge_chunks_sequence"),
         CheckConstraint("page_number > 0", name="ck_knowledge_chunks_page_number"),
+        CheckConstraint("version >= 0", name="ck_knowledge_chunks_version"),
         CheckConstraint(
             "review_state <> 'reviewed' OR "
             "(source_block_id IS NOT NULL AND competency_id IS NOT NULL)",
@@ -297,6 +304,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
     skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     sub_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     learning_concept_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     @classmethod
     def from_domain(cls, chunk: KnowledgeChunk, actor_id: UUID) -> Self:
@@ -315,6 +323,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
             skill_id=chunk.skill_id,
             sub_skill_id=chunk.sub_skill_id,
             learning_concept_id=chunk.learning_concept_id,
+            version=chunk.version,
             created_by=actor_id,
             updated_by=actor_id,
         )
@@ -337,6 +346,9 @@ class KnowledgeChunkModel(AuditColumns, Base):
             skill_id=self.skill_id,
             sub_skill_id=self.sub_skill_id,
             learning_concept_id=self.learning_concept_id,
+            version=self.version,
+            created_at=getattr(self, "created_at", None),
+            updated_at=getattr(self, "updated_at", None),
         )
 
 

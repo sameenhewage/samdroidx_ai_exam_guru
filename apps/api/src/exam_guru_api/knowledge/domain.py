@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -29,6 +30,21 @@ class ChunkType(StrEnum):
     KEY_TERM = "key_term"
 
 
+class EmbeddingStatus(StrEnum):
+    NOT_EMBEDDED = "not_embedded"
+    EMBEDDED = "embedded"
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingConfigurationMetadata:
+    id: UUID
+    provider: str
+    model: str
+    dimension: int
+    version: str
+    config_fingerprint: str
+
+
 @dataclass(frozen=True, slots=True)
 class Provenance:
     source_document_id: UUID
@@ -56,6 +72,10 @@ class HistoricalQuestion:
     skill_id: UUID | None = None
     sub_skill_id: UUID | None = None
     learning_concept_id: UUID | None = None
+    version: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    embedding_configurations: tuple[EmbeddingConfigurationMetadata, ...] = ()
 
     def __post_init__(self) -> None:
         if not 1900 <= self.year <= 2100:
@@ -64,8 +84,20 @@ class HistoricalQuestion:
             raise KnowledgeContractError("question identity and text must be non-blank")
         if self.marks < 1:
             raise KnowledgeContractError("marks must be positive")
-        if self.review_state is ReviewState.REVIEWED and self.competency_id is None:
-            raise KnowledgeContractError("reviewed questions require competency classification")
+        if self.version < 0:
+            raise KnowledgeContractError("version must be non-negative")
+        if self.review_state is ReviewState.REVIEWED and (
+            self.competency_id is None or self.provenance.source_block_id is None
+        ):
+            raise KnowledgeContractError(
+                "reviewed questions require block provenance and competency classification"
+            )
+
+    @property
+    def embedding_status(self) -> EmbeddingStatus:
+        if self.embedding_configurations:
+            return EmbeddingStatus.EMBEDDED
+        return EmbeddingStatus.NOT_EMBEDDED
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,14 +114,30 @@ class KnowledgeChunk:
     skill_id: UUID | None = None
     sub_skill_id: UUID | None = None
     learning_concept_id: UUID | None = None
+    version: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    embedding_configurations: tuple[EmbeddingConfigurationMetadata, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.text.strip() or not self.educational_boundary.strip():
             raise KnowledgeContractError("chunk text and educational boundary must be non-blank")
         if self.sequence < 0:
             raise KnowledgeContractError("chunk sequence must be non-negative")
-        if self.review_state is ReviewState.REVIEWED and self.competency_id is None:
-            raise KnowledgeContractError("reviewed chunks require competency classification")
+        if self.version < 0:
+            raise KnowledgeContractError("version must be non-negative")
+        if self.review_state is ReviewState.REVIEWED and (
+            self.competency_id is None or self.provenance.source_block_id is None
+        ):
+            raise KnowledgeContractError(
+                "reviewed chunks require block provenance and competency classification"
+            )
+
+    @property
+    def embedding_status(self) -> EmbeddingStatus:
+        if self.embedding_configurations:
+            return EmbeddingStatus.EMBEDDED
+        return EmbeddingStatus.NOT_EMBEDDED
 
 
 _ALLOWED_REVIEW_TRANSITIONS = frozenset(

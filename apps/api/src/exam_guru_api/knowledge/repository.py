@@ -1,12 +1,22 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import func, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql.elements import ColumnElement
 
-from exam_guru_api.knowledge.domain import HistoricalQuestion, KnowledgeChunk, ReviewState
+from exam_guru_api.knowledge.domain import (
+    ChunkType,
+    EmbeddingConfigurationMetadata,
+    HistoricalQuestion,
+    KnowledgeChunk,
+    QuestionType,
+    ReviewState,
+)
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.knowledge.models import (
     EmbeddingConfigurationModel,
@@ -17,6 +27,15 @@ from exam_guru_api.knowledge.models import (
 
 _CONFIGURATION_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/embedding-configurations")
 _EMBEDDING_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/knowledge-embeddings")
+
+
+def _equals_if_provided[ValueT](
+    column: InstrumentedAttribute[ValueT],
+    value: ValueT | None,
+) -> ColumnElement[bool]:
+    if value is None:
+        return true()
+    return column == value
 
 
 class SourceImportConflictError(RuntimeError):
@@ -34,6 +53,13 @@ class KnowledgeRecordNotFoundError(LookupError):
         self.record_type = record_type
         self.record_id = record_id
         super().__init__(f"{record_type} not found: {record_id}")
+
+
+class ConcurrentKnowledgeVersionError(RuntimeError):
+    def __init__(self, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"expected knowledge version {expected}, found {actual}")
 
 
 class EmbeddingSpaceConflictError(RuntimeError):
@@ -79,14 +105,15 @@ class SqlAlchemyKnowledgeRepository:
         actor_id: UUID,
     ) -> RepositoryImportResult[HistoricalQuestion]:
         values = self._question_values(question, actor_id)
-        inserted_id = await self._session.scalar(
+        inserted = await self._session.scalar(
             insert(HistoricalQuestionModel)
             .values(**values)
             .on_conflict_do_nothing(constraint="uq_historical_questions_source_question")
-            .returning(HistoricalQuestionModel.id)
+            .returning(HistoricalQuestionModel)
         )
-        if inserted_id is not None:
-            return RepositoryImportResult(record=question, created=True)
+        if inserted is not None:
+            record = (await self._questions_with_embedding_metadata((inserted,)))[0]
+            return RepositoryImportResult(record=record, created=True)
 
         existing = await self._session.scalar(
             select(HistoricalQuestionModel).where(
@@ -101,7 +128,8 @@ class SqlAlchemyKnowledgeRepository:
                 question.provenance.source_document_id,
                 question.question_number,
             )
-        return RepositoryImportResult(record=existing.to_domain(), created=False)
+        record = (await self._questions_with_embedding_metadata((existing,)))[0]
+        return RepositoryImportResult(record=record, created=False)
 
     async def import_chunk(
         self,
@@ -110,14 +138,15 @@ class SqlAlchemyKnowledgeRepository:
         actor_id: UUID,
     ) -> RepositoryImportResult[KnowledgeChunk]:
         values = self._chunk_values(chunk, actor_id)
-        inserted_id = await self._session.scalar(
+        inserted = await self._session.scalar(
             insert(KnowledgeChunkModel)
             .values(**values)
             .on_conflict_do_nothing(constraint="uq_knowledge_chunks_source_sequence")
-            .returning(KnowledgeChunkModel.id)
+            .returning(KnowledgeChunkModel)
         )
-        if inserted_id is not None:
-            return RepositoryImportResult(record=chunk, created=True)
+        if inserted is not None:
+            record = (await self._chunks_with_embedding_metadata((inserted,)))[0]
+            return RepositoryImportResult(record=record, created=True)
 
         existing = await self._session.scalar(
             select(KnowledgeChunkModel).where(
@@ -131,15 +160,23 @@ class SqlAlchemyKnowledgeRepository:
                 chunk.provenance.source_document_id,
                 str(chunk.sequence),
             )
-        return RepositoryImportResult(record=existing.to_domain(), created=False)
+        record = (await self._chunks_with_embedding_metadata((existing,)))[0]
+        return RepositoryImportResult(record=record, created=False)
 
     async def get_question(
         self,
         question_id: UUID,
         *,
+        curriculum_version_id: UUID | None = None,
         for_update: bool = False,
     ) -> HistoricalQuestionModel:
-        statement = select(HistoricalQuestionModel).where(HistoricalQuestionModel.id == question_id)
+        statement = select(HistoricalQuestionModel).where(
+            HistoricalQuestionModel.id == question_id,
+            _equals_if_provided(
+                HistoricalQuestionModel.curriculum_version_id,
+                curriculum_version_id,
+            ),
+        )
         if for_update:
             statement = statement.with_for_update()
         model = await self._session.scalar(statement)
@@ -151,9 +188,16 @@ class SqlAlchemyKnowledgeRepository:
         self,
         chunk_id: UUID,
         *,
+        curriculum_version_id: UUID | None = None,
         for_update: bool = False,
     ) -> KnowledgeChunkModel:
-        statement = select(KnowledgeChunkModel).where(KnowledgeChunkModel.id == chunk_id)
+        statement = select(KnowledgeChunkModel).where(
+            KnowledgeChunkModel.id == chunk_id,
+            _equals_if_provided(
+                KnowledgeChunkModel.curriculum_version_id,
+                curriculum_version_id,
+            ),
+        )
         if for_update:
             statement = statement.with_for_update()
         model = await self._session.scalar(statement)
@@ -161,70 +205,253 @@ class SqlAlchemyKnowledgeRepository:
             raise KnowledgeRecordNotFoundError("knowledge_chunk", chunk_id)
         return model
 
+    async def get_question_record(
+        self,
+        curriculum_version_id: UUID,
+        question_id: UUID,
+    ) -> HistoricalQuestion:
+        model = await self.get_question(
+            question_id,
+            curriculum_version_id=curriculum_version_id,
+        )
+        return (await self._questions_with_embedding_metadata((model,)))[0]
+
+    async def get_chunk_record(
+        self,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
+    ) -> KnowledgeChunk:
+        model = await self.get_chunk(
+            chunk_id,
+            curriculum_version_id=curriculum_version_id,
+        )
+        return (await self._chunks_with_embedding_metadata((model,)))[0]
+
+    async def list_questions(
+        self,
+        curriculum_version_id: UUID,
+        *,
+        review_state: ReviewState | None,
+        source_document_id: UUID | None,
+        competency_id: UUID | None,
+        question_type: QuestionType | None,
+        year: int | None,
+        paper_code: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[HistoricalQuestion, ...]:
+        models = tuple(
+            await self._session.scalars(
+                select(HistoricalQuestionModel)
+                .where(
+                    HistoricalQuestionModel.curriculum_version_id == curriculum_version_id,
+                    _equals_if_provided(
+                        HistoricalQuestionModel.review_state,
+                        review_state,
+                    ),
+                    _equals_if_provided(
+                        HistoricalQuestionModel.source_document_id,
+                        source_document_id,
+                    ),
+                    _equals_if_provided(
+                        HistoricalQuestionModel.competency_id,
+                        competency_id,
+                    ),
+                    _equals_if_provided(
+                        HistoricalQuestionModel.question_type,
+                        question_type,
+                    ),
+                    _equals_if_provided(HistoricalQuestionModel.year, year),
+                    _equals_if_provided(HistoricalQuestionModel.paper_code, paper_code),
+                )
+                .order_by(
+                    HistoricalQuestionModel.year.desc(),
+                    HistoricalQuestionModel.paper_code,
+                    HistoricalQuestionModel.question_number,
+                    HistoricalQuestionModel.id,
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        return await self._questions_with_embedding_metadata(models)
+
+    async def list_chunks(
+        self,
+        curriculum_version_id: UUID,
+        *,
+        review_state: ReviewState | None,
+        source_document_id: UUID | None,
+        competency_id: UUID | None,
+        chunk_type: ChunkType | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[KnowledgeChunk, ...]:
+        models = tuple(
+            await self._session.scalars(
+                select(KnowledgeChunkModel)
+                .where(
+                    KnowledgeChunkModel.curriculum_version_id == curriculum_version_id,
+                    _equals_if_provided(KnowledgeChunkModel.review_state, review_state),
+                    _equals_if_provided(
+                        KnowledgeChunkModel.source_document_id,
+                        source_document_id,
+                    ),
+                    _equals_if_provided(
+                        KnowledgeChunkModel.competency_id,
+                        competency_id,
+                    ),
+                    _equals_if_provided(KnowledgeChunkModel.chunk_type, chunk_type),
+                )
+                .order_by(
+                    KnowledgeChunkModel.source_document_id,
+                    KnowledgeChunkModel.sequence,
+                    KnowledgeChunkModel.id,
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        return await self._chunks_with_embedding_metadata(models)
+
     async def update_question_review(
         self,
-        model: HistoricalQuestionModel,
+        curriculum_version_id: UUID,
+        question_id: UUID,
         target: ReviewState,
         *,
+        expected_version: int,
         actor_id: UUID,
     ) -> HistoricalQuestion:
-        model.review_state = target
-        model.updated_by = actor_id
-        await self._session.flush()
+        model = await self._session.scalar(
+            update(HistoricalQuestionModel)
+            .where(
+                HistoricalQuestionModel.id == question_id,
+                HistoricalQuestionModel.curriculum_version_id == curriculum_version_id,
+                HistoricalQuestionModel.version == expected_version,
+            )
+            .values(
+                review_state=target,
+                version=HistoricalQuestionModel.version + 1,
+                updated_at=func.now(),
+                updated_by=actor_id,
+            )
+            .returning(HistoricalQuestionModel)
+        )
+        if model is None:
+            current = await self.get_question(
+                question_id,
+                curriculum_version_id=curriculum_version_id,
+            )
+            raise ConcurrentKnowledgeVersionError(expected_version, current.version)
         return model.to_domain()
 
     async def update_chunk_review(
         self,
-        model: KnowledgeChunkModel,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
         target: ReviewState,
         *,
+        expected_version: int,
         actor_id: UUID,
     ) -> KnowledgeChunk:
-        model.review_state = target
-        model.updated_by = actor_id
-        await self._session.flush()
+        model = await self._session.scalar(
+            update(KnowledgeChunkModel)
+            .where(
+                KnowledgeChunkModel.id == chunk_id,
+                KnowledgeChunkModel.curriculum_version_id == curriculum_version_id,
+                KnowledgeChunkModel.version == expected_version,
+            )
+            .values(
+                review_state=target,
+                version=KnowledgeChunkModel.version + 1,
+                updated_at=func.now(),
+                updated_by=actor_id,
+            )
+            .returning(KnowledgeChunkModel)
+        )
+        if model is None:
+            current = await self.get_chunk(
+                chunk_id,
+                curriculum_version_id=curriculum_version_id,
+            )
+            raise ConcurrentKnowledgeVersionError(expected_version, current.version)
         return model.to_domain()
 
     async def update_question_classification(
         self,
-        model: HistoricalQuestionModel,
+        curriculum_version_id: UUID,
+        question_id: UUID,
         *,
         competency_id: UUID | None,
         skill_id: UUID | None,
         sub_skill_id: UUID | None,
         learning_concept_id: UUID | None,
+        expected_version: int,
         actor_id: UUID,
     ) -> HistoricalQuestion:
-        self._set_classification(
-            model,
-            competency_id=competency_id,
-            skill_id=skill_id,
-            sub_skill_id=sub_skill_id,
-            learning_concept_id=learning_concept_id,
-            actor_id=actor_id,
+        model = await self._session.scalar(
+            update(HistoricalQuestionModel)
+            .where(
+                HistoricalQuestionModel.id == question_id,
+                HistoricalQuestionModel.curriculum_version_id == curriculum_version_id,
+                HistoricalQuestionModel.version == expected_version,
+            )
+            .values(
+                competency_id=competency_id,
+                skill_id=skill_id,
+                sub_skill_id=sub_skill_id,
+                learning_concept_id=learning_concept_id,
+                version=HistoricalQuestionModel.version + 1,
+                updated_at=func.now(),
+                updated_by=actor_id,
+            )
+            .returning(HistoricalQuestionModel)
         )
-        await self._session.flush()
+        if model is None:
+            current = await self.get_question(
+                question_id,
+                curriculum_version_id=curriculum_version_id,
+            )
+            raise ConcurrentKnowledgeVersionError(expected_version, current.version)
         return model.to_domain()
 
     async def update_chunk_classification(
         self,
-        model: KnowledgeChunkModel,
+        curriculum_version_id: UUID,
+        chunk_id: UUID,
         *,
         competency_id: UUID | None,
         skill_id: UUID | None,
         sub_skill_id: UUID | None,
         learning_concept_id: UUID | None,
+        expected_version: int,
         actor_id: UUID,
     ) -> KnowledgeChunk:
-        self._set_classification(
-            model,
-            competency_id=competency_id,
-            skill_id=skill_id,
-            sub_skill_id=sub_skill_id,
-            learning_concept_id=learning_concept_id,
-            actor_id=actor_id,
+        model = await self._session.scalar(
+            update(KnowledgeChunkModel)
+            .where(
+                KnowledgeChunkModel.id == chunk_id,
+                KnowledgeChunkModel.curriculum_version_id == curriculum_version_id,
+                KnowledgeChunkModel.version == expected_version,
+            )
+            .values(
+                competency_id=competency_id,
+                skill_id=skill_id,
+                sub_skill_id=sub_skill_id,
+                learning_concept_id=learning_concept_id,
+                version=KnowledgeChunkModel.version + 1,
+                updated_at=func.now(),
+                updated_by=actor_id,
+            )
+            .returning(KnowledgeChunkModel)
         )
-        await self._session.flush()
+        if model is None:
+            current = await self.get_chunk(
+                chunk_id,
+                curriculum_version_id=curriculum_version_id,
+            )
+            raise ConcurrentKnowledgeVersionError(expected_version, current.version)
         return model.to_domain()
 
     async def get_or_create_embedding_configuration(
@@ -338,6 +565,97 @@ class SqlAlchemyKnowledgeRepository:
             created=False,
         )
 
+    async def _questions_with_embedding_metadata(
+        self,
+        models: tuple[HistoricalQuestionModel, ...],
+    ) -> tuple[HistoricalQuestion, ...]:
+        configurations: dict[UUID, list[EmbeddingConfigurationMetadata]] = {
+            model.id: [] for model in models
+        }
+        rows = (
+            await self._session.execute(
+                select(
+                    KnowledgeEmbeddingModel.historical_question_id,
+                    EmbeddingConfigurationModel,
+                )
+                .join(
+                    EmbeddingConfigurationModel,
+                    KnowledgeEmbeddingModel.embedding_configuration_id
+                    == EmbeddingConfigurationModel.id,
+                )
+                .where(KnowledgeEmbeddingModel.historical_question_id.in_(tuple(configurations)))
+                .order_by(
+                    KnowledgeEmbeddingModel.historical_question_id,
+                    EmbeddingConfigurationModel.provider,
+                    EmbeddingConfigurationModel.model,
+                    EmbeddingConfigurationModel.version,
+                    EmbeddingConfigurationModel.id,
+                )
+            )
+        ).all()
+        for question_id, configuration in rows:
+            configurations[cast(UUID, question_id)].append(
+                self._configuration_metadata(configuration)
+            )
+        return tuple(
+            replace(
+                model.to_domain(),
+                embedding_configurations=tuple(configurations[model.id]),
+            )
+            for model in models
+        )
+
+    async def _chunks_with_embedding_metadata(
+        self,
+        models: tuple[KnowledgeChunkModel, ...],
+    ) -> tuple[KnowledgeChunk, ...]:
+        configurations: dict[UUID, list[EmbeddingConfigurationMetadata]] = {
+            model.id: [] for model in models
+        }
+        rows = (
+            await self._session.execute(
+                select(
+                    KnowledgeEmbeddingModel.knowledge_chunk_id,
+                    EmbeddingConfigurationModel,
+                )
+                .join(
+                    EmbeddingConfigurationModel,
+                    KnowledgeEmbeddingModel.embedding_configuration_id
+                    == EmbeddingConfigurationModel.id,
+                )
+                .where(KnowledgeEmbeddingModel.knowledge_chunk_id.in_(tuple(configurations)))
+                .order_by(
+                    KnowledgeEmbeddingModel.knowledge_chunk_id,
+                    EmbeddingConfigurationModel.provider,
+                    EmbeddingConfigurationModel.model,
+                    EmbeddingConfigurationModel.version,
+                    EmbeddingConfigurationModel.id,
+                )
+            )
+        ).all()
+        for chunk_id, configuration in rows:
+            configurations[cast(UUID, chunk_id)].append(self._configuration_metadata(configuration))
+        return tuple(
+            replace(
+                model.to_domain(),
+                embedding_configurations=tuple(configurations[model.id]),
+            )
+            for model in models
+        )
+
+    @staticmethod
+    def _configuration_metadata(
+        model: EmbeddingConfigurationModel,
+    ) -> EmbeddingConfigurationMetadata:
+        return EmbeddingConfigurationMetadata(
+            id=model.id,
+            provider=model.provider,
+            model=model.model,
+            dimension=model.dimension,
+            version=model.version,
+            config_fingerprint=model.config_fingerprint,
+        )
+
     @staticmethod
     def configuration_id(config: EmbeddingConfig) -> UUID:
         identity = json.dumps(
@@ -386,6 +704,7 @@ class SqlAlchemyKnowledgeRepository:
             "skill_id": question.skill_id,
             "sub_skill_id": question.sub_skill_id,
             "learning_concept_id": question.learning_concept_id,
+            "version": question.version,
             "created_by": actor_id,
             "updated_by": actor_id,
         }
@@ -407,6 +726,7 @@ class SqlAlchemyKnowledgeRepository:
             "skill_id": chunk.skill_id,
             "sub_skill_id": chunk.sub_skill_id,
             "learning_concept_id": chunk.learning_concept_id,
+            "version": chunk.version,
             "created_by": actor_id,
             "updated_by": actor_id,
         }
@@ -455,19 +775,3 @@ class SqlAlchemyKnowledgeRepository:
             candidate.sequence,
             candidate.provenance,
         )
-
-    @staticmethod
-    def _set_classification(
-        model: HistoricalQuestionModel | KnowledgeChunkModel,
-        *,
-        competency_id: UUID | None,
-        skill_id: UUID | None,
-        sub_skill_id: UUID | None,
-        learning_concept_id: UUID | None,
-        actor_id: UUID,
-    ) -> None:
-        model.competency_id = competency_id
-        model.skill_id = skill_id
-        model.sub_skill_id = sub_skill_id
-        model.learning_concept_id = learning_concept_id
-        model.updated_by = actor_id

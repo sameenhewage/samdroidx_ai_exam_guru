@@ -26,6 +26,7 @@ from exam_guru_api.knowledge.models import (
     KnowledgeEmbeddingModel,
 )
 from exam_guru_api.knowledge.repository import (
+    ConcurrentKnowledgeVersionError,
     EmbeddingSourceConflictError,
     EmbeddingSpaceConflictError,
     KnowledgeRecordNotFoundError,
@@ -85,6 +86,9 @@ def test_question_and_chunk_models_round_trip_domain_records() -> None:
     assert chunk_model.to_domain() == chunk
     assert question_model.created_by == question_model.updated_by == ACTOR_ID
     assert chunk_model.created_by == chunk_model.updated_by == ACTOR_ID
+    assert question_model.version == chunk_model.version == 0
+    assert HistoricalQuestionModel.__table__.c.version.server_default is not None
+    assert KnowledgeChunkModel.__table__.c.version.server_default is not None
 
 
 def test_embedding_configuration_round_trip_and_vector_column_use_pgvector() -> None:
@@ -124,6 +128,90 @@ def test_repository_reports_missing_records_and_invalid_embedding_targets() -> N
         SqlAlchemyKnowledgeRepository._embedding_target(None, None)
     with pytest.raises(ValueError, match="exactly one knowledge target"):
         SqlAlchemyKnowledgeRepository._embedding_target(UUID(int=1), UUID(int=2))
+
+
+def test_repository_atomic_updates_report_actual_version_after_cas_loss() -> None:
+    async def exercise() -> None:
+        question = HistoricalQuestion(
+            id=UUID(int=110),
+            curriculum_version_id=UUID(int=111),
+            year=2021,
+            paper_code="P1",
+            question_number="1",
+            text="Question",
+            question_type=QuestionType.SHORT_ANSWER,
+            marks=1,
+            provenance=Provenance(UUID(int=112), 1, UUID(int=113)),
+            version=3,
+        )
+        chunk = KnowledgeChunk(
+            id=UUID(int=120),
+            curriculum_version_id=question.curriculum_version_id,
+            chunk_type=ChunkType.EXPLANATION,
+            text="Chunk",
+            educational_boundary="Unit",
+            sequence=0,
+            provenance=question.provenance,
+            version=3,
+        )
+        question_model = HistoricalQuestionModel.from_domain(question, ACTOR_ID)
+        chunk_model = KnowledgeChunkModel.from_domain(chunk, ACTOR_ID)
+
+        question_review_repository = SqlAlchemyKnowledgeRepository(
+            cast(AsyncSession, ScriptedScalarSession(None, question_model))
+        )
+        with pytest.raises(ConcurrentKnowledgeVersionError, match="found 3"):
+            await question_review_repository.update_question_review(
+                question.curriculum_version_id,
+                question.id,
+                ReviewState.IN_REVIEW,
+                expected_version=2,
+                actor_id=ACTOR_ID,
+            )
+
+        chunk_review_repository = SqlAlchemyKnowledgeRepository(
+            cast(AsyncSession, ScriptedScalarSession(None, chunk_model))
+        )
+        with pytest.raises(ConcurrentKnowledgeVersionError, match="found 3"):
+            await chunk_review_repository.update_chunk_review(
+                chunk.curriculum_version_id,
+                chunk.id,
+                ReviewState.IN_REVIEW,
+                expected_version=2,
+                actor_id=ACTOR_ID,
+            )
+
+        question_classification_repository = SqlAlchemyKnowledgeRepository(
+            cast(AsyncSession, ScriptedScalarSession(None, question_model))
+        )
+        with pytest.raises(ConcurrentKnowledgeVersionError, match="found 3"):
+            await question_classification_repository.update_question_classification(
+                question.curriculum_version_id,
+                question.id,
+                competency_id=None,
+                skill_id=None,
+                sub_skill_id=None,
+                learning_concept_id=None,
+                expected_version=2,
+                actor_id=ACTOR_ID,
+            )
+
+        chunk_classification_repository = SqlAlchemyKnowledgeRepository(
+            cast(AsyncSession, ScriptedScalarSession(None, chunk_model))
+        )
+        with pytest.raises(ConcurrentKnowledgeVersionError, match="found 3"):
+            await chunk_classification_repository.update_chunk_classification(
+                chunk.curriculum_version_id,
+                chunk.id,
+                competency_id=None,
+                skill_id=None,
+                sub_skill_id=None,
+                learning_concept_id=None,
+                expected_version=2,
+                actor_id=ACTOR_ID,
+            )
+
+    asyncio.run(exercise())
 
 
 def test_repository_rejects_embedding_space_and_source_conflicts() -> None:
