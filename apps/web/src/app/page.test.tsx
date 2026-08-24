@@ -59,6 +59,10 @@ describe("admin foundation shell", () => {
       "href",
       "/admin/review",
     );
+    expect(within(navigation).getByRole("link", { name: /Papers/ })).toHaveAttribute(
+      "href",
+      "/admin/papers",
+    );
     const validationCard = document.querySelector("#validation");
     expect(validationCard).not.toBeNull();
     expect(within(validationCard as HTMLElement).getByRole("link", { name: "Open Validation Studio" })).toHaveAttribute(
@@ -70,6 +74,12 @@ describe("admin foundation shell", () => {
     expect(within(reviewCard as HTMLElement).getByRole("link", { name: "Open Reviewer Studio" })).toHaveAttribute(
       "href",
       "/admin/review",
+    );
+    const papersCard = document.querySelector("#papers");
+    expect(papersCard).not.toBeNull();
+    expect(within(papersCard as HTMLElement).getByRole("link", { name: "Open Paper Studio" })).toHaveAttribute(
+      "href",
+      "/admin/papers",
     );
   });
 

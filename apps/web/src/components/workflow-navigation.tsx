@@ -31,7 +31,9 @@ export function WorkflowNavigation() {
                                 ? "/admin/validation"
                                 : area.id === "review-queue"
                                   ? "/admin/review"
-                                  : `#${area.id}`
+                                  : area.id === "papers"
+                                    ? "/admin/papers"
+                                    : `#${area.id}`
               }
             >
               <span className="mr-3 font-mono text-xs text-slate-500 group-hover:text-amber-300">

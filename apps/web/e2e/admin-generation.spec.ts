@@ -19,6 +19,10 @@ type ValidationReportSummary = components["schemas"]["ValidationRunSummaryRespon
 type ValidationRequest = components["schemas"]["ValidationRunCreateRequest"];
 type ReviewCandidate = components["schemas"]["ReviewCandidateResponse"];
 type ReviewEditRequest = components["schemas"]["ReviewCandidateEditRequest"];
+type PaperDraft = components["schemas"]["PaperDraftVersionResponse"];
+type PaperPublishRequest = components["schemas"]["PaperPublishRequest"];
+type PaperSummary = components["schemas"]["PaperSummaryResponse"];
+type Publication = components["schemas"]["PublishedPaperVersionResponse"];
 type AuditEvent = components["schemas"]["AdminAuditEventResponse"];
 
 function syntheticPdf(marker: string): Buffer {
@@ -147,6 +151,11 @@ test("real generation reaches validation and reviewer approval with terminal aud
   page,
 }) => {
   test.setTimeout(180_000);
+  test.info().annotations.push({
+    type: "limitation",
+    description:
+      "The deterministic one-slot fixture proves exact paper assembly and publication mechanics; it is not evidence of representative complete-paper quality.",
+  });
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") browserErrors.push(message.text());
@@ -545,5 +554,131 @@ test("real generation reaches validation and reviewer approval with terminal aud
     },
   );
   expect(denied.status()).toBe(403);
+
+  await page.goto("/admin/papers");
+  await expect(page.getByRole("heading", { name: "Paper Studio" })).toBeVisible();
+  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await page.getByLabel("Immutable paper blueprint").selectOption(blueprint.id);
+  await expect(page.getByTestId("exact-blueprint-slot")).toHaveCount(1);
+  await expect(page.getByTestId("exact-blueprint-slot")).toContainText(exactSlot.slot_id);
+  await page.getByLabel("Paper title").fill(`Published generation paper ${unique}`);
+  await page
+    .getByLabel(`Candidate for exact slot ${exactSlot.slot_id}`)
+    .selectOption(approvedCandidate.id);
+  await page.getByRole("button", { name: "Create immutable draft" }).click();
+  await expect(page.getByText("Immutable draft version 1 created.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
+    "Draft",
+  );
+  await expect(page.getByRole("region", { name: "Immutable draft versions" })).toContainText(
+    approvedCandidate.id,
+  );
+
+  const paperListResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/papers`,
+  );
+  expect(paperListResponse.ok()).toBe(true);
+  const persistedPaper = ((await paperListResponse.json()) as PaperSummary[]).find(
+    (paper) => paper.title === `Published generation paper ${unique}`,
+  );
+  if (!persistedPaper) throw new Error("Paper Studio did not persist the reviewer-assembled draft");
+  const draftsResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/draft-versions`,
+  );
+  expect(draftsResponse.ok()).toBe(true);
+  const [paperDraft] = (await draftsResponse.json()) as PaperDraft[];
+  expect(paperDraft?.candidates).toEqual([
+    expect.objectContaining({
+      blueprint_slot_id: exactSlot.slot_id,
+      candidate_id: approvedCandidate.id,
+      ordinal: 1,
+    }),
+  ]);
+
+  const reviewerPublishPayload: PaperPublishRequest = {
+    expected_version: persistedPaper.current_version,
+  };
+  const reviewerPublishDenied = await page.request.post(
+    `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/publish`,
+    { data: reviewerPublishPayload },
+  );
+  expect(reviewerPublishDenied.status()).toBe(403);
+  await expect(page.getByRole("button", { name: "Publish current draft" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Archive paper terminally" })).toHaveCount(0);
+
+  const generationStateBeforeRead = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
+  );
+  expect(generationStateBeforeRead.ok()).toBe(true);
+  const generationSummariesBeforeRead =
+    (await generationStateBeforeRead.json()) as GenerationRunSummary[];
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await login(page, "admin");
+  await page.goto("/admin/papers");
+  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await page.getByRole("button", { name: `Select paper ${persistedPaper.id}` }).click();
+  await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
+    "Draft",
+  );
+  await page.getByRole("button", { name: "Publish current draft" }).click();
+  await expect(
+    page.getByText("Publication version 1 created as an immutable verified snapshot."),
+  ).toBeVisible();
+
+  const snapshotRegion = page.getByRole("region", {
+    name: "Verified immutable publication snapshot",
+  });
+  await expect(snapshotRegion).toContainText("Student serving requires no live LLM or provider call");
+  await expect(snapshotRegion).toContainText("immutable, hash-verified snapshot");
+  await expect(snapshotRegion).toContainText(reviewedStem);
+  await expect(snapshotRegion).toContainText("deterministic-fake");
+  await expect(snapshotRegion).toContainText(reviewedChunk.id);
+  await expect(snapshotRegion).toContainText("Validated revision");
+  await expect(snapshotRegion).toContainText("1");
+  await expect(snapshotRegion).toContainText("Approved");
+
+  const publicationResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/publication-versions/1`,
+  );
+  expect(publicationResponse.ok()).toBe(true);
+  const immutablePublication = (await publicationResponse.json()) as Publication;
+  expect(immutablePublication.content_hash).toMatch(/^[a-f0-9]{64}$/);
+  expect(immutablePublication.snapshot.title).toBe(`Published generation paper ${unique}`);
+  expect(immutablePublication.snapshot.questions).toHaveLength(1);
+  expect(immutablePublication.snapshot.questions[0]).toMatchObject({
+    candidate_id: approvedCandidate.id,
+    content: { stem: reviewedStem },
+    content_revision: 2,
+    decision: { state: "approved" },
+    lineage: {
+      blueprint_slot_id: exactSlot.slot_id,
+      provider: "deterministic-fake",
+    },
+    validation: { passed: true, validated_revision: 1 },
+  });
+  expect(immutablePublication.snapshot.questions[0]?.lineage.provenance).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ chunk_id: reviewedChunk.id, source_document_id: source.id }),
+    ]),
+  );
+  expect(immutablePublication.snapshot.questions[0]?.review_history.map((item) => item.action)).toEqual([
+    "started",
+    "edited",
+    "approved",
+  ]);
+
+  const generationStateAfterRead = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/generation-runs`,
+  );
+  expect(generationStateAfterRead.ok()).toBe(true);
+  expect((await generationStateAfterRead.json()) as GenerationRunSummary[]).toEqual(
+    generationSummariesBeforeRead,
+  );
+  const finalPaperResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}`,
+  );
+  expect(finalPaperResponse.ok()).toBe(true);
+  expect((await finalPaperResponse.json()).state).toBe("published");
   expect(browserErrors).toEqual([]);
 });

@@ -99,12 +99,22 @@ export default function Home() {
                 </div>
                 <h3 className="mt-8 text-lg font-semibold">{area.label}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{area.description}</p>
-                {area.id === "validation" || area.id === "review-queue" ? (
+                {area.id === "validation" || area.id === "review-queue" || area.id === "papers" ? (
                   <Link
                     className="mt-4 inline-flex text-sm font-semibold text-slate-950 underline decoration-amber-500 decoration-2 underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                    href={area.id === "validation" ? "/admin/validation" : "/admin/review"}
+                    href={
+                      area.id === "validation"
+                        ? "/admin/validation"
+                        : area.id === "review-queue"
+                          ? "/admin/review"
+                          : "/admin/papers"
+                    }
                   >
-                    {area.id === "validation" ? "Open Validation Studio" : "Open Reviewer Studio"}
+                    {area.id === "validation"
+                      ? "Open Validation Studio"
+                      : area.id === "review-queue"
+                        ? "Open Reviewer Studio"
+                        : "Open Paper Studio"}
                   </Link>
                 ) : null}
               </article>
