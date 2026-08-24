@@ -42,6 +42,10 @@ describe("admin foundation shell", () => {
     expect(
       within(navigation).getByRole("link", { name: /Exam intelligence/ }),
     ).toHaveAttribute("href", "/admin/analytics");
+    expect(within(navigation).getByRole("link", { name: /Blueprints/ })).toHaveAttribute(
+      "href",
+      "/admin/blueprints",
+    );
   });
 
   it("has no automated accessibility violations", async () => {
