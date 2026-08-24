@@ -813,6 +813,20 @@ export interface components {
             /** Statistics */
             statistics: string;
         };
+        /** ApiErrorDetail */
+        ApiErrorDetail: {
+            /** Code */
+            code: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ApiErrorResponse */
+        ApiErrorResponse: {
+            /** Detail */
+            detail: components["schemas"]["ApiErrorDetail"] | {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+        };
         /** BacktestAggregateResponse */
         BacktestAggregateResponse: {
             baseline_delta: components["schemas"]["ExactFraction"];
@@ -2094,6 +2108,15 @@ export interface operations {
                     "application/json": components["schemas"]["AnalyticsRunSummaryResponse"][];
                 };
             };
+            /** @description Curriculum version not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2136,19 +2159,32 @@ export interface operations {
                     "application/json": components["schemas"]["AnalyticsRunResponse"];
                 };
             };
+            /** @description Curriculum version not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
             /** @description Analytics fingerprint conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
             };
             /** @description Insufficient or out-of-bounds reviewed evidence */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
             };
         };
     };
@@ -2171,6 +2207,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsRunResponse"];
+                };
+            };
+            /** @description Curriculum version or analytics run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3126,21 +3171,27 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
             };
             /** @description Malformed or internally inconsistent retrieval request */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
             };
             /** @description Configured embedding provider is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
             };
         };
     };

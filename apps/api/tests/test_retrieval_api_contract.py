@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.main import create_app
 from exam_guru_api.retrieval.schemas import (
     RetrievalExploreLimitsRequest,
@@ -53,6 +54,10 @@ def test_retrieval_explorer_openapi_is_authorized_typed_and_vector_free() -> Non
         "$ref": "#/components/schemas/RetrievalExploreResponse"
     }
     assert {"404", "422", "503"} <= set(operation["responses"])
+    for status_code in ("404", "422", "503"):
+        assert operation["responses"][status_code]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ApiErrorResponse"
+        }
 
     request_schema = schema["components"]["schemas"]["RetrievalExploreRequest"]
     assert request_schema["additionalProperties"] is False
@@ -68,6 +73,21 @@ def test_retrieval_explorer_openapi_is_authorized_typed_and_vector_free() -> Non
     assert "query_vector" not in serialized_operation
     assert "raw_vector" not in serialized_operation
     assert "embedding_values" not in serialized_operation
+
+
+def test_api_error_contract_types_codes_extras_and_validation_details() -> None:
+    coded = ApiErrorResponse.model_validate(
+        {"detail": {"code": "analytics_record_limit_exceeded", "maximum": 5_000}}
+    )
+    validation = ApiErrorResponse.model_validate(
+        {"detail": [{"loc": ["body", "query"], "msg": "required", "type": "missing"}]}
+    )
+
+    assert not isinstance(coded.detail, list)
+    assert coded.detail.code == "analytics_record_limit_exceeded"
+    assert coded.detail.model_extra == {"maximum": 5_000}
+    assert isinstance(validation.detail, list)
+    assert validation.detail[0]["type"] == "missing"
 
 
 def test_retrieval_request_scope_config_and_cost_bounds_are_explicit() -> None:

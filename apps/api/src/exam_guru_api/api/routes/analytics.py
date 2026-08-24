@@ -27,6 +27,7 @@ from exam_guru_api.analytics.service import (
     AnalyticsYearLimitError,
 )
 from exam_guru_api.api.dependencies import get_database_session
+from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
 
@@ -45,9 +46,17 @@ Offset = Annotated[int, Query(ge=0, le=100_000)]
     responses={
         status.HTTP_200_OK: {"description": "Existing identical analytics run returned"},
         status.HTTP_201_CREATED: {"description": "Deterministic analytics run persisted"},
-        status.HTTP_409_CONFLICT: {"description": "Analytics fingerprint conflict"},
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Curriculum version not found",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Analytics fingerprint conflict",
+            "model": ApiErrorResponse,
+        },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
-            "description": "Insufficient or out-of-bounds reviewed evidence"
+            "description": "Insufficient or out-of-bounds reviewed evidence",
+            "model": ApiErrorResponse,
         },
     },
     status_code=status.HTTP_201_CREATED,
@@ -79,6 +88,12 @@ async def create_analytics_run(
     "/{curriculum_version_id}/analytics/runs",
     operation_id="list_analytics_runs",
     response_model=list[AnalyticsRunSummaryResponse],
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Curriculum version not found",
+            "model": ApiErrorResponse,
+        }
+    },
     summary="List persisted historical analysis runs",
 )
 async def list_analytics_runs(
@@ -104,6 +119,12 @@ async def list_analytics_runs(
     "/{curriculum_version_id}/analytics/runs/{run_id}",
     operation_id="get_analytics_run",
     response_model=AnalyticsRunResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Curriculum version or analytics run not found",
+            "model": ApiErrorResponse,
+        }
+    },
     summary="Get one persisted historical analysis run",
 )
 async def get_analytics_run(

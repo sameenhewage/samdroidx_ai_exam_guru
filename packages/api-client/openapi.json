@@ -454,6 +454,46 @@
         "title": "AnalyticsVersionsResponse",
         "type": "object"
       },
+      "ApiErrorDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiErrorDetail"
+              },
+              {
+                "items": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/JsonValue"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
       "BacktestAggregateResponse": {
         "properties": {
           "baseline_delta": {
@@ -3958,6 +3998,16 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version not found"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -4017,10 +4067,34 @@
             },
             "description": "Deterministic analytics run persisted"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version not found"
+          },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
             "description": "Analytics fingerprint conflict"
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
             "description": "Insufficient or out-of-bounds reviewed evidence"
           }
         },
@@ -4070,6 +4144,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum version or analytics run not found"
           },
           "422": {
             "content": {
@@ -5766,12 +5850,33 @@
             "description": "Successful Response"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
             "description": "Embedding configuration or exact retrieval scope not found"
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
             "description": "Malformed or internally inconsistent retrieval request"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
             "description": "Configured embedding provider is unavailable"
           }
         },

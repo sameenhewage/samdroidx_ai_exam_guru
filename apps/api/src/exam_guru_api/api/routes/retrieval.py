@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from exam_guru_api.api.dependencies import get_retrieval_explorer_service
+from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.retrieval.domain import RetrievalContractError
@@ -33,13 +34,16 @@ RetrievalExplorer = Annotated[
     response_model=RetrievalExploreResponse,
     responses={
         status.HTTP_404_NOT_FOUND: {
-            "description": "Embedding configuration or exact retrieval scope not found"
+            "description": "Embedding configuration or exact retrieval scope not found",
+            "model": ApiErrorResponse,
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
-            "description": "Malformed or internally inconsistent retrieval request"
+            "description": "Malformed or internally inconsistent retrieval request",
+            "model": ApiErrorResponse,
         },
         status.HTTP_503_SERVICE_UNAVAILABLE: {
-            "description": "Configured embedding provider is unavailable"
+            "description": "Configured embedding provider is unavailable",
+            "model": ApiErrorResponse,
         },
     },
     summary="Explore hard-scoped hybrid retrieval evidence",

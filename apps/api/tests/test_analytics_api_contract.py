@@ -41,6 +41,16 @@ def test_analytics_request_and_response_contracts_are_exact_and_do_not_claim_pre
     assert operation["responses"]["201"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/AnalyticsRunResponse"
     }
+    for status_code in ("404", "409", "422"):
+        assert operation["responses"][status_code]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ApiErrorResponse"
+        }
+    assert schema["paths"][RUNS_PATH]["get"]["responses"]["404"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/ApiErrorResponse"}
+    assert schema["paths"][RUN_PATH]["get"]["responses"]["404"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/ApiErrorResponse"}
     assert "prediction" not in operation["summary"].casefold()
 
 
