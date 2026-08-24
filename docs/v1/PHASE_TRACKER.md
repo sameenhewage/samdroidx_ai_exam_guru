@@ -108,7 +108,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - admin extraction-review/correction workflow
 
 ### Exit criteria
-- [ ] real Grade 5 fixture documents can be uploaded and preserved
+- [x] real Grade 5 fixture documents can be uploaded and preserved
 - [x] native PDF extraction works with deterministic tests
 - [ ] OCR abstraction exists and chosen open-source OCR has a benchmark record on representative Sinhala scans
 - [x] admin can compare/correct extracted content
@@ -126,7 +126,10 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - A provider-independent OCR port and deterministic benchmark harness record engine/version/configuration, page/block provenance, normalized character error rate, page coverage and question-structure coverage; 56 focused tests prove the harness while explicitly making no real Sinhala quality claim.
 - The Compose-backed Chromium journey proves `admin upload -> immutable MinIO source -> queued Valkey/Dramatiq extraction -> PostgreSQL pages/blocks/metrics -> compare/correct -> trusted -> same-checksum reuse`, visible audit evidence and reviewer 403 denial. The P1 taxonomy journey also remains green; 2 browser tests pass in 7.0 seconds.
 - Final gate for this progress point: 289 backend tests pass with 100% statements and branches; 18 frontend tests pass, configured unit coverage remains 100%, and Ruff/format/mypy/ESLint/typecheck/build/OpenAPI reproducibility/npm audit/actionlint/Compose health all pass.
-- P2 remains IN_PROGRESS because no legally usable representative scanned Sinhala Grade 5 fixture set with human-adjudicated ground truth is available, so no open-source OCR engine can yet be benchmarked or selected honestly. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, and lifecycle/tagged orphan cleanup remains P10 reliability hardening.
+- `7274ae7` adds deterministic metadata-only local inventory tooling. The ignored operator dataset contains 90 PDFs / 859 pages: 1 Sinhala teacher guide (293 pages), 51 English documents (77 pages), 13 Maths documents (397 pages), 6 Parisaraya scan-dominant activities (17 pages), and 19 Sinhala activities (75 pages), with zero malformed files.
+- Four real local PDFs were checksum-verified against the inventory and preserved through the API/MinIO pipeline. A five-page Unicode Sinhala Maths source was extracted by PyMuPDF `1.28.2` into 39 provenance blocks / 1,109 characters with native-text ratio `1.0` and remains queued for human trust review; scan-dominant Parisaraya and overlay-heavy Sinhala sources remain untrusted OCR candidates.
+- `5e31dda` adds a real-data regression that detects sparse native overlays over near-full-page raster images: the representative Parisaraya file reports image-dominant ratio `1.0` and `needs_ocr=true`; the Sinhala activity reports `0.25` and `needs_ocr=true`; the teacher guide remains flagged separately for nonstandard font-mapping review. Backend gate: 297 tests pass with 100% statements and branches.
+- P2 remains IN_PROGRESS because representative scanned Sinhala pages now exist locally but do not yet have human-adjudicated ground truth, and no Sinhala-capable OCR engine is installed/configured for a defensible benchmark. A secondary accepted risk is that a permanently abandoned upload can leave a content-addressed S3 object if PostgreSQL fails after object creation; retries self-heal, and lifecycle/tagged orphan cleanup remains P10 reliability hardening.
 
 ---
 
@@ -432,4 +435,4 @@ TBD
 ---
 
 # Current next action
-P2 is IN_PROGRESS with an external content blocker. The next required evidence is a legally usable representative set of scanned Sinhala Grade 5 pages plus human-adjudicated text/layout/question ground truth; then the fixed OCR harness can compare open-source engines without inventing quality claims. Tagged object-upload lifecycle/orphan cleanup remains queued for P10 reliability hardening. P3 and student Priority 2 remain blocked.
+P2 is IN_PROGRESS with a human-adjudication blocker: representative Sinhala scan pages are now inventoried locally, but verified text/layout/question ground truth is still required before claiming OCR accuracy. Next, benchmark a Sinhala-capable open-source OCR adapter on the ignored local queue and continue P3 knowledge/question-bank engineering with the extracted native Sinhala Maths candidate and deterministic fixtures. Student Priority 2 remains blocked by P10.
