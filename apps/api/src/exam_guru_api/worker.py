@@ -6,12 +6,14 @@ from exam_guru_api.core.config import Settings
 
 def _register_actors(broker: RedisBroker) -> None:
     from exam_guru_api.documents.jobs import extract_document
-    from exam_guru_api.generation.jobs import generate_question
+    from exam_guru_api.generation.jobs import generate_question, recover_generation_jobs
 
     extract_document.broker = broker
     generate_question.broker = broker
+    recover_generation_jobs.broker = broker
     broker.declare_actor(extract_document)
     broker.declare_actor(generate_question)
+    broker.declare_actor(recover_generation_jobs)
 
 
 def create_broker(settings: Settings | None = None) -> RedisBroker:

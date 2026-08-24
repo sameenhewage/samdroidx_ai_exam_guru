@@ -10,6 +10,11 @@ LOCAL_DATABASE_URL = "postgresql+asyncpg://exam_guru@localhost:5432/exam_guru"
 LOCAL_VALKEY_URL = "redis://localhost:6379/0"
 LOCAL_STORAGE_ACCESS_KEY = "exam-guru-local"
 LOCAL_STORAGE_SECRET_KEY = ""
+GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+GENERATION_PROVIDER_MAX_EXECUTION_SECONDS = 3 * 120 + 2 * 2
+MIN_GENERATION_WORKER_LEASE_SECONDS = (
+    max(GENERATION_ACTOR_MAX_EXECUTION_SECONDS, GENERATION_PROVIDER_MAX_EXECUTION_SECONDS) + 1
+)
 
 
 class Settings(BaseSettings):
@@ -66,6 +71,13 @@ class Settings(BaseSettings):
         le=100_000_000_000,
     )
     generation_timeout_ms: int | None = Field(default=None, ge=1, le=120_000)
+    generation_recovery_batch_size: int = Field(default=50, ge=1, le=100)
+    generation_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
+    generation_worker_lease_seconds: int = Field(
+        default=600,
+        ge=MIN_GENERATION_WORKER_LEASE_SECONDS,
+        le=86_400,
+    )
     deterministic_admin_token: SecretStr | None = None
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None

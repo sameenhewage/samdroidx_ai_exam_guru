@@ -7,11 +7,11 @@ from uuid import UUID
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 
-from exam_guru_api.core.config import Settings
+from exam_guru_api.core.config import GENERATION_ACTOR_MAX_EXECUTION_SECONDS, Settings
 
 GENERATION_QUEUE_NAME = "question-generation"
 GENERATION_JOB_MAX_RETRIES = 0
-GENERATION_JOB_TIME_LIMIT_MS = 5 * 60 * 1_000
+GENERATION_JOB_TIME_LIMIT_MS = GENERATION_ACTOR_MAX_EXECUTION_SECONDS * 1_000
 
 
 class GenerationDispatcher(Protocol):
@@ -43,6 +43,31 @@ async def _process_generation_job(job_id: UUID, run_id: UUID) -> None:
         await resources.close()
 
 
+async def _recover_generation_jobs() -> None:
+    from exam_guru_api.generation.run_service import (
+        GenerationRecoveryPolicy,
+        GenerationRecoveryService,
+    )
+    from exam_guru_api.infrastructure.resources import create_resources
+
+    settings = Settings()
+    resources = create_resources(settings)
+    try:
+        policy = GenerationRecoveryPolicy(
+            batch_size=settings.generation_recovery_batch_size,
+            outbox_min_age_seconds=settings.generation_outbox_min_age_seconds,
+            worker_lease_seconds=settings.generation_worker_lease_seconds,
+        )
+        async with resources.session_factory() as session:
+            await GenerationRecoveryService(
+                session,
+                DramatiqGenerationDispatcher(),
+                policy,
+            ).recover()
+    finally:
+        await resources.close()
+
+
 @dramatiq.actor(
     queue_name=GENERATION_QUEUE_NAME,
     max_retries=GENERATION_JOB_MAX_RETRIES,
@@ -50,6 +75,15 @@ async def _process_generation_job(job_id: UUID, run_id: UUID) -> None:
 )
 def generate_question(job_id: str, run_id: str) -> None:
     asyncio.run(_process_generation_job(UUID(job_id), UUID(run_id)))
+
+
+@dramatiq.actor(
+    queue_name=GENERATION_QUEUE_NAME,
+    max_retries=GENERATION_JOB_MAX_RETRIES,
+    time_limit=GENERATION_JOB_TIME_LIMIT_MS,
+)
+def recover_generation_jobs() -> None:
+    asyncio.run(_recover_generation_jobs())
 
 
 _DEFAULT_GENERATION_ACTOR = cast(_GenerationActor, generate_question)
@@ -77,5 +111,7 @@ def create_generation_dispatcher(settings: Settings) -> DramatiqGenerationDispat
     broker = RedisBroker(url=settings.valkey_url.get_secret_value())
     dramatiq.set_broker(broker)
     generate_question.broker = broker
+    recover_generation_jobs.broker = broker
     broker.declare_actor(generate_question)
+    broker.declare_actor(recover_generation_jobs)
     return DramatiqGenerationDispatcher()

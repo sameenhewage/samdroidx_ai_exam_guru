@@ -461,7 +461,39 @@ def test_context_and_slot_snapshot_boundaries_are_strict() -> None:
         _slot_snapshot({"slots": []}, PAPER.slots[0].slot_id)
 
 
-def test_dispatch_failure_is_sanitized_persisted_and_audited() -> None:
+def test_duplicate_create_redispatches_a_committed_job_after_process_death() -> None:
+    class SimulatedProcessDeath(BaseException):
+        pass
+
+    class CrashingDispatcher:
+        def dispatch(self, job_id: UUID, run_id: UUID) -> str:
+            del job_id, run_id
+            raise SimulatedProcessDeath
+
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        crashed_service, crashed_session, _ = build_service(repository, CrashingDispatcher())
+        with pytest.raises(SimulatedProcessDeath):
+            await create(crashed_service, key="crash-before-dispatch")
+
+        stored = next(iter(repository.by_hash.values()))
+        assert crashed_session.commits == 1
+        assert stored.run.status == "pending"
+        assert stored.job.status == "queued"
+        assert stored.job.queue_message_id is None
+
+        recovery_service, recovery_session, dispatcher = build_service(repository)
+        recovered = await create(recovery_service, key="crash-before-dispatch")
+
+        assert recovered.deduplicated is True
+        assert recovered.job.queue_message_id == "unit-generation-message"
+        assert dispatcher.dispatched == [(stored.job.id, stored.run.id)]
+        assert recovery_session.commits == 1
+
+    asyncio.run(exercise())
+
+
+def test_dispatch_failure_remains_recoverable_and_is_sanitized_and_audited() -> None:
     class FailingDispatcher:
         def dispatch(self, job_id: UUID, run_id: UUID) -> str:
             del job_id, run_id
@@ -473,10 +505,15 @@ def test_dispatch_failure_is_sanitized_persisted_and_audited() -> None:
         with pytest.raises(GenerationQueueUnavailableError):
             await create(service, key="queue-failure")
         stored = next(iter(repository.by_hash.values()))
-        assert stored.run.status == stored.job.status == "failed"
-        assert stored.run.failure_code == stored.job.failure_code == "queue_dispatch_failed"
+        assert stored.run.status == "pending"
+        assert stored.job.status == "queued"
+        assert stored.job.queue_message_id is None
         audit = cast(AdminAuditEventModel, session.added[-1])
-        assert audit.action == "generation_run.failed"
+        assert audit.action == "generation_job.dispatch_failed"
+        assert audit.payload == {
+            "failure_code": "queue_dispatch_failed",
+            "job_id": str(stored.job.id),
+        }
         assert "credential" not in str(audit.payload)
 
     asyncio.run(exercise())

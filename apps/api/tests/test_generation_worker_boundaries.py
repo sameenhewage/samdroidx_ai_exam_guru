@@ -9,9 +9,11 @@ from exam_guru_api.core.config import Settings
 from exam_guru_api.generation.domain import GenerationRequest, GenerationResult
 from exam_guru_api.generation.models import GenerationRunModel
 from exam_guru_api.generation.ports import ProviderError, ProviderFailureCode
+from exam_guru_api.generation.repository import GenerationClaimRecord
 from exam_guru_api.generation.run_service import (
     GenerationRegisteredConfigMismatchError,
     GenerationWorkerService,
+    _CompletedAttempt,
     _generation_request,
     _persisted_context,
     _RecordingProvider,
@@ -122,7 +124,7 @@ def test_worker_claim_rolls_back_when_job_does_not_match_claimed_run() -> None:
     asyncio.run(exercise())
 
 
-def test_worker_rejects_unregistered_persisted_configuration_and_completion_cas_loss() -> None:
+def test_worker_rejects_unregistered_configuration_and_rolls_back_lost_lease() -> None:
     async def exercise() -> None:
         runtime = create_generation_runtime(Settings(environment="test"))
         changed = run_model()
@@ -137,16 +139,61 @@ def test_worker_rejects_unregistered_persisted_configuration_and_completion_cas_
         ):
             worker._matching_config(changed)
 
-        session = ClaimSession((None, job_model()))
+        class InactiveRepository:
+            async def lock_active_completion(
+                self,
+                run_id: UUID,
+                job_id: UUID,
+            ) -> None:
+                del run_id, job_id
+
+        session = ClaimSession(())
         worker = GenerationWorkerService(
             cast(AsyncSession, session),
             runtime,
             sleep=lambda _: None,
         )
-        with pytest.raises(RuntimeError, match="completion lost"):
+        worker._repository = cast(object, InactiveRepository())  # type: ignore[assignment]
+        assert (
             await worker._complete(
                 changed,
                 JOB_ID,
+                (),
+                result=None,
+                failure_code="generation_internal_error",
+            )
+            is False
+        )
+        assert session.rollbacks == 1
+
+    asyncio.run(exercise())
+
+
+def test_worker_rolls_back_when_terminal_completion_cas_is_lost() -> None:
+    async def exercise() -> None:
+        run = run_model()
+        job = job_model()
+
+        class ActiveRepository:
+            async def lock_active_completion(
+                self,
+                run_id: UUID,
+                job_id: UUID,
+            ) -> GenerationClaimRecord:
+                assert (run_id, job_id) == (run.id, job.id)
+                return GenerationClaimRecord(run=run, job=job)
+
+        session = ClaimSession((None, job))
+        worker = GenerationWorkerService(
+            cast(AsyncSession, session),
+            create_generation_runtime(Settings(environment="test")),
+            sleep=lambda _: None,
+        )
+        worker._repository = cast(object, ActiveRepository())  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="completion lost"):
+            await worker._complete(
+                run,
+                job.id,
                 (),
                 result=None,
                 failure_code="generation_internal_error",
@@ -208,9 +255,18 @@ def test_worker_maps_retry_exhaustion_orchestration_and_internal_failures(
             del run
             return self._config
 
-        async def _complete(self, *args: object, **kwargs: object) -> None:
-            del args
-            self.failure_codes.append(cast(str | None, kwargs["failure_code"]))
+        async def _complete(
+            self,
+            run: GenerationRunModel,
+            job_id: UUID,
+            completed: tuple[_CompletedAttempt, ...],
+            *,
+            result: GenerationResult | None,
+            failure_code: str | None,
+        ) -> bool:
+            del run, job_id, completed, result
+            self.failure_codes.append(failure_code)
+            return True
 
     runtime = create_generation_runtime(Settings(environment="test"))
     config = runtime.active_config

@@ -16,6 +16,8 @@ from exam_guru_api.generation.models import (
     GenerationRunModel,
 )
 from exam_guru_api.generation.repository import (
+    GenerationAttemptAccounting,
+    GenerationClaimRecord,
     GenerationJobNotFoundError,
     GenerationRunNotFoundError,
     GenerationRunWrite,
@@ -55,6 +57,11 @@ class ExecuteResult:
     def all(self) -> list[object]:
         return list(self._rows)
 
+    def one(self) -> object:
+        if self._row is None:
+            raise AssertionError("scripted row is required")
+        return self._row
+
 
 class ScriptedSession:
     def __init__(
@@ -71,6 +78,7 @@ class ScriptedSession:
         self.get_result = get_result
         self.added: list[object] = []
         self.flushes = 0
+        self.rollbacks = 0
 
     async def scalar(self, statement: object) -> object | None:
         del statement
@@ -93,6 +101,9 @@ class ScriptedSession:
 
     async def flush(self) -> None:
         self.flushes += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 def run_write() -> GenerationRunWrite:
@@ -395,5 +406,77 @@ def test_repository_cas_message_dispatch_failure_and_lookup_boundaries() -> None
             await SqlAlchemyGenerationRepository(
                 cast(AsyncSession, ScriptedSession(scalar_results=(None,)))
             ).get_job(CURRICULUM_ID, JOB_ID)
+
+    asyncio.run(exercise())
+
+
+def test_repository_locks_recovery_pages_accounts_attempts_and_cas_expires_claims() -> None:
+    async def exercise() -> None:
+        run = run_model()
+        run.status = "running"
+        run.version = 1
+        run.started_at = NOW
+        job = job_model()
+        job.status = "claimed"
+        job.version = 2
+        job.claimed_at = NOW
+        claim = GenerationClaimRecord(run=run, job=job)
+        accounting = GenerationAttemptAccounting(
+            attempt_count=1,
+            input_tokens=10,
+            output_tokens=4,
+            total_tokens=14,
+            cost_microusd=7,
+            latency_ms=9,
+        )
+
+        outbox = await SqlAlchemyGenerationRepository(
+            cast(AsyncSession, ScriptedSession(scalar_rows=(job,)))
+        ).lock_recoverable_outbox_jobs(created_before=NOW, limit=10)
+        assert outbox == (job,)
+
+        expired = await SqlAlchemyGenerationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(execute_results=(ExecuteResult(rows=((run, job),)),)),
+            )
+        ).lock_expired_claims(claimed_before=NOW, limit=10)
+        assert expired == (claim,)
+
+        active = await SqlAlchemyGenerationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(execute_results=(ExecuteResult(row=(run, job)),)),
+            )
+        ).lock_active_completion(RUN_ID, JOB_ID)
+        assert active == claim
+        missing = await SqlAlchemyGenerationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(execute_results=(ExecuteResult(row=None),)),
+            )
+        ).lock_active_completion(RUN_ID, JOB_ID)
+        assert missing is None
+
+        totals = await SqlAlchemyGenerationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(execute_results=(ExecuteResult(row=(1, 10, 4, 14, 7, 9)),)),
+            )
+        ).get_attempt_accounting(RUN_ID)
+        assert totals == accounting
+
+        assert await SqlAlchemyGenerationRepository(
+            cast(AsyncSession, ScriptedSession(scalar_results=(run, job)))
+        ).expire_claim(claim, accounting, completed_at=NOW)
+        assert not await SqlAlchemyGenerationRepository(
+            cast(AsyncSession, ScriptedSession(scalar_results=(None,)))
+        ).expire_claim(claim, accounting, completed_at=NOW)
+
+        job_loss_session = ScriptedSession(scalar_results=(run, None))
+        assert not await SqlAlchemyGenerationRepository(
+            cast(AsyncSession, job_loss_session)
+        ).expire_claim(claim, accounting, completed_at=NOW)
+        assert job_loss_session.rollbacks == 1
 
     asyncio.run(exercise())

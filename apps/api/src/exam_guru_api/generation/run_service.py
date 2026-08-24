@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.domain import BlueprintSlot, TaxonomyTarget
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
+from exam_guru_api.core.config import MIN_GENERATION_WORKER_LEASE_SECONDS
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.generation.domain import (
     CandidateDisposition,
@@ -41,6 +42,8 @@ from exam_guru_api.generation.models import (
 )
 from exam_guru_api.generation.ports import GenerationProvider, ProviderError, ProviderFailureCode
 from exam_guru_api.generation.repository import (
+    GenerationAttemptAccounting,
+    GenerationClaimRecord,
     GenerationContextRecord,
     GenerationRunWrite,
     SqlAlchemyGenerationRepository,
@@ -129,6 +132,44 @@ class GenerationCreationResult:
     run: GenerationRunModel
     job: GenerationJobModel
     deduplicated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationRecoveryPolicy:
+    batch_size: int
+    outbox_min_age_seconds: int
+    worker_lease_seconds: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.batch_size, int)
+            or isinstance(self.batch_size, bool)
+            or not 1 <= self.batch_size <= 100
+        ):
+            raise ValueError("batch_size must be between 1 and 100")
+        if (
+            not isinstance(self.outbox_min_age_seconds, int)
+            or isinstance(self.outbox_min_age_seconds, bool)
+            or not 1 <= self.outbox_min_age_seconds <= 3_600
+        ):
+            raise ValueError("outbox_min_age_seconds must be between 1 and 3600")
+        if (
+            not isinstance(self.worker_lease_seconds, int)
+            or isinstance(self.worker_lease_seconds, bool)
+            or not MIN_GENERATION_WORKER_LEASE_SECONDS <= self.worker_lease_seconds <= 86_400
+        ):
+            raise ValueError(
+                "worker_lease_seconds must exceed maximum generation execution and be bounded"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationRecoveryResult:
+    outbox_scanned: int
+    outbox_dispatched: int
+    outbox_failures: int
+    claims_scanned: int
+    claims_expired: int
 
 
 class GenerationRunService:
@@ -286,35 +327,28 @@ class GenerationRunService:
             created_by=actor_id,
         )
         stored = await self._repository.store_run(write, job_id=job_id)
-        if not stored.created:
-            if (
-                stored.run.id != run_id
-                or stored.run.curriculum_version_id != curriculum_version_id
-                or stored.run.paper_blueprint_id != paper_blueprint_id
-                or stored.run.slot_id != slot_id
-                or stored.run.request_fingerprint != request_fingerprint
-                or stored.run.retry_of_run_id != retry_of_run_id
-            ):
-                raise GenerationIdempotencyConflictError(idempotency_key_hash)
-            return GenerationCreationResult(stored.run, stored.job, deduplicated=True)
+        if not stored.created and (
+            stored.run.id != run_id
+            or stored.run.curriculum_version_id != curriculum_version_id
+            or stored.run.paper_blueprint_id != paper_blueprint_id
+            or stored.run.slot_id != slot_id
+            or stored.run.request_fingerprint != request_fingerprint
+            or stored.run.retry_of_run_id != retry_of_run_id
+        ):
+            raise GenerationIdempotencyConflictError(idempotency_key_hash)
 
-        self._audit_created(stored.run)
-        await self._session.commit()
-        try:
-            message_id = self._dispatcher.dispatch(stored.job.id, stored.run.id)
-        except Exception as error:
-            await self._repository.fail_dispatch(
-                stored.run.id,
-                stored.job.id,
-                completed_at=datetime.now(UTC),
-                failure_code="queue_dispatch_failed",
-            )
-            self._audit_failed(stored.run, "queue_dispatch_failed")
+        if stored.created:
+            self._audit_created(stored.run)
             await self._session.commit()
-            raise GenerationQueueUnavailableError from error
-        job = await self._repository.attach_queue_message(stored.job.id, message_id)
-        await self._session.commit()
-        return GenerationCreationResult(stored.run, job, deduplicated=False)
+
+        job = stored.job
+        if job.status == GenerationJobStatus.QUEUED.value and job.queue_message_id is None:
+            job = await self._dispatch_job(stored.run, job)
+        return GenerationCreationResult(
+            stored.run,
+            job,
+            deduplicated=not stored.created,
+        )
 
     async def retry(
         self,
@@ -417,6 +451,21 @@ class GenerationRunService:
                 raise GenerationContextTaxonomyMismatchError(record.id)
         return ordered
 
+    async def _dispatch_job(
+        self,
+        run: GenerationRunModel,
+        job: GenerationJobModel,
+    ) -> GenerationJobModel:
+        try:
+            message_id = self._dispatcher.dispatch(job.id, run.id)
+        except Exception as error:
+            self._audit_dispatch_failed(run, job)
+            await self._session.commit()
+            raise GenerationQueueUnavailableError from error
+        attached = await self._repository.attach_queue_message(job.id, message_id)
+        await self._session.commit()
+        return attached
+
     def _audit_created(self, run: GenerationRunModel) -> None:
         self._session.add(
             AdminAuditEventModel(
@@ -452,15 +501,133 @@ class GenerationRunService:
             )
         )
 
-    def _audit_failed(self, run: GenerationRunModel, failure_code: str) -> None:
+    def _audit_dispatch_failed(
+        self,
+        run: GenerationRunModel,
+        job: GenerationJobModel,
+    ) -> None:
         self._session.add(
             AdminAuditEventModel(
                 id=uuid4(),
                 actor_id=run.created_by,
-                action="generation_run.failed",
+                action="generation_job.dispatch_failed",
                 resource_type="generation_run",
                 resource_id=run.id,
-                payload={"failure_code": failure_code, "attempt_count": 0},
+                payload={
+                    "failure_code": "queue_dispatch_failed",
+                    "job_id": str(job.id),
+                },
+            )
+        )
+
+
+class GenerationRecoveryService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        dispatcher: GenerationDispatcher,
+        policy: GenerationRecoveryPolicy,
+    ) -> None:
+        if not isinstance(policy, GenerationRecoveryPolicy):
+            raise TypeError("policy must be GenerationRecoveryPolicy")
+        self._session = session
+        self._dispatcher = dispatcher
+        self._policy = policy
+        self._repository = SqlAlchemyGenerationRepository(session)
+
+    async def recover(self, *, now: datetime | None = None) -> GenerationRecoveryResult:
+        active_now = datetime.now(UTC) if now is None else now
+        outbox_jobs = await self._repository.lock_recoverable_outbox_jobs(
+            created_before=active_now - timedelta(seconds=self._policy.outbox_min_age_seconds),
+            limit=self._policy.batch_size,
+        )
+        outbox_dispatched = 0
+        outbox_failures = 0
+        for job in outbox_jobs:
+            try:
+                message_id = self._dispatcher.dispatch(job.id, job.generation_run_id)
+            except Exception:
+                outbox_failures += 1
+                self._audit_redispatch_failed(job)
+                continue
+            await self._repository.attach_queue_message(job.id, message_id)
+            outbox_dispatched += 1
+            self._audit_redispatched(job)
+
+        claims = await self._repository.lock_expired_claims(
+            claimed_before=active_now - timedelta(seconds=self._policy.worker_lease_seconds),
+            limit=self._policy.batch_size,
+        )
+        claims_expired = 0
+        for claim in claims:
+            accounting = await self._repository.get_attempt_accounting(claim.run.id)
+            if await self._repository.expire_claim(
+                claim,
+                accounting,
+                completed_at=active_now,
+            ):
+                claims_expired += 1
+                self._audit_lease_expired(claim, accounting)
+
+        await self._session.commit()
+        return GenerationRecoveryResult(
+            outbox_scanned=len(outbox_jobs),
+            outbox_dispatched=outbox_dispatched,
+            outbox_failures=outbox_failures,
+            claims_scanned=len(claims),
+            claims_expired=claims_expired,
+        )
+
+    def _audit_redispatched(self, job: GenerationJobModel) -> None:
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=job.created_by,
+                action="generation_job.redispatched",
+                resource_type="generation_run",
+                resource_id=job.generation_run_id,
+                payload={"job_id": str(job.id), "recovery": True},
+            )
+        )
+
+    def _audit_redispatch_failed(self, job: GenerationJobModel) -> None:
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=job.created_by,
+                action="generation_job.redispatch_failed",
+                resource_type="generation_run",
+                resource_id=job.generation_run_id,
+                payload={
+                    "failure_code": "queue_dispatch_failed",
+                    "job_id": str(job.id),
+                    "recovery": True,
+                },
+            )
+        )
+
+    def _audit_lease_expired(
+        self,
+        claim: GenerationClaimRecord,
+        accounting: GenerationAttemptAccounting,
+    ) -> None:
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=claim.run.created_by,
+                action="generation_run.worker_lease_expired",
+                resource_type="generation_run",
+                resource_id=claim.run.id,
+                payload={
+                    "failure_code": "worker_lease_expired",
+                    "job_id": str(claim.job.id),
+                    "attempt_count": accounting.attempt_count,
+                    "input_tokens": accounting.input_tokens,
+                    "output_tokens": accounting.output_tokens,
+                    "total_tokens": accounting.total_tokens,
+                    "cost_microusd": accounting.cost_microusd,
+                    "latency_ms": accounting.latency_ms,
+                },
             )
         )
 
@@ -598,6 +765,7 @@ class GenerationWorkerService:
         self._session = session
         self._runtime = runtime
         self._sleep = sleep
+        self._repository = SqlAlchemyGenerationRepository(session)
 
     async def process(self, job_id: UUID, run_id: UUID) -> bool:
         run = await self._claim(job_id, run_id)
@@ -635,14 +803,14 @@ class GenerationWorkerService:
             failure_code = "generation_internal_error"
 
         completed = () if recorder is None else tuple(recorder.completed)
-        await self._complete(
+        completion = await self._complete(
             run,
             job_id,
             completed,
             result=result,
             failure_code=failure_code,
         )
-        return True
+        return completion is not False
 
     async def _claim(self, job_id: UUID, run_id: UUID) -> GenerationRunModel | None:
         now = datetime.now(UTC)
@@ -735,7 +903,12 @@ class GenerationWorkerService:
         *,
         result: GenerationResult | None,
         failure_code: str | None,
-    ) -> None:
+    ) -> bool:
+        active = await self._repository.lock_active_completion(run.id, job_id)
+        if active is None:
+            await self._session.rollback()
+            return False
+        run = active.run
         for item in completed:
             accounting = item.accounting
             attempt = GenerationAttemptModel(
@@ -803,7 +976,7 @@ class GenerationWorkerService:
             .where(
                 GenerationRunModel.id == run.id,
                 GenerationRunModel.status == GenerationRunStatus.RUNNING.value,
-                GenerationRunModel.version == 1,
+                GenerationRunModel.version == run.version,
             )
             .values(
                 status=(
@@ -838,6 +1011,7 @@ class GenerationWorkerService:
                 GenerationJobModel.id == job_id,
                 GenerationJobModel.generation_run_id == run.id,
                 GenerationJobModel.status == GenerationJobStatus.CLAIMED.value,
+                GenerationJobModel.version == active.job.version,
             )
             .values(
                 status=(
@@ -876,6 +1050,7 @@ class GenerationWorkerService:
             )
         )
         await self._session.commit()
+        return True
 
 
 def _context_snapshot(

@@ -3,11 +3,11 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Barrier
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from dramatiq.brokers.redis import RedisBroker
@@ -37,6 +37,7 @@ from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentMo
 from exam_guru_api.generation import jobs as generation_jobs
 from exam_guru_api.generation.domain import (
     GenerationAccounting,
+    GenerationIdentity,
     GenerationRequest,
     GenerationResult,
 )
@@ -48,11 +49,19 @@ from exam_guru_api.generation.jobs import (
 )
 from exam_guru_api.generation.models import (
     GenerationAttemptModel,
+    GenerationAttemptStatus,
     GenerationJobModel,
     GenerationRunModel,
 )
 from exam_guru_api.generation.ports import GenerationProvider, ProviderError, ProviderFailureCode
-from exam_guru_api.generation.run_service import GenerationWorkerService
+from exam_guru_api.generation.run_service import (
+    GenerationRecoveryPolicy,
+    GenerationRecoveryResult,
+    GenerationRecoveryService,
+    GenerationRunService,
+    GenerationWorkerService,
+    _CompletedAttempt,
+)
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
 from exam_guru_api.infrastructure.migrations import (
     assert_database_schema_current,
@@ -661,8 +670,9 @@ def test_generation_create_race_converges_on_one_run_job_and_dispatch(
     dispatcher = DeterministicGenerationDispatcher("generation-race-message")
     barrier = Barrier(2)
 
-    def create_once() -> tuple[int, str, str]:
-        with api_client(generation_seed, dispatcher) as client:
+    with api_client(generation_seed, dispatcher) as client:
+
+        def create_once() -> tuple[int, str, str, str | None]:
             barrier.wait()
             response = client.post(
                 generation_seed.base_path,
@@ -670,15 +680,22 @@ def test_generation_create_race_converges_on_one_run_job_and_dispatch(
                 headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-race"},
             )
             body = response.json()
-            return response.status_code, body["id"], body["generation_run_id"]
+            return (
+                response.status_code,
+                body["id"],
+                body["generation_run_id"],
+                body["queue_message_id"],
+            )
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = tuple(executor.map(lambda _: create_once(), range(2)))
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = tuple(executor.map(lambda _: create_once(), range(2)))
 
     assert {item[0] for item in results} == {202}
     assert len({item[1] for item in results}) == 1
     assert len({item[2] for item in results}) == 1
-    assert len(dispatcher.dispatched) == 1
+    assert {item[3] for item in results} == {"generation-race-message"}
+    assert 1 <= len(dispatcher.dispatched) <= 2
+    assert set(dispatcher.dispatched) == {(UUID(results[0][1]), UUID(results[0][2]))}
 
     async def verify() -> None:
         engine = create_async_engine(generation_seed.database_url)
@@ -1072,3 +1089,382 @@ def test_generation_api_enqueues_the_durable_job_in_real_valkey(
         assert broker.do_qsize(GENERATION_QUEUE_NAME) == 1
     finally:
         broker.close()
+
+
+class SimulatedProcessDeath(BaseException):
+    pass
+
+
+class CrashAfterOptionalSendDispatcher:
+    def __init__(self, *, records_send: bool) -> None:
+        self._records_send = records_send
+        self.calls: list[tuple[UUID, UUID]] = []
+
+    def dispatch(self, job_id: UUID, run_id: UUID) -> str:
+        if self._records_send:
+            self.calls.append((job_id, run_id))
+        else:
+            self.calls = [(job_id, run_id)]
+        raise SimulatedProcessDeath
+
+
+async def create_direct(
+    generation_seed: GenerationSeed,
+    *,
+    key: str,
+    dispatcher: GenerationDispatcher,
+    runtime: GenerationRuntimeRegistry | None = None,
+) -> tuple[UUID, UUID]:
+    engine = create_async_engine(generation_seed.database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            result = await GenerationRunService(
+                session,
+                runtime or create_generation_runtime(settings_for(generation_seed)),
+                dispatcher,
+            ).create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=generation_seed.paper_blueprint_id,
+                slot_id=generation_seed.slot_id,
+                knowledge_chunk_ids=(ALLOWED_CHUNK_ID,),
+                historical_question_ids=(ALLOWED_QUESTION_ID,),
+                idempotency_key=key,
+                actor_id=ADMIN_ID,
+            )
+            return result.job.id, result.run.id
+    finally:
+        await engine.dispose()
+
+
+async def create_crashed(
+    generation_seed: GenerationSeed,
+    *,
+    key: str,
+    records_send: bool,
+) -> tuple[UUID, UUID, CrashAfterOptionalSendDispatcher]:
+    dispatcher = CrashAfterOptionalSendDispatcher(records_send=records_send)
+    with pytest.raises(SimulatedProcessDeath):
+        await create_direct(generation_seed, key=key, dispatcher=dispatcher)
+    job_id, run_id = dispatcher.calls[0]
+    return job_id, run_id, dispatcher
+
+
+@pytest.mark.integration
+def test_duplicate_message_after_dispatch_crash_has_one_provider_execution(
+    generation_seed: GenerationSeed,
+) -> None:
+    provider_calls: list[UUID] = []
+
+    class CountingProvider:
+        def __init__(self, delegate: GenerationProvider) -> None:
+            self._delegate = delegate
+
+        def generate(self, request: GenerationRequest) -> GenerationResult:
+            provider_calls.append(request.identity.attempt_id)
+            return self._delegate.generate(request)
+
+    async def exercise() -> None:
+        job_id, run_id, crashed = await create_crashed(
+            generation_seed,
+            key="generation-dispatch-send-crash",
+            records_send=True,
+        )
+        second_dispatcher = DeterministicGenerationDispatcher("duplicate-message")
+        base_runtime = create_generation_runtime(settings_for(generation_seed))
+        runtime = GenerationRuntimeRegistry(
+            base_runtime.active_config,
+            provider_factory=lambda config: CountingProvider(base_runtime.build_provider(config)),
+        )
+        recovered_job_id, recovered_run_id = await create_direct(
+            generation_seed,
+            key="generation-dispatch-send-crash",
+            dispatcher=second_dispatcher,
+            runtime=runtime,
+        )
+        assert (recovered_job_id, recovered_run_id) == (job_id, run_id)
+        assert crashed.calls == [(job_id, run_id)]
+        assert second_dispatcher.dispatched == [(job_id, run_id)]
+
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                worker = GenerationWorkerService(session, runtime, sleep=lambda _: None)
+                assert await worker.process(job_id, run_id) is True
+                assert await worker.process(job_id, run_id) is False
+        finally:
+            await engine.dispose()
+
+        assert len(provider_calls) == 1
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_concurrent_outbox_recoverers_dispatch_once_and_failure_remains_recoverable(
+    generation_seed: GenerationSeed,
+) -> None:
+    async def exercise() -> None:
+        job_id, run_id, _ = await create_crashed(
+            generation_seed,
+            key="generation-outbox-concurrent",
+            records_send=False,
+        )
+        now = datetime.now(UTC) + timedelta(minutes=5)
+        dispatcher = DeterministicGenerationDispatcher("outbox-recovered")
+        policy = GenerationRecoveryPolicy(
+            batch_size=1,
+            outbox_min_age_seconds=1,
+            worker_lease_seconds=600,
+        )
+
+        async def recover_once() -> GenerationRecoveryResult:
+            engine = create_async_engine(generation_seed.database_url)
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with sessions() as session:
+                    return await GenerationRecoveryService(
+                        session,
+                        dispatcher,
+                        policy,
+                    ).recover(now=now)
+            finally:
+                await engine.dispose()
+
+        first, second = await asyncio.gather(recover_once(), recover_once())
+        assert first.outbox_dispatched + second.outbox_dispatched == 1
+        assert dispatcher.dispatched == [(job_id, run_id)]
+
+        failing_job_id, failing_run_id, _ = await create_crashed(
+            generation_seed,
+            key="generation-outbox-failure",
+            records_send=False,
+        )
+
+        class FailingDispatcher:
+            def dispatch(self, actual_job_id: UUID, actual_run_id: UUID) -> str:
+                assert (actual_job_id, actual_run_id) == (failing_job_id, failing_run_id)
+                raise RuntimeError("raw valkey credential and transport exception")
+
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                failed = await GenerationRecoveryService(
+                    session,
+                    FailingDispatcher(),
+                    policy,
+                ).recover(now=now)
+                assert failed.outbox_failures == 1
+                job = await session.get(GenerationJobModel, failing_job_id)
+                assert job is not None
+                assert job.status == "queued"
+                assert job.queue_message_id is None
+
+            async with sessions() as session:
+                recovered = await GenerationRecoveryService(
+                    session,
+                    DeterministicGenerationDispatcher("outbox-after-failure"),
+                    policy,
+                ).recover(now=now)
+                assert recovered.outbox_dispatched == 1
+                job = await session.get(GenerationJobModel, failing_job_id)
+                assert job is not None
+                assert job.queue_message_id == "outbox-after-failure"
+                audits = tuple(
+                    await session.scalars(
+                        select(AdminAuditEventModel).where(
+                            AdminAuditEventModel.resource_id == failing_run_id,
+                            AdminAuditEventModel.action == "generation_job.redispatch_failed",
+                        )
+                    )
+                )
+                assert len(audits) == 1
+                assert audits[0].payload["failure_code"] == "queue_dispatch_failed"
+                assert "credential" not in str(audits[0].payload)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_stale_claim_recovery_preserves_accounting_allows_retry_and_rejects_late_completion(
+    generation_seed: GenerationSeed,
+) -> None:
+    async def exercise() -> None:
+        stale_job_id, stale_run_id = await create_direct(
+            generation_seed,
+            key="generation-stale-claim",
+            dispatcher=DeterministicGenerationDispatcher("stale-message"),
+        )
+        fresh_job_id, fresh_run_id = await create_direct(
+            generation_seed,
+            key="generation-fresh-claim",
+            dispatcher=DeterministicGenerationDispatcher("fresh-message"),
+        )
+        now = datetime.now(UTC)
+        stale_at = now - timedelta(seconds=601)
+        fresh_at = now - timedelta(seconds=599)
+        attempt_id = uuid4()
+
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                for run_id, job_id, claimed_at in (
+                    (stale_run_id, stale_job_id, stale_at),
+                    (fresh_run_id, fresh_job_id, fresh_at),
+                ):
+                    await session.execute(
+                        update(GenerationRunModel)
+                        .where(GenerationRunModel.id == run_id)
+                        .values(status="running", version=1, started_at=claimed_at)
+                    )
+                    await session.execute(
+                        update(GenerationJobModel)
+                        .where(GenerationJobModel.id == job_id)
+                        .values(
+                            status="claimed",
+                            version=GenerationJobModel.version + 1,
+                            claimed_at=claimed_at,
+                        )
+                    )
+                session.add(
+                    GenerationAttemptModel(
+                        id=attempt_id,
+                        generation_run_id=stale_run_id,
+                        attempt_number=1,
+                        retry_of_attempt_id=None,
+                        provider_idempotency_key=f"generation-{stale_run_id.hex}",
+                        status="failed",
+                        failure_code="timeout",
+                        retry_after_ms=None,
+                        accounting_known=True,
+                        input_tokens=10,
+                        output_tokens=4,
+                        total_tokens=14,
+                        cost_microusd=7,
+                        latency_ms=9,
+                        candidate=None,
+                        disposition=None,
+                        started_at=stale_at,
+                        completed_at=stale_at + timedelta(seconds=1),
+                    )
+                )
+                await session.commit()
+
+            policy = GenerationRecoveryPolicy(
+                batch_size=10,
+                outbox_min_age_seconds=1,
+                worker_lease_seconds=600,
+            )
+            async with sessions() as session:
+                recovered = await GenerationRecoveryService(
+                    session,
+                    DeterministicGenerationDispatcher("unused"),
+                    policy,
+                ).recover(now=now)
+                assert recovered.claims_scanned == 1
+                assert recovered.claims_expired == 1
+
+                stale_run = await session.get(GenerationRunModel, stale_run_id)
+                stale_job = await session.get(GenerationJobModel, stale_job_id)
+                fresh_run = await session.get(GenerationRunModel, fresh_run_id)
+                fresh_job = await session.get(GenerationJobModel, fresh_job_id)
+                assert stale_run is not None
+                assert stale_job is not None
+                assert fresh_run is not None
+                assert fresh_job is not None
+                assert stale_run.status == stale_job.status == "failed"
+                assert stale_run.failure_code == stale_job.failure_code == "worker_lease_expired"
+                assert (
+                    stale_run.attempt_count,
+                    stale_run.input_tokens,
+                    stale_run.output_tokens,
+                    stale_run.total_tokens,
+                    stale_run.cost_microusd,
+                    stale_run.latency_ms,
+                ) == (1, 10, 4, 14, 7, 9)
+                assert fresh_run.status == "running"
+                assert fresh_job.status == "claimed"
+
+            async with sessions() as session:
+                stale_run = await session.get(GenerationRunModel, stale_run_id)
+                assert stale_run is not None
+                late = _CompletedAttempt(
+                    identity=GenerationIdentity(
+                        generation_id=stale_run_id,
+                        attempt_id=uuid4(),
+                        idempotency_key=f"generation-{stale_run_id.hex}",
+                        attempt_number=2,
+                        retry_of_attempt_id=attempt_id,
+                    ),
+                    status=GenerationAttemptStatus.FAILED,
+                    failure_code="timeout",
+                    retry_after_ms=None,
+                    accounting=None,
+                    latency_ms=1,
+                    candidate=None,
+                    started_at=now,
+                    completed_at=now,
+                )
+                worker = GenerationWorkerService(
+                    session,
+                    create_generation_runtime(settings_for(generation_seed)),
+                    sleep=lambda _: None,
+                )
+                assert (
+                    await worker._complete(
+                        stale_run,
+                        stale_job_id,
+                        (late,),
+                        result=None,
+                        failure_code="provider_timeout",
+                    )
+                    is False
+                )
+                assert (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(GenerationAttemptModel)
+                        .where(GenerationAttemptModel.generation_run_id == stale_run_id)
+                    )
+                    == 1
+                )
+
+            with api_client(
+                generation_seed,
+                DeterministicGenerationDispatcher("explicit-retry"),
+            ) as client:
+                retry = client.post(
+                    f"{generation_seed.base_path}/{stale_run_id}/retry",
+                    headers={
+                        **ADMIN_HEADERS,
+                        "Idempotency-Key": "generation-stale-explicit-retry",
+                    },
+                )
+                assert retry.status_code == 202
+                retry_run = client.get(
+                    f"{generation_seed.base_path}/{retry.json()['generation_run_id']}",
+                    headers=REVIEWER_HEADERS,
+                )
+                assert retry_run.json()["retry_of_run_id"] == str(stale_run_id)
+
+            async with sessions() as session:
+                audits = tuple(
+                    await session.scalars(
+                        select(AdminAuditEventModel).where(
+                            AdminAuditEventModel.resource_id == stale_run_id,
+                            AdminAuditEventModel.action == "generation_run.worker_lease_expired",
+                        )
+                    )
+                )
+                assert len(audits) == 1
+                assert audits[0].payload["failure_code"] == "worker_lease_expired"
+                assert audits[0].payload["attempt_count"] == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())

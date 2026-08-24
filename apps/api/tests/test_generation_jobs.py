@@ -54,6 +54,11 @@ def test_generation_actor_has_a_dedicated_bounded_nonduplicating_policy() -> Non
         "max_retries": GENERATION_JOB_MAX_RETRIES,
         "time_limit": GENERATION_JOB_TIME_LIMIT_MS,
     }
+    assert jobs.recover_generation_jobs.queue_name == GENERATION_QUEUE_NAME
+    assert jobs.recover_generation_jobs.options == {
+        "max_retries": GENERATION_JOB_MAX_RETRIES,
+        "time_limit": GENERATION_JOB_TIME_LIMIT_MS,
+    }
     assert GENERATION_JOB_MAX_RETRIES == 0
     assert GENERATION_JOB_TIME_LIMIT_MS > 0
 
@@ -65,8 +70,11 @@ def test_generation_dispatcher_factory_and_worker_register_the_actor() -> None:
 
     worker = importlib.import_module("exam_guru_api.worker")
     registered = worker.broker.get_actor(jobs.generate_question.actor_name)
+    recovery = worker.broker.get_actor(jobs.recover_generation_jobs.actor_name)
     assert registered is jobs.generate_question
     assert registered.queue_name == GENERATION_QUEUE_NAME
+    assert recovery is jobs.recover_generation_jobs
+    assert recovery.queue_name == GENERATION_QUEUE_NAME
 
 
 def test_generation_actor_builds_worker_dependencies_and_always_closes_resources(
@@ -117,4 +125,67 @@ def test_generation_actor_builds_worker_dependencies_and_always_closes_resources
     jobs.generate_question(str(JOB_ID), str(RUN_ID))
 
     assert calls == [(JOB_ID, RUN_ID)]
+    assert resources.closed is True
+
+
+def test_generation_recovery_actor_uses_internal_bounded_settings_and_closes_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.generation import run_service
+    from exam_guru_api.infrastructure import resources as resources_module
+
+    settings = Settings.model_validate(
+        {
+            "environment": "test",
+            "generation_recovery_batch_size": 7,
+            "generation_outbox_min_age_seconds": 11,
+            "generation_worker_lease_seconds": 700,
+        }
+    )
+    session = object()
+    dispatcher = object()
+    policies: list[object] = []
+
+    class StubResources:
+        def __init__(self) -> None:
+            self.closed = False
+
+        @asynccontextmanager
+        async def session_factory(self) -> AsyncIterator[object]:
+            yield session
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class StubRecoveryService:
+        def __init__(
+            self,
+            actual_session: object,
+            actual_dispatcher: object,
+            policy: object,
+        ) -> None:
+            assert actual_session is session
+            assert actual_dispatcher is dispatcher
+            policies.append(policy)
+
+        async def recover(self) -> object:
+            return object()
+
+    resources = StubResources()
+    monkeypatch.setattr(jobs, "Settings", lambda: settings)
+    monkeypatch.setattr(jobs, "DramatiqGenerationDispatcher", lambda: dispatcher)
+    monkeypatch.setattr(
+        resources_module,
+        "create_resources",
+        lambda actual: resources if actual is settings else None,
+    )
+    monkeypatch.setattr(run_service, "GenerationRecoveryService", StubRecoveryService)
+
+    jobs.recover_generation_jobs()
+
+    assert len(policies) == 1
+    policy = policies[0]
+    assert policy.batch_size == 7  # type: ignore[attr-defined]
+    assert policy.outbox_min_age_seconds == 11  # type: ignore[attr-defined]
+    assert policy.worker_lease_seconds == 700  # type: ignore[attr-defined]
     assert resources.closed is True

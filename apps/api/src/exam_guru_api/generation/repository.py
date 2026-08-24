@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,6 +110,22 @@ class StoredGeneration:
     run: GenerationRunModel
     job: GenerationJobModel
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationAttemptAccounting:
+    attempt_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost_microusd: int
+    latency_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationClaimRecord:
+    run: GenerationRunModel
+    job: GenerationJobModel
 
 
 class GenerationRunNotFoundError(LookupError):
@@ -309,6 +325,155 @@ class SqlAlchemyGenerationRepository:
         if run is None or job is None:
             raise RuntimeError("generation dispatch failure lost its CAS race")
         return job
+
+    async def lock_recoverable_outbox_jobs(
+        self,
+        *,
+        created_before: datetime,
+        limit: int,
+    ) -> tuple[GenerationJobModel, ...]:
+        return tuple(
+            await self._session.scalars(
+                select(GenerationJobModel)
+                .where(
+                    GenerationJobModel.status == GenerationJobStatus.QUEUED.value,
+                    GenerationJobModel.queue_message_id.is_(None),
+                    GenerationJobModel.created_at < created_before,
+                )
+                .order_by(GenerationJobModel.created_at, GenerationJobModel.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+
+    async def lock_expired_claims(
+        self,
+        *,
+        claimed_before: datetime,
+        limit: int,
+    ) -> tuple[GenerationClaimRecord, ...]:
+        rows = (
+            await self._session.execute(
+                select(GenerationRunModel, GenerationJobModel)
+                .join(
+                    GenerationJobModel,
+                    GenerationJobModel.generation_run_id == GenerationRunModel.id,
+                )
+                .where(
+                    GenerationRunModel.status == GenerationRunStatus.RUNNING.value,
+                    GenerationJobModel.status == GenerationJobStatus.CLAIMED.value,
+                    GenerationJobModel.claimed_at.is_not(None),
+                    GenerationJobModel.claimed_at < claimed_before,
+                )
+                .order_by(GenerationJobModel.claimed_at, GenerationJobModel.id)
+                .limit(limit)
+                .with_for_update(
+                    of=(GenerationRunModel, GenerationJobModel),
+                    skip_locked=True,
+                )
+            )
+        ).all()
+        return tuple(GenerationClaimRecord(run=run, job=job) for run, job in rows)
+
+    async def lock_active_completion(
+        self,
+        run_id: UUID,
+        job_id: UUID,
+    ) -> GenerationClaimRecord | None:
+        row = (
+            await self._session.execute(
+                select(GenerationRunModel, GenerationJobModel)
+                .join(
+                    GenerationJobModel,
+                    GenerationJobModel.generation_run_id == GenerationRunModel.id,
+                )
+                .where(
+                    GenerationRunModel.id == run_id,
+                    GenerationRunModel.status == GenerationRunStatus.RUNNING.value,
+                    GenerationJobModel.id == job_id,
+                    GenerationJobModel.status == GenerationJobStatus.CLAIMED.value,
+                )
+                .with_for_update(of=(GenerationRunModel, GenerationJobModel))
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        return GenerationClaimRecord(run=row[0], job=row[1])
+
+    async def get_attempt_accounting(self, run_id: UUID) -> GenerationAttemptAccounting:
+        row = (
+            await self._session.execute(
+                select(
+                    func.count(GenerationAttemptModel.id),
+                    func.coalesce(func.sum(GenerationAttemptModel.input_tokens), 0),
+                    func.coalesce(func.sum(GenerationAttemptModel.output_tokens), 0),
+                    func.coalesce(func.sum(GenerationAttemptModel.total_tokens), 0),
+                    func.coalesce(func.sum(GenerationAttemptModel.cost_microusd), 0),
+                    func.coalesce(func.sum(GenerationAttemptModel.latency_ms), 0),
+                ).where(GenerationAttemptModel.generation_run_id == run_id)
+            )
+        ).one()
+        return GenerationAttemptAccounting(
+            attempt_count=int(row[0]),
+            input_tokens=int(row[1]),
+            output_tokens=int(row[2]),
+            total_tokens=int(row[3]),
+            cost_microusd=int(row[4]),
+            latency_ms=int(row[5]),
+        )
+
+    async def expire_claim(
+        self,
+        claim: GenerationClaimRecord,
+        accounting: GenerationAttemptAccounting,
+        *,
+        completed_at: datetime,
+    ) -> bool:
+        run = await self._session.scalar(
+            update(GenerationRunModel)
+            .where(
+                GenerationRunModel.id == claim.run.id,
+                GenerationRunModel.status == GenerationRunStatus.RUNNING.value,
+                GenerationRunModel.version == claim.run.version,
+            )
+            .values(
+                status=GenerationRunStatus.FAILED.value,
+                version=GenerationRunModel.version + 1,
+                completed_at=completed_at,
+                failure_code="worker_lease_expired",
+                result_attempt_id=None,
+                attempt_count=accounting.attempt_count,
+                input_tokens=accounting.input_tokens,
+                output_tokens=accounting.output_tokens,
+                total_tokens=accounting.total_tokens,
+                cost_microusd=accounting.cost_microusd,
+                latency_ms=accounting.latency_ms,
+                candidate=None,
+                disposition=None,
+            )
+            .returning(GenerationRunModel)
+        )
+        if run is None:
+            return False
+        job = await self._session.scalar(
+            update(GenerationJobModel)
+            .where(
+                GenerationJobModel.id == claim.job.id,
+                GenerationJobModel.status == GenerationJobStatus.CLAIMED.value,
+                GenerationJobModel.version == claim.job.version,
+            )
+            .values(
+                status=GenerationJobStatus.FAILED.value,
+                version=GenerationJobModel.version + 1,
+                completed_at=completed_at,
+                failure_code="worker_lease_expired",
+            )
+            .returning(GenerationJobModel)
+        )
+        if job is None:
+            await self._session.rollback()
+            return False
+        return True
 
     async def get_run(
         self,
