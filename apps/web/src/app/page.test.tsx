@@ -55,11 +55,21 @@ describe("admin foundation shell", () => {
       "href",
       "/admin/validation",
     );
+    expect(within(navigation).getByRole("link", { name: /Review queue/ })).toHaveAttribute(
+      "href",
+      "/admin/review",
+    );
     const validationCard = document.querySelector("#validation");
     expect(validationCard).not.toBeNull();
     expect(within(validationCard as HTMLElement).getByRole("link", { name: "Open Validation Studio" })).toHaveAttribute(
       "href",
       "/admin/validation",
+    );
+    const reviewCard = document.querySelector("#review-queue");
+    expect(reviewCard).not.toBeNull();
+    expect(within(reviewCard as HTMLElement).getByRole("link", { name: "Open Reviewer Studio" })).toHaveAttribute(
+      "href",
+      "/admin/review",
     );
   });
 

@@ -8,6 +8,7 @@ type AdminArea =
   | "generation"
   | "knowledge"
   | "retrieval"
+  | "review"
   | "validation";
 type Role = "admin" | "reviewer";
 
@@ -20,6 +21,7 @@ const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
   { href: "/admin/blueprints", id: "blueprints", label: "Blueprints" },
   { href: "/admin/generation", id: "generation", label: "Generation" },
   { href: "/admin/validation", id: "validation", label: "Validation" },
+  { href: "/admin/review", id: "review", label: "Review" },
 ];
 
 export function AdminHeader({ current, role }: { current: AdminArea; role: Role }) {
@@ -35,7 +37,7 @@ export function AdminHeader({ current, role }: { current: AdminArea; role: Role 
 
         <nav
           aria-label="Admin content areas"
-          className="order-3 flex w-full gap-1 border-t border-white/10 pt-4 sm:order-none sm:w-auto sm:border-0 sm:pt-0"
+          className="order-3 flex w-full flex-wrap gap-1 border-t border-white/10 pt-4 sm:order-none sm:w-auto sm:border-0 sm:pt-0"
         >
           {areas.map((area) => {
             const active = area.id === current;

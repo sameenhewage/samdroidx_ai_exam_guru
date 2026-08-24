@@ -17,6 +17,9 @@ type GenerationRequest = components["schemas"]["GenerationRunCreateRequest"];
 type ValidationReport = components["schemas"]["ValidationRunResponse"];
 type ValidationReportSummary = components["schemas"]["ValidationRunSummaryResponse"];
 type ValidationRequest = components["schemas"]["ValidationRunCreateRequest"];
+type ReviewCandidate = components["schemas"]["ReviewCandidateResponse"];
+type ReviewEditRequest = components["schemas"]["ReviewCandidateEditRequest"];
+type AuditEvent = components["schemas"]["AdminAuditEventResponse"];
 
 function syntheticPdf(marker: string): Buffer {
   const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
@@ -140,7 +143,7 @@ function blueprintRequest(
   };
 }
 
-test("real generation reaches worker success, validates through UI, and remains reviewer read-only", async ({
+test("real generation reaches validation and reviewer approval with terminal audit history", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -164,7 +167,7 @@ test("real generation reaches worker success, validates through UI, and remains 
     name: `Generation exam ${unique}`,
   });
   const medium = await postCreated<Medium>(page.request, "/api/v1/admin/media", {
-    code: `g${unique.slice(-7)}`,
+    code: `en-${unique.slice(-7)}`,
     name: `Generation English ${unique}`,
   });
   const curriculum = await postCreated<Curriculum>(
@@ -411,6 +414,116 @@ test("real generation reaches worker success, validates through UI, and remains 
     source.id,
   );
   await expect(page.getByRole("button", { name: "Run deterministic validation" })).toHaveCount(0);
+  expect(validationReport.overall_status).toBe("pass");
+
+  await page.goto("/admin/review");
+  await expect(page.getByRole("heading", { name: "Reviewer Studio" })).toBeVisible();
+  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await expect(page.getByLabel("Passing validation run")).toContainText(validationSummary.id);
+  await page.getByLabel("Passing validation run").selectOption(validationSummary.id);
+  await page.getByRole("button", { name: "Create review candidate" }).click();
+  await expect(
+    page.getByText("Review candidate created from persisted PASS validation evidence."),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Candidate review editor" })).toContainText(
+    "Validated",
+  );
+  await expect(page.getByRole("region", { name: "Generated revision 1 evidence" })).toContainText(
+    "Which response is supported by the reviewed context?",
+  );
+  await expect(page.getByRole("region", { name: "Generation context provenance" })).toContainText(
+    reviewedChunk.id,
+  );
+  await expect(page.getByRole("region", { name: "P8 validation report and findings" })).toContainText(
+    validationReport.pipeline_version,
+  );
+  await expect(page.getByText(/Automated validation applies to generated revision 1 only/i)).toBeVisible();
+  await expect(page.getByText(/Human edits are not automatically revalidated/i)).toBeVisible();
+  await expect(page.getByText(/Approval does not publish/i)).toBeVisible();
+
+  await page.getByRole("button", { name: "Start review" }).click();
+  await expect(page.getByText("Human review started.")).toBeVisible();
+  await expect(page.getByLabel("Question type (locked)")).toBeDisabled();
+  await expect(page.getByLabel("Marks (locked)")).toBeDisabled();
+  const reviewedStem = `Which response is supported by the reviewed context for ${unique}?`;
+  await page.getByLabel("Question stem").fill(reviewedStem);
+  await page.getByLabel("Option B text").fill("The supported even-number choice");
+  await page.getByLabel("Explanation").fill("The trusted reviewed source supports option B.");
+  await page
+    .getByLabel("Marking guide (one item per line)")
+    .fill("Award two marks for selecting B.\nAward no marks for unsupported choices.");
+  await page.getByLabel("Edit reason").fill("Clarify the grounded wording and marking guidance.");
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await expect(
+    page.getByText("Revision 2 saved. Automated validation still applies only to revision 1."),
+  ).toBeVisible();
+  await expect(page.getByLabel("Question stem")).toHaveValue(reviewedStem);
+
+  await page
+    .getByLabel("Approval note (optional)")
+    .fill("Source, answer, explanation, and marking guidance reviewed.");
+  await page.getByRole("button", { name: "Approve candidate" }).click();
+  await expect(page.getByText("Candidate approved. This is not a publish action.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approved terminal state" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
+    "Revision 2",
+  );
+  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
+    "Started",
+  );
+  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
+    "Edited",
+  );
+  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
+    "Approved",
+  );
+  await expect(page.getByRole("region", { name: "Review decision" })).toContainText(
+    "Source, answer, explanation, and marking guidance reviewed.",
+  );
+
+  const candidateResponse = await page.request.get(
+    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${run.id}`,
+  );
+  expect(candidateResponse.ok()).toBe(true);
+  const approvedCandidate = (await candidateResponse.json()) as ReviewCandidate;
+  expect(approvedCandidate.state).toBe("approved");
+  expect(approvedCandidate.current_revision).toBe(2);
+  expect(approvedCandidate.current_content.stem).toBe(reviewedStem);
+  expect(approvedCandidate.validation.validated_revision).toBe(1);
+  expect(approvedCandidate.events.map((event) => event.action)).toEqual([
+    "started",
+    "edited",
+    "approved",
+  ]);
+
+  const auditResponse = await page.request.get(
+    "/api/v1/admin/audit-events?resource_type=question_candidate&limit=200",
+  );
+  expect(auditResponse.ok()).toBe(true);
+  const candidateAudit = ((await auditResponse.json()) as AuditEvent[])
+    .filter((event) => event.resource_id === approvedCandidate.id)
+    .map((event) => event.action);
+  expect(candidateAudit).toEqual(
+    expect.arrayContaining([
+      "question_candidate.created",
+      "question_candidate.review_started",
+      "question_candidate.edited",
+      "question_candidate.approved",
+    ]),
+  );
+
+  const terminalPayload: ReviewEditRequest = {
+    content: approvedCandidate.current_content,
+    expected_version: approvedCandidate.version,
+    reason: "Attempt to mutate an approved terminal candidate.",
+  };
+  const terminalMutation = await page.request.patch(
+    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${approvedCandidate.id}`,
+    { data: terminalPayload },
+  );
+  expect(terminalMutation.status()).toBe(409);
+  expect((await terminalMutation.json()).detail.code).toBe("review_candidate_state_conflict");
+
   const reviewerValidationPayload: ValidationRequest = { generation_run_id: run.id };
   const validationDenied = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
