@@ -65,6 +65,11 @@ class QuestionCandidateModel(Base):
         ),
         UniqueConstraint("generation_run_id", name="uq_question_candidates_generation_run"),
         UniqueConstraint("validation_run_id", name="uq_question_candidates_validation_run"),
+        UniqueConstraint(
+            "id",
+            "curriculum_version_id",
+            name="uq_question_candidates_id_curriculum",
+        ),
         CheckConstraint("id = generation_run_id", name="ck_question_candidates_deterministic_id"),
         CheckConstraint(
             "blueprint_id = btrim(blueprint_id) AND length(blueprint_id) BETWEEN 1 AND 128 AND "

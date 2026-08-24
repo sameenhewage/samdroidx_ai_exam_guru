@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -133,7 +135,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0015_review_candidates"
+    assert migration_revision == "0016_published_papers"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -342,6 +344,258 @@ def test_review_candidate_migration_downgrades_cleanly_and_reapplies(
     assert not asyncio.run(candidate_table_exists())
     upgrade_database(database_url)
     assert asyncio.run(candidate_table_exists())
+    assert_database_schema_current(database_url)
+
+
+@pytest.mark.integration
+def test_published_paper_migration_is_normalized_bounded_deferred_and_hash_compatible(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+    unicode_payload = {
+        "blueprint": {"slot_ids": ["ප්‍රශ්නය-1"], "title": "ශිෂ්‍යත්ව පුහුණුව"},
+        "marks": 7,
+        "published": True,
+    }
+    canonical = json.dumps(
+        unicode_payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    expected_digest = hashlib.sha256(canonical).hexdigest()
+
+    async def inspect() -> tuple[
+        set[str],
+        dict[str, set[str]],
+        set[str],
+        set[str],
+        int,
+        str,
+        str,
+    ]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            paper_tables = {
+                "practice_papers",
+                "paper_draft_versions",
+                "paper_draft_candidates",
+                "published_paper_versions",
+                "paper_archive_events",
+            }
+            tables = set(
+                await connection.scalars(
+                    text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = 'public' AND table_name = ANY(:tables)"
+                    ),
+                    {"tables": sorted(paper_tables)},
+                )
+            )
+            columns = {
+                table_name: set(
+                    await connection.scalars(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'public' AND table_name = :table_name"
+                        ),
+                        {"table_name": table_name},
+                    )
+                )
+                for table_name in paper_tables
+            }
+            triggers = set(
+                await connection.scalars(
+                    text(
+                        "SELECT trigger.tgname FROM pg_trigger AS trigger "
+                        "JOIN pg_class AS relation ON relation.oid = trigger.tgrelid "
+                        "WHERE NOT trigger.tgisinternal AND relation.relname = ANY(:tables)"
+                    ),
+                    {"tables": sorted(paper_tables)},
+                )
+            )
+            deferred = set(
+                await connection.scalars(
+                    text(
+                        "SELECT constraint_row.conname FROM pg_constraint AS constraint_row "
+                        "JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid "
+                        "WHERE constraint_row.contype = 't' "
+                        "AND constraint_row.condeferrable AND constraint_row.condeferred "
+                        "AND relation.relname = ANY(:tables)"
+                    ),
+                    {"tables": sorted(paper_tables)},
+                )
+            )
+            materialized_view_count = int(
+                await connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_class WHERE relkind = 'm' "
+                        "AND relname LIKE ANY(ARRAY['%paper%', '%question%bank%'])"
+                    )
+                )
+                or 0
+            )
+            database_digest = str(
+                await connection.scalar(
+                    text(
+                        "SELECT encode(sha256(convert_to(paper_canonical_jsonb("
+                        "CAST(:payload AS jsonb)), 'UTF8')), 'hex')"
+                    ),
+                    {
+                        "payload": json.dumps(
+                            unicode_payload,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    },
+                )
+            )
+            snapshot_bound = str(
+                await connection.scalar(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conname = 'ck_published_paper_versions_snapshot_bound'"
+                    )
+                )
+            )
+        await engine.dispose()
+        return (
+            tables,
+            columns,
+            triggers,
+            deferred,
+            materialized_view_count,
+            database_digest,
+            snapshot_bound,
+        )
+
+    tables, columns, triggers, deferred, view_count, database_digest, snapshot_bound = asyncio.run(
+        inspect()
+    )
+    assert tables == {
+        "practice_papers",
+        "paper_draft_versions",
+        "paper_draft_candidates",
+        "published_paper_versions",
+        "paper_archive_events",
+    }
+    assert {
+        "id",
+        "curriculum_version_id",
+        "paper_blueprint_id",
+        "blueprint_id",
+        "blueprint_version",
+        "state",
+        "current_version",
+        "idempotency_key_hash",
+        "create_request_fingerprint",
+        "created_by",
+        "created_at",
+        "updated_by",
+        "updated_at",
+    } == columns["practice_papers"]
+    assert {"paper_id", "curriculum_version_id", "version", "title"} <= columns[
+        "paper_draft_versions"
+    ]
+    assert {
+        "paper_id",
+        "curriculum_version_id",
+        "paper_version",
+        "ordinal",
+        "blueprint_slot_id",
+        "candidate_id",
+        "candidate_version",
+        "candidate_revision",
+    } <= columns["paper_draft_candidates"]
+    assert {"snapshot", "content_hash", "published_by", "published_at"} <= columns[
+        "published_paper_versions"
+    ]
+    assert {"reason", "archived_by", "archived_at"} <= columns["paper_archive_events"]
+    assert {
+        "enforce_practice_paper_insert_trigger",
+        "enforce_practice_paper_update_trigger",
+        "reject_practice_paper_delete_trigger",
+        "enforce_paper_draft_version_insert_trigger",
+        "reject_paper_draft_version_mutation_trigger",
+        "enforce_paper_draft_candidate_insert_trigger",
+        "reject_paper_draft_candidate_mutation_trigger",
+        "enforce_published_paper_version_insert_trigger",
+        "reject_published_paper_version_mutation_trigger",
+        "enforce_paper_archive_event_insert_trigger",
+        "reject_paper_archive_event_mutation_trigger",
+    } <= triggers
+    assert deferred == {
+        "enforce_practice_papers_complete_trigger",
+        "enforce_paper_draft_versions_complete_trigger",
+        "enforce_paper_draft_candidates_complete_trigger",
+        "enforce_published_paper_versions_complete_trigger",
+        "enforce_paper_archive_events_complete_trigger",
+    }
+    assert view_count == 0
+    assert database_digest == expected_digest
+    assert "octet_length(paper_canonical_jsonb(snapshot))" in snapshot_bound
+    assert "33554432" in snapshot_bound
+
+
+@pytest.mark.integration
+def test_published_paper_versions_are_bounded_to_32_in_every_persisted_record(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+
+    async def inspect() -> dict[str, str]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conname IN ("
+                        "'ck_practice_papers_state_version', "
+                        "'ck_paper_draft_versions_version', "
+                        "'ck_paper_draft_candidates_paper_bounds', "
+                        "'ck_published_paper_versions_version', "
+                        "'ck_paper_archive_events_version')"
+                    )
+                )
+            ).all()
+        await engine.dispose()
+        return {str(name): str(definition) for name, definition in rows}
+
+    bounds = asyncio.run(inspect())
+    assert set(bounds) == {
+        "ck_practice_papers_state_version",
+        "ck_paper_draft_versions_version",
+        "ck_paper_draft_candidates_paper_bounds",
+        "ck_published_paper_versions_version",
+        "ck_paper_archive_events_version",
+    }
+    assert all("32" in definition for definition in bounds.values())
+    assert all("1000" not in definition for definition in bounds.values())
+
+
+@pytest.mark.integration
+def test_published_paper_migration_downgrades_cleanly_and_reapplies(database_url: str) -> None:
+    command.downgrade(_config_for_database(database_url), "0015_review_candidates")
+
+    async def paper_tables_exist() -> bool:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name IN "
+                    "('practice_papers', 'paper_draft_versions', 'paper_draft_candidates', "
+                    "'published_paper_versions', 'paper_archive_events')"
+                )
+            )
+        await engine.dispose()
+        return int(count or 0) > 0
+
+    assert not asyncio.run(paper_tables_exist())
+    upgrade_database(database_url)
+    assert asyncio.run(paper_tables_exist())
     assert_database_schema_current(database_url)
 
 

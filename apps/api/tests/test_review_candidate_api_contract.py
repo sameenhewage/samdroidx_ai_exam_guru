@@ -177,7 +177,7 @@ def test_review_candidate_openapi_exposes_only_bounded_authorized_vertical_slice
     assert "post" in schema["paths"][START_PATH]
     assert "post" in schema["paths"][APPROVE_PATH]
     assert "post" in schema["paths"][REJECT_PATH]
-    assert not any("paper-draft" in path or "publish" in path for path in schema["paths"])
+    assert "/api/v1/admin/curricula/{curriculum_version_id}/paper-drafts" in schema["paths"]
 
     operations = (
         (BASE_PATH, "post"),

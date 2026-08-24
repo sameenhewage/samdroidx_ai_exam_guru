@@ -651,6 +651,61 @@ def test_internal_question_snapshot_requires_approved_candidate_and_decision() -
         paper_domain._published_question(approved)
 
 
+def test_paper_publication_metadata_and_work_bounds_are_enforced_in_domain() -> None:
+    with pytest.raises(CandidateInvariantError, match="cannot exceed 200"):
+        PaperBlueprintReference(
+            blueprint_id="bounded-blueprint",
+            blueprint_version="v1",
+            slot_ids=tuple(f"slot-{index}" for index in range(201)),
+        )
+    with pytest.raises(CandidateInvariantError, match="paper_blueprint_id"):
+        replace(
+            assembled_draft().blueprint,
+            paper_blueprint_id=cast(UUID, object()),
+        )
+    draft = assembled_draft()
+    with pytest.raises(CandidateInvariantError, match="512"):
+        replace(draft, title="x" * 513)
+
+    publication = PaperWorkflowService().publish(
+        ADMIN,
+        PublishPaperCommand(draft=draft, expected_version=1),
+    )
+    with pytest.raises(CandidateInvariantError, match="512"):
+        PaperWorkflowService().revise(
+            ADMIN,
+            RevisePaperCommand(
+                source=publication,
+                candidates=draft.candidates,
+                expected_version=1,
+                title="x" * 513,
+            ),
+        )
+    with pytest.raises(CandidateInvariantError, match="1024"):
+        PaperWorkflowService().archive(
+            ADMIN,
+            ArchivePaperCommand(
+                publication=publication,
+                reason="x" * 1_025,
+                expected_version=1,
+            ),
+        )
+    with pytest.raises(CandidateInvariantError, match="32"):
+        replace(
+            draft,
+            version=33,
+            previous_version=32,
+            supersedes_content_hash="0" * 64,
+        )
+    with pytest.raises(CandidateInvariantError, match="32"):
+        _internal_snapshot(
+            publication,
+            version=33,
+            previous_version=32,
+            supersedes_content_hash="0" * 64,
+        )
+
+
 def test_service_domain_guards_reject_wrong_paper_aggregate_types() -> None:
     service = PaperWorkflowService()
     publication = _published()

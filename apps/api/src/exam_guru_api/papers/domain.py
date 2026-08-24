@@ -13,6 +13,10 @@ from uuid import UUID
 
 MAX_CANDIDATE_REVISIONS = 32
 MAX_CANDIDATE_VERSION = MAX_CANDIDATE_REVISIONS + 3
+MAX_PAPER_VERSIONS = 32
+MAX_PAPER_SLOTS = 200
+MAX_PAPER_TITLE_CHARACTERS = 512
+MAX_ARCHIVE_REASON_CHARACTERS = 1_024
 
 
 class CandidateState(StrEnum):
@@ -105,6 +109,13 @@ def _require_optional_text(value: object | None, field_name: str) -> str | None:
     return _require_text(value, field_name)
 
 
+def _require_bounded_text(value: object, field_name: str, maximum: int) -> str:
+    text = _require_text(value, field_name)
+    if len(text) > maximum:
+        raise CandidateInvariantError(f"{field_name} cannot exceed {maximum} characters")
+    return text
+
+
 def _require_uuid(value: object, field_name: str) -> UUID:
     if not isinstance(value, UUID):
         raise CandidateInvariantError(f"{field_name} must be a UUID")
@@ -115,6 +126,13 @@ def _require_positive_integer(value: object, field_name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise CandidateInvariantError(f"{field_name} must be a positive integer")
     return value
+
+
+def _require_paper_version(value: object) -> int:
+    version = _require_positive_integer(value, "paper version")
+    if version > MAX_PAPER_VERSIONS:
+        raise CandidateInvariantError(f"paper version cannot exceed {MAX_PAPER_VERSIONS}")
+    return version
 
 
 def _require_expected_version(expected: int, actual: int) -> None:
@@ -590,16 +608,21 @@ class PaperBlueprintReference:
     blueprint_id: str
     blueprint_version: str
     slot_ids: tuple[str, ...]
+    paper_blueprint_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.blueprint_id, "blueprint_id")
         _require_text(self.blueprint_version, "blueprint_version")
         if not isinstance(self.slot_ids, tuple) or not self.slot_ids:
             raise CandidateInvariantError("slot_ids must be a non-empty tuple")
+        if len(self.slot_ids) > MAX_PAPER_SLOTS:
+            raise CandidateInvariantError(f"slot_ids cannot exceed {MAX_PAPER_SLOTS} entries")
         for slot_id in self.slot_ids:
             _require_text(slot_id, "slot_id")
         if len(set(self.slot_ids)) != len(self.slot_ids):
             raise CandidateInvariantError("slot_ids must be unique")
+        if self.paper_blueprint_id is not None:
+            _require_uuid(self.paper_blueprint_id, "paper_blueprint_id")
 
 
 def _ordered_approved_candidates(
@@ -661,8 +684,8 @@ class PaperDraft:
 
     def __post_init__(self) -> None:
         _require_uuid(self.paper_id, "paper_id")
-        _require_positive_integer(self.version, "paper version")
-        _require_text(self.title, "paper title")
+        _require_paper_version(self.version)
+        _require_bounded_text(self.title, "paper title", MAX_PAPER_TITLE_CHARACTERS)
         if not isinstance(self.blueprint, PaperBlueprintReference):
             raise CandidateInvariantError("blueprint must be PaperBlueprintReference")
         if not isinstance(self.candidates, tuple) or any(
@@ -762,8 +785,8 @@ class PublishedPaperSnapshot:
         if _service_capability is not _PUBLISH_CAPABILITY:
             raise ServiceBoundaryRequiredError(PaperState.PUBLISHED)
         _require_uuid(self.paper_id, "paper_id")
-        _require_positive_integer(self.version, "paper version")
-        _require_text(self.title, "paper title")
+        _require_paper_version(self.version)
+        _require_bounded_text(self.title, "paper title", MAX_PAPER_TITLE_CHARACTERS)
         _require_uuid(self.published_by, "published_by")
         if not isinstance(self.blueprint, PaperBlueprintReference):
             raise CandidateInvariantError("blueprint must be PaperBlueprintReference")
@@ -829,7 +852,11 @@ class ArchivedPaperSnapshot:
         if not isinstance(self.publication, PublishedPaperSnapshot):
             raise CandidateInvariantError("publication must be PublishedPaperSnapshot")
         _require_uuid(self.archived_by, "archived_by")
-        _require_text(self.reason, "archive reason")
+        _require_bounded_text(
+            self.reason,
+            "archive reason",
+            MAX_ARCHIVE_REASON_CHARACTERS,
+        )
 
     @property
     def paper_id(self) -> UUID:
@@ -900,18 +927,17 @@ def _revise_paper(
 ) -> PaperDraft:
     if isinstance(source, ArchivedPaperSnapshot):
         raise InvalidPaperTransitionError(PaperState.ARCHIVED, PaperState.DRAFT)
-    if not isinstance(source, (PaperDraft, PublishedPaperSnapshot)):
-        raise InvalidPaperTransitionError(PaperState.PUBLISHED, PaperState.DRAFT)
-    expected_state = PaperState.DRAFT if isinstance(source, PaperDraft) else PaperState.PUBLISHED
-    if source.state is not expected_state:
+    if not isinstance(source, PublishedPaperSnapshot):
+        current_state = getattr(source, "state", PaperState.PUBLISHED)
+        raise InvalidPaperTransitionError(current_state, PaperState.DRAFT)
+    if source.state is not PaperState.PUBLISHED:
         raise InvalidPaperTransitionError(source.state, PaperState.DRAFT)
     _require_expected_version(expected_version, source.version)
     ordered = _ordered_approved_candidates(source.blueprint, candidates)
-    next_title = source.title if title is None else _require_text(title, "paper title")
-    supersedes_hash = (
-        source.content_hash
-        if isinstance(source, PublishedPaperSnapshot)
-        else source.supersedes_content_hash
+    next_title = (
+        source.title
+        if title is None
+        else _require_bounded_text(title, "paper title", MAX_PAPER_TITLE_CHARACTERS)
     )
     return PaperDraft(
         paper_id=source.paper_id,
@@ -920,7 +946,7 @@ def _revise_paper(
         blueprint=source.blueprint,
         candidates=ordered,
         previous_version=source.version,
-        supersedes_content_hash=supersedes_hash,
+        supersedes_content_hash=source.content_hash,
     )
 
 
@@ -989,6 +1015,11 @@ def _published_content_payload(snapshot: PublishedPaperSnapshot) -> dict[str, ob
         "blueprint": {
             "blueprint_id": snapshot.blueprint.blueprint_id,
             "blueprint_version": snapshot.blueprint.blueprint_version,
+            "paper_blueprint_id": (
+                str(snapshot.blueprint.paper_blueprint_id)
+                if snapshot.blueprint.paper_blueprint_id is not None
+                else None
+            ),
             "slot_ids": list(snapshot.blueprint.slot_ids),
         },
         "paper_id": str(snapshot.paper_id),
@@ -999,10 +1030,37 @@ def _published_content_payload(snapshot: PublishedPaperSnapshot) -> dict[str, ob
                 "candidate_version": question.candidate_version,
                 "content": _question_content_payload(question.content),
                 "content_revision": question.revisions[-1].revision,
+                "decision": {
+                    "candidate_version": question.decision.candidate_version,
+                    "reason": question.decision.reason,
+                    "reviewer_id": str(question.decision.reviewer_id),
+                    "state": question.decision.state.value,
+                },
                 "lineage": _lineage_payload(question.lineage),
+                "review_history": [
+                    {
+                        "action": record.action.value,
+                        "candidate_version": record.candidate_version,
+                        "reason": record.reason,
+                        "reviewer_id": str(record.reviewer_id),
+                    }
+                    for record in question.review_history
+                ],
+                "revisions": [
+                    {
+                        "content": _question_content_payload(revision.content),
+                        "reason": revision.reason,
+                        "reviewer_id": (
+                            str(revision.reviewer_id) if revision.reviewer_id is not None else None
+                        ),
+                        "revision": revision.revision,
+                    }
+                    for revision in question.revisions
+                ],
                 "slot_id": question.slot_id,
                 "validation": {
                     "finding_refs": list(question.validation.finding_refs),
+                    "passed": question.validation.passed,
                     "validated_revision": question.validation.validated_revision,
                     "validation_run_id": str(question.validation.validation_run_id),
                     "validator_version": question.validation.validator_version,

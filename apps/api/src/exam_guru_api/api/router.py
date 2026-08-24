@@ -8,6 +8,7 @@ from exam_guru_api.api.routes.documents import router as document_router
 from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
+from exam_guru_api.api.routes.papers import router as paper_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.review_candidates import router as review_candidate_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
@@ -43,6 +44,11 @@ api_router.include_router(
     review_candidate_router,
     prefix="/admin/curricula",
     tags=["admin-review-candidates"],
+)
+api_router.include_router(
+    paper_router,
+    prefix="/admin/curricula",
+    tags=["admin-papers"],
 )
 api_router.include_router(
     knowledge_router,

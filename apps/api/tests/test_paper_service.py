@@ -290,34 +290,23 @@ def test_editing_published_content_creates_new_draft_and_version() -> None:
     assert published_v1.recompute_content_hash() == published_v1.content_hash
 
 
-def test_revising_a_draft_also_creates_a_new_version_and_honors_expected_version() -> None:
+def test_revision_is_rejected_until_the_current_draft_has_been_published() -> None:
     service = PaperWorkflowService()
     draft_v1 = assembled_draft()
 
-    draft_v2 = service.revise(
-        reviewer(),
-        RevisePaperCommand(
-            source=draft_v1,
-            candidates=draft_v1.candidates,
-            expected_version=draft_v1.version,
-            title="Retitled paper",
-        ),
-    )
-
-    assert draft_v2.version == 2
-    assert draft_v2.previous_version == 1
-    assert draft_v2.title == "Retitled paper"
-    assert draft_v1.title == "Grade 5 Scholarship Practice Paper"
-
-    with pytest.raises(ConcurrentVersionError):
+    with pytest.raises(InvalidPaperTransitionError) as raised:
         service.revise(
             reviewer(),
             RevisePaperCommand(
-                source=draft_v2,
-                candidates=draft_v2.candidates,
+                source=draft_v1,
+                candidates=draft_v1.candidates,
                 expected_version=draft_v1.version,
+                title="Retitled paper",
             ),
         )
+
+    assert raised.value.current is PaperState.DRAFT
+    assert raised.value.target is PaperState.DRAFT
 
 
 def test_archive_is_authorized_forward_only_and_preserves_published_snapshot() -> None:
