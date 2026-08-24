@@ -315,6 +315,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List bounded curriculum-scoped review candidates */
+        get: operations["list_review_candidates"];
+        put?: never;
+        /** Create a validated review candidate from persisted validation evidence */
+        post: operations["create_review_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a review candidate with revisions, events, lineage, and validation evidence */
+        get: operations["get_review_candidate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Append a bounded human content revision */
+        patch: operations["edit_review_candidate"];
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve an in-review candidate with optimistic concurrency */
+        post: operations["approve_review_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject an in-review candidate with an explicit reason */
+        post: operations["reject_review_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/start-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start human review with optimistic concurrency */
+        post: operations["start_review_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes": {
         parameters: {
             query?: never;
@@ -1161,6 +1248,47 @@ export interface components {
             /** Year */
             year?: number | null;
         };
+        /** CandidateReviewEventResponse */
+        CandidateReviewEventResponse: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "started" | "edited" | "approved" | "rejected";
+            /** Candidate Version */
+            candidate_version: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Reviewer Id
+             * Format: uuid
+             */
+            reviewer_id: string;
+            /** Revision */
+            revision: number;
+        };
+        /** CandidateRevisionResponse */
+        CandidateRevisionResponse: {
+            /** Candidate Version */
+            candidate_version: number;
+            content: components["schemas"]["QuestionContentResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Reason */
+            reason: string | null;
+            /** Reviewer Id */
+            reviewer_id: string | null;
+            /** Revision */
+            revision: number;
+        };
         /**
          * ChunkType
          * @enum {string}
@@ -1596,6 +1724,42 @@ export interface components {
             status: "queued" | "claimed" | "succeeded" | "failed";
             /** Version */
             version: number;
+        };
+        /** GenerationLineageResponse */
+        GenerationLineageResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /** Model Version */
+            model_version: string;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provenance */
+            provenance: components["schemas"]["SourceProvenanceResponse"][];
+            /** Provider */
+            provider: string;
+            /** Retrieval Version */
+            retrieval_version: string;
+            /** Schema Version */
+            schema_version: string;
         };
         /** GenerationPolicyRequest */
         GenerationPolicyRequest: {
@@ -2325,6 +2489,60 @@ export interface components {
             recency: components["schemas"]["ExactFraction"];
             syllabus: components["schemas"]["ExactFraction"];
         };
+        /** QuestionContentRequest */
+        QuestionContentRequest: {
+            /** Answer */
+            answer: string;
+            /** Explanation */
+            explanation: string;
+            /** Marking Guide */
+            marking_guide: string[];
+            /** Marks */
+            marks: number;
+            /** Options */
+            options: components["schemas"]["QuestionOptionRequest"][];
+            /**
+             * Question Type
+             * @enum {string}
+             */
+            question_type: "multiple_choice" | "short_answer" | "structured" | "structured_response";
+            /** Stem */
+            stem: string;
+        };
+        /** QuestionContentResponse */
+        QuestionContentResponse: {
+            /** Answer */
+            answer: string;
+            /** Explanation */
+            explanation: string;
+            /** Marking Guide */
+            marking_guide: string[];
+            /** Marks */
+            marks: number;
+            /** Options */
+            options: components["schemas"]["QuestionOptionResponse"][];
+            /**
+             * Question Type
+             * @enum {string}
+             */
+            question_type: "multiple_choice" | "short_answer" | "structured" | "structured_response";
+            /** Stem */
+            stem: string;
+        };
+        /** QuestionOptionRequest */
+        QuestionOptionRequest: {
+            /** Option Id */
+            option_id: string;
+            /** Text */
+            text: string;
+        };
+        /** QuestionOptionResponse */
+        QuestionOptionResponse: {
+            /** Option Id */
+            option_id: string;
+            /** Text */
+            text: string;
+        };
         /**
          * QuestionType
          * @enum {string}
@@ -2582,6 +2800,183 @@ export interface components {
             skill_id: string | null;
             /** Sub Skill Id */
             sub_skill_id: string | null;
+        };
+        /** ReviewCandidateApproveRequest */
+        ReviewCandidateApproveRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Note */
+            note?: string | null;
+        };
+        /** ReviewCandidateCreateRequest */
+        ReviewCandidateCreateRequest: {
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+        };
+        /** ReviewCandidateEditRequest */
+        ReviewCandidateEditRequest: {
+            content: components["schemas"]["QuestionContentRequest"];
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ReviewCandidateRejectRequest */
+        ReviewCandidateRejectRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ReviewCandidateResponse */
+        ReviewCandidateResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            current_content: components["schemas"]["QuestionContentResponse"];
+            /** Current Revision */
+            current_revision: number;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Events */
+            events: components["schemas"]["CandidateReviewEventResponse"][];
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            lineage: components["schemas"]["GenerationLineageResponse"];
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /** Revisions */
+            revisions: components["schemas"]["CandidateRevisionResponse"][];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "validated" | "in_review" | "approved" | "rejected";
+            validation: components["schemas"]["ValidationEvidenceResponse"];
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Version */
+            version: number;
+        };
+        /** ReviewCandidateStartRequest */
+        ReviewCandidateStartRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** ReviewCandidateSummaryResponse */
+        ReviewCandidateSummaryResponse: {
+            /** Blueprint Id */
+            blueprint_id: string;
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /** Blueprint Version */
+            blueprint_version: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Current Revision */
+            current_revision: number;
+            /**
+             * Current Revision Created At
+             * Format: date-time
+             */
+            current_revision_created_at: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Marks */
+            marks: number;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /**
+             * Question Type
+             * @enum {string}
+             */
+            question_type: "multiple_choice" | "short_answer" | "structured" | "structured_response";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "validated" | "in_review" | "approved" | "rejected";
+            /** Stem Preview */
+            stem_preview: string;
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Version */
+            version: number;
         };
         /**
          * ReviewState
@@ -2859,6 +3254,17 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SourceProvenanceResponse */
+        SourceProvenanceResponse: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Page Number */
+            page_number: number;
+            /** Source Document Id */
+            source_document_id: string;
+            /** Source Version */
+            source_version: string;
+        };
         /** SourceVersionResponse */
         SourceVersionResponse: {
             /**
@@ -3060,6 +3466,25 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** ValidationEvidenceResponse */
+        ValidationEvidenceResponse: {
+            /** Finding Refs */
+            finding_refs: string[];
+            /** Passed */
+            passed: boolean;
+            /**
+             * Validated Revision
+             * @constant
+             */
+            validated_revision: 1;
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Validator Version */
+            validator_version: string;
         };
         /** ValidationFindingResponse */
         ValidationFindingResponse: {
@@ -4368,6 +4793,380 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_review_candidates: {
+        parameters: {
+            query?: {
+                state?: ("validated" | "in_review" | "approved" | "rejected") | null;
+                paper_blueprint_id?: string | null;
+                blueprint_slot_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateSummaryResponse"][];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    edit_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    approve_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    reject_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    start_review_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCandidateResponse"];
+                };
+            };
+            /** @description Review candidate resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review state, version, upstream, or persistence conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review command or question content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

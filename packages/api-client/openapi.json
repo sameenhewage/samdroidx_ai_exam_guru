@@ -1034,6 +1034,114 @@
         "title": "Body_upload_source_document",
         "type": "object"
       },
+      "CandidateReviewEventResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "started",
+              "edited",
+              "approved",
+              "rejected"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reviewer_id": {
+            "format": "uuid",
+            "title": "Reviewer Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "reviewer_id",
+          "candidate_version",
+          "revision",
+          "reason",
+          "created_at"
+        ],
+        "title": "CandidateReviewEventResponse",
+        "type": "object"
+      },
+      "CandidateRevisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "content": {
+            "$ref": "#/components/schemas/QuestionContentResponse"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reviewer_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Id"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "candidate_version",
+          "content",
+          "reviewer_id",
+          "reason",
+          "created_at"
+        ],
+        "title": "CandidateRevisionResponse",
+        "type": "object"
+      },
       "ChunkType": {
         "enum": [
           "competency_section",
@@ -2097,6 +2205,81 @@
           "completed_at"
         ],
         "title": "GenerationJobResponse",
+        "type": "object"
+      },
+      "GenerationLineageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "generation_attempt_id": {
+            "format": "uuid",
+            "title": "Generation Attempt Id",
+            "type": "string"
+          },
+          "generation_id": {
+            "format": "uuid",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provenance": {
+            "items": {
+              "$ref": "#/components/schemas/SourceProvenanceResponse"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "retrieval_version": {
+            "title": "Retrieval Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation_id",
+          "generation_attempt_id",
+          "paper_blueprint_id",
+          "blueprint_id",
+          "blueprint_version",
+          "blueprint_slot_id",
+          "prompt_version",
+          "provider",
+          "model_version",
+          "retrieval_version",
+          "schema_version",
+          "provenance"
+        ],
+        "title": "GenerationLineageResponse",
         "type": "object"
       },
       "GenerationPolicyRequest": {
@@ -4154,6 +4337,173 @@
         "title": "PriorityWeightsResponse",
         "type": "object"
       },
+      "QuestionContentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "explanation": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "marking_guide": {
+            "items": {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Marking Guide",
+            "type": "array"
+          },
+          "marks": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Marks",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOptionRequest"
+            },
+            "maxItems": 16,
+            "title": "Options",
+            "type": "array"
+          },
+          "question_type": {
+            "enum": [
+              "multiple_choice",
+              "short_answer",
+              "structured",
+              "structured_response"
+            ],
+            "title": "Question Type",
+            "type": "string"
+          },
+          "stem": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Stem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_type",
+          "stem",
+          "options",
+          "answer",
+          "explanation",
+          "marks",
+          "marking_guide"
+        ],
+        "title": "QuestionContentRequest",
+        "type": "object"
+      },
+      "QuestionContentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "marking_guide": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Marking Guide",
+            "type": "array"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOptionResponse"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "question_type": {
+            "enum": [
+              "multiple_choice",
+              "short_answer",
+              "structured",
+              "structured_response"
+            ],
+            "title": "Question Type",
+            "type": "string"
+          },
+          "stem": {
+            "title": "Stem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_type",
+          "stem",
+          "options",
+          "answer",
+          "explanation",
+          "marks",
+          "marking_guide"
+        ],
+        "title": "QuestionContentResponse",
+        "type": "object"
+      },
+      "QuestionOptionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "option_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Option Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "option_id",
+          "text"
+        ],
+        "title": "QuestionOptionRequest",
+        "type": "object"
+      },
+      "QuestionOptionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "option_id": {
+            "title": "Option Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "option_id",
+          "text"
+        ],
+        "title": "QuestionOptionResponse",
+        "type": "object"
+      },
       "QuestionType": {
         "enum": [
           "multiple_choice",
@@ -4881,6 +5231,364 @@
           "learning_concept_id"
         ],
         "title": "RetrievalTaxonomyScopeResponse",
+        "type": "object"
+      },
+      "ReviewCandidateApproveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 35.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReviewCandidateApproveRequest",
+        "type": "object"
+      },
+      "ReviewCandidateCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "validation_run_id"
+        ],
+        "title": "ReviewCandidateCreateRequest",
+        "type": "object"
+      },
+      "ReviewCandidateEditRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/QuestionContentRequest"
+          },
+          "expected_version": {
+            "maximum": 35.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "reason",
+          "expected_version"
+        ],
+        "title": "ReviewCandidateEditRequest",
+        "type": "object"
+      },
+      "ReviewCandidateRejectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 35.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "reason"
+        ],
+        "title": "ReviewCandidateRejectRequest",
+        "type": "object"
+      },
+      "ReviewCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_content": {
+            "$ref": "#/components/schemas/QuestionContentResponse"
+          },
+          "current_revision": {
+            "title": "Current Revision",
+            "type": "integer"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateReviewEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "generation_attempt_id": {
+            "format": "uuid",
+            "title": "Generation Attempt Id",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "format": "uuid",
+            "title": "Generation Run Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lineage": {
+            "$ref": "#/components/schemas/GenerationLineageResponse"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateRevisionResponse"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "validated",
+              "in_review",
+              "approved",
+              "rejected"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/ValidationEvidenceResponse"
+          },
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "generation_run_id",
+          "generation_attempt_id",
+          "validation_run_id",
+          "paper_blueprint_id",
+          "blueprint_id",
+          "blueprint_version",
+          "blueprint_slot_id",
+          "state",
+          "version",
+          "current_revision",
+          "lineage",
+          "validation",
+          "current_content",
+          "revisions",
+          "events",
+          "created_by",
+          "created_at"
+        ],
+        "title": "ReviewCandidateResponse",
+        "type": "object"
+      },
+      "ReviewCandidateStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 35.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReviewCandidateStartRequest",
+        "type": "object"
+      },
+      "ReviewCandidateSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_id": {
+            "title": "Blueprint Id",
+            "type": "string"
+          },
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "blueprint_version": {
+            "title": "Blueprint Version",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_revision": {
+            "title": "Current Revision",
+            "type": "integer"
+          },
+          "current_revision_created_at": {
+            "format": "date-time",
+            "title": "Current Revision Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "generation_attempt_id": {
+            "format": "uuid",
+            "title": "Generation Attempt Id",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "format": "uuid",
+            "title": "Generation Run Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "question_type": {
+            "enum": [
+              "multiple_choice",
+              "short_answer",
+              "structured",
+              "structured_response"
+            ],
+            "title": "Question Type",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "validated",
+              "in_review",
+              "approved",
+              "rejected"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "stem_preview": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Stem Preview",
+            "type": "string"
+          },
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "generation_run_id",
+          "generation_attempt_id",
+          "validation_run_id",
+          "paper_blueprint_id",
+          "blueprint_id",
+          "blueprint_version",
+          "blueprint_slot_id",
+          "state",
+          "version",
+          "current_revision",
+          "question_type",
+          "stem_preview",
+          "marks",
+          "created_by",
+          "created_at",
+          "current_revision_created_at"
+        ],
+        "title": "ReviewCandidateSummaryResponse",
         "type": "object"
       },
       "ReviewState": {
@@ -5698,6 +6406,35 @@
         "title": "SourcePageResponse",
         "type": "object"
       },
+      "SourceProvenanceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_document_id": {
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "source_version": {
+            "title": "Source Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_document_id",
+          "source_version",
+          "page_number",
+          "chunk_id"
+        ],
+        "title": "SourceProvenanceResponse",
+        "type": "object"
+      },
       "SourceVersionResponse": {
         "properties": {
           "source_document_id": {
@@ -6246,6 +6983,46 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "finding_refs": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Finding Refs",
+            "type": "array"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "validated_revision": {
+            "const": 1,
+            "title": "Validated Revision",
+            "type": "integer"
+          },
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          },
+          "validator_version": {
+            "title": "Validator Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "validation_run_id",
+          "validator_version",
+          "finding_refs",
+          "passed",
+          "validated_revision"
+        ],
+        "title": "ValidationEvidenceResponse",
         "type": "object"
       },
       "ValidationFindingResponse": {
@@ -8703,6 +9480,663 @@
         "summary": "Advance a historical question review state",
         "tags": [
           "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates": {
+      "get": {
+        "operationId": "list_review_candidates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "validated",
+                    "in_review",
+                    "approved",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_blueprint_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Blueprint Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "blueprint_slot_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blueprint Slot Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewCandidateSummaryResponse"
+                  },
+                  "title": "Response List Review Candidates",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List bounded curriculum-scoped review candidates",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      },
+      "post": {
+        "operationId": "create_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create a validated review candidate from persisted validation evidence",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}": {
+      "get": {
+        "operationId": "get_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a review candidate with revisions, events, lineage, and validation evidence",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      },
+      "patch": {
+        "operationId": "edit_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Append a bounded human content revision",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/approve": {
+      "post": {
+        "operationId": "approve_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve an in-review candidate with optimistic concurrency",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/reject": {
+      "post": {
+        "operationId": "reject_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateRejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject an in-review candidate with an explicit reason",
+        "tags": [
+          "admin-review-candidates"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/review-candidates/{candidate_id}/start-review": {
+      "post": {
+        "operationId": "start_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review candidate resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review state, version, upstream, or persistence conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review command or question content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start human review with optimistic concurrency",
+        "tags": [
+          "admin-review-candidates"
         ]
       }
     },
