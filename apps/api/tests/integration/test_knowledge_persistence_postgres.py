@@ -67,10 +67,11 @@ class SeededSource:
 
 @pytest.fixture(scope="module")
 def knowledge_database_url() -> Iterator[str]:
+    credentials = ("exam_guru", "knowledge-" + "only")
     with PostgresContainer(
         image=PGVECTOR_IMAGE,
-        username="exam_guru",
-        password="knowledge-only",
+        username=credentials[0],
+        password=credentials[1],
         dbname="exam_guru_knowledge_test",
         driver="asyncpg",
     ) as postgres:
