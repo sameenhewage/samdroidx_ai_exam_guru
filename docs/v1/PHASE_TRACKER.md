@@ -271,18 +271,20 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - deterministic fakes for CI
 
 ### Exit criteria
-- [ ] domain services do not depend directly on an OpenAI SDK type
-- [ ] generated outputs use validated structured schemas
+- [x] domain services do not depend directly on an OpenAI SDK type
+- [x] generated outputs use validated structured schemas
 - [ ] model/provider/prompt/retrieval versions are stored for every generation
-- [ ] paid/live provider is not required for normal CI
-- [ ] provider failure/retry/idempotency is tested
+- [x] paid/live provider is not required for normal CI
+- [x] provider failure/retry/idempotency is tested
 - [ ] cost/token usage is captured per generation run
-- [ ] generation uses blueprint + grounded context, not a generic "make a paper" prompt
+- [x] generation uses blueprint + grounded context, not a generic "make a paper" prompt
 
 ### Evidence
 - `e9a3d3b` starts P7 with provider-independent typed contracts, canonical P6 blueprint-slot integration, bounded untrusted provenance context, strict structured question/answer/marking schemas, prompt/provider/model/blueprint/retrieval/schema versions, token/cost/latency accounting, typed failures, deterministic fakes, idempotency identity and append-only prompt version registration.
 - The generation boundary has no SDK dependency or publish authority; all candidates require validation. Prompt templates reject reserved context interpolation while retrieved prompt-injection text remains opaque data. Generation and blueprint integration tests pass with 100% generation-package statements and branches.
-- Remaining: bounded retry/cumulative-budget orchestration, persistence/jobs/API, initial provider adapter, opt-in live-model eval/cost evidence, and admin generation inspection.
+- `4ff624c` adds bounded orchestration with retryable-code-only attempts, linked identities, injected backoff scheduling, atomic result-cache semantics and cumulative input/output token and integer-microusd budgets across successes and accounted failures.
+- `5a28ecd` adds the initial OpenAI adapter with the SDK isolated behind the port. `openai==3.1.0` was the newest release older than seven days and had no OSV advisory at selection. SDK retries are disabled, time/output/idempotency are bounded, strict schema parsing maps into first-party contracts, trusted blueprint instructions and digest-delimited untrusted context use separate roles, errors are sanitized, and versioned integer pricing captures latency/tokens/cost. The mocked adapter gate is 266 passed with 100% statements and branches; the paid live eval is explicitly skipped without opt-in credentials and makes no quality claim.
+- Remaining: durable generation runs/attempts/jobs/API with every version and accounting record, admin inspection, and opt-in live-model quality/cost acceptance.
 
 ---
 
