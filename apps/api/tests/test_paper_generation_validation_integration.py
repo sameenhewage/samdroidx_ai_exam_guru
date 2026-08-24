@@ -21,6 +21,7 @@ from exam_guru_api.papers import (
     GenerationValidationAdapterError,
     GenerationValidationMismatch,
     GenerationValidationMismatchError,
+    QuestionCandidate,
     SourceProvenance,
     ValidationNotPassedError,
     adapt_generation_validation,
@@ -37,6 +38,24 @@ from exam_guru_api.validation import (
     validate_question,
 )
 from tests.test_generation_domain import accounting, mcq, request
+
+VALIDATION_RUN_ID = UUID("00000000-0000-0000-0000-000000009901")
+
+
+def persisted_finding_ids(report: ValidationReport) -> tuple[UUID, ...]:
+    return tuple(UUID(int=9_910 + index) for index, _finding in enumerate(report.findings))
+
+
+def adapt_persisted(
+    result: GenerationResult,
+    report: ValidationReport,
+) -> QuestionCandidate:
+    return adapt_generation_validation(
+        result,
+        report,
+        validation_run_id=VALIDATION_RUN_ID,
+        finding_ids=persisted_finding_ids(report),
+    )
 
 
 def generation_result(
@@ -130,7 +149,7 @@ def test_passing_generation_and_report_become_only_a_validated_paper_candidate()
     result = generation_result()
     report = passing_report(result)
 
-    candidate = adapt_generation_validation(result, report)
+    candidate = adapt_persisted(result, report)
 
     assert candidate.candidate_id == result.request.identity.generation_id
     assert candidate.state is CandidateState.VALIDATED
@@ -172,18 +191,15 @@ def test_passing_generation_and_report_become_only_a_validated_paper_candidate()
     }
 
     assert candidate.validation is not None
-    assert candidate.validation.validation_run_id == UUID(hex=report.report_fingerprint[:32])
+    assert candidate.validation.validation_run_id == VALIDATION_RUN_ID
     assert candidate.validation.validator_version == (
         f"{report.pipeline_version}/{report.report_schema_version}"
     )
-    assert candidate.validation.finding_refs == (
-        f"report:{report.report_schema_version}:{report.report_fingerprint}",
-        *(
-            f"finding:{finding.validator_id}:{finding.validator_version}:{finding.code}"
-            for finding in report.findings
-        ),
+    assert candidate.validation.finding_refs == tuple(
+        str(finding_id) for finding_id in persisted_finding_ids(report)
     )
     assert candidate.validation.passed is True
+    assert candidate.validation.validated_revision == 1
     assert not hasattr(paper_adapters, "approve_candidate")
     assert not hasattr(paper_adapters, "assemble_paper_draft")
     assert not hasattr(paper_adapters, "publish")
@@ -254,7 +270,7 @@ def test_canonical_validation_report_cannot_be_replayed_against_an_altered_resul
     assert report.candidate_id == generation_result_fingerprint(result)
     assert generation_result_fingerprint(altered_result) != report.candidate_id
     with pytest.raises(GenerationValidationMismatchError) as raised:
-        adapt_generation_validation(altered_result, report)
+        adapt_persisted(altered_result, report)
 
     assert raised.value.mismatch is GenerationValidationMismatch.GENERATION_FINGERPRINT
 
@@ -272,7 +288,7 @@ def test_nonpassing_validation_report_cannot_promote_generated_candidate(
     )
 
     with pytest.raises(ValidationNotPassedError) as raised:
-        adapt_generation_validation(result, blocked_report)
+        adapt_persisted(result, blocked_report)
 
     assert raised.value.candidate_id == result.request.identity.generation_id
 
@@ -282,7 +298,7 @@ def test_adapter_rejects_a_report_bound_to_a_different_blueprint_slot() -> None:
     report_for_other_slot = passing_report(generation_result(slot_id="paper-slot-b"))
 
     with pytest.raises(GenerationValidationMismatchError) as raised:
-        adapt_generation_validation(result, report_for_other_slot)
+        adapt_persisted(result, report_for_other_slot)
 
     assert raised.value.mismatch is GenerationValidationMismatch.GENERATION_FINGERPRINT
 
@@ -297,7 +313,7 @@ def test_adapter_rejects_a_report_bound_to_a_different_generation_fingerprint() 
     report_for_other_generation = passing_report(generation_result(identity=other_identity))
 
     with pytest.raises(GenerationValidationMismatchError) as raised:
-        adapt_generation_validation(result, report_for_other_generation)
+        adapt_persisted(result, report_for_other_generation)
 
     assert raised.value.mismatch is GenerationValidationMismatch.GENERATION_FINGERPRINT
 
@@ -317,7 +333,7 @@ def test_adapter_rejects_a_report_for_different_candidate_content_even_if_id_is_
     assert mismatched_report.passed
 
     with pytest.raises(GenerationValidationMismatchError) as raised:
-        adapt_generation_validation(result, mismatched_report)
+        adapt_persisted(result, mismatched_report)
 
     assert raised.value.mismatch is GenerationValidationMismatch.CANDIDATE_FINGERPRINT
 
@@ -328,7 +344,7 @@ def test_adapter_recomputes_and_rejects_a_tampered_report_fingerprint() -> None:
     object.__setattr__(report, "report_fingerprint", "0" * 64)
 
     with pytest.raises(GenerationValidationMismatchError) as raised:
-        adapt_generation_validation(result, report)
+        adapt_persisted(result, report)
 
     assert raised.value.mismatch is GenerationValidationMismatch.REPORT_FINGERPRINT
 
@@ -366,7 +382,7 @@ def test_constructed_response_and_each_marking_criterion_remain_lossless() -> No
         accounting=base.accounting,
     )
 
-    candidate = adapt_generation_validation(result, passing_report(result))
+    candidate = adapt_persisted(result, passing_report(result))
 
     assert json.loads(candidate.content.answer) == ["42", "forty-two | 42\nunits"]
     assert tuple(json.loads(item) for item in candidate.content.marking_guide) == (
@@ -388,6 +404,36 @@ def test_adapter_rejects_untyped_boundary_values() -> None:
     with pytest.raises(GenerationAdapterError, match="GenerationResult"):
         generation_result_fingerprint(cast(GenerationResult, object()))
     with pytest.raises(GenerationValidationAdapterError, match="GenerationResult"):
-        adapt_generation_validation(cast(GenerationResult, object()), report)
+        adapt_generation_validation(
+            cast(GenerationResult, object()),
+            report,
+            validation_run_id=VALIDATION_RUN_ID,
+            finding_ids=persisted_finding_ids(report),
+        )
     with pytest.raises(GenerationValidationAdapterError, match="ValidationReport"):
-        adapt_generation_validation(result, cast(ValidationReport, object()))
+        adapt_generation_validation(
+            result,
+            cast(ValidationReport, object()),
+            validation_run_id=VALIDATION_RUN_ID,
+            finding_ids=persisted_finding_ids(report),
+        )
+
+
+def test_adapter_requires_actual_persisted_validation_and_finding_identities() -> None:
+    result = generation_result()
+    report = passing_report(result)
+
+    with pytest.raises(GenerationValidationAdapterError, match="validation_run_id"):
+        adapt_generation_validation(
+            result,
+            report,
+            validation_run_id=cast(UUID, "derived-or-client-value"),
+            finding_ids=persisted_finding_ids(report),
+        )
+    with pytest.raises(GenerationValidationAdapterError, match="finding_ids"):
+        adapt_generation_validation(
+            result,
+            report,
+            validation_run_id=VALIDATION_RUN_ID,
+            finding_ids=persisted_finding_ids(report)[:-1],
+        )

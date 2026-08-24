@@ -129,6 +129,8 @@ def test_generation_lineage_requires_unique_immutable_provenance(
         lambda: replace(content("base"), marking_guide=cast(tuple[str, ...], [])),
         lambda: replace(content("base"), marking_guide=()),
         lambda: replace(content("base"), marking_guide=(" ",)),
+        lambda: replace(content("base"), answer="missing-option"),
+        lambda: replace(content("base"), options=(), answer="A"),
     ],
 )
 def test_question_content_rejects_mutable_or_ambiguous_structure(
@@ -145,6 +147,8 @@ def test_question_content_rejects_mutable_or_ambiguous_structure(
         lambda: replace(validation(), finding_refs=()),
         lambda: replace(validation(), finding_refs=("same", "same")),
         lambda: replace(validation(), passed=cast(bool, 1)),
+        lambda: replace(validation(), validated_revision=0),
+        lambda: replace(validation(), validated_revision=2),
     ],
 )
 def test_validation_evidence_is_typed_nonempty_and_unique(
@@ -171,6 +175,22 @@ def test_review_history_values_reject_forged_or_incomplete_records(
 ) -> None:
     with pytest.raises(CandidateInvariantError):
         build()
+
+
+def test_candidate_history_has_a_small_persistable_revision_bound() -> None:
+    assert paper_domain.MAX_CANDIDATE_REVISIONS == 32
+    assert paper_domain.MAX_CANDIDATE_VERSION == 35
+    with pytest.raises(CandidateInvariantError, match="revision"):
+        CandidateRevision(33, content("overflow"), REVIEWER_ID, "Overflow edit.")
+    with pytest.raises(CandidateInvariantError, match="version"):
+        ReviewRecord(ReviewAction.EDITED, REVIEWER_ID, 36, "Overflow edit.")
+    with pytest.raises(CandidateInvariantError, match="version"):
+        ReviewDecision(CandidateState.APPROVED, REVIEWER_ID, 36)
+    candidate = validated_candidate("slot-a")
+    with pytest.raises(CandidateInvariantError, match="version"):
+        replace(candidate, version=36)
+    with pytest.raises(CandidateInvariantError, match="32 revisions"):
+        replace(candidate, revisions=(candidate.revisions[0],) * 33)
 
 
 def _second_revision() -> CandidateRevision:

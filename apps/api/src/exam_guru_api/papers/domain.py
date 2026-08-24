@@ -11,6 +11,9 @@ from dataclasses import InitVar, dataclass, field, replace
 from enum import StrEnum
 from uuid import UUID
 
+MAX_CANDIDATE_REVISIONS = 32
+MAX_CANDIDATE_VERSION = MAX_CANDIDATE_REVISIONS + 3
+
 
 class CandidateState(StrEnum):
     GENERATED = "generated"
@@ -209,6 +212,12 @@ class QuestionContent:
         option_ids = tuple(option.option_id for option in self.options)
         if len(set(option_ids)) != len(option_ids):
             raise CandidateInvariantError("option identifiers must be unique")
+        if self.question_type == "multiple_choice" and (
+            not option_ids or sum(option_id == self.answer for option_id in option_ids) != 1
+        ):
+            raise CandidateInvariantError(
+                "multiple-choice answer must reference exactly one existing option"
+            )
         if not isinstance(self.marking_guide, tuple) or not self.marking_guide:
             raise CandidateInvariantError("marking_guide must be a non-empty tuple")
         for criterion in self.marking_guide:
@@ -221,6 +230,7 @@ class ValidationEvidence:
     validator_version: str
     finding_refs: tuple[str, ...]
     passed: bool
+    validated_revision: int = 1
 
     def __post_init__(self) -> None:
         _require_uuid(self.validation_run_id, "validation_run_id")
@@ -233,6 +243,8 @@ class ValidationEvidence:
             raise CandidateInvariantError("finding_refs must be unique")
         if not isinstance(self.passed, bool):
             raise CandidateInvariantError("passed must be a boolean")
+        if self.validated_revision != 1 or isinstance(self.validated_revision, bool):
+            raise CandidateInvariantError("validated_revision must identify generated revision 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +256,8 @@ class CandidateRevision:
 
     def __post_init__(self) -> None:
         _require_positive_integer(self.revision, "revision")
+        if self.revision > MAX_CANDIDATE_REVISIONS:
+            raise CandidateInvariantError(f"revision cannot exceed {MAX_CANDIDATE_REVISIONS}")
         if not isinstance(self.content, QuestionContent):
             raise CandidateInvariantError("content must be QuestionContent")
         if self.reviewer_id is None:
@@ -266,6 +280,10 @@ class ReviewRecord:
             raise CandidateInvariantError("action must be a ReviewAction")
         _require_uuid(self.reviewer_id, "reviewer_id")
         _require_positive_integer(self.candidate_version, "candidate_version")
+        if self.candidate_version > MAX_CANDIDATE_VERSION:
+            raise CandidateInvariantError(
+                f"candidate version cannot exceed {MAX_CANDIDATE_VERSION}"
+            )
         _require_optional_text(self.reason, "review reason")
         if self.action in {ReviewAction.EDITED, ReviewAction.REJECTED} and self.reason is None:
             raise CandidateInvariantError(f"{self.action.value} review action requires a reason")
@@ -283,6 +301,10 @@ class ReviewDecision:
             raise CandidateInvariantError("review decision must be approved or rejected")
         _require_uuid(self.reviewer_id, "reviewer_id")
         _require_positive_integer(self.candidate_version, "candidate_version")
+        if self.candidate_version > MAX_CANDIDATE_VERSION:
+            raise CandidateInvariantError(
+                f"candidate version cannot exceed {MAX_CANDIDATE_VERSION}"
+            )
         _require_optional_text(self.reason, "decision reason")
         if self.state is CandidateState.REJECTED and self.reason is None:
             raise CandidateInvariantError("rejection reason is required")
@@ -304,10 +326,18 @@ class QuestionCandidate:
         if not isinstance(self.state, CandidateState):
             raise CandidateInvariantError("state must be a CandidateState")
         _require_positive_integer(self.version, "version")
+        if self.version > MAX_CANDIDATE_VERSION:
+            raise CandidateInvariantError(
+                f"candidate version cannot exceed {MAX_CANDIDATE_VERSION}"
+            )
         if not isinstance(self.lineage, GenerationLineage):
             raise CandidateInvariantError("lineage must be GenerationLineage")
         if not isinstance(self.revisions, tuple) or not self.revisions:
             raise CandidateInvariantError("revisions must be a non-empty tuple")
+        if len(self.revisions) > MAX_CANDIDATE_REVISIONS:
+            raise CandidateInvariantError(
+                f"candidate cannot exceed {MAX_CANDIDATE_REVISIONS} revisions"
+            )
         if any(not isinstance(revision, CandidateRevision) for revision in self.revisions):
             raise CandidateInvariantError("revisions must contain CandidateRevision values")
         if tuple(revision.revision for revision in self.revisions) != tuple(
@@ -463,6 +493,11 @@ def edit_candidate(
     _require_text(reason, "edit reason")
     if not isinstance(content, QuestionContent):
         raise CandidateInvariantError("content must be QuestionContent")
+    generated_content = candidate.revisions[0].content
+    if content.question_type != generated_content.question_type:
+        raise CandidateInvariantError("reviewer cannot change generated question_type")
+    if content.marks != generated_content.marks:
+        raise CandidateInvariantError("reviewer cannot change generated marks")
     version = candidate.version + 1
     revision = CandidateRevision(
         revision=len(candidate.revisions) + 1,
@@ -968,6 +1003,7 @@ def _published_content_payload(snapshot: PublishedPaperSnapshot) -> dict[str, ob
                 "slot_id": question.slot_id,
                 "validation": {
                     "finding_refs": list(question.validation.finding_refs),
+                    "validated_revision": question.validation.validated_revision,
                     "validation_run_id": str(question.validation.validation_run_id),
                     "validator_version": question.validation.validator_version,
                 },

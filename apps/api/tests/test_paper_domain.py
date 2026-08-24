@@ -226,7 +226,18 @@ def test_candidate_follows_validation_and_human_review_lifecycle() -> None:
 
 def test_reviewer_edit_is_a_new_immutable_revision_with_original_lineage() -> None:
     original = in_review_candidate("slot-a")
-    revised_content = content("reviewed", stem="A reviewer-corrected Grade 5 question")
+    revised_content = QuestionContent(
+        question_type=original.content.question_type,
+        stem="A reviewer-corrected Grade 5 question",
+        options=(
+            QuestionOption(option_id="A", text="Reviewed option A"),
+            QuestionOption(option_id="C", text="Reviewed correct option"),
+        ),
+        answer="C",
+        explanation="Reviewer-corrected explanation",
+        marks=original.content.marks,
+        marking_guide=("Reviewer-corrected marking guide.",),
+    )
 
     edited = edit_candidate(
         original,
@@ -241,6 +252,8 @@ def test_reviewer_edit_is_a_new_immutable_revision_with_original_lineage() -> No
     assert edited.version == original.version + 1
     assert edited.lineage is original.lineage
     assert edited.lineage.provenance == original.lineage.provenance
+    assert edited.validation is not None
+    assert edited.validation.validated_revision == 1
     assert edited.revisions[:-1] == original.revisions
     assert edited.revisions[-1].revision == 2
     assert edited.revisions[-1].content == revised_content
@@ -248,6 +261,23 @@ def test_reviewer_edit_is_a_new_immutable_revision_with_original_lineage() -> No
     assert edited.content == revised_content
     assert original.content != revised_content
     assert edited.review_history[-1].candidate_version == edited.version
+
+
+def test_reviewer_cannot_change_generated_question_type_or_marks() -> None:
+    original = in_review_candidate("slot-a")
+
+    for revised_content in (
+        replace(original.content, question_type="short_answer", options=(), answer="42"),
+        replace(original.content, marks=original.content.marks + 1),
+    ):
+        with pytest.raises(CandidateInvariantError, match=r"question_type|marks"):
+            edit_candidate(
+                original,
+                content=revised_content,
+                reviewer_id=OTHER_REVIEWER_ID,
+                reason="Attempt to change an immutable blueprint requirement.",
+                expected_version=original.version,
+            )
 
 
 def test_candidate_can_be_rejected_only_from_review_and_requires_reason() -> None:

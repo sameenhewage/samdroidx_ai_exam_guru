@@ -58,6 +58,13 @@ class ValidationRunModel(Base):
             "curriculum_version_id",
             name="uq_validation_runs_id_curriculum",
         ),
+        UniqueConstraint(
+            "id",
+            "generation_run_id",
+            "generation_attempt_id",
+            "curriculum_version_id",
+            name="uq_validation_runs_candidate_lineage",
+        ),
         *(
             CheckConstraint(
                 f"{column_name} ~ '{_FINGERPRINT_SQL}'",

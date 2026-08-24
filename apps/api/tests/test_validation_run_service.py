@@ -51,6 +51,7 @@ from exam_guru_api.validation.service import (
     ValidationGenerationNotSucceededError,
     ValidationIdempotencyConflictError,
     ValidationPipelineVersionConflictError,
+    ValidationReportIntegrityError,
     ValidationResourceLimitError,
     ValidationRunService,
     _array,
@@ -66,6 +67,7 @@ from exam_guru_api.validation.service import (
     _request_fingerprint_payload,
     _text,
     reconstruct_generation_result,
+    reconstruct_validation_report,
 )
 from tests.test_validation_generation_integration import _PAPER, _result
 
@@ -573,6 +575,144 @@ def test_finding_models_enforce_service_resource_bounds() -> None:
     models = _finding_models(UUID(int=1), report)
     assert len(models) == 1
     assert models[0].evidence_count == 1
+
+
+def persisted_validation_report() -> tuple[
+    ValidationRunModel,
+    tuple[ValidationFindingModel, ...],
+    ValidationReport,
+]:
+    report = ValidationReport(
+        candidate_id="a" * 64,
+        pipeline_version="pipeline.v1",
+        findings=custom_findings(2),
+    )
+    run_id = UUID(int=980_090)
+    findings = _finding_models(run_id, report)
+    run = ValidationRunModel(
+        id=run_id,
+        generation_result_fingerprint=report.candidate_id,
+        pipeline_version=report.pipeline_version,
+        report_schema_version=report.report_schema_version,
+        report_fingerprint=report.report_fingerprint,
+        overall_status=report.overall_status.value,
+        finding_count=len(report.findings),
+        validator_count=1,
+        validator_lineage=[
+            {
+                "validator_id": "fixture-validator",
+                "validator_version": "1.0.0",
+            }
+        ],
+        limitations=list(report.limitations),
+    )
+    return run, findings, report
+
+
+def test_reconstructs_canonical_validation_report_with_actual_finding_ids() -> None:
+    run, findings, expected = persisted_validation_report()
+
+    reconstructed = reconstruct_validation_report(run, findings)
+
+    assert reconstructed.report == expected
+    assert reconstructed.finding_ids == tuple(finding.id for finding in findings)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("report_fingerprint", "0" * 64),
+        ("overall_status", "warn"),
+        ("finding_count", 1),
+        ("validator_count", 2),
+        ("report_schema_version", "question-validation-report.v999"),
+        ("limitations", ["forged limitation"]),
+    ],
+)
+def test_validation_report_reconstruction_rejects_tampered_run_metadata(
+    field_name: str,
+    value: object,
+) -> None:
+    run, findings, _report = persisted_validation_report()
+    setattr(run, field_name, value)
+
+    with pytest.raises(ValidationReportIntegrityError):
+        reconstruct_validation_report(run, findings)
+
+
+def test_validation_report_reconstruction_rejects_malformed_persisted_boundaries() -> None:
+    run, findings, _report = persisted_validation_report()
+    with pytest.raises(ValidationReportIntegrityError, match="invalid type"):
+        reconstruct_validation_report(cast(ValidationRunModel, object()), findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].validation_run_id = UUID(int=123)
+    with pytest.raises(ValidationReportIntegrityError, match="run identity"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[1].id = findings[0].id
+    with pytest.raises(ValidationReportIntegrityError, match="identities"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].evidence = [
+        {
+            "location": "$",
+            "expected": "expected",
+            "observed": "observed",
+            "extra": "forged",
+        }
+    ]
+    with pytest.raises(ValidationReportIntegrityError, match="evidence shape"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].status = "invalid"
+    with pytest.raises(ValidationReportIntegrityError, match="canonically"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].code, findings[1].code = findings[1].code, findings[0].code
+    with pytest.raises(ValidationReportIntegrityError, match="order"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    run.validator_lineage = [
+        {
+            "validator_id": "fixture-validator",
+            "validator_version": "1.0.0",
+            "extra": "forged",
+        }
+    ]
+    with pytest.raises(ValidationReportIntegrityError, match="lineage shape"):
+        reconstruct_validation_report(run, findings)
+
+
+def test_validation_report_reconstruction_rejects_incomplete_lineage_and_findings() -> None:
+    run, findings, _report = persisted_validation_report()
+    run.validator_lineage = [
+        {
+            "validator_id": "fixture-validator",
+            "validator_version": "forged-version",
+        }
+    ]
+    with pytest.raises(ValidationReportIntegrityError, match="lineage"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    with pytest.raises(ValidationReportIntegrityError, match=r"count|contiguous"):
+        reconstruct_validation_report(run, findings[:-1])
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].ordinal = 1
+    with pytest.raises(ValidationReportIntegrityError, match="contiguous"):
+        reconstruct_validation_report(run, findings)
+
+    run, findings, _report = persisted_validation_report()
+    findings[0].evidence_count = 2
+    with pytest.raises(ValidationReportIntegrityError, match="evidence"):
+        reconstruct_validation_report(run, findings)
 
 
 class FakeSession:

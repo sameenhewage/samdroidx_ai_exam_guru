@@ -9,6 +9,8 @@ from exam_guru_api.papers.adapters import (
     generation_result_fingerprint,
 )
 from exam_guru_api.papers.domain import (
+    MAX_CANDIDATE_REVISIONS,
+    MAX_CANDIDATE_VERSION,
     ArchivedPaperSnapshot,
     AssemblyViolation,
     CandidateInvariantError,
@@ -56,6 +58,8 @@ from exam_guru_api.papers.service import (
 )
 
 __all__ = [
+    "MAX_CANDIDATE_REVISIONS",
+    "MAX_CANDIDATE_VERSION",
     "ApproveCandidateCommand",
     "ArchivePaperCommand",
     "ArchivedPaperSnapshot",

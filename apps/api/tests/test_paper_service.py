@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+import exam_guru_api.papers.domain as paper_domain
 from exam_guru_api.auth.domain import AdminRole, AuthorizationError, Permission, Principal
 from exam_guru_api.papers import (
     ApproveCandidateCommand,
@@ -175,6 +176,10 @@ def test_admin_publish_creates_reproducible_immutable_offline_snapshot() -> None
     assert first.questions[0].content == draft.candidates[0].content
     assert first.questions[0].lineage == draft.candidates[0].lineage
     assert first.questions[0].validation == draft.candidates[0].validation
+    publication_payload = paper_domain._published_content_payload(first)
+    first_question = cast(list[dict[str, object]], publication_payload["questions"])[0]
+    validation_payload = cast(dict[str, object], first_question["validation"])
+    assert validation_payload["validated_revision"] == 1
     assert not hasattr(first, "generation_provider")
     assert not hasattr(first, "generate")
 

@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Iterator
 
 import pytest
+from alembic import command
 from dramatiq import Worker
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -11,7 +12,11 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.core.config import Settings
-from exam_guru_api.infrastructure.migrations import assert_database_schema_current, upgrade_database
+from exam_guru_api.infrastructure.migrations import (
+    _config_for_database,
+    assert_database_schema_current,
+    upgrade_database,
+)
 from exam_guru_api.main import create_app
 from exam_guru_api.worker import create_broker
 
@@ -128,7 +133,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0014_validation_runs"
+    assert migration_revision == "0015_review_candidates"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -182,6 +187,162 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
         "ck_historical_questions_metadata_difficulty_evidence",
         "ck_historical_questions_metadata_difficulty_confidence",
     } <= metadata_constraints
+
+
+@pytest.mark.integration
+def test_review_candidate_migration_is_normalized_deferred_and_has_no_materialized_bank(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+
+    async def inspect() -> tuple[
+        set[str],
+        set[str],
+        set[str],
+        set[str],
+        dict[str, str],
+        int,
+    ]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            tables = set(
+                await connection.scalars(
+                    text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = 'public' AND table_name IN "
+                        "('question_candidates', 'question_candidate_revisions', "
+                        "'candidate_review_events')"
+                    )
+                )
+            )
+            candidate_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'question_candidates'"
+                    )
+                )
+            )
+            triggers = set(
+                await connection.scalars(
+                    text(
+                        "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND "
+                        "tgrelid IN ('question_candidates'::regclass, "
+                        "'question_candidate_revisions'::regclass, "
+                        "'candidate_review_events'::regclass)"
+                    )
+                )
+            )
+            deferred_constraints = set(
+                await connection.scalars(
+                    text(
+                        "SELECT conname FROM pg_constraint WHERE contype = 't' "
+                        "AND condeferrable AND condeferred AND conrelid IN "
+                        "('question_candidates'::regclass, "
+                        "'question_candidate_revisions'::regclass, "
+                        "'candidate_review_events'::regclass)"
+                    )
+                )
+            )
+            bound_constraints = {
+                str(row[0]): str(row[1])
+                for row in (
+                    await connection.execute(
+                        text(
+                            "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                            "WHERE conname IN ('ck_question_candidates_state_version_revision', "
+                            "'ck_question_candidate_revisions_identity', "
+                            "'ck_candidate_review_events_bounds')"
+                        )
+                    )
+                ).all()
+            }
+            materialized_bank_count = int(
+                await connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_class WHERE relkind = 'm' "
+                        "AND relname LIKE '%question%bank%'"
+                    )
+                )
+                or 0
+            )
+        await engine.dispose()
+        return (
+            tables,
+            candidate_columns,
+            triggers,
+            deferred_constraints,
+            bound_constraints,
+            materialized_bank_count,
+        )
+
+    tables, columns, triggers, deferred, bounds, materialized_bank_count = asyncio.run(inspect())
+    assert tables == {
+        "question_candidates",
+        "question_candidate_revisions",
+        "candidate_review_events",
+    }
+    assert columns == {
+        "id",
+        "curriculum_version_id",
+        "generation_run_id",
+        "generation_attempt_id",
+        "validation_run_id",
+        "paper_blueprint_id",
+        "blueprint_id",
+        "blueprint_version",
+        "blueprint_slot_id",
+        "state",
+        "version",
+        "current_revision",
+        "generation_lineage",
+        "validation_evidence",
+        "created_by",
+        "created_at",
+    }
+    assert {
+        "enforce_question_candidate_insert_trigger",
+        "enforce_question_candidate_update_trigger",
+        "reject_question_candidate_delete_trigger",
+        "enforce_question_candidate_revision_insert_trigger",
+        "reject_question_candidate_revision_mutation_trigger",
+        "enforce_candidate_review_event_insert_trigger",
+        "reject_candidate_review_event_mutation_trigger",
+    } <= triggers
+    assert deferred == {
+        "enforce_question_candidates_complete_trigger",
+        "enforce_question_candidate_revisions_complete_trigger",
+        "enforce_candidate_review_events_complete_trigger",
+    }
+    assert "32" in bounds["ck_question_candidates_state_version_revision"]
+    assert "1000" not in bounds["ck_question_candidates_state_version_revision"]
+    assert "32" in bounds["ck_question_candidate_revisions_identity"]
+    assert "1000" not in bounds["ck_question_candidate_revisions_identity"]
+    assert "35" in bounds["ck_candidate_review_events_bounds"]
+    assert "32" in bounds["ck_candidate_review_events_bounds"]
+    assert "1003" not in bounds["ck_candidate_review_events_bounds"]
+    assert materialized_bank_count == 0
+
+
+@pytest.mark.integration
+def test_review_candidate_migration_downgrades_cleanly_and_reapplies(
+    database_url: str,
+) -> None:
+    command.downgrade(_config_for_database(database_url), "0014_validation_runs")
+
+    async def candidate_table_exists() -> bool:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            exists = await connection.scalar(
+                text("SELECT to_regclass('public.question_candidates') IS NOT NULL")
+            )
+        await engine.dispose()
+        return bool(exists)
+
+    assert not asyncio.run(candidate_table_exists())
+    upgrade_database(database_url)
+    assert asyncio.run(candidate_table_exists())
+    assert_database_schema_current(database_url)
 
 
 @pytest.mark.integration

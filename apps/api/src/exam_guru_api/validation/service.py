@@ -41,7 +41,10 @@ from exam_guru_api.validation.domain import (
     REPORT_SCHEMA_VERSION,
     BlueprintRequirements,
     DuplicateReference,
+    FindingEvidence,
+    FindingStatus,
     ValidationContractError,
+    ValidationFinding,
     ValidationInput,
     ValidationReport,
     canonical_text_sha256,
@@ -96,6 +99,16 @@ class ValidationIdempotencyConflictError(RuntimeError):
 
 class ValidationResourceLimitError(RuntimeError):
     pass
+
+
+class ValidationReportIntegrityError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructedValidationReport:
+    report: ValidationReport
+    finding_ids: tuple[UUID, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,6 +457,121 @@ def reconstruct_generation_result(record: ValidationGenerationRecord) -> Generat
         raise ValidationGenerationIntegrityError(
             "persisted generation result cannot be reconstructed canonically"
         ) from error
+
+
+def reconstruct_validation_report(
+    run: ValidationRunModel,
+    findings: tuple[ValidationFindingModel, ...],
+) -> ReconstructedValidationReport:
+    """Rebuild and verify one canonical report from its append-only persisted rows."""
+
+    if not isinstance(run, ValidationRunModel):
+        raise ValidationReportIntegrityError("validation run has an invalid type")
+    if (
+        not isinstance(findings, tuple)
+        or any(not isinstance(finding, ValidationFindingModel) for finding in findings)
+        or len(findings) != run.finding_count
+        or not 1 <= len(findings) <= MAX_VALIDATION_FINDINGS
+    ):
+        raise ValidationReportIntegrityError("validation finding count is incomplete")
+    if tuple(finding.ordinal for finding in findings) != tuple(range(len(findings))):
+        raise ValidationReportIntegrityError("validation finding ordinals are not contiguous")
+    if any(finding.validation_run_id != run.id for finding in findings):
+        raise ValidationReportIntegrityError("validation finding run identity is inconsistent")
+    finding_ids = tuple(finding.id for finding in findings)
+    if any(not isinstance(finding_id, UUID) for finding_id in finding_ids) or len(
+        set(finding_ids)
+    ) != len(finding_ids):
+        raise ValidationReportIntegrityError("validation finding identities are invalid")
+
+    reconstructed_findings: list[ValidationFinding] = []
+    try:
+        for finding in findings:
+            raw_evidence = finding.evidence
+            if (
+                not isinstance(raw_evidence, list)
+                or len(raw_evidence) != finding.evidence_count
+                or not 1 <= len(raw_evidence) <= MAX_VALIDATION_EVIDENCE_PER_FINDING
+            ):
+                raise ValidationReportIntegrityError("validation finding evidence is incomplete")
+            evidence: list[FindingEvidence] = []
+            for item in raw_evidence:
+                if not isinstance(item, Mapping) or frozenset(item) != frozenset(
+                    {"location", "expected", "observed"}
+                ):
+                    raise ValidationReportIntegrityError(
+                        "validation finding evidence shape is invalid"
+                    )
+                evidence.append(
+                    FindingEvidence(
+                        location=_text(item["location"], label="evidence location"),
+                        expected=_text(item["expected"], label="evidence expected"),
+                        observed=_text(item["observed"], label="evidence observed"),
+                    )
+                )
+            reconstructed_findings.append(
+                ValidationFinding(
+                    validator_id=finding.validator_id,
+                    validator_version=finding.validator_version,
+                    code=finding.code,
+                    status=FindingStatus(finding.status),
+                    message=finding.message,
+                    evidence=tuple(evidence),
+                )
+            )
+        report = ValidationReport(
+            candidate_id=run.generation_result_fingerprint,
+            pipeline_version=run.pipeline_version,
+            findings=tuple(reconstructed_findings),
+        )
+    except ValidationReportIntegrityError:
+        raise
+    except (TypeError, ValueError, ValidationContractError) as error:
+        raise ValidationReportIntegrityError(
+            "persisted validation findings cannot be reconstructed canonically"
+        ) from error
+
+    persisted_identities = tuple(
+        (finding.validator_id, finding.validator_version, finding.code) for finding in findings
+    )
+    canonical_identities = tuple(
+        (finding.validator_id, finding.validator_version, finding.code)
+        for finding in report.findings
+    )
+    if persisted_identities != canonical_identities:
+        raise ValidationReportIntegrityError("validation finding order is not canonical")
+
+    lineage = run.validator_lineage
+    if not isinstance(lineage, list) or len(lineage) != run.validator_count:
+        raise ValidationReportIntegrityError("validation validator lineage count is invalid")
+    expected_lineage: set[tuple[str, str]] = set()
+    for item in lineage:
+        if (
+            not isinstance(item, Mapping)
+            or frozenset(item) != frozenset({"validator_id", "validator_version"})
+            or not isinstance(item["validator_id"], str)
+            or not isinstance(item["validator_version"], str)
+        ):
+            raise ValidationReportIntegrityError("validation validator lineage shape is invalid")
+        expected_lineage.add((item["validator_id"], item["validator_version"]))
+    observed_lineage = {
+        (finding.validator_id, finding.validator_version) for finding in report.findings
+    }
+    if (
+        len(expected_lineage) != run.validator_count
+        or expected_lineage != observed_lineage
+        or run.validator_count > MAX_VALIDATION_VALIDATORS
+    ):
+        raise ValidationReportIntegrityError("validation validator lineage is inconsistent")
+
+    if (
+        run.report_schema_version != report.report_schema_version
+        or run.overall_status != report.overall_status.value
+        or run.report_fingerprint != report.report_fingerprint
+        or run.limitations != list(report.limitations)
+    ):
+        raise ValidationReportIntegrityError("validation report metadata is inconsistent")
+    return ReconstructedValidationReport(report=report, finding_ids=finding_ids)
 
 
 def _duplicate_references(

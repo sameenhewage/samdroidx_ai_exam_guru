@@ -210,24 +210,38 @@ def _paper_content(result: GenerationResult) -> QuestionContent:
     )
 
 
-def _validation_evidence(report: ValidationReport) -> ValidationEvidence:
+def _validation_evidence(
+    report: ValidationReport,
+    *,
+    validation_run_id: UUID,
+    finding_ids: tuple[UUID, ...],
+) -> ValidationEvidence:
+    if not isinstance(validation_run_id, UUID):
+        raise GenerationValidationAdapterError("validation_run_id must be a persisted UUID")
+    if (
+        not isinstance(finding_ids, tuple)
+        or len(finding_ids) != len(report.findings)
+        or any(not isinstance(finding_id, UUID) for finding_id in finding_ids)
+        or len(set(finding_ids)) != len(finding_ids)
+    ):
+        raise GenerationValidationAdapterError(
+            "finding_ids must be unique persisted UUIDs matching every report finding"
+        )
     return ValidationEvidence(
-        validation_run_id=UUID(hex=report.report_fingerprint[:32]),
+        validation_run_id=validation_run_id,
         validator_version=f"{report.pipeline_version}/{report.report_schema_version}",
-        finding_refs=(
-            f"report:{report.report_schema_version}:{report.report_fingerprint}",
-            *(
-                f"finding:{finding.validator_id}:{finding.validator_version}:{finding.code}"
-                for finding in report.findings
-            ),
-        ),
+        finding_refs=tuple(str(finding_id) for finding_id in finding_ids),
         passed=report.passed,
+        validated_revision=1,
     )
 
 
 def adapt_generation_validation(
     generation_result: GenerationResult,
     validation_report: ValidationReport,
+    *,
+    validation_run_id: UUID,
+    finding_ids: tuple[UUID, ...],
 ) -> QuestionCandidate:
     """Create a generated candidate and apply only the domain validation transition."""
 
@@ -244,6 +258,10 @@ def adapt_generation_validation(
     )
     return record_candidate_validation(
         generated,
-        _validation_evidence(report),
+        _validation_evidence(
+            report,
+            validation_run_id=validation_run_id,
+            finding_ids=finding_ids,
+        ),
         expected_version=generated.version,
     )
