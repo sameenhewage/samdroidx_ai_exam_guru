@@ -1,10 +1,21 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 
 import { WorkflowNavigation } from "@/components/workflow-navigation";
 import { Badge } from "@/components/ui/badge";
 import { contentWorkflow } from "@/lib/content-workflow";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const cookieStore = await cookies();
+  const cookieRole = cookieStore.get("exam_guru_admin_role")?.value;
+  const role = cookieStore.get("exam_guru_admin_token")
+    ? cookieRole === "admin" || cookieRole === "reviewer"
+      ? cookieRole
+      : undefined
+    : undefined;
+
   return (
     <main className="min-h-screen bg-[#f3f4ef] text-slate-950 lg:grid lg:grid-cols-[18rem_1fr]">
       <aside className="bg-slate-950 px-5 py-6 text-white lg:min-h-screen lg:px-6">
@@ -19,7 +30,7 @@ export default function Home() {
             </Badge>
           </header>
 
-          <WorkflowNavigation />
+          <WorkflowNavigation role={role} />
 
           <dl className="mt-8 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 text-xs">
             <div>

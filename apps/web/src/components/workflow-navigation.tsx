@@ -4,7 +4,7 @@ import { Link } from "react-aria-components";
 
 import { contentWorkflow } from "@/lib/content-workflow";
 
-export function WorkflowNavigation() {
+export function WorkflowNavigation({ role }: { role?: "admin" | "reviewer" }) {
   return (
     <nav aria-label="Content workflow">
       <ol className="space-y-1">
@@ -43,6 +43,17 @@ export function WorkflowNavigation() {
             </Link>
           </li>
         ))}
+        {role === "admin" ? (
+          <li>
+            <Link
+              className="group flex rounded-lg border border-amber-300/30 px-3 py-2.5 text-sm text-amber-100 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300"
+              href="/admin/operations"
+            >
+              <span className="mr-3 font-mono text-xs text-amber-300">12</span>
+              Operations dashboard
+            </Link>
+          </li>
+        ) : null}
       </ol>
     </nav>
   );

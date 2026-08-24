@@ -7,13 +7,19 @@ type AdminArea =
   | "documents"
   | "generation"
   | "knowledge"
+  | "operations"
   | "papers"
   | "retrieval"
   | "review"
   | "validation";
 type Role = "admin" | "reviewer";
 
-const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
+const areas: ReadonlyArray<{
+  adminOnly?: boolean;
+  href: string;
+  id: AdminArea;
+  label: string;
+}> = [
   { href: "/admin/curriculum", id: "curriculum", label: "Curriculum" },
   { href: "/admin/documents", id: "documents", label: "Documents" },
   { href: "/admin/knowledge", id: "knowledge", label: "Knowledge" },
@@ -24,6 +30,12 @@ const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
   { href: "/admin/validation", id: "validation", label: "Validation" },
   { href: "/admin/review", id: "review", label: "Review" },
   { href: "/admin/papers", id: "papers", label: "Papers" },
+  {
+    adminOnly: true,
+    href: "/admin/operations",
+    id: "operations",
+    label: "Operations",
+  },
 ];
 
 export function AdminHeader({ current, role }: { current: AdminArea; role: Role }) {
@@ -41,7 +53,7 @@ export function AdminHeader({ current, role }: { current: AdminArea; role: Role 
           aria-label="Admin content areas"
           className="order-3 flex w-full flex-wrap gap-1 border-t border-white/10 pt-4 sm:order-none sm:w-auto sm:border-0 sm:pt-0"
         >
-          {areas.map((area) => {
+          {areas.filter((area) => !area.adminOnly || role === "admin").map((area) => {
             const active = area.id === current;
             return (
               <Link

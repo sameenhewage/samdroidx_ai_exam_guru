@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { AdminHeader } from "./admin-header";
 
 describe("AdminHeader", () => {
-  it("links every existing admin studio to Knowledge Studio and marks the current area", () => {
+  it("links every shared admin studio, hides Operations from reviewers, and marks the current area", () => {
     render(<AdminHeader current="knowledge" role="reviewer" />);
 
     expect(screen.getByRole("link", { name: "Curriculum" })).toHaveAttribute(
@@ -47,10 +47,24 @@ describe("AdminHeader", () => {
       "href",
       "/admin/papers",
     );
+    expect(screen.queryByRole("link", { name: "Operations" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Knowledge" })).toHaveAttribute(
       "aria-current",
       "page",
     );
     expect(screen.getByText("reviewer")).toBeInTheDocument();
+  });
+
+  it("shows the Operations dashboard link only to an administrator", () => {
+    render(<AdminHeader current="operations" role="admin" />);
+
+    expect(screen.getByRole("link", { name: "Operations" })).toHaveAttribute(
+      "href",
+      "/admin/operations",
+    );
+    expect(screen.getByRole("link", { name: "Operations" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 });
