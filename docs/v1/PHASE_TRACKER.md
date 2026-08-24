@@ -328,7 +328,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P9 — Human Review, Question Bank & Paper Publishing
-**Status:** IN_PROGRESS
+**Status:** DONE
 
 ### Scope
 - reviewer queue
@@ -345,7 +345,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] rejected questions cannot be published
 - [x] published paper versions are immutable/reproducible
 - [x] student serving path requires no live LLM call
-- [ ] complete Grade 5 practice paper can be generated, reviewed and published end-to-end
+- [x] complete Grade 5 practice paper can be generated, reviewed and published end-to-end
 
 ### Evidence
 - `279c4b7` starts P9 with a strict generated→validated→in-review→approved/rejected candidate lifecycle, immutable generation/provenance/validation lineage and reviewer revisions, optimistic command versions, approved-only exact-slot paper assembly, explicit publish authorization, deterministic immutable published snapshots/content hashes and forward-only archive contracts.
@@ -354,8 +354,8 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - `83b6d81` adds the generated-client Reviewer Studio. Reviewers inspect generation content, blueprint, context provenance and complete P8 findings together; preserve/conflict-resolve unsaved edits; and execute audited start/edit/approve/reject transitions. The real worker/browser journey reaches terminal approval and proves a terminal mutation returns 409.
 - `f3bfc38` adds normalized practice-paper aggregates, immutable draft selections, immutable publication snapshots and append-only archive events. Exact approved/current candidate versions must cover every persisted blueprint slot. Canonical Unicode JSON is reconstructed from authoritative PostgreSQL rows and SHA-256 checked in both Python and PostgreSQL. Revision chains are contiguous, archive is terminal, reviewer/admin reads and assembly are separated from admin-only publish/archive, snapshots are bounded and later serving requires no generation or provider call. Direct-SQL bypass, concurrent publish, idempotency, rejected/foreign/stale candidates, audit rollback, downgrade/reapply and hash tampering are covered against real PostgreSQL.
 - `5621f8d` adds the generated-client Paper Studio with exact-slot approved-bank selection, draft/revision inspection, admin-only publication/archive controls, immutable content/version/hash/provenance/validation/reviewer views and a no-live-provider serving statement. Final web gate: 86 tests at configured 100% coverage; the full real browser suite passes 6/6 through upload, extraction/trust, knowledge review, blueprint, worker generation, validation, human edit/approval, reviewer paper assembly, reviewer publish denial, admin publication and immutable snapshot inspection.
-- Final backend gate for the P9 persistence slices: 1,749 passed and 2 expected optional skips with 100% statements and branches; Ruff, format, strict mypy, migration-head and secret scans pass.
-- Remaining P9 gate: the browser fixture intentionally uses one exact slot to prove lifecycle mechanics. Representative multi-slot Grade 5 content must be generated, validated, human-reviewed and published before the complete-paper criterion can be checked.
+- Final backend gate after multi-slot acceptance: 1,756 passed and 2 expected optional skips with 100% statements and branches; Ruff, format, strict mypy, migration-head, npm audit and secret scans pass.
+- `14da846` closes the complete-paper gate with a deterministic three-slot mixed blueprint covering MCQ, short-answer and structured-response contracts at two marks each. Type-specific local/test outputs remain pairwise below the bounded lexical-overlap warning threshold without claiming semantic quality. The real browser journey generates all three slots through the worker, validates them sequentially with duplicate-bank evidence, human-reviews and approves all three (including one retained edit), assembles exact ordered coverage, proves reviewer publish 403, publishes as admin, and verifies the immutable three-question snapshot, hash, provenance, validation and review lineage without changing generation/provider state. The targeted acceptance passes in 10.1 seconds and the full browser suite passes 6/6.
 
 ---
 
