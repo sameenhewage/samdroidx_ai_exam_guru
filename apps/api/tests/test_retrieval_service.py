@@ -1,5 +1,6 @@
 import asyncio
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -7,18 +8,26 @@ import pytest
 
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.retrieval.context import ContextLimits, ContextTrust, OpaqueRetrievalContext
-from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope
+from exam_guru_api.retrieval.domain import (
+    LexicalCandidate,
+    RetrievalContractError,
+    RetrievalScope,
+    VectorCandidate,
+)
 from exam_guru_api.retrieval.fusion import FusedCandidate, FusionConfig
 from exam_guru_api.retrieval.repository import RetrievalCandidateSet
 from exam_guru_api.retrieval.service import (
     HybridCandidateRepository,
+    HybridRetrievalLatency,
     HybridRetrievalResult,
     HybridRetrievalService,
 )
 from tests.test_retrieval_fixtures import (
     EMBEDDING_FINGERPRINT,
+    OTHER_MEDIUM_ID,
     PROMPT_INJECTION_TEXT,
     grade_five_filter,
+    grade_five_scope,
     lexical,
     retrieval_record,
     vector,
@@ -120,6 +129,48 @@ def test_service_rejects_invalid_query_vectors_before_repository_call(
     assert repository.calls == []
 
 
+def test_service_exposes_only_hard_scoped_channels_with_phase_latency() -> None:
+    allowed = retrieval_record(503, "Allowed evidence", block_id=1_503)
+    forbidden = retrieval_record(
+        504,
+        "Stronger forbidden evidence",
+        scope=grade_five_scope(medium_id=OTHER_MEDIUM_ID),
+        block_id=1_504,
+    )
+    repository = FakeCandidateRepository(
+        RetrievalCandidateSet(
+            lexical_candidates=(lexical(forbidden, 100.0), lexical(allowed, 1.0)),
+            vector_candidates=(vector(forbidden, 1.0), vector(allowed, 0.5)),
+        )
+    )
+    ticks = iter((1.000, 1.002, 1.002, 1.005, 1.005, 1.009))
+    service = HybridRetrievalService(
+        cast(HybridCandidateRepository, repository),
+        clock=lambda: next(ticks),
+    )
+
+    result = asyncio.run(
+        service.retrieve(
+            query="allowed",
+            query_vector=(1.0, 0.0, 0.0),
+            filters=grade_five_filter(),
+        )
+    )
+
+    assert result.lexical_candidates == (lexical(allowed, 1.0),)
+    assert result.vector_candidates == (vector(allowed, 0.5),)
+    assert result.filtered_candidate_count == 2
+    assert result.latency == HybridRetrievalLatency(
+        candidate_retrieval_ms=2.0,
+        fusion_ms=3.0,
+        context_building_ms=4.0,
+    )
+    assert all(
+        grade_five_filter().allows(candidate.record.scope)
+        for candidate in (*result.lexical_candidates, *result.vector_candidates)
+    )
+
+
 def test_service_preserves_empty_bounded_result() -> None:
     repository = FakeCandidateRepository(RetrievalCandidateSet((), ()))
     service = HybridRetrievalService(cast(HybridCandidateRepository, repository))
@@ -150,6 +201,11 @@ def test_service_requires_declared_repository_configuration_and_typed_settings()
         HybridRetrievalService(
             cast(HybridCandidateRepository, repository),
             context_limits=cast(ContextLimits, "invalid"),
+        )
+    with pytest.raises(RetrievalContractError, match="clock"):
+        HybridRetrievalService(
+            cast(HybridCandidateRepository, repository),
+            clock=cast(Callable[[], float], "invalid"),
         )
 
     repository.embedding_config = cast(EmbeddingConfig, None)
@@ -246,3 +302,46 @@ def test_hybrid_result_rejects_untyped_payloads_and_invalid_counts() -> None:
                 lexical_candidate_count=lexical_count,
                 vector_candidate_count=vector_count,
             )
+
+    with pytest.raises(RetrievalContractError, match="filtered_candidate_count"):
+        HybridRetrievalResult(
+            ranked_candidates=(),
+            context=valid.context,
+            embedding_config=embedding_config(),
+            lexical_candidate_count=0,
+            vector_candidate_count=0,
+            filtered_candidate_count=-1,
+        )
+    with pytest.raises(RetrievalContractError, match="LexicalCandidate"):
+        HybridRetrievalResult(
+            ranked_candidates=(),
+            context=valid.context,
+            embedding_config=embedding_config(),
+            lexical_candidate_count=0,
+            vector_candidate_count=0,
+            lexical_candidates=cast(tuple[LexicalCandidate, ...], ("invalid",)),
+        )
+    with pytest.raises(RetrievalContractError, match="VectorCandidate"):
+        HybridRetrievalResult(
+            ranked_candidates=(),
+            context=valid.context,
+            embedding_config=embedding_config(),
+            lexical_candidate_count=0,
+            vector_candidate_count=0,
+            vector_candidates=cast(tuple[VectorCandidate, ...], ("invalid",)),
+        )
+    with pytest.raises(RetrievalContractError, match="HybridRetrievalLatency"):
+        HybridRetrievalResult(
+            ranked_candidates=(),
+            context=valid.context,
+            embedding_config=embedding_config(),
+            lexical_candidate_count=0,
+            vector_candidate_count=0,
+            latency=cast(HybridRetrievalLatency, "invalid"),
+        )
+
+
+@pytest.mark.parametrize("value", [-1.0, math.inf, math.nan, True, cast(float, "1")])
+def test_hybrid_retrieval_latency_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(RetrievalContractError, match="candidate_retrieval_ms"):
+        HybridRetrievalLatency(candidate_retrieval_ms=value)

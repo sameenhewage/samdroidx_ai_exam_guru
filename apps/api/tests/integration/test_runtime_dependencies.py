@@ -81,7 +81,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     )
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0010_historical_answer_encoding"
+    assert migration_revision == "0011_analytics_runs"
     assert metadata_columns == {
         "media_references",
         "options",

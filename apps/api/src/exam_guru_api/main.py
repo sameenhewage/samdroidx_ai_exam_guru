@@ -16,6 +16,10 @@ from exam_guru_api.infrastructure.resources import (
     create_resources,
 )
 from exam_guru_api.observability import configure_observability
+from exam_guru_api.retrieval.embeddings import (
+    EmbeddingProviderRegistry,
+    create_embedding_provider_registry,
+)
 
 ResourceFactory = Callable[[Settings], ApplicationResources]
 
@@ -27,6 +31,7 @@ def create_app(
     identity_provider: IdentityProvider | None = None,
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
+    embedding_provider_registry: EmbeddingProviderRegistry | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
 
@@ -65,6 +70,14 @@ def create_app(
         if extraction_dispatcher is not None
         else create_extraction_dispatcher(resolved_settings)
     )
+    resolved_embedding_registry = (
+        embedding_provider_registry
+        if embedding_provider_registry is not None
+        else create_embedding_provider_registry(resolved_settings)
+    )
+    if resolved_settings.environment in {"staging", "production"}:
+        resolved_embedding_registry = resolved_embedding_registry.without_deterministic_providers()
+    application.state.embedding_provider_registry = resolved_embedding_registry
     application.include_router(api_router, prefix="/api/v1")
     observability_runtime = configure_observability(application, resolved_settings)
     return application

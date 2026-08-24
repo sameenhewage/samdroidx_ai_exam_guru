@@ -44,6 +44,7 @@ from exam_guru_api.retrieval.domain import (
 
 MAX_POSTGRES_CANDIDATES = 1_000
 MAX_RETRIEVAL_QUERY_CHARACTERS = 4_096
+MAX_QUERY_VECTOR_ABSOLUTE_VALUE = 100.0
 
 _RECORD_COLUMNS = (
     "record_kind",
@@ -148,6 +149,10 @@ def validate_query_vector(
     ):
         raise RetrievalContractError("query vector values must be finite numbers")
     normalized = tuple(float(cast(int | float, value)) for value in snapshot)
+    if any(abs(value) > MAX_QUERY_VECTOR_ABSOLUTE_VALUE for value in normalized):
+        raise RetrievalContractError(
+            f"query vector magnitude cannot exceed {MAX_QUERY_VECTOR_ABSOLUTE_VALUE:g}"
+        )
     if not any(value != 0.0 for value in normalized):
         raise RetrievalContractError("cosine query vector must be non-zero")
     return normalized
@@ -185,13 +190,48 @@ class PostgresHybridRetrievalRepository:
 
     def _chunk_scope_select(self, filters: RetrievalScope) -> Select[Any]:
         competency = aliased(TaxonomyNodeModel, name="chunk_competency")
+        skill = aliased(TaxonomyNodeModel, name="chunk_skill")
+        sub_skill = aliased(TaxonomyNodeModel, name="chunk_sub_skill")
+        learning_concept = aliased(TaxonomyNodeModel, name="chunk_learning_concept")
         conditions: list[Any] = [
             KnowledgeChunkModel.review_state == ReviewState.REVIEWED,
+            ExamConfigurationModel.active.is_(True),
+            MediumModel.active.is_(True),
+            CurriculumVersionModel.active.is_(True),
             ExamConfigurationModel.grade == filters.grade,
             ExamConfigurationModel.id == filters.exam_id,
             MediumModel.id == filters.medium_id,
             CurriculumVersionModel.id == filters.curriculum_version_id,
             competency.id == filters.taxonomy.competency_id,
+            or_(
+                KnowledgeChunkModel.skill_id.is_(None),
+                and_(
+                    skill.parent_id == competency.id,
+                    skill.level == TaxonomyLevel.SKILL,
+                    skill.active.is_(True),
+                    skill.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
+            or_(
+                KnowledgeChunkModel.sub_skill_id.is_(None),
+                and_(
+                    KnowledgeChunkModel.skill_id.is_not(None),
+                    sub_skill.parent_id == skill.id,
+                    sub_skill.level == TaxonomyLevel.SUB_SKILL,
+                    sub_skill.active.is_(True),
+                    sub_skill.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
+            or_(
+                KnowledgeChunkModel.learning_concept_id.is_(None),
+                and_(
+                    KnowledgeChunkModel.sub_skill_id.is_not(None),
+                    learning_concept.parent_id == sub_skill.id,
+                    learning_concept.level == TaxonomyLevel.LEARNING_CONCEPT,
+                    learning_concept.active.is_(True),
+                    learning_concept.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
         ]
         if filters.taxonomy.skill_id is not None:
             conditions.append(KnowledgeChunkModel.skill_id == filters.taxonomy.skill_id)
@@ -238,18 +278,75 @@ class PostgresHybridRetrievalRepository:
                     competency.review_state == TaxonomyReviewState.REVIEWED,
                 ),
             )
+            .outerjoin(
+                skill,
+                and_(
+                    skill.id == KnowledgeChunkModel.skill_id,
+                    skill.curriculum_version_id == KnowledgeChunkModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                sub_skill,
+                and_(
+                    sub_skill.id == KnowledgeChunkModel.sub_skill_id,
+                    sub_skill.curriculum_version_id == KnowledgeChunkModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                learning_concept,
+                and_(
+                    learning_concept.id == KnowledgeChunkModel.learning_concept_id,
+                    learning_concept.curriculum_version_id
+                    == KnowledgeChunkModel.curriculum_version_id,
+                ),
+            )
             .where(*conditions)
         )
 
     def _question_scope_select(self, filters: RetrievalScope) -> Select[Any]:
         competency = aliased(TaxonomyNodeModel, name="question_competency")
+        skill = aliased(TaxonomyNodeModel, name="question_skill")
+        sub_skill = aliased(TaxonomyNodeModel, name="question_sub_skill")
+        learning_concept = aliased(TaxonomyNodeModel, name="question_learning_concept")
         conditions: list[Any] = [
             HistoricalQuestionModel.review_state == ReviewState.REVIEWED,
+            ExamConfigurationModel.active.is_(True),
+            MediumModel.active.is_(True),
+            CurriculumVersionModel.active.is_(True),
             ExamConfigurationModel.grade == filters.grade,
             ExamConfigurationModel.id == filters.exam_id,
             MediumModel.id == filters.medium_id,
             CurriculumVersionModel.id == filters.curriculum_version_id,
             competency.id == filters.taxonomy.competency_id,
+            or_(
+                HistoricalQuestionModel.skill_id.is_(None),
+                and_(
+                    skill.parent_id == competency.id,
+                    skill.level == TaxonomyLevel.SKILL,
+                    skill.active.is_(True),
+                    skill.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
+            or_(
+                HistoricalQuestionModel.sub_skill_id.is_(None),
+                and_(
+                    HistoricalQuestionModel.skill_id.is_not(None),
+                    sub_skill.parent_id == skill.id,
+                    sub_skill.level == TaxonomyLevel.SUB_SKILL,
+                    sub_skill.active.is_(True),
+                    sub_skill.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
+            or_(
+                HistoricalQuestionModel.learning_concept_id.is_(None),
+                and_(
+                    HistoricalQuestionModel.sub_skill_id.is_not(None),
+                    learning_concept.parent_id == sub_skill.id,
+                    learning_concept.level == TaxonomyLevel.LEARNING_CONCEPT,
+                    learning_concept.active.is_(True),
+                    learning_concept.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            ),
         ]
         if filters.taxonomy.skill_id is not None:
             conditions.append(HistoricalQuestionModel.skill_id == filters.taxonomy.skill_id)
@@ -295,6 +392,29 @@ class PostgresHybridRetrievalRepository:
                     competency.level == TaxonomyLevel.COMPETENCY,
                     competency.active.is_(True),
                     competency.review_state == TaxonomyReviewState.REVIEWED,
+                ),
+            )
+            .outerjoin(
+                skill,
+                and_(
+                    skill.id == HistoricalQuestionModel.skill_id,
+                    skill.curriculum_version_id == HistoricalQuestionModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                sub_skill,
+                and_(
+                    sub_skill.id == HistoricalQuestionModel.sub_skill_id,
+                    sub_skill.curriculum_version_id
+                    == HistoricalQuestionModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                learning_concept,
+                and_(
+                    learning_concept.id == HistoricalQuestionModel.learning_concept_id,
+                    learning_concept.curriculum_version_id
+                    == HistoricalQuestionModel.curriculum_version_id,
                 ),
             )
             .where(*conditions)

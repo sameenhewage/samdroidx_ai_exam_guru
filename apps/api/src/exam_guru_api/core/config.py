@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
+    retrieval_embedding_provider: Literal["deterministic"] | None = None
     deterministic_admin_token: SecretStr | None = None
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None
@@ -48,6 +49,11 @@ class Settings(BaseSettings):
         ]
         if self.environment == "production" and deterministic_tokens:
             raise ValueError("production configuration cannot use deterministic identity tokens")
+        if (
+            self.environment in {"staging", "production"}
+            and self.retrieval_embedding_provider == "deterministic"
+        ):
+            raise ValueError("staging and production cannot use deterministic retrieval embeddings")
         if any(len(token) < 16 for token in deterministic_tokens):
             raise ValueError("deterministic identity tokens must contain at least 16 characters")
         if len(deterministic_tokens) != len(set(deterministic_tokens)):

@@ -128,8 +128,24 @@ def test_statements_scope_reviewed_records_before_postgres_ranking() -> None:
     assert "exam_configurations.id =" in lexical_sql
     assert "media.id =" in lexical_sql
     assert "curriculum_versions.id =" in lexical_sql
+    assert "exam_configurations.active IS true" in lexical_sql
+    assert "media.active IS true" in lexical_sql
+    assert "curriculum_versions.active IS true" in lexical_sql
     assert "chunk_competency.id =" in lexical_sql
     assert "question_competency.id =" in lexical_sql
+    for taxonomy_alias in (
+        "chunk_skill",
+        "chunk_sub_skill",
+        "chunk_learning_concept",
+        "question_skill",
+        "question_sub_skill",
+        "question_learning_concept",
+    ):
+        assert f"{taxonomy_alias}.active IS true" in lexical_sql
+        assert f"{taxonomy_alias}.review_state =" in lexical_sql
+    assert lexical_sql.count("exam_configurations.active IS true") == 2
+    assert lexical_sql.count("media.active IS true") == 2
+    assert lexical_sql.count("curriculum_versions.active IS true") == 2
     assert "knowledge_chunks.skill_id =" in lexical_sql
     assert "historical_questions.skill_id =" in lexical_sql
     assert "websearch_to_tsquery" in lexical_sql
@@ -197,6 +213,7 @@ def test_repository_executes_bounded_channels_and_maps_complete_provenance() -> 
         ((1.0, math.inf, 0.0), "finite"),
         ((1.0, True, 0.0), "finite"),
         ((1.0, "0", 0.0), "finite"),
+        ((1e101, 0.0, 0.0), "magnitude"),
         ((0.0, 0.0, 0.0), "non-zero"),
     ],
 )
