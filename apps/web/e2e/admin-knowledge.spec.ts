@@ -233,11 +233,10 @@ test("admin imports trusted question and chunk, then reviewer classifies and rev
     }),
   });
   await expect(questionCard).toBeVisible();
-  const metadataHeading = questionCard.getByRole("heading", {
+  const metadataPanel = questionCard.getByRole("region", {
     exact: true,
     name: "Historical question metadata",
   });
-  const metadataPanel = questionCard.locator("section").filter({ has: metadataHeading });
   await expect(metadataPanel).toBeVisible();
   await expect(metadataPanel.getByText(mediaReference, { exact: true })).toBeVisible();
   await expect(metadataPanel.getByText(optionA, { exact: true })).toBeVisible();

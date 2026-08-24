@@ -35,6 +35,13 @@ describe("admin foundation shell", () => {
     expect(
       within(navigation).getByRole("link", { name: /Historical questions/ }),
     ).toHaveAttribute("href", "/admin/knowledge");
+    expect(within(navigation).getByRole("link", { name: /RAG explorer/ })).toHaveAttribute(
+      "href",
+      "/admin/retrieval",
+    );
+    expect(
+      within(navigation).getByRole("link", { name: /Exam intelligence/ }),
+    ).toHaveAttribute("href", "/admin/analytics");
   });
 
   it("has no automated accessibility violations", async () => {

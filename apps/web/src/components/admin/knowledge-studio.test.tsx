@@ -652,7 +652,9 @@ describe("KnowledgeStudio", () => {
 
     expect(await screen.findByText("Import permission required")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Import historical question" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Immutable provenance" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Immutable provenance" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(ids.block)).toBeInTheDocument();
     expect(screen.getByText("multilingual-e5-small")).toBeInTheDocument();
     expect(screen.getByText("sha256:fixture")).toBeInTheDocument();

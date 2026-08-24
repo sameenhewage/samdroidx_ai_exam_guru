@@ -1,12 +1,14 @@
 import Link from "next/link";
 
-type AdminArea = "curriculum" | "documents" | "knowledge";
+type AdminArea = "analytics" | "curriculum" | "documents" | "knowledge" | "retrieval";
 type Role = "admin" | "reviewer";
 
 const areas: ReadonlyArray<{ href: string; id: AdminArea; label: string }> = [
   { href: "/admin/curriculum", id: "curriculum", label: "Curriculum" },
   { href: "/admin/documents", id: "documents", label: "Documents" },
   { href: "/admin/knowledge", id: "knowledge", label: "Knowledge" },
+  { href: "/admin/retrieval", id: "retrieval", label: "RAG Explorer" },
+  { href: "/admin/analytics", id: "analytics", label: "Analytics" },
 ];
 
 export function AdminHeader({ current, role }: { current: AdminArea; role: Role }) {

@@ -19,7 +19,11 @@ export function WorkflowNavigation() {
                     ? "/admin/documents"
                     : area.id === "historical-questions"
                       ? "/admin/knowledge"
-                      : `#${area.id}`
+                      : area.id === "rag-explorer"
+                        ? "/admin/retrieval"
+                        : area.id === "exam-intelligence"
+                          ? "/admin/analytics"
+                          : `#${area.id}`
               }
             >
               <span className="mr-3 font-mono text-xs text-slate-500 group-hover:text-amber-300">

@@ -19,6 +19,14 @@ describe("AdminHeader", () => {
       "href",
       "/admin/knowledge",
     );
+    expect(screen.getByRole("link", { name: "RAG Explorer" })).toHaveAttribute(
+      "href",
+      "/admin/retrieval",
+    );
+    expect(screen.getByRole("link", { name: "Analytics" })).toHaveAttribute(
+      "href",
+      "/admin/analytics",
+    );
     expect(screen.getByRole("link", { name: "Knowledge" })).toHaveAttribute(
       "aria-current",
       "page",
