@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { guardBrowserRequest } from "@/lib/browser-request-guard";
+
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 26 * 1024 * 1024;
 
@@ -31,6 +33,9 @@ export function upstreamHeadersForRequest(
 type RouteContext = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: RouteContext) {
+  const rejection = guardBrowserRequest(request);
+  if (rejection) return rejection;
+
   const token = (await cookies()).get("exam_guru_admin_token")?.value;
   if (!token) {
     return NextResponse.json({ detail: { code: "authentication_required" } }, { status: 401 });
@@ -73,3 +78,5 @@ async function proxy(request: NextRequest, context: RouteContext) {
 export const GET = proxy;
 export const POST = proxy;
 export const PATCH = proxy;
+export const PUT = proxy;
+export const DELETE = proxy;
