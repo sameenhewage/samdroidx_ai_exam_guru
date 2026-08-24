@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from exam_guru_api.api.routes.analytics import router as analytics_router
 from exam_guru_api.api.routes.audit import router as audit_router
+from exam_guru_api.api.routes.blueprints import router as blueprint_router
 from exam_guru_api.api.routes.configuration import router as configuration_router
 from exam_guru_api.api.routes.documents import router as document_router
 from exam_guru_api.api.routes.health import router as health_router
@@ -18,6 +19,11 @@ api_router.include_router(
     analytics_router,
     prefix="/admin/curricula",
     tags=["admin-analytics"],
+)
+api_router.include_router(
+    blueprint_router,
+    prefix="/admin/curricula",
+    tags=["admin-blueprints"],
 )
 api_router.include_router(retrieval_router, prefix="/admin", tags=["admin-retrieval"])
 api_router.include_router(

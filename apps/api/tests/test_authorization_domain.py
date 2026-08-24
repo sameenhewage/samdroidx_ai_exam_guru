@@ -29,6 +29,8 @@ REVIEWER_ID = UUID(int=2)
         Permission.RETRIEVAL_READ,
         Permission.ANALYTICS_READ,
         Permission.ANALYTICS_RUN,
+        Permission.BLUEPRINT_READ,
+        Permission.BLUEPRINT_GENERATE,
         Permission.PAPER_PUBLISH,
     ],
 )
@@ -46,6 +48,7 @@ def test_admin_has_every_priority_one_permission(permission: Permission) -> None
         Permission.KNOWLEDGE_READ,
         Permission.RETRIEVAL_READ,
         Permission.ANALYTICS_READ,
+        Permission.BLUEPRINT_READ,
         Permission.CONTENT_REVIEW,
     ],
 )
@@ -64,6 +67,7 @@ def test_reviewer_has_read_and_review_permissions(permission: Permission) -> Non
         Permission.SOURCE_TRUST,
         Permission.KNOWLEDGE_WRITE,
         Permission.ANALYTICS_RUN,
+        Permission.BLUEPRINT_GENERATE,
         Permission.PAPER_PUBLISH,
     ],
 )

@@ -1,4 +1,8 @@
-from .analytics import adapt_rolling_backtest_priorities
+from .analytics import (
+    PersistedAnalyticsEvidenceError,
+    adapt_persisted_analytics_priorities,
+    adapt_rolling_backtest_priorities,
+)
 from .domain import (
     BlueprintSection,
     BlueprintSlot,
@@ -30,12 +34,21 @@ from .generator import (
     DeterministicBlueprintGenerator,
     generate_blueprint,
 )
+from .serialization import (
+    BlueprintSnapshotError,
+    deserialize_blueprint,
+    deserialize_specification,
+    fingerprint_snapshot,
+    serialize_blueprint,
+    serialize_specification,
+)
 
 __all__ = [
     "ALGORITHM_VERSION",
     "SCHEMA_VERSION",
     "BlueprintSection",
     "BlueprintSlot",
+    "BlueprintSnapshotError",
     "BlueprintSpecification",
     "BlueprintValidationError",
     "BlueprintVersion",
@@ -46,6 +59,7 @@ __all__ = [
     "GenerationPolicy",
     "ImpossibleBlueprintError",
     "PaperBlueprint",
+    "PersistedAnalyticsEvidenceError",
     "PracticePriority",
     "PriorityMode",
     "QuestionType",
@@ -58,6 +72,12 @@ __all__ = [
     "TaxonomyTarget",
     "UniquenessPolicy",
     "Violation",
+    "adapt_persisted_analytics_priorities",
     "adapt_rolling_backtest_priorities",
+    "deserialize_blueprint",
+    "deserialize_specification",
+    "fingerprint_snapshot",
     "generate_blueprint",
+    "serialize_blueprint",
+    "serialize_specification",
 ]

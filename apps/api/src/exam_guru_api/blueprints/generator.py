@@ -1,12 +1,9 @@
 import hashlib
-import json
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
-from enum import Enum
+from dataclasses import dataclass
 from fractions import Fraction
 from functools import cache
-from typing import Any, Never, cast
-from uuid import UUID
+from typing import Never, cast
 
 from .domain import (
     BlueprintSection,
@@ -26,12 +23,11 @@ from .domain import (
     TaxonomyRequirement,
     Violation,
 )
+from .serialization import JsonValue, fingerprint_snapshot
+from .serialization import _canonicalize as _serialize_canonicalize
 
 SCHEMA_VERSION = "1"
 ALGORITHM_VERSION = "deterministic-paper-blueprint-v1"
-
-_JsonScalar = str | int | bool | None
-_JsonValue = _JsonScalar | list["_JsonValue"] | dict[str, "_JsonValue"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,32 +38,12 @@ class _SlotDraft:
     marks: int
 
 
-def _canonicalize(value: object) -> _JsonValue:
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, Enum):
-        return cast(str, value.value)
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-    if isinstance(value, tuple):
-        return [_canonicalize(item) for item in value]
-    if is_dataclass(value) and not isinstance(value, type):
-        dataclass_value = cast(Any, value)
-        return {
-            field.name: _canonicalize(getattr(dataclass_value, field.name))
-            for field in fields(dataclass_value)
-        }
-    raise TypeError(f"cannot canonicalize blueprint value of type {type(value).__name__}")
+def _canonicalize(value: object) -> JsonValue:
+    return _serialize_canonicalize(value)
 
 
 def _specification_fingerprint(specification: BlueprintSpecification) -> str:
-    canonical = json.dumps(
-        _canonicalize(specification),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return fingerprint_snapshot(specification).removeprefix("sha256:")
 
 
 def _stable_rank(seed: int, *parts: object) -> int:

@@ -1,19 +1,74 @@
 """Adapter from analytics backtests to canonical blueprint practice priorities."""
 
 from collections.abc import Iterable
+from dataclasses import replace
 from fractions import Fraction
 from math import lcm
 from typing import cast
 from uuid import UUID
 
-from exam_guru_api.analytics.backtest import RollingBacktestResult
+from pydantic import ValidationError
+
+from exam_guru_api.analytics.backtest import (
+    BacktestAggregate,
+    BacktestMetrics,
+    BacktestWindowResult,
+    LeakageAudit,
+    PracticeRecommendationDecision,
+    RollingBacktestResult,
+)
 from exam_guru_api.analytics.domain import PracticeRecommendation, SourceVersion
 from exam_guru_api.analytics.forecast import (
     PracticePriority as AnalyticsPracticePriority,
 )
-from exam_guru_api.analytics.forecast import PracticePriorityMethod, PracticePriorityRun
+from exam_guru_api.analytics.forecast import (
+    PracticePriorityFeatures,
+    PracticePriorityMethod,
+    PracticePriorityRun,
+)
+from exam_guru_api.analytics.repository import AnalyticsRunRecord
+from exam_guru_api.analytics.schemas import (
+    AnalyticsResultsResponse,
+    BacktestMetricsResponse,
+    BacktestWindowResponse,
+    PracticePriorityRunResponse,
+    SourceVersionResponse,
+)
+from exam_guru_api.analytics.service import fingerprint_payload
 
 from .domain import BlueprintValidationError, PracticePriority, TaxonomyTarget, Violation
+
+
+class PersistedAnalyticsEvidenceError(ValueError):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"invalid persisted analytics evidence: {detail}")
+
+
+def adapt_persisted_analytics_priorities(
+    record: AnalyticsRunRecord,
+    syllabus_targets: Iterable[TaxonomyTarget],
+) -> dict[TaxonomyTarget, PracticePriority]:
+    if fingerprint_payload(record.result) != record.result_fingerprint:
+        raise PersistedAnalyticsEvidenceError("result fingerprint mismatch")
+    try:
+        response = AnalyticsResultsResponse.model_validate(record.result)
+    except ValidationError as error:
+        raise PersistedAnalyticsEvidenceError("result snapshot shape is invalid") from error
+    _validate_persisted_versions_and_scope(record, response)
+    result = _rolling_backtest_from_response(response)
+    adapted = adapt_rolling_backtest_priorities(result, syllabus_targets)
+    persisted_refs = (
+        f"analytics:persisted-run:{record.id}",
+        f"analytics:persisted-result:{record.result_fingerprint}",
+    )
+    return {
+        target: replace(
+            priority,
+            forecast_evidence_refs=(*priority.forecast_evidence_refs, *persisted_refs),
+        )
+        for target, priority in adapted.items()
+    }
 
 
 def adapt_rolling_backtest_priorities(
@@ -105,6 +160,152 @@ def adapt_rolling_backtest_priorities(
         )
         for target in targets
     }
+
+
+def _validate_persisted_versions_and_scope(
+    record: AnalyticsRunRecord,
+    response: AnalyticsResultsResponse,
+) -> None:
+    backtest = response.backtest
+    runs = (
+        *(window.method_run for window in backtest.windows),
+        *(window.baseline_run for window in backtest.windows),
+        backtest.recommended_run,
+    )
+    invalid = (
+        response.statistics.curriculum_version_id != record.curriculum_version_id
+        or response.statistics.algorithm_version != record.statistics_algorithm_version
+        or backtest.backtest_version != record.backtest_algorithm_version
+        or backtest.config_fingerprint != record.config_fingerprint
+        or not backtest.windows
+        or any(run.curriculum_version_id != record.curriculum_version_id for run in runs)
+        or any(
+            window.method_run.algorithm_version != record.practice_priority_algorithm_version
+            for window in backtest.windows
+        )
+        or any(
+            window.baseline_run.algorithm_version != record.baseline_algorithm_version
+            for window in backtest.windows
+        )
+    )
+    expected_recommended_version = (
+        record.practice_priority_algorithm_version
+        if backtest.recommended_run.method is PracticePriorityMethod.HISTORICAL_EVIDENCE
+        else record.baseline_algorithm_version
+    )
+    if invalid or backtest.recommended_run.algorithm_version != expected_recommended_version:
+        raise PersistedAnalyticsEvidenceError("curriculum scope or algorithm version mismatch")
+
+
+def _rolling_backtest_from_response(response: AnalyticsResultsResponse) -> RollingBacktestResult:
+    backtest = response.backtest
+    windows = tuple(_window_from_response(window) for window in backtest.windows)
+    return RollingBacktestResult(
+        backtest_version=backtest.backtest_version,
+        config_fingerprint=backtest.config_fingerprint,
+        input_fingerprint=backtest.input_fingerprint,
+        sources=tuple(_source_from_response(source) for source in backtest.sources),
+        limitations=tuple(backtest.limitations),
+        windows=windows,
+        aggregate=BacktestAggregate(
+            window_count=backtest.aggregate.window_count,
+            mean_method_score=backtest.aggregate.mean_method_score.to_fraction(),
+            mean_baseline_score=backtest.aggregate.mean_baseline_score.to_fraction(),
+            baseline_delta=backtest.aggregate.baseline_delta.to_fraction(),
+            method_score_variance=backtest.aggregate.method_score_variance.to_fraction(),
+            baseline_score_variance=backtest.aggregate.baseline_score_variance.to_fraction(),
+        ),
+        recommendation=PracticeRecommendationDecision(
+            mode=backtest.recommendation.mode,
+            selected_method=backtest.recommendation.selected_method,
+            observed_baseline_delta=(backtest.recommendation.observed_baseline_delta.to_fraction()),
+            meaningful_improvement=(backtest.recommendation.meaningful_improvement.to_fraction()),
+            language=backtest.recommendation.language,
+        ),
+        recommended_run=_run_from_response(backtest.recommended_run),
+    )
+
+
+def _window_from_response(window: BacktestWindowResponse) -> BacktestWindowResult:
+    audit = LeakageAudit(
+        training_cutoff_exclusive=window.leakage_audit.training_cutoff_exclusive,
+        latest_training_year=window.leakage_audit.latest_training_year,
+        training_observation_ids=tuple(window.leakage_audit.training_observation_ids),
+        heldout_observation_ids=tuple(window.leakage_audit.heldout_observation_ids),
+        overlapping_observation_ids=tuple(window.leakage_audit.overlapping_observation_ids),
+    )
+    if audit.passed is not window.leakage_audit.passed or not audit.passed:
+        raise PersistedAnalyticsEvidenceError("persisted leakage audit failed")
+    return BacktestWindowResult(
+        training_years=tuple(window.training_years),
+        heldout_year=window.heldout_year,
+        leakage_audit=audit,
+        training_input_fingerprint=window.training_input_fingerprint,
+        heldout_input_fingerprint=window.heldout_input_fingerprint,
+        heldout_sources=tuple(_source_from_response(source) for source in window.heldout_sources),
+        method_run=_run_from_response(window.method_run),
+        baseline_run=_run_from_response(window.baseline_run),
+        method_metrics=_metrics_from_response(window.method_metrics),
+        baseline_metrics=_metrics_from_response(window.baseline_metrics),
+        baseline_delta=window.baseline_delta.to_fraction(),
+    )
+
+
+def _metrics_from_response(metrics: BacktestMetricsResponse) -> BacktestMetrics:
+    return BacktestMetrics(
+        competency_distribution_error=metrics.competency_distribution_error.to_fraction(),
+        skill_distribution_error=metrics.skill_distribution_error.to_fraction(),
+        competency_distribution_accuracy=(metrics.competency_distribution_accuracy.to_fraction()),
+        skill_distribution_accuracy=metrics.skill_distribution_accuracy.to_fraction(),
+        top_k_skill_hit_rate=metrics.top_k_skill_hit_rate.to_fraction(),
+        composite_score=metrics.composite_score.to_fraction(),
+    )
+
+
+def _run_from_response(run: PracticePriorityRunResponse) -> PracticePriorityRun:
+    return PracticePriorityRun(
+        curriculum_version_id=run.curriculum_version_id,
+        target_year=run.target_year,
+        evidence_through_year=run.evidence_through_year,
+        method=run.method,
+        recommendation=run.recommendation,
+        algorithm_version=run.algorithm_version,
+        config_fingerprint=run.config_fingerprint,
+        run_fingerprint=run.run_fingerprint,
+        feature_definitions=tuple(run.feature_definitions),
+        random_seed=None,
+        input_observation_ids=tuple(run.input_observation_ids),
+        sources=tuple(_source_from_response(source) for source in run.sources),
+        priorities=tuple(
+            AnalyticsPracticePriority(
+                rank=priority.rank,
+                competency_id=priority.competency_id,
+                skill_id=priority.skill_id,
+                skill_title=priority.skill_title,
+                practice_share=priority.practice_share.to_fraction(),
+                features=PracticePriorityFeatures(
+                    syllabus_share=priority.features.syllabus_share.to_fraction(),
+                    question_frequency_share=(
+                        priority.features.question_frequency_share.to_fraction()
+                    ),
+                    marks_share=priority.features.marks_share.to_fraction(),
+                    recency_gap_share=priority.features.recency_gap_share.to_fraction(),
+                    evidence_question_count=priority.features.evidence_question_count,
+                    evidence_marks=priority.features.evidence_marks,
+                    last_observed_year=priority.features.last_observed_year,
+                ),
+                evidence_language=priority.evidence_language,
+            )
+            for priority in run.priorities
+        ),
+    )
+
+
+def _source_from_response(source: SourceVersionResponse) -> SourceVersion:
+    return SourceVersion(
+        source_document_id=source.source_document_id,
+        source_version=source.source_version,
+    )
 
 
 def _by_skill(run: PracticePriorityRun) -> dict[UUID, AnalyticsPracticePriority]:

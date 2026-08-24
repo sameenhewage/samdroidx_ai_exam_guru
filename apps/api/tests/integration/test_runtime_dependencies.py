@@ -44,7 +44,15 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     upgrade_database(database_url)
     assert_database_schema_current(database_url)
 
-    async def read_database_state() -> tuple[str | None, str | None, set[str], set[str]]:
+    async def read_database_state() -> tuple[
+        str | None,
+        str | None,
+        set[str],
+        set[str],
+        set[str],
+        set[str],
+        set[str],
+    ]:
         engine = create_async_engine(database_url)
         async with engine.connect() as connection:
             vector_version = await connection.scalar(
@@ -73,15 +81,86 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
                     )
                 )
             )
+            blueprint_columns = set(
+                await connection.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'paper_blueprints'"
+                    )
+                )
+            )
+            blueprint_constraints = set(
+                await connection.scalars(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'paper_blueprints'::regclass"
+                    )
+                )
+            )
+            blueprint_triggers = set(
+                await connection.scalars(
+                    text(
+                        "SELECT tgname FROM pg_trigger "
+                        "WHERE tgrelid = 'paper_blueprints'::regclass "
+                        "AND NOT tgisinternal"
+                    )
+                )
+            )
         await engine.dispose()
-        return vector_version, migration_revision, metadata_columns, metadata_constraints
+        return (
+            vector_version,
+            migration_revision,
+            metadata_columns,
+            metadata_constraints,
+            blueprint_columns,
+            blueprint_constraints,
+            blueprint_triggers,
+        )
 
-    vector_version, migration_revision, metadata_columns, metadata_constraints = asyncio.run(
-        read_database_state()
-    )
+    (
+        vector_version,
+        migration_revision,
+        metadata_columns,
+        metadata_constraints,
+        blueprint_columns,
+        blueprint_constraints,
+        blueprint_triggers,
+    ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0011_analytics_runs"
+    assert migration_revision == "0012_paper_blueprints"
+    assert blueprint_columns == {
+        "id",
+        "curriculum_version_id",
+        "analytics_run_id",
+        "blueprint_id",
+        "schema_version",
+        "algorithm_version",
+        "config_version",
+        "seed",
+        "total_marks",
+        "slot_count",
+        "specification_fingerprint",
+        "input_fingerprint",
+        "result_fingerprint",
+        "specification",
+        "blueprint",
+        "taxonomy_snapshot",
+        "created_by",
+        "created_at",
+    }
+    assert {
+        "fk_paper_blueprints_curriculum_version",
+        "fk_paper_blueprints_analytics_curriculum",
+        "uq_paper_blueprints_blueprint_id",
+        "uq_paper_blueprints_input_fingerprint",
+        "ck_paper_blueprints_specification_shape",
+        "ck_paper_blueprints_specification_size",
+        "ck_paper_blueprints_blueprint_shape",
+        "ck_paper_blueprints_blueprint_size",
+        "ck_paper_blueprints_taxonomy_snapshot",
+    } <= blueprint_constraints
+    assert blueprint_triggers == {"reject_paper_blueprint_mutation_trigger"}
     assert metadata_columns == {
         "media_references",
         "options",

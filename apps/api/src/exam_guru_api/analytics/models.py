@@ -27,6 +27,11 @@ class AnalyticsRunModel(Base):
             "run_fingerprint",
             name="uq_analytics_runs_run_fingerprint",
         ),
+        UniqueConstraint(
+            "id",
+            "curriculum_version_id",
+            name="uq_analytics_runs_id_curriculum",
+        ),
         *(
             CheckConstraint(
                 f"{column_name} ~ '{_FINGERPRINT_SQL}'",
