@@ -1,3 +1,4 @@
+from .analytics import adapt_rolling_backtest_priorities
 from .domain import (
     BlueprintSection,
     BlueprintSlot,
@@ -57,5 +58,6 @@ __all__ = [
     "TaxonomyTarget",
     "UniquenessPolicy",
     "Violation",
+    "adapt_rolling_backtest_priorities",
     "generate_blueprint",
 ]
