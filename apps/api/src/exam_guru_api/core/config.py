@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
+    extraction_recovery_batch_size: int = Field(default=50, ge=1, le=100)
+    extraction_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
+    maintenance_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3_600)
     ocr_provider: Literal["tesseract"] | None = None
     ocr_tesseract_executable: str = Field(default="tesseract", min_length=1, max_length=255)
     ocr_tesseract_language: str = Field(default="sin+eng", min_length=1, max_length=64)

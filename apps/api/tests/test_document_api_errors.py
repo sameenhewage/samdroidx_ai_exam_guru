@@ -41,7 +41,11 @@ from exam_guru_api.documents.models import (
     SourceDocumentModel,
     SourcePageModel,
 )
-from exam_guru_api.documents.schemas import ReviewedTextUpdate, SourceDocumentResponse
+from exam_guru_api.documents.schemas import (
+    ExtractionJobResponse,
+    ReviewedTextUpdate,
+    SourceDocumentResponse,
+)
 from exam_guru_api.documents.service import (
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
@@ -205,10 +209,19 @@ def test_extraction_route_wrappers_return_typed_responses(
     dispatcher = DeterministicExtractionDispatcher("message-id")
     persistence_result = ExtractionPersistenceResult(
         document_id=document.id,
-        status=ExtractionStatus.EXTRACTED,
-        page_count=1,
-        block_count=1,
+        status=ExtractionStatus.EXTRACTION_PENDING,
+        page_count=0,
+        block_count=0,
         deduplicated=False,
+        queue_message_id=None,
+    )
+    attached_result = ExtractionPersistenceResult(
+        document_id=document.id,
+        status=ExtractionStatus.EXTRACTION_PENDING,
+        page_count=0,
+        block_count=0,
+        deduplicated=False,
+        queue_message_id="message-id",
     )
 
     async def return_pages(
@@ -235,6 +248,17 @@ def test_extraction_route_wrappers_return_typed_responses(
         assert actor_id == principal.subject_id
         return persistence_result
 
+    async def attach_message(
+        _service: DocumentExtractionService,
+        _document_id: UUID,
+        message_id: str,
+        *,
+        actor_id: UUID,
+    ) -> ExtractionPersistenceResult:
+        assert message_id == "message-id"
+        assert actor_id == principal.subject_id
+        return attached_result
+
     async def return_page(
         _service: DocumentExtractionService,
         _document_id: UUID,
@@ -250,6 +274,7 @@ def test_extraction_route_wrappers_return_typed_responses(
         return block
 
     monkeypatch.setattr(DocumentExtractionService, "queue_extraction", return_result)
+    monkeypatch.setattr(DocumentExtractionService, "attach_queue_message", attach_message)
     monkeypatch.setattr(DocumentExtractionService, "list_pages", return_pages)
     monkeypatch.setattr(DocumentExtractionService, "list_blocks", return_blocks)
     monkeypatch.setattr(DocumentExtractionService, "begin_review", return_result)
@@ -313,7 +338,112 @@ def test_extraction_route_wrappers_return_typed_responses(
     responses = asyncio.run(exercise())
 
     assert len(responses) == 7
+    extraction_response = cast(ExtractionJobResponse, responses[0])
+    assert extraction_response.message_id == "message-id"
     assert dispatcher.dispatched == [(document.id, principal.subject_id)]
+
+
+def test_extraction_trigger_returns_typed_503_and_sanitized_audit_on_dispatch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = source_document()
+    principal = Principal(subject_id=UUID(int=2), roles=frozenset({AdminRole.ADMIN}))
+    queued = ExtractionPersistenceResult(
+        document_id=document.id,
+        status=ExtractionStatus.EXTRACTION_PENDING,
+        page_count=0,
+        block_count=0,
+        deduplicated=False,
+        queue_message_id=None,
+    )
+    failure_audits: list[tuple[UUID, UUID]] = []
+
+    async def return_queued(
+        _service: DocumentExtractionService,
+        _document_id: UUID,
+        *,
+        actor_id: UUID,
+    ) -> ExtractionPersistenceResult:
+        assert actor_id == principal.subject_id
+        return queued
+
+    async def record_failure(
+        _service: DocumentExtractionService,
+        document_id: UUID,
+        *,
+        actor_id: UUID,
+    ) -> None:
+        failure_audits.append((document_id, actor_id))
+
+    class FailingDispatcher:
+        def dispatch(self, document_id: UUID, *, actor_id: UUID) -> str:
+            del document_id, actor_id
+            raise RuntimeError("private valkey transport diagnostic raw-payload")
+
+    monkeypatch.setattr(DocumentExtractionService, "queue_extraction", return_queued)
+    monkeypatch.setattr(
+        DocumentExtractionService,
+        "record_queue_dispatch_failure",
+        record_failure,
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            trigger_source_document_extraction(
+                document.id,
+                principal,
+                cast(AsyncSession, RouteSession(document)),
+                cast(ObjectStorage, object()),
+                FailingDispatcher(),
+            )
+        )
+
+    assert raised.value.status_code == 503
+    detail = cast(dict[str, str], raised.value.detail)
+    assert detail == {"code": "extraction_queue_unavailable"}
+    assert "raw-payload" not in repr(detail)
+    assert failure_audits == [(document.id, principal.subject_id)]
+
+
+def test_extraction_trigger_reuses_attached_pending_queue_identity_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = source_document()
+    principal = Principal(subject_id=UUID(int=2), roles=frozenset({AdminRole.ADMIN}))
+    existing = ExtractionPersistenceResult(
+        document_id=document.id,
+        status=ExtractionStatus.EXTRACTION_PENDING,
+        page_count=0,
+        block_count=0,
+        deduplicated=True,
+        queue_message_id="existing-message",
+    )
+
+    async def return_existing(
+        _service: DocumentExtractionService,
+        _document_id: UUID,
+        *,
+        actor_id: UUID,
+    ) -> ExtractionPersistenceResult:
+        assert actor_id == principal.subject_id
+        return existing
+
+    monkeypatch.setattr(DocumentExtractionService, "queue_extraction", return_existing)
+    dispatcher = DeterministicExtractionDispatcher()
+
+    response = asyncio.run(
+        trigger_source_document_extraction(
+            document.id,
+            principal,
+            cast(AsyncSession, RouteSession(document)),
+            cast(ObjectStorage, object()),
+            dispatcher,
+        )
+    )
+
+    assert response.message_id == "existing-message"
+    assert response.status is ExtractionStatus.EXTRACTION_PENDING
+    assert dispatcher.dispatched == []
 
 
 def test_extraction_route_wrappers_map_service_errors(

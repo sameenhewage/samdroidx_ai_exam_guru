@@ -14,12 +14,16 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.core.config import Settings
+from exam_guru_api.documents.jobs import EXTRACTION_QUEUE_NAME, recover_extraction_jobs
+from exam_guru_api.generation.jobs import GENERATION_QUEUE_NAME, recover_generation_jobs
 from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     assert_database_schema_current,
     upgrade_database,
 )
+from exam_guru_api.knowledge.embedding_jobs import EMBEDDING_QUEUE_NAME, recover_embedding_jobs
 from exam_guru_api.main import create_app
+from exam_guru_api.maintenance import create_maintenance_broker, enqueue_recovery_jobs
 from exam_guru_api.worker import create_broker
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
@@ -135,7 +139,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0018_embedding_jobs"
+    assert migration_revision == "0019_extraction_outbox"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -787,6 +791,146 @@ def test_ocr_worker_migration_has_bounded_provenance_columns_and_downgrades_clea
 
 
 @pytest.mark.integration
+def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
+    database_url: str,
+) -> None:
+    upgrade_database(database_url)
+    command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
+    actor_id = "00000000-0000-0000-0000-000000009190"
+    document_ids = (
+        "00000000-0000-0000-0000-000000009191",
+        "00000000-0000-0000-0000-000000009192",
+        "00000000-0000-0000-0000-000000009193",
+    )
+
+    async def seed_pre_outbox_rows() -> None:
+        engine = create_async_engine(database_url)
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO source_documents ("
+                    "id, checksum_sha256, object_key, original_filename, content_type, "
+                    "size_bytes, document_type, extraction_status, extraction_attempt_count, "
+                    "extraction_started_at, extraction_completed_at, extraction_failure_code, "
+                    "created_by, updated_by) VALUES "
+                    "(:uploaded_id, :uploaded_checksum, :uploaded_key, 'uploaded.pdf', "
+                    "'application/pdf', 10, 'syllabus', 'uploaded', 0, NULL, NULL, NULL, "
+                    ":actor_id, :actor_id), "
+                    "(:pending_id, :pending_checksum, :pending_key, 'pending.pdf', "
+                    "'application/pdf', 10, 'syllabus', 'extraction_pending', 1, now(), NULL, "
+                    "NULL, :actor_id, :actor_id), "
+                    "(:failed_id, :failed_checksum, :failed_key, 'failed.pdf', "
+                    "'application/pdf', 10, 'syllabus', 'failed', 1, now() - interval '1 second', "
+                    "now(), 'unexpected_error', :actor_id, :actor_id)"
+                ),
+                {
+                    "actor_id": actor_id,
+                    "failed_checksum": "93" * 32,
+                    "failed_id": document_ids[2],
+                    "failed_key": "sources/migration-failed.pdf",
+                    "pending_checksum": "92" * 32,
+                    "pending_id": document_ids[1],
+                    "pending_key": "sources/migration-pending.pdf",
+                    "uploaded_checksum": "91" * 32,
+                    "uploaded_id": document_ids[0],
+                    "uploaded_key": "sources/migration-uploaded.pdf",
+                },
+            )
+        await engine.dispose()
+
+    asyncio.run(seed_pre_outbox_rows())
+    upgrade_database(database_url)
+
+    async def inspect() -> tuple[
+        list[tuple[str, object]],
+        set[str],
+        set[str],
+        set[str],
+        str | None,
+    ]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            rows = list(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT extraction_status, extraction_queue_message_id "
+                            "FROM source_documents WHERE id = ANY(:document_ids) "
+                            "ORDER BY id"
+                        ),
+                        {"document_ids": list(document_ids)},
+                    )
+                ).tuples()
+            )
+            constraints = set(
+                await connection.scalars(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'source_documents'::regclass "
+                        "AND conname LIKE 'ck_source_document_extraction_queue_%'"
+                    )
+                )
+            )
+            indexes = set(
+                await connection.scalars(
+                    text(
+                        "SELECT indexname FROM pg_indexes WHERE tablename = 'source_documents' "
+                        "AND indexname = 'ix_source_documents_extraction_outbox'"
+                    )
+                )
+            )
+            triggers = set(
+                await connection.scalars(
+                    text(
+                        "SELECT tgname FROM pg_trigger "
+                        "WHERE tgrelid = 'source_documents'::regclass "
+                        "AND tgname = 'enforce_source_document_extraction_queue_identity_trigger'"
+                    )
+                )
+            )
+            revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
+        await engine.dispose()
+        return rows, constraints, indexes, triggers, revision
+
+    rows, constraints, indexes, triggers, revision = asyncio.run(inspect())
+    assert rows == [
+        ("uploaded", None),
+        ("extraction_pending", None),
+        ("failed", None),
+    ]
+    assert constraints == {
+        "ck_source_document_extraction_queue_message_id",
+        "ck_source_document_extraction_queue_state",
+    }
+    assert indexes == {"ix_source_documents_extraction_outbox"}
+    assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
+    assert revision == "0019_extraction_outbox"
+
+    command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
+
+    async def inspect_downgrade() -> tuple[int, int]:
+        engine = create_async_engine(database_url)
+        async with engine.connect() as connection:
+            column_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_name = 'source_documents' "
+                    "AND column_name = 'extraction_queue_message_id'"
+                )
+            )
+            row_count = await connection.scalar(
+                text("SELECT count(*) FROM source_documents WHERE id = ANY(:document_ids)"),
+                {"document_ids": list(document_ids)},
+            )
+        await engine.dispose()
+        return int(column_count or 0), int(row_count or 0)
+
+    assert asyncio.run(inspect_downgrade()) == (0, 3)
+    upgrade_database(database_url)
+    assert_database_schema_current(database_url)
+
+
+@pytest.mark.integration
 def test_generation_migration_has_durable_state_and_append_only_attempt_triggers(
     database_url: str,
 ) -> None:
@@ -898,6 +1042,45 @@ def test_readiness_connects_to_postgresql_and_valkey(
         "status": "ok",
         "checks": {"database": "ok", "valkey": "ok"},
     }
+
+
+@pytest.mark.integration
+def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
+    valkey_url: str,
+) -> None:
+    settings = Settings(environment="test", valkey_url=SecretStr(valkey_url))
+    broker = create_maintenance_broker(settings)
+    broker.flush_all()
+    expected = {
+        EXTRACTION_QUEUE_NAME: recover_extraction_jobs.actor_name,
+        GENERATION_QUEUE_NAME: recover_generation_jobs.actor_name,
+        EMBEDDING_QUEUE_NAME: recover_embedding_jobs.actor_name,
+    }
+
+    try:
+        result = enqueue_recovery_jobs()
+
+        assert result.enqueued == 3
+        assert result.failures == 0
+        assert {queue: broker.do_qsize(queue) for queue in expected} == dict.fromkeys(
+            expected,
+            1,
+        )
+        for queue_name, actor_name in expected.items():
+            consumer = broker.consume(queue_name, prefetch=1, timeout=100)
+            try:
+                message = next(consumer)
+                assert message is not None
+                assert message.actor_name == actor_name
+                assert message.args == ()
+                assert message.kwargs == {}
+                consumer.ack(message)
+            finally:
+                consumer.close()
+        assert all(broker.do_qsize(queue) == 0 for queue in expected)
+    finally:
+        broker.flush_all()
+        broker.close()
 
 
 @pytest.mark.integration

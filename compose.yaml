@@ -111,6 +111,24 @@ services:
         condition: service_healthy
     environment: *api-environment
 
+  maintenance:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["exam-guru-maintenance"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment: *api-environment
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   web:
     build:
       context: .

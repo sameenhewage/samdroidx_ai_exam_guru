@@ -10,6 +10,7 @@ from exam_guru_api.api.dependencies import (
     get_object_storage,
     get_settings,
 )
+from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.core.config import Settings
@@ -72,6 +73,12 @@ async def list_source_documents(
     "/source-documents/{document_id}/extract",
     operation_id="trigger_source_document_extraction",
     response_model=ExtractionJobResponse,
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Extraction queue unavailable",
+            "model": ApiErrorResponse,
+        }
+    },
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def trigger_source_document_extraction(
@@ -89,11 +96,35 @@ async def trigger_source_document_extraction(
         result = await service.queue_extraction(document_id, actor_id=principal.subject_id)
     except (ExtractionDocumentNotFoundError, InvalidExtractionTransitionError) as error:
         raise _extraction_http_exception(error) from error
-    message_id = dispatcher.dispatch(document_id, actor_id=principal.subject_id)
+    if result.queue_message_id is not None:
+        return ExtractionJobResponse(
+            document_id=document_id,
+            message_id=result.queue_message_id,
+            status=result.status,
+        )
+    try:
+        dispatched_message_id = dispatcher.dispatch(
+            document_id,
+            actor_id=principal.subject_id,
+        )
+        attached = await service.attach_queue_message(
+            document_id,
+            dispatched_message_id,
+            actor_id=principal.subject_id,
+        )
+    except Exception as error:
+        await service.record_queue_dispatch_failure(
+            document_id,
+            actor_id=principal.subject_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "extraction_queue_unavailable"},
+        ) from error
     return ExtractionJobResponse(
         document_id=document_id,
-        message_id=message_id,
-        status=result.status,
+        message_id=attached.queue_message_id or dispatched_message_id,
+        status=attached.status,
     )
 
 

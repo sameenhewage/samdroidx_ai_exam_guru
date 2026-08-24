@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from threading import Barrier
 from typing import cast
@@ -9,7 +10,8 @@ from uuid import UUID
 import pymupdf
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text as sql_text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
 
@@ -22,6 +24,10 @@ from exam_guru_api.documents.extraction import (
     ExtractionViolation,
     NativeExtractionResult,
     PyMuPdfExtractor,
+)
+from exam_guru_api.documents.extraction_outbox import (
+    ExtractionRecoveryPolicy,
+    ExtractionRecoveryService,
 )
 from exam_guru_api.documents.extraction_service import (
     ConcurrentReviewVersionError,
@@ -98,6 +104,17 @@ class BarrierExtractor(CountingExtractor):
         self.calls += 1
         self._barrier.wait(timeout=10)
         return self._delegate.extract(data)
+
+
+class BarrierRecoveryDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[tuple[UUID, UUID]] = []
+        self._barrier = Barrier(2)
+
+    def dispatch(self, document_id: UUID, *, actor_id: UUID) -> str:
+        self.calls.append((document_id, actor_id))
+        self._barrier.wait(timeout=10)
+        return f"recovery-{document_id}"
 
 
 class StaticNativeResultExtractor:
@@ -458,10 +475,10 @@ def test_concurrent_native_extraction_serializes_to_one_persisted_result(
         assert sorted(result.deduplicated for result in results) == [False, True]
         assert extractor.calls == 2
         assert persisted_document is not None
-        assert persisted_document.extraction_attempt_count == 2
+        assert persisted_document.extraction_attempt_count == 1
         assert page_count == 1
         assert block_count == 1
-        assert actions.count("source_document.extraction_started") == 2
+        assert actions.count("source_document.extraction_started") == 1
         assert actions.count("source_document.extracted") == 1
 
     asyncio.run(exercise())
@@ -639,7 +656,7 @@ def test_pending_retry_replaces_partial_rows_from_an_interrupted_attempt(
 
         assert result.status is ExtractionStatus.EXTRACTED
         assert persisted_document is not None
-        assert persisted_document.extraction_attempt_count == 2
+        assert persisted_document.extraction_attempt_count == 1
         assert len(pages) == len(blocks) == 1
         assert pages[0].id != stale_page_id
         assert pages[0].raw_text == "Fresh extraction"
@@ -891,7 +908,7 @@ def test_hybrid_ocr_pipeline_persists_exact_provenance_audit_and_idempotency(
 
 
 @pytest.mark.integration
-def test_concurrent_hybrid_ocr_calls_serialize_to_one_complete_result(
+def test_duplicate_preclaimed_workers_converge_but_can_repeat_ocr_provider_work(
     extraction_database_url: str,
 ) -> None:
     async def exercise() -> None:
@@ -910,6 +927,12 @@ def test_concurrent_hybrid_ocr_calls_serialize_to_one_complete_result(
                 data=data,
             )
             object_key = document.object_key
+            await DocumentExtractionService(
+                session,
+                MemoryObjectStorage({object_key: data}),
+                extractor,
+                ocr_port=ocr,
+            ).queue_extraction(document_id, actor_id=EXTRACTION_ACTOR_ID)
 
         async def extract_once(actor_id: UUID) -> ExtractionPersistenceResult:
             async with sessions() as session:
@@ -918,7 +941,7 @@ def test_concurrent_hybrid_ocr_calls_serialize_to_one_complete_result(
                     MemoryObjectStorage({object_key: data}),
                     extractor,
                     ocr_port=ocr,
-                ).extract_native(document_id, actor_id=actor_id)
+                ).extract_native(document_id, actor_id=actor_id, preclaimed=True)
 
         results = await asyncio.gather(
             extract_once(UUID(int=8_021)),
@@ -950,7 +973,7 @@ def test_concurrent_hybrid_ocr_calls_serialize_to_one_complete_result(
         assert extractor.calls == 2
         assert len(ocr.requests) == 2
         assert persisted_document is not None
-        assert persisted_document.extraction_attempt_count == 2
+        assert persisted_document.extraction_attempt_count == 1
         assert persisted_document.ocr_page_count == 1
         assert page_count == block_count == 2
         assert extracted_event_count == 1
@@ -1108,3 +1131,195 @@ def test_database_directly_rejects_unbounded_or_invalid_page_provenance(
         await engine.dispose()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_extraction_outbox_cas_and_database_identity_constraints(
+    extraction_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        data = pdf_bytes("outbox identity constraint fixture 81020")
+        document_id = UUID(int=81_020)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with sessions() as session:
+            document = await add_uploaded_document(
+                session,
+                document_id=document_id,
+                filename="outbox-identity.pdf",
+                data=data,
+            )
+            service = DocumentExtractionService(
+                session,
+                MemoryObjectStorage({document.object_key: data}),
+                CountingExtractor(),
+            )
+            queued = await service.queue_extraction(document_id, actor_id=EXTRACTION_ACTOR_ID)
+
+            for invalid_message_id in ("invalid message", "x" * 129):
+                with pytest.raises(DBAPIError):
+                    await session.execute(
+                        sql_text(
+                            "UPDATE source_documents SET extraction_queue_message_id = :message_id "
+                            "WHERE id = :document_id"
+                        ),
+                        {"document_id": document_id, "message_id": invalid_message_id},
+                    )
+                await session.rollback()
+
+            attached = await service.attach_queue_message(
+                document_id,
+                "attempt-one-message",
+                actor_id=EXTRACTION_ACTOR_ID,
+            )
+            duplicate_attach = await service.attach_queue_message(
+                document_id,
+                "duplicate-send-message",
+                actor_id=EXTRACTION_ACTOR_ID,
+            )
+
+            assert queued.queue_message_id is None
+            assert attached.queue_message_id == "attempt-one-message"
+            assert attached.deduplicated is False
+            assert duplicate_attach.queue_message_id == "attempt-one-message"
+            assert duplicate_attach.deduplicated is True
+
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    sql_text(
+                        "UPDATE source_documents SET extraction_queue_message_id = NULL "
+                        "WHERE id = :document_id"
+                    ),
+                    {"document_id": document_id},
+                )
+            await session.rollback()
+
+            await session.execute(
+                sql_text(
+                    "UPDATE source_documents SET extraction_status = 'failed', "
+                    "extraction_failure_code = 'unexpected_error', "
+                    "extraction_completed_at = now() WHERE id = :document_id"
+                ),
+                {"document_id": document_id},
+            )
+            await session.commit()
+
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    sql_text(
+                        "UPDATE source_documents SET extraction_status = 'extraction_pending', "
+                        "extraction_attempt_count = extraction_attempt_count + 1, "
+                        "extraction_completed_at = NULL, extraction_failure_code = NULL "
+                        "WHERE id = :document_id"
+                    ),
+                    {"document_id": document_id},
+                )
+            await session.rollback()
+
+            retried = await service.queue_extraction(document_id, actor_id=REVIEW_ACTOR_ID)
+            reattached = await service.attach_queue_message(
+                document_id,
+                "attempt-two-message",
+                actor_id=REVIEW_ACTOR_ID,
+            )
+
+            assert retried.queue_message_id is None
+            assert reattached.queue_message_id == "attempt-two-message"
+
+        async with sessions() as session:
+            persisted = await session.get(SourceDocumentModel, document_id)
+            actions = list(
+                await session.scalars(
+                    select(AdminAuditEventModel.action)
+                    .where(AdminAuditEventModel.resource_id == document_id)
+                    .order_by(AdminAuditEventModel.created_at)
+                )
+            )
+        await engine.dispose()
+
+        assert persisted is not None
+        assert persisted.extraction_attempt_count == 2
+        assert persisted.extraction_queue_message_id == "attempt-two-message"
+        assert actions == [
+            "source_document.extraction_queued",
+            "source_document.extraction_dispatched",
+            "source_document.extraction_queued",
+            "source_document.extraction_dispatched",
+        ]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_concurrent_extraction_recoverers_skip_locked_and_dispatch_each_job_once(
+    extraction_database_url: str,
+) -> None:
+    document_ids = (UUID(int=81_021), UUID(int=81_022))
+
+    async def seed() -> None:
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        for document_id in document_ids:
+            data = pdf_bytes(f"recovery concurrency {document_id}")
+            async with sessions() as session:
+                document = await add_uploaded_document(
+                    session,
+                    document_id=document_id,
+                    filename=f"recovery-{document_id}.pdf",
+                    data=data,
+                )
+                await DocumentExtractionService(
+                    session,
+                    MemoryObjectStorage({document.object_key: data}),
+                    CountingExtractor(),
+                ).queue_extraction(document_id, actor_id=UUID(int=document_id.int + 100))
+        await engine.dispose()
+
+    asyncio.run(seed())
+    dispatcher = BarrierRecoveryDispatcher()
+
+    def recover_once() -> object:
+        async def recover() -> object:
+            engine = create_async_engine(extraction_database_url)
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            async with sessions() as session:
+                result = await ExtractionRecoveryService(
+                    session,
+                    dispatcher,
+                    ExtractionRecoveryPolicy(batch_size=1, outbox_min_age_seconds=5),
+                ).recover(now=datetime(2027, 1, 1, tzinfo=UTC))
+            await engine.dispose()
+            return result
+
+        return asyncio.run(recover())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: recover_once(), range(2)))
+
+    async def inspect() -> tuple[list[str | None], int]:
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            message_ids = list(
+                await session.scalars(
+                    select(SourceDocumentModel.extraction_queue_message_id)
+                    .where(SourceDocumentModel.id.in_(document_ids))
+                    .order_by(SourceDocumentModel.id)
+                )
+            )
+            audit_count = await session.scalar(
+                select(func.count(AdminAuditEventModel.id)).where(
+                    AdminAuditEventModel.resource_id.in_(document_ids),
+                    AdminAuditEventModel.action == "source_document.extraction_redispatched",
+                )
+            )
+        await engine.dispose()
+        return message_ids, int(audit_count or 0)
+
+    message_ids, audit_count = asyncio.run(inspect())
+    assert sorted(result.scanned for result in results) == [1, 1]  # type: ignore[attr-defined]
+    assert sorted(result.dispatched for result in results) == [1, 1]  # type: ignore[attr-defined]
+    assert {call[0] for call in dispatcher.calls} == set(document_ids)
+    assert message_ids == [f"recovery-{document_id}" for document_id in document_ids]
+    assert audit_count == 2

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -59,6 +60,18 @@ class SourceDocumentModel(AuditColumns, Base):
         CheckConstraint(
             "extraction_attempt_count >= 0",
             name="ck_source_document_extraction_attempt_count",
+        ),
+        CheckConstraint(
+            "extraction_queue_message_id IS NULL OR "
+            "(extraction_queue_message_id = btrim(extraction_queue_message_id) AND "
+            "char_length(extraction_queue_message_id) BETWEEN 1 AND 128 AND "
+            "extraction_queue_message_id !~ '[[:space:][:cntrl:]]')",
+            name="ck_source_document_extraction_queue_message_id",
+        ),
+        CheckConstraint(
+            "extraction_queue_message_id IS NULL OR "
+            "(extraction_status <> 'uploaded' AND extraction_attempt_count > 0)",
+            name="ck_source_document_extraction_queue_state",
         ),
         CheckConstraint(
             "native_text_page_ratio IS NULL OR native_text_page_ratio BETWEEN 0.0 AND 1.0",
@@ -110,6 +123,14 @@ class SourceDocumentModel(AuditColumns, Base):
             name="ck_source_document_extraction_state_data",
         ),
         Index("ix_source_documents_status", "extraction_status"),
+        Index(
+            "ix_source_documents_extraction_outbox",
+            "extraction_started_at",
+            "id",
+            postgresql_where=text(
+                "extraction_status = 'extraction_pending' AND extraction_queue_message_id IS NULL"
+            ),
+        ),
         Index("ix_source_documents_curriculum", "curriculum_version_id"),
     )
 
@@ -154,6 +175,10 @@ class SourceDocumentModel(AuditColumns, Base):
         nullable=False,
         default=0,
         server_default="0",
+    )
+    extraction_queue_message_id: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
     )
     extractor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(128), nullable=True)

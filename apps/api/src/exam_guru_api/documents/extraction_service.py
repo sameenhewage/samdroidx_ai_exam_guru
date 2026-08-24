@@ -22,6 +22,10 @@ from exam_guru_api.documents.extraction import (
     ocr_page_numbers,
     transition_extraction_status,
 )
+from exam_guru_api.documents.extraction_outbox import (
+    SqlAlchemyExtractionOutboxRepository,
+    validate_extraction_queue_message_id,
+)
 from exam_guru_api.documents.models import (
     ExtractedBlockModel,
     SourceDocumentModel,
@@ -96,6 +100,7 @@ class ExtractionPersistenceResult:
     page_count: int
     block_count: int
     deduplicated: bool
+    queue_message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +132,7 @@ class DocumentExtractionService:
         self._object_storage = object_storage
         self._extractor = extractor
         self._ocr_port = ocr_port
+        self._outbox_repository = SqlAlchemyExtractionOutboxRepository(session)
 
     async def queue_extraction(
         self,
@@ -135,6 +141,9 @@ class DocumentExtractionService:
         actor_id: UUID,
     ) -> ExtractionPersistenceResult:
         document = await self._get_locked_document(document_id)
+        if document.extraction_status is ExtractionStatus.EXTRACTION_PENDING:
+            await self._session.commit()
+            return self._result_from_document(document, deduplicated=True)
         if document.extraction_status not in {
             ExtractionStatus.UPLOADED,
             ExtractionStatus.FAILED,
@@ -148,6 +157,7 @@ class DocumentExtractionService:
             ExtractionStatus.EXTRACTION_PENDING,
         )
         document.extraction_attempt_count += 1
+        document.extraction_queue_message_id = None
         document.extraction_started_at = datetime.now(UTC)
         document.extraction_completed_at = None
         document.extraction_failure_code = None
@@ -163,6 +173,53 @@ class DocumentExtractionService:
         )
         await self._session.commit()
         return self._result_from_document(document, deduplicated=False)
+
+    async def attach_queue_message(
+        self,
+        document_id: UUID,
+        message_id: str,
+        *,
+        actor_id: UUID,
+    ) -> ExtractionPersistenceResult:
+        validated_message_id = validate_extraction_queue_message_id(message_id)
+        try:
+            attachment = await self._outbox_repository.attach_queue_message(
+                document_id,
+                validated_message_id,
+            )
+        except LookupError as error:
+            raise ExtractionDocumentNotFoundError(document_id) from error
+        if attachment.attached:
+            self._audit(
+                attachment.document,
+                actor_id=actor_id,
+                action="source_document.extraction_dispatched",
+                payload={"attempt": attachment.document.extraction_attempt_count},
+            )
+        await self._session.commit()
+        return self._result_from_document(
+            attachment.document,
+            deduplicated=not attachment.attached,
+        )
+
+    async def record_queue_dispatch_failure(
+        self,
+        document_id: UUID,
+        *,
+        actor_id: UUID,
+    ) -> None:
+        await self._session.rollback()
+        document = await self._get_locked_document(document_id)
+        self._audit(
+            document,
+            actor_id=actor_id,
+            action="source_document.extraction_dispatch_failed",
+            payload={
+                "attempt": document.extraction_attempt_count,
+                "failure_code": "queue_dispatch_failed",
+            },
+        )
+        await self._session.commit()
 
     async def extract_native(
         self,
@@ -605,17 +662,21 @@ class DocumentExtractionService:
     ) -> _ExtractionClaim | ExtractionPersistenceResult:
         document = await self._get_locked_document(document_id)
         if document.extraction_status in _FINAL_EXTRACTION_STATUSES:
-            return self._result_from_document(document, deduplicated=True)
+            result = self._result_from_document(document, deduplicated=True)
+            await self._session.commit()
+            return result
         if document.extraction_status is not ExtractionStatus.EXTRACTION_PENDING:
             raise InvalidExtractionTransitionError(
                 document.extraction_status,
                 ExtractionStatus.EXTRACTION_PENDING,
             )
-        return _ExtractionClaim(
+        claim = _ExtractionClaim(
             object_key=document.object_key,
             checksum_sha256=document.checksum_sha256,
             size_bytes=document.size_bytes,
         )
+        await self._session.commit()
+        return claim
 
     async def _claim(
         self,
@@ -626,12 +687,21 @@ class DocumentExtractionService:
         document = await self._get_locked_document(document_id)
         if document.extraction_status in _FINAL_EXTRACTION_STATUSES:
             return self._result_from_document(document, deduplicated=True)
+        if document.extraction_status is ExtractionStatus.EXTRACTION_PENDING:
+            claim = _ExtractionClaim(
+                object_key=document.object_key,
+                checksum_sha256=document.checksum_sha256,
+                size_bytes=document.size_bytes,
+            )
+            await self._session.commit()
+            return claim
 
         document.extraction_status = transition_extraction_status(
             document.extraction_status,
             ExtractionStatus.EXTRACTION_PENDING,
         )
         document.extraction_attempt_count += 1
+        document.extraction_queue_message_id = None
         document.extraction_started_at = datetime.now(UTC)
         document.extraction_completed_at = None
         document.extraction_failure_code = None
@@ -876,6 +946,7 @@ class DocumentExtractionService:
             page_count=document.extracted_page_count or 0,
             block_count=document.extracted_block_count or 0,
             deduplicated=deduplicated,
+            queue_message_id=getattr(document, "extraction_queue_message_id", None),
         )
 
     def _audit(

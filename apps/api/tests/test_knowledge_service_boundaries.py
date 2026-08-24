@@ -15,6 +15,7 @@ from exam_guru_api.knowledge.domain import (
     QuestionType,
     ReviewState,
 )
+from exam_guru_api.knowledge.repository import SqlAlchemyKnowledgeRepository
 from exam_guru_api.knowledge.service import (
     KnowledgeCurriculumNotFoundError,
     KnowledgePersistenceService,
@@ -152,3 +153,90 @@ def test_chunk_source_metadata_and_review_readiness() -> None:
             unclassified,
             ReviewState.REVIEWED,
         )
+
+
+def test_service_lists_chunks_after_curriculum_scope_validation() -> None:
+    class RecordingRepository:
+        def __init__(self) -> None:
+            self.calls: list[tuple[UUID, dict[str, object]]] = []
+
+        async def list_chunks(
+            self,
+            curriculum_version_id: UUID,
+            **filters: object,
+        ) -> tuple[KnowledgeChunk, ...]:
+            self.calls.append((curriculum_version_id, filters))
+            return (knowledge_chunk(),)
+
+    async def exercise() -> None:
+        repository = RecordingRepository()
+        service = KnowledgePersistenceService(cast(AsyncSession, LookupSession(object())))
+        service._repository = cast(SqlAlchemyKnowledgeRepository, repository)
+
+        chunks = await service.list_chunks(
+            CURRICULUM_ID,
+            review_state=ReviewState.DRAFT,
+            source_document_id=SOURCE_ID,
+            competency_id=UUID(int=105),
+            chunk_type=ChunkType.EXPLANATION,
+            limit=12,
+            offset=3,
+        )
+
+        assert chunks == (knowledge_chunk(),)
+        assert repository.calls == [
+            (
+                CURRICULUM_ID,
+                {
+                    "review_state": ReviewState.DRAFT,
+                    "source_document_id": SOURCE_ID,
+                    "competency_id": UUID(int=105),
+                    "chunk_type": ChunkType.EXPLANATION,
+                    "limit": 12,
+                    "offset": 3,
+                },
+            )
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_service_lists_questions_after_curriculum_scope_validation() -> None:
+    class RecordingRepository:
+        async def list_questions(
+            self,
+            curriculum_version_id: UUID,
+            **filters: object,
+        ) -> tuple[HistoricalQuestion, ...]:
+            assert curriculum_version_id == CURRICULUM_ID
+            assert filters == {
+                "review_state": ReviewState.REVIEWED,
+                "source_document_id": SOURCE_ID,
+                "competency_id": UUID(int=105),
+                "question_type": QuestionType.SHORT_ANSWER,
+                "year": 2021,
+                "paper_code": "P1",
+                "limit": 12,
+                "offset": 3,
+            }
+            return (historical_question(),)
+
+    async def exercise() -> None:
+        service = KnowledgePersistenceService(cast(AsyncSession, LookupSession(object())))
+        service._repository = cast(SqlAlchemyKnowledgeRepository, RecordingRepository())
+
+        questions = await service.list_questions(
+            CURRICULUM_ID,
+            review_state=ReviewState.REVIEWED,
+            source_document_id=SOURCE_ID,
+            competency_id=UUID(int=105),
+            question_type=QuestionType.SHORT_ANSWER,
+            year=2021,
+            paper_code="P1",
+            limit=12,
+            offset=3,
+        )
+
+        assert questions == (historical_question(),)
+
+    asyncio.run(exercise())

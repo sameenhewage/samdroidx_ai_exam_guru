@@ -12,6 +12,8 @@ from exam_guru_api.documents.jobs import (
     EXTRACTION_MAX_RETRIES,
     EXTRACTION_MIN_BACKOFF_MS,
     EXTRACTION_QUEUE_NAME,
+    EXTRACTION_RECOVERY_MAX_RETRIES,
+    EXTRACTION_RECOVERY_TIME_LIMIT_MS,
     EXTRACTION_TIME_LIMIT_MS,
     NATIVE_EXTRACTION_MAX_PAGES,
     DeterministicExtractionDispatcher,
@@ -129,6 +131,13 @@ def test_extraction_actor_uses_a_dedicated_queue_and_bounded_execution_policy() 
     assert 0 < EXTRACTION_MAX_RETRIES <= 5
     assert 0 < EXTRACTION_MIN_BACKOFF_MS <= EXTRACTION_MAX_BACKOFF_MS
     assert EXTRACTION_TIME_LIMIT_MS == EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS * 1_000
+    assert jobs.recover_extraction_jobs.queue_name == EXTRACTION_QUEUE_NAME
+    assert jobs.recover_extraction_jobs.options == {
+        "max_retries": EXTRACTION_RECOVERY_MAX_RETRIES,
+        "time_limit": EXTRACTION_RECOVERY_TIME_LIMIT_MS,
+    }
+    assert EXTRACTION_RECOVERY_MAX_RETRIES == 0
+    assert EXTRACTION_RECOVERY_TIME_LIMIT_MS == EXTRACTION_TIME_LIMIT_MS
 
 
 def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
@@ -229,10 +238,60 @@ def test_extraction_actor_closes_resources_when_the_service_fails(
     assert resources.closed is True
 
 
-def test_worker_import_registers_the_extraction_actor() -> None:
+def test_extraction_recovery_actor_uses_internal_bounded_settings_and_closes_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.documents import extraction_outbox
+
+    settings = Settings.model_validate(
+        {
+            "environment": "test",
+            "extraction_recovery_batch_size": 7,
+            "extraction_outbox_min_age_seconds": 11,
+        }
+    )
+    session = object()
+    dispatcher = object()
+    resources = StubResources(session)
+    policies: list[object] = []
+
+    class StubRecoveryService:
+        def __init__(
+            self,
+            actual_session: object,
+            actual_dispatcher: object,
+            policy: object,
+        ) -> None:
+            assert actual_session is session
+            assert actual_dispatcher is dispatcher
+            policies.append(policy)
+
+        async def recover(self) -> object:
+            return object()
+
+    monkeypatch.setattr(jobs, "Settings", lambda: settings)
+    monkeypatch.setattr(
+        jobs, "create_resources", lambda actual: resources if actual is settings else None
+    )
+    monkeypatch.setattr(jobs, "DramatiqExtractionDispatcher", lambda: dispatcher)
+    monkeypatch.setattr(extraction_outbox, "ExtractionRecoveryService", StubRecoveryService)
+
+    jobs.recover_extraction_jobs()
+
+    assert len(policies) == 1
+    policy = policies[0]
+    assert policy.batch_size == 7  # type: ignore[attr-defined]
+    assert policy.outbox_min_age_seconds == 11  # type: ignore[attr-defined]
+    assert resources.closed is True
+
+
+def test_worker_import_registers_extraction_and_recovery_actors() -> None:
     worker = importlib.import_module("exam_guru_api.worker")
 
     registered = worker.broker.get_actor(jobs.extract_document.actor_name)
+    recovery = worker.broker.get_actor(jobs.recover_extraction_jobs.actor_name)
 
     assert registered is jobs.extract_document
     assert registered.queue_name == EXTRACTION_QUEUE_NAME
+    assert recovery is jobs.recover_extraction_jobs
+    assert recovery.queue_name == EXTRACTION_QUEUE_NAME

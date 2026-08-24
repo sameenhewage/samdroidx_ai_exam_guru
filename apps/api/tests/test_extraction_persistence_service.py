@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.extraction import (
     ExtractedBlock,
@@ -14,6 +15,7 @@ from exam_guru_api.documents.extraction import (
     InvalidExtractionTransitionError,
     NativeExtractionResult,
 )
+from exam_guru_api.documents.extraction_outbox import SqlAlchemyExtractionOutboxRepository
 from exam_guru_api.documents.extraction_service import (
     ConcurrentReviewVersionError,
     DocumentExtractionService,
@@ -187,16 +189,24 @@ def test_missing_document_has_a_stable_typed_error() -> None:
     assert str(raised.value) == str(missing_id)
 
 
-def test_queue_claim_is_atomic_and_preclaimed_worker_is_idempotent() -> None:
+def test_queue_claim_commits_before_dispatch_and_pending_replay_is_idempotent() -> None:
     model = document(ExtractionStatus.UPLOADED)
     session = StubSession(model)
     extraction_service = service(session)
 
     queued = asyncio.run(extraction_service.queue_extraction(DOCUMENT_ID, actor_id=ACTOR_ID))
+    replayed = asyncio.run(extraction_service.queue_extraction(DOCUMENT_ID, actor_id=ACTOR_ID))
     claim = asyncio.run(extraction_service._preclaimed(DOCUMENT_ID))
 
     assert queued.status is ExtractionStatus.EXTRACTION_PENDING
+    assert queued.deduplicated is False
+    assert queued.queue_message_id is None
+    assert replayed.status is ExtractionStatus.EXTRACTION_PENDING
+    assert replayed.deduplicated is True
+    assert replayed.queue_message_id is None
     assert model.extraction_attempt_count == 1
+    assert session.executions == 2
+    assert session.commits == 3
     assert not isinstance(claim, ExtractionPersistenceResult)
     assert claim.object_key == model.object_key
 
@@ -215,6 +225,106 @@ def test_queue_claim_is_atomic_and_preclaimed_worker_is_idempotent() -> None:
     model.extraction_status = ExtractionStatus.UPLOADED
     with pytest.raises(InvalidExtractionTransitionError):
         asyncio.run(extraction_service._preclaimed(DOCUMENT_ID))
+
+
+def test_failed_queue_retry_starts_one_new_attempt_and_clears_old_queue_identity() -> None:
+    model = document(ExtractionStatus.FAILED)
+    model.extraction_queue_message_id = "old-attempt-message"
+    session = StubSession(model)
+
+    queued = asyncio.run(service(session).queue_extraction(DOCUMENT_ID, actor_id=ACTOR_ID))
+
+    assert queued.status is ExtractionStatus.EXTRACTION_PENDING
+    assert queued.queue_message_id is None
+    assert model.extraction_queue_message_id is None
+    assert model.extraction_attempt_count == 2
+    assert session.executions == 2
+    assert session.commits == 1
+
+
+def test_queue_attachment_maps_disappeared_document_and_dispatch_failure_is_audited() -> None:
+    class MissingOutboxRepository:
+        async def attach_queue_message(self, document_id: UUID, message_id: str) -> object:
+            del document_id, message_id
+            raise LookupError
+
+    missing_session = StubSession(document(ExtractionStatus.EXTRACTION_PENDING))
+    missing_service = service(missing_session)
+    missing_service._outbox_repository = cast(
+        SqlAlchemyExtractionOutboxRepository,
+        MissingOutboxRepository(),
+    )
+
+    with pytest.raises(ExtractionDocumentNotFoundError):
+        asyncio.run(
+            missing_service.attach_queue_message(
+                DOCUMENT_ID,
+                "message-id",
+                actor_id=ACTOR_ID,
+            )
+        )
+
+    pending = document(ExtractionStatus.EXTRACTION_PENDING)
+    pending.extraction_queue_message_id = None
+    pending_session = StubSession(pending)
+
+    asyncio.run(
+        service(pending_session).record_queue_dispatch_failure(
+            DOCUMENT_ID,
+            actor_id=ACTOR_ID,
+        )
+    )
+
+    audit = pending_session.added[-1]
+    assert isinstance(audit, AdminAuditEventModel)
+    assert audit.action == "source_document.extraction_dispatch_failed"
+    assert audit.payload == {
+        "attempt": 1,
+        "failure_code": "queue_dispatch_failed",
+    }
+    assert pending_session.rollbacks == 1
+    assert pending_session.commits == 1
+
+    pending.extraction_queue_message_id = "already-attached"
+    healed_session = StubSession(pending)
+    asyncio.run(
+        service(healed_session).record_queue_dispatch_failure(
+            DOCUMENT_ID,
+            actor_id=ACTOR_ID,
+        )
+    )
+    healed_audit = healed_session.added[-1]
+    assert isinstance(healed_audit, AdminAuditEventModel)
+    assert healed_audit.action == "source_document.extraction_dispatch_failed"
+    assert healed_audit.payload["failure_code"] == "queue_dispatch_failed"
+    assert healed_session.rollbacks == 1
+    assert healed_session.commits == 1
+
+
+def test_direct_worker_claim_respects_queue_attempt_identity_and_pending_idempotency() -> None:
+    failed = document(ExtractionStatus.FAILED)
+    failed.extraction_queue_message_id = "old-attempt-message"
+    failed_session = StubSession(failed)
+
+    claim = asyncio.run(service(failed_session)._claim(DOCUMENT_ID, actor_id=ACTOR_ID))
+
+    assert not isinstance(claim, ExtractionPersistenceResult)
+    assert failed.extraction_attempt_count == 2
+    assert failed.extraction_queue_message_id is None
+
+    pending = document(ExtractionStatus.EXTRACTION_PENDING)
+    pending.extraction_queue_message_id = "current-attempt-message"
+    pending_session = StubSession(pending)
+
+    duplicate_claim = asyncio.run(
+        service(pending_session)._claim(DOCUMENT_ID, actor_id=UUID(int=82_002))
+    )
+
+    assert not isinstance(duplicate_claim, ExtractionPersistenceResult)
+    assert pending.extraction_attempt_count == 1
+    assert pending.extraction_queue_message_id == "current-attempt-message"
+    assert pending_session.executions == 0
+    assert pending_session.commits == 1
 
 
 @pytest.mark.parametrize(

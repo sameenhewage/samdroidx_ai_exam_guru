@@ -21,7 +21,11 @@ def test_openapi_export_is_deterministic(tmp_path: Path) -> None:
     document_properties = schema["components"]["schemas"]["SourceDocumentResponse"]["properties"]
     page_properties = schema["components"]["schemas"]["SourcePageResponse"]["properties"]
     block_properties = schema["components"]["schemas"]["ExtractedBlockResponse"]["properties"]
-    assert {"ocr_page_count", "extraction_config"} <= document_properties.keys()
+    assert {
+        "ocr_page_count",
+        "extraction_config",
+        "extraction_queue_message_id",
+    } <= document_properties.keys()
     assert {"extraction_config", "confidence"} <= page_properties.keys()
     assert {"extraction_config", "confidence"} <= block_properties.keys()
     assert block_properties["bbox"]["anyOf"][1] == {"type": "null"}

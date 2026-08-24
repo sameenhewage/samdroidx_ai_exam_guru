@@ -20,6 +20,8 @@ EXTRACTION_MAX_RETRIES = 3
 EXTRACTION_MIN_BACKOFF_MS = 5_000
 EXTRACTION_MAX_BACKOFF_MS = 60_000
 EXTRACTION_TIME_LIMIT_MS = EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS * 1_000
+EXTRACTION_RECOVERY_MAX_RETRIES = 0
+EXTRACTION_RECOVERY_TIME_LIMIT_MS = EXTRACTION_TIME_LIMIT_MS
 NATIVE_EXTRACTION_MAX_PAGES = 1_000
 
 
@@ -74,6 +76,29 @@ async def _extract_document(document_id: UUID, *, actor_id: UUID) -> None:
         await resources.close()
 
 
+async def _recover_extraction_jobs() -> None:
+    from exam_guru_api.documents.extraction_outbox import (
+        ExtractionRecoveryPolicy,
+        ExtractionRecoveryService,
+    )
+
+    settings = Settings()
+    resources = create_resources(settings)
+    try:
+        policy = ExtractionRecoveryPolicy(
+            batch_size=settings.extraction_recovery_batch_size,
+            outbox_min_age_seconds=settings.extraction_outbox_min_age_seconds,
+        )
+        async with resources.session_factory() as session:
+            await ExtractionRecoveryService(
+                session,
+                DramatiqExtractionDispatcher(),
+                policy,
+            ).recover()
+    finally:
+        await resources.close()
+
+
 @dramatiq.actor(
     queue_name=EXTRACTION_QUEUE_NAME,
     max_retries=EXTRACTION_MAX_RETRIES,
@@ -83,6 +108,15 @@ async def _extract_document(document_id: UUID, *, actor_id: UUID) -> None:
 )
 def extract_document(document_id: str, actor_id: str) -> None:
     asyncio.run(_extract_document(UUID(document_id), actor_id=UUID(actor_id)))
+
+
+@dramatiq.actor(
+    queue_name=EXTRACTION_QUEUE_NAME,
+    max_retries=EXTRACTION_RECOVERY_MAX_RETRIES,
+    time_limit=EXTRACTION_RECOVERY_TIME_LIMIT_MS,
+)
+def recover_extraction_jobs() -> None:
+    asyncio.run(_recover_extraction_jobs())
 
 
 _DEFAULT_EXTRACTION_ACTOR = cast(_ExtractionActor, extract_document)
@@ -104,7 +138,9 @@ def create_extraction_dispatcher(settings: Settings) -> DramatiqExtractionDispat
     broker = RedisBroker(url=settings.valkey_url.get_secret_value())
     dramatiq.set_broker(broker)
     extract_document.broker = broker
+    recover_extraction_jobs.broker = broker
     broker.declare_actor(extract_document)
+    broker.declare_actor(recover_extraction_jobs)
     return DramatiqExtractionDispatcher()
 
 

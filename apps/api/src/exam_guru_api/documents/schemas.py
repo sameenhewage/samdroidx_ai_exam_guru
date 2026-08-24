@@ -73,6 +73,7 @@ class SourceDocumentResponse(BaseModel):
     year: int | None
     paper_code: str | None
     extraction_attempt_count: int
+    extraction_queue_message_id: str | None = Field(default=None, max_length=128)
     extractor: str | None
     extractor_version: str | None
     extracted_page_count: int | None
