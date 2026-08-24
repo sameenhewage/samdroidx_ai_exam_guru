@@ -340,17 +340,22 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - archive/unpublish rules
 
 ### Exit criteria
-- [ ] reviewer can inspect question, answer, blueprint, retrieved sources and validation results together
-- [ ] approve/reject/edit actions are authorized and audited
-- [ ] rejected questions cannot be published
-- [ ] published paper versions are immutable/reproducible
-- [ ] student serving path requires no live LLM call
+- [x] reviewer can inspect question, answer, blueprint, retrieved sources and validation results together
+- [x] approve/reject/edit actions are authorized and audited
+- [x] rejected questions cannot be published
+- [x] published paper versions are immutable/reproducible
+- [x] student serving path requires no live LLM call
 - [ ] complete Grade 5 practice paper can be generated, reviewed and published end-to-end
 
 ### Evidence
 - `279c4b7` starts P9 with a strict generated→validated→in-review→approved/rejected candidate lifecycle, immutable generation/provenance/validation lineage and reviewer revisions, optimistic command versions, approved-only exact-slot paper assembly, explicit publish authorization, deterministic immutable published snapshots/content hashes and forward-only archive contracts.
 - One hundred fourteen focused paper tests pass with 100% statements and branches, including direct publish construction, forged states, stale commands, prompt-like authorization text, duplicate slots, unapproved candidates and publication mutation attempts.
-- Remaining: canonical generation/validation adapters, persistence and database bypass triggers, append-only audit events, authorized APIs, reviewer/admin UI, approved question bank, and complete browser-tested Grade 5 paper publication.
+- `6a9150e` adds the persisted approved-question-bank foundation: server-derived candidates can be created only from the exact same-curriculum succeeded generation and immutable PASS validation run; PostgreSQL enforces the upstream blueprint/slot/provenance/finding lineage, normalized append-only revisions and review events, CAS transitions, terminal immutability and direct-SQL completeness. Reviewer/admin APIs support bounded queue reads and audited start/edit/approve/reject commands; automated validation is explicitly bound to generated revision 1 while type and marks remain immutable across human edits.
+- `83b6d81` adds the generated-client Reviewer Studio. Reviewers inspect generation content, blueprint, context provenance and complete P8 findings together; preserve/conflict-resolve unsaved edits; and execute audited start/edit/approve/reject transitions. The real worker/browser journey reaches terminal approval and proves a terminal mutation returns 409.
+- `f3bfc38` adds normalized practice-paper aggregates, immutable draft selections, immutable publication snapshots and append-only archive events. Exact approved/current candidate versions must cover every persisted blueprint slot. Canonical Unicode JSON is reconstructed from authoritative PostgreSQL rows and SHA-256 checked in both Python and PostgreSQL. Revision chains are contiguous, archive is terminal, reviewer/admin reads and assembly are separated from admin-only publish/archive, snapshots are bounded and later serving requires no generation or provider call. Direct-SQL bypass, concurrent publish, idempotency, rejected/foreign/stale candidates, audit rollback, downgrade/reapply and hash tampering are covered against real PostgreSQL.
+- `5621f8d` adds the generated-client Paper Studio with exact-slot approved-bank selection, draft/revision inspection, admin-only publication/archive controls, immutable content/version/hash/provenance/validation/reviewer views and a no-live-provider serving statement. Final web gate: 86 tests at configured 100% coverage; the full real browser suite passes 6/6 through upload, extraction/trust, knowledge review, blueprint, worker generation, validation, human edit/approval, reviewer paper assembly, reviewer publish denial, admin publication and immutable snapshot inspection.
+- Final backend gate for the P9 persistence slices: 1,749 passed and 2 expected optional skips with 100% statements and branches; Ruff, format, strict mypy, migration-head and secret scans pass.
+- Remaining P9 gate: the browser fixture intentionally uses one exact slot to prove lifecycle mechanics. Representative multi-slot Grade 5 content must be generated, validated, human-reviewed and published before the complete-paper criterion can be checked.
 
 ---
 
