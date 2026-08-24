@@ -314,6 +314,9 @@ function fixtureApi(options: ApiFixtureOptions = {}) {
       const documentId = url.pathname.split("/").at(-4) ?? "";
       return Response.json([blockFor(documentId)]);
     }
+    if (request.method === "GET" && url.pathname.endsWith("/embedding-jobs")) {
+      return Response.json([]);
+    }
     if (request.method === "GET" && url.pathname.endsWith("/knowledge/questions")) {
       return Response.json(questions);
     }
@@ -390,6 +393,7 @@ describe("KnowledgeStudio", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("Loading Knowledge Studio");
     expect(await screen.findByRole("heading", { name: "Knowledge Studio" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Embedding ingestion" })).toBeInTheDocument();
     expect(screen.getByLabelText("Active curriculum")).toHaveValue(ids.curriculum);
     expect(screen.queryByRole("option", { name: inactiveCurriculum.title })).not.toBeInTheDocument();
 
@@ -811,7 +815,11 @@ describe("KnowledgeStudio", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = asRequest(input, init);
       const url = new URL(request.url);
-      if (request.method === "GET" && url.pathname.endsWith("/knowledge/questions")) {
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith("/knowledge/questions") &&
+        !url.searchParams.has("review_state")
+      ) {
         listAttempts += 1;
         if (listAttempts === 1) {
           return Response.json({ detail: { code: "service_unavailable" } }, { status: 503 });

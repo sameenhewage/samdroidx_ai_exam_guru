@@ -23,6 +23,7 @@ import {
   Tabs,
 } from "react-aria-components";
 
+import { EmbeddingIngestion } from "@/components/admin/embedding-ingestion";
 import { Badge } from "@/components/ui/badge";
 
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
@@ -635,6 +636,11 @@ export function KnowledgeStudio({ role }: { role: Role }) {
     [api],
   );
 
+  const refreshVisibleRecordsAfterEmbedding = useCallback(async () => {
+    const query = activeKind === "questions" ? questionQuery : chunkQuery;
+    await loadRecords(activeKind, selectedCurriculumId, query);
+  }, [activeKind, chunkQuery, loadRecords, questionQuery, selectedCurriculumId]);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadWorkspace(), 0);
     return () => window.clearTimeout(timeout);
@@ -1225,6 +1231,14 @@ export function KnowledgeStudio({ role }: { role: Role }) {
           </div>
         </div>
       </header>
+
+      {activeCurricula.length ? (
+        <EmbeddingIngestion
+          curriculumVersionId={selectedCurriculumId}
+          onRecordsEmbedded={refreshVisibleRecordsAfterEmbedding}
+          role={role}
+        />
+      ) : null}
 
       {!activeCurricula.length ? (
         <section className="mt-8 rounded-xl border border-dashed border-slate-400 bg-white p-8 text-center">
