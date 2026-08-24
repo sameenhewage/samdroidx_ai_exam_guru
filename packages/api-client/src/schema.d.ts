@@ -21,6 +21,144 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List curriculum knowledge chunks */
+        get: operations["list_knowledge_chunks"];
+        put?: never;
+        /** Import a draft educational knowledge chunk */
+        post: operations["import_knowledge_chunk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a curriculum knowledge chunk */
+        get: operations["get_knowledge_chunk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}/classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Correct a knowledge chunk classification */
+        patch: operations["classify_knowledge_chunk"];
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Advance a knowledge chunk review state */
+        post: operations["transition_knowledge_chunk_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List curriculum historical questions */
+        get: operations["list_historical_questions"];
+        put?: never;
+        /** Import a draft historical question */
+        post: operations["import_historical_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a curriculum historical question */
+        get: operations["get_historical_question"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}/classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Correct a historical question classification */
+        patch: operations["classify_historical_question"];
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Advance a historical question review state */
+        post: operations["transition_historical_question_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes": {
         parameters: {
             query?: never;
@@ -464,6 +602,11 @@ export interface components {
             /** Year */
             year?: number | null;
         };
+        /**
+         * ChunkType
+         * @enum {string}
+         */
+        ChunkType: "competency_section" | "learning_outcome" | "explanation" | "example" | "practice_question" | "key_term";
         /** CurriculumVersionCreate */
         CurriculumVersionCreate: {
             /** Code */
@@ -533,6 +676,29 @@ export interface components {
              */
             valkey: "ok" | "unavailable";
         };
+        /** EmbeddingConfigurationMetadataResponse */
+        EmbeddingConfigurationMetadataResponse: {
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Dimension */
+            dimension: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Version */
+            version: string;
+        };
+        /**
+         * EmbeddingStatus
+         * @enum {string}
+         */
+        EmbeddingStatus: "not_embedded" | "embedded";
         /** ExamConfigurationCreate */
         ExamConfigurationCreate: {
             /** Code */
@@ -656,6 +822,180 @@ export interface components {
              */
             status: "ok";
         };
+        /** HistoricalQuestionImportRequest */
+        HistoricalQuestionImportRequest: {
+            /** Marks */
+            marks: number;
+            /** Page Number */
+            page_number: number;
+            /** Paper Code */
+            paper_code: string;
+            /** Question Number */
+            question_number: string;
+            question_type: components["schemas"]["QuestionType"];
+            /** Source Block Id */
+            source_block_id?: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+            /** Text */
+            text: string;
+            /** Year */
+            year: number;
+        };
+        /** HistoricalQuestionResponse */
+        HistoricalQuestionResponse: {
+            classification: components["schemas"]["KnowledgeClassificationResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Embedding Configurations */
+            embedding_configurations: components["schemas"]["EmbeddingConfigurationMetadataResponse"][];
+            embedding_status: components["schemas"]["EmbeddingStatus"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Marks */
+            marks: number;
+            /** Paper Code */
+            paper_code: string;
+            provenance: components["schemas"]["KnowledgeProvenanceResponse"];
+            /** Question Number */
+            question_number: string;
+            question_type: components["schemas"]["QuestionType"];
+            review_state: components["schemas"]["ReviewState"];
+            /** Text */
+            text: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+            /** Year */
+            year: number;
+        };
+        /** KnowledgeChunkImportRequest */
+        KnowledgeChunkImportRequest: {
+            chunk_type: components["schemas"]["ChunkType"];
+            /** Educational Boundary */
+            educational_boundary: string;
+            /** Page Number */
+            page_number: number;
+            /** Sequence */
+            sequence: number;
+            /** Source Block Id */
+            source_block_id?: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+            /** Text */
+            text: string;
+        };
+        /** KnowledgeChunkResponse */
+        KnowledgeChunkResponse: {
+            chunk_type: components["schemas"]["ChunkType"];
+            classification: components["schemas"]["KnowledgeClassificationResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Educational Boundary */
+            educational_boundary: string;
+            /** Embedding Configurations */
+            embedding_configurations: components["schemas"]["EmbeddingConfigurationMetadataResponse"][];
+            embedding_status: components["schemas"]["EmbeddingStatus"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            provenance: components["schemas"]["KnowledgeProvenanceResponse"];
+            review_state: components["schemas"]["ReviewState"];
+            /** Sequence */
+            sequence: number;
+            /** Text */
+            text: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeClassificationRequest */
+        KnowledgeClassificationRequest: {
+            /** Competency Id */
+            competency_id?: string | null;
+            /** Expected Version */
+            expected_version: number;
+            /** Learning Concept Id */
+            learning_concept_id?: string | null;
+            /** Skill Id */
+            skill_id?: string | null;
+            /** Sub Skill Id */
+            sub_skill_id?: string | null;
+        };
+        /** KnowledgeClassificationResponse */
+        KnowledgeClassificationResponse: {
+            /** Competency Id */
+            competency_id: string | null;
+            /** Learning Concept Id */
+            learning_concept_id: string | null;
+            /** Skill Id */
+            skill_id: string | null;
+            /** Sub Skill Id */
+            sub_skill_id: string | null;
+        };
+        /** KnowledgeProvenanceResponse */
+        KnowledgeProvenanceResponse: {
+            /** Page Number */
+            page_number: number;
+            /** Source Block Id */
+            source_block_id: string | null;
+            /**
+             * Source Document Id
+             * Format: uuid
+             */
+            source_document_id: string;
+        };
+        /** KnowledgeReviewTransitionRequest */
+        KnowledgeReviewTransitionRequest: {
+            /** Expected Version */
+            expected_version: number;
+            target: components["schemas"]["ReviewState"];
+        };
         /** MediumCreate */
         MediumCreate: {
             /** Code */
@@ -692,6 +1032,11 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * QuestionType
+         * @enum {string}
+         */
+        QuestionType: "multiple_choice" | "short_answer" | "structured";
         /** ReadinessResponse */
         ReadinessResponse: {
             checks: components["schemas"]["DependencyChecks"];
@@ -701,6 +1046,11 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /**
+         * ReviewState
+         * @enum {string}
+         */
+        ReviewState: "draft" | "in_review" | "reviewed" | "rejected";
         /** ReviewedTextUpdate */
         ReviewedTextUpdate: {
             /** Expected Version */
@@ -904,6 +1254,386 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminAuditEventResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_chunks: {
+        parameters: {
+            query?: {
+                review_state?: components["schemas"]["ReviewState"] | null;
+                source_document_id?: string | null;
+                competency_id?: string | null;
+                chunk_type?: components["schemas"]["ChunkType"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_knowledge_chunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeChunkImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing source chunk returned idempotently */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Draft knowledge chunk imported */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkResponse"];
+                };
+            };
+            /** @description Conflicting source import */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Knowledge invariant failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_knowledge_chunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    classify_knowledge_chunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeClassificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_knowledge_chunk_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReviewTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeChunkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_historical_questions: {
+        parameters: {
+            query?: {
+                review_state?: components["schemas"]["ReviewState"] | null;
+                source_document_id?: string | null;
+                competency_id?: string | null;
+                question_type?: components["schemas"]["QuestionType"] | null;
+                year?: number | null;
+                paper_code?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalQuestionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_historical_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoricalQuestionImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing source question returned idempotently */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Draft historical question imported */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalQuestionResponse"];
+                };
+            };
+            /** @description Conflicting source import */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Knowledge invariant failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_historical_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalQuestionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    classify_historical_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeClassificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalQuestionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_historical_question_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReviewTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalQuestionResponse"];
                 };
             };
             /** @description Validation Error */

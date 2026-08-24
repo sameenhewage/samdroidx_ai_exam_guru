@@ -104,6 +104,18 @@
         "title": "Body_upload_source_document",
         "type": "object"
       },
+      "ChunkType": {
+        "enum": [
+          "competency_section",
+          "learning_outcome",
+          "explanation",
+          "example",
+          "practice_question",
+          "key_term"
+        ],
+        "title": "ChunkType",
+        "type": "string"
+      },
       "CurriculumVersionCreate": {
         "additionalProperties": false,
         "properties": {
@@ -234,6 +246,53 @@
         ],
         "title": "DependencyChecks",
         "type": "object"
+      },
+      "EmbeddingConfigurationMetadataResponse": {
+        "properties": {
+          "config_fingerprint": {
+            "title": "Config Fingerprint",
+            "type": "string"
+          },
+          "dimension": {
+            "title": "Dimension",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "model",
+          "dimension",
+          "version",
+          "config_fingerprint"
+        ],
+        "title": "EmbeddingConfigurationMetadataResponse",
+        "type": "object"
+      },
+      "EmbeddingStatus": {
+        "enum": [
+          "not_embedded",
+          "embedded"
+        ],
+        "title": "EmbeddingStatus",
+        "type": "string"
       },
       "ExamConfigurationCreate": {
         "additionalProperties": false,
@@ -495,6 +554,494 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HistoricalQuestionImportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "marks": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Marks",
+            "type": "integer"
+          },
+          "page_number": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "paper_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "question_number": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Question Number",
+            "type": "string"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          },
+          "source_block_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Block Id"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "year": {
+            "maximum": 2100.0,
+            "minimum": 1900.0,
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "year",
+          "paper_code",
+          "question_number",
+          "text",
+          "question_type",
+          "marks",
+          "source_document_id",
+          "page_number"
+        ],
+        "title": "HistoricalQuestionImportRequest",
+        "type": "object"
+      },
+      "HistoricalQuestionResponse": {
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/KnowledgeClassificationResponse"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "embedding_configurations": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingConfigurationMetadataResponse"
+            },
+            "title": "Embedding Configurations",
+            "type": "array"
+          },
+          "embedding_status": {
+            "$ref": "#/components/schemas/EmbeddingStatus"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "paper_code": {
+            "title": "Paper Code",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/KnowledgeProvenanceResponse"
+          },
+          "question_number": {
+            "title": "Question Number",
+            "type": "string"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuestionType"
+          },
+          "review_state": {
+            "$ref": "#/components/schemas/ReviewState"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "year",
+          "paper_code",
+          "question_number",
+          "text",
+          "question_type",
+          "marks",
+          "provenance",
+          "classification",
+          "review_state",
+          "version",
+          "created_at",
+          "updated_at",
+          "embedding_status",
+          "embedding_configurations"
+        ],
+        "title": "HistoricalQuestionResponse",
+        "type": "object"
+      },
+      "KnowledgeChunkImportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_type": {
+            "$ref": "#/components/schemas/ChunkType"
+          },
+          "educational_boundary": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Educational Boundary",
+            "type": "string"
+          },
+          "page_number": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "sequence": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "source_block_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Block Id"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_type",
+          "text",
+          "educational_boundary",
+          "sequence",
+          "source_document_id",
+          "page_number"
+        ],
+        "title": "KnowledgeChunkImportRequest",
+        "type": "object"
+      },
+      "KnowledgeChunkResponse": {
+        "properties": {
+          "chunk_type": {
+            "$ref": "#/components/schemas/ChunkType"
+          },
+          "classification": {
+            "$ref": "#/components/schemas/KnowledgeClassificationResponse"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "educational_boundary": {
+            "title": "Educational Boundary",
+            "type": "string"
+          },
+          "embedding_configurations": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingConfigurationMetadataResponse"
+            },
+            "title": "Embedding Configurations",
+            "type": "array"
+          },
+          "embedding_status": {
+            "$ref": "#/components/schemas/EmbeddingStatus"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/KnowledgeProvenanceResponse"
+          },
+          "review_state": {
+            "$ref": "#/components/schemas/ReviewState"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "chunk_type",
+          "text",
+          "educational_boundary",
+          "sequence",
+          "provenance",
+          "classification",
+          "review_state",
+          "version",
+          "created_at",
+          "updated_at",
+          "embedding_status",
+          "embedding_configurations"
+        ],
+        "title": "KnowledgeChunkResponse",
+        "type": "object"
+      },
+      "KnowledgeClassificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "competency_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competency Id"
+          },
+          "expected_version": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "KnowledgeClassificationRequest",
+        "type": "object"
+      },
+      "KnowledgeClassificationResponse": {
+        "properties": {
+          "competency_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competency Id"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "competency_id",
+          "skill_id",
+          "sub_skill_id",
+          "learning_concept_id"
+        ],
+        "title": "KnowledgeClassificationResponse",
+        "type": "object"
+      },
+      "KnowledgeProvenanceResponse": {
+        "properties": {
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_block_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Block Id"
+          },
+          "source_document_id": {
+            "format": "uuid",
+            "title": "Source Document Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_document_id",
+          "page_number",
+          "source_block_id"
+        ],
+        "title": "KnowledgeProvenanceResponse",
+        "type": "object"
+      },
+      "KnowledgeReviewTransitionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ReviewState"
+          }
+        },
+        "required": [
+          "target",
+          "expected_version"
+        ],
+        "title": "KnowledgeReviewTransitionRequest",
+        "type": "object"
+      },
       "MediumCreate": {
         "additionalProperties": false,
         "properties": {
@@ -576,6 +1123,15 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "QuestionType": {
+        "enum": [
+          "multiple_choice",
+          "short_answer",
+          "structured"
+        ],
+        "title": "QuestionType",
+        "type": "string"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -596,6 +1152,16 @@
         ],
         "title": "ReadinessResponse",
         "type": "object"
+      },
+      "ReviewState": {
+        "enum": [
+          "draft",
+          "in_review",
+          "reviewed",
+          "rejected"
+        ],
+        "title": "ReviewState",
+        "type": "string"
       },
       "ReviewedTextUpdate": {
         "additionalProperties": false,
@@ -1191,6 +1757,823 @@
         "summary": "List Admin Audit Events",
         "tags": [
           "admin-audit"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks": {
+      "get": {
+        "operationId": "list_knowledge_chunks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "review_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ReviewState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Review State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_document_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Document Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "competency_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Competency Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "chunk_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ChunkType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chunk Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeChunkResponse"
+                  },
+                  "title": "Response List Knowledge Chunks",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List curriculum knowledge chunks",
+        "tags": [
+          "admin-knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "import_knowledge_chunk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeChunkImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing source chunk returned idempotently"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkResponse"
+                }
+              }
+            },
+            "description": "Draft knowledge chunk imported"
+          },
+          "409": {
+            "description": "Conflicting source import"
+          },
+          "422": {
+            "description": "Knowledge invariant failed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import a draft educational knowledge chunk",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}": {
+      "get": {
+        "operationId": "get_knowledge_chunk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a curriculum knowledge chunk",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}/classification": {
+      "patch": {
+        "operationId": "classify_knowledge_chunk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeClassificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct a knowledge chunk classification",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/chunks/{chunk_id}/review": {
+      "post": {
+        "operationId": "transition_knowledge_chunk_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReviewTransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeChunkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Advance a knowledge chunk review state",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions": {
+      "get": {
+        "operationId": "list_historical_questions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "review_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ReviewState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Review State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_document_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Document Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "competency_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Competency Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "question_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/QuestionType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Question Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2100,
+                  "minimum": 1900,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HistoricalQuestionResponse"
+                  },
+                  "title": "Response List Historical Questions",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List curriculum historical questions",
+        "tags": [
+          "admin-knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "import_historical_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoricalQuestionImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing source question returned idempotently"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalQuestionResponse"
+                }
+              }
+            },
+            "description": "Draft historical question imported"
+          },
+          "409": {
+            "description": "Conflicting source import"
+          },
+          "422": {
+            "description": "Knowledge invariant failed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import a draft historical question",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}": {
+      "get": {
+        "operationId": "get_historical_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get a curriculum historical question",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}/classification": {
+      "patch": {
+        "operationId": "classify_historical_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeClassificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct a historical question classification",
+        "tags": [
+          "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/questions/{question_id}/review": {
+      "post": {
+        "operationId": "transition_historical_question_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReviewTransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Advance a historical question review state",
+        "tags": [
+          "admin-knowledge"
         ]
       }
     },
