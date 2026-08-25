@@ -4,44 +4,69 @@ import { type NextRequest, NextResponse } from "next/server";
 import { guardBrowserRequest } from "@/lib/browser-request-guard";
 import { parseWebAppConfig } from "@/lib/web-app-config";
 
-const TOKEN_COOKIE = "exam_guru_admin_token";
-const ROLE_COOKIE = "exam_guru_admin_role";
+import {
+  AUTHENTICATED_PATH,
+  clearAuthCookies,
+  setSessionCookies,
+  type AuthCookieStore,
+  validateAccessTokenWithBackend,
+} from "../auth-utils";
 
 export async function POST(request: NextRequest) {
   const config = parseWebAppConfig();
   const rejection = guardBrowserRequest(request, config);
   if (rejection) return rejection;
 
-  if (process.env.ENABLE_DETERMINISTIC_IDENTITY !== "true") {
+  if (config.identityProvider !== "deterministic" || !config.deterministicIdentityEnabled) {
     return NextResponse.json({ detail: { code: "development_login_disabled" } }, { status: 404 });
   }
 
-  const form = await request.formData();
-  const role = form.get("role");
+  const cookieStore = (await cookies()) as AuthCookieStore;
+  clearAuthCookies(cookieStore, config.adminCookieSecure);
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json(
+      { detail: { code: "development_identity_unavailable" } },
+      { status: 503 },
+    );
+  }
+  const requestedRole = form.get("role");
   const token =
-    role === "admin"
-      ? process.env.DETERMINISTIC_ADMIN_TOKEN
-      : role === "reviewer"
-        ? process.env.DETERMINISTIC_REVIEWER_TOKEN
-        : undefined;
-  if (!token || (role !== "admin" && role !== "reviewer")) {
-    return NextResponse.json({ detail: { code: "development_identity_unavailable" } }, { status: 503 });
+    requestedRole === "admin"
+      ? config.deterministicAdminToken
+      : requestedRole === "reviewer"
+        ? config.deterministicReviewerToken
+        : null;
+  if (!token) {
+    return NextResponse.json(
+      { detail: { code: "development_identity_unavailable" } },
+      { status: 503 },
+    );
   }
 
-  const cookieStore = await cookies();
-  cookieStore.set(TOKEN_COOKIE, token, {
-    httpOnly: true,
-    maxAge: 8 * 60 * 60,
-    path: "/",
-    sameSite: "strict",
-    secure: config.adminCookieSecure,
-  });
-  cookieStore.set(ROLE_COOKIE, role, {
-    httpOnly: true,
-    maxAge: 8 * 60 * 60,
-    path: "/",
-    sameSite: "strict",
-    secure: config.adminCookieSecure,
-  });
-  return NextResponse.redirect(new URL("/admin/curriculum", config.appBaseUrl), 303);
+  const session = await validateAccessTokenWithBackend(token, config);
+  if (!session) {
+    return NextResponse.json(
+      { detail: { code: "development_identity_unavailable" } },
+      { status: 503 },
+    );
+  }
+
+  const sessionStored = setSessionCookies(
+    cookieStore,
+    config.adminCookieSecure,
+    token,
+    session.role,
+    config.sessionMaxAgeSeconds,
+  );
+  if (!sessionStored) {
+    return NextResponse.json(
+      { detail: { code: "development_identity_unavailable" } },
+      { status: 503 },
+    );
+  }
+  return NextResponse.redirect(new URL(AUTHENTICATED_PATH, config.appBaseUrl), 303);
 }

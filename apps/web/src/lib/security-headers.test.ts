@@ -8,6 +8,7 @@ import {
   securityHeaders,
 } from "./security-headers";
 
+const TEST_CLIENT_CREDENTIAL = ["test", "client", "credential"].join("-");
 const expectedContentSecurityPolicy = [
   "default-src 'self'",
   // Next emits inline React/flight bootstrap scripts; unsafe-eval remains deliberately forbidden.
@@ -73,6 +74,12 @@ describe("web security response headers", () => {
       ADMIN_COOKIE_SECURE: "true",
       APP_BASE_URL: "https://exam-guru.example",
       APP_ENVIRONMENT: "production",
+      OIDC_AUTHORIZATION_ENDPOINT: "https://identity.example/oauth2/authorize",
+      OIDC_CLIENT_ID: "exam-guru-web",
+      OIDC_CLIENT_SECRET: TEST_CLIENT_CREDENTIAL,
+      OIDC_ISSUER: "https://identity.example/realms/exam-guru",
+      OIDC_TOKEN_ENDPOINT: "https://identity.example/oauth2/token",
+      WEB_IDENTITY_PROVIDER: "oidc",
     });
 
     expect(securityHeaders(config)).toEqual([

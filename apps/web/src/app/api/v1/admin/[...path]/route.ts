@@ -1,7 +1,9 @@
 import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { isTimeoutError } from "@/app/api/auth/auth-utils";
 import { guardBrowserRequest } from "@/lib/browser-request-guard";
+import { parseWebAppConfig } from "@/lib/web-app-config";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 26 * 1024 * 1024;
@@ -33,7 +35,8 @@ export function upstreamHeadersForRequest(
 type RouteContext = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: RouteContext) {
-  const rejection = guardBrowserRequest(request);
+  const config = parseWebAppConfig();
+  const rejection = guardBrowserRequest(request, config);
   if (rejection) return rejection;
 
   const token = (await cookies()).get("exam_guru_admin_token")?.value;
@@ -56,15 +59,33 @@ async function proxy(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ detail: { code: "request_too_large" } }, { status: 413 });
   }
 
-  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:8000";
-  const upstream = new URL(`/api/v1/admin/${path.map(encodeURIComponent).join("/")}`, baseUrl);
+  const upstream = new URL(
+    `/api/v1/admin/${path.map(encodeURIComponent).join("/")}`,
+    config.apiBaseUrl,
+  );
   upstream.search = request.nextUrl.search;
-  const response = await fetch(upstream, {
-    body,
-    cache: "no-store",
-    headers: upstreamHeadersForRequest(request.headers, token),
-    method: request.method,
-  });
+
+  let response: Response;
+  try {
+    // The display-only role cookie is deliberately ignored. Every target API endpoint receives
+    // the bearer token and revalidates identity and permissions at the backend boundary.
+    response = await fetch(upstream, {
+      body,
+      cache: "no-store",
+      headers: upstreamHeadersForRequest(request.headers, token),
+      method: request.method,
+      redirect: "error",
+      signal: AbortSignal.timeout(config.httpTimeoutMs),
+    });
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return NextResponse.json({ detail: { code: "upstream_timeout" } }, { status: 504 });
+    }
+    return NextResponse.json({ detail: { code: "upstream_unavailable" } }, { status: 502 });
+  }
+  if (response.status >= 300 && response.status < 400) {
+    return NextResponse.json({ detail: { code: "upstream_unavailable" } }, { status: 502 });
+  }
 
   return new NextResponse(response.body, {
     headers: {

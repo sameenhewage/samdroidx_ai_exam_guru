@@ -150,6 +150,7 @@ services:
         ADMIN_COOKIE_SECURE: "false"
         APP_BASE_URL: http://localhost:3000
         APP_ENVIRONMENT: local
+        WEB_IDENTITY_PROVIDER: deterministic
     depends_on:
       api:
         condition: service_healthy
@@ -161,6 +162,7 @@ services:
       DETERMINISTIC_REVIEWER_TOKEN: ${DETERMINISTIC_REVIEWER_TOKEN:-exam-guru-reviewer-local-token}
       ENABLE_DETERMINISTIC_IDENTITY: "true"
       ADMIN_COOKIE_SECURE: "false"
+      WEB_IDENTITY_PROVIDER: deterministic
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"]
       interval: 5s
