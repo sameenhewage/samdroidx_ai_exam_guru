@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingJobNotFoundError,
+    EmbeddingPersistenceConflictError,
     SqlAlchemyEmbeddingJobRepository,
 )
 from exam_guru_api.knowledge.models import EmbeddingJobModel, EmbeddingJobStatus
@@ -101,8 +102,33 @@ def test_repository_idempotent_insert_winner_and_impossible_missing_winner() -> 
 
         session, scalar, _, _ = _session()
         scalar.side_effect = [None, None]
-        with pytest.raises(RuntimeError, match="winner"):
+        with pytest.raises(EmbeddingPersistenceConflictError, match="outside actor"):
             await SqlAlchemyEmbeddingJobRepository(session).store_job(values)
+
+    asyncio.run(exercise())
+
+
+def test_repository_reads_actor_scoped_idempotent_job() -> None:
+    async def exercise() -> None:
+        job = _job()
+        session, scalar, _, _ = _session()
+        scalar.side_effect = [job, object()]
+        repository = SqlAlchemyEmbeddingJobRepository(session)
+
+        assert (
+            await repository.get_idempotent_job(
+                actor_id=ACTOR_ID,
+                idempotency_key_hash="sha256:" + "1" * 64,
+            )
+            is job
+        )
+        assert (
+            await repository.get_idempotent_job(
+                actor_id=ACTOR_ID,
+                idempotency_key_hash="sha256:" + "2" * 64,
+            )
+            is None
+        )
 
     asyncio.run(exercise())
 

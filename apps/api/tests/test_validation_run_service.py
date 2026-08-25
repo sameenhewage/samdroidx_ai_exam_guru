@@ -171,6 +171,7 @@ def generation_record() -> tuple[ValidationGenerationRecord, GenerationResult]:
         curriculum_version_id=CURRICULUM_ID,
         paper_blueprint_id=BLUEPRINT_DB_ID,
         retry_of_run_id=None,
+        retry_depth=0,
         slot_id=result.request.blueprint_slot.slot_id,
         idempotency_key_hash="sha256:" + "1" * 64,
         request_fingerprint="sha256:" + "0" * 64,

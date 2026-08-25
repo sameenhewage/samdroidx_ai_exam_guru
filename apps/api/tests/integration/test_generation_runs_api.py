@@ -1078,6 +1078,359 @@ def test_generation_worker_enforces_budget_and_manual_retry_creates_linked_run(
 
 
 @pytest.mark.integration
+def test_generation_top_level_retry_chain_is_bounded_and_exposes_depth(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.INVALID_RESPONSE,
+        fail_attempts=frozenset({1}),
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-bounded-retry-message")
+
+    async def fail_job(job_id: UUID, run_id: UUID) -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                worker = GenerationWorkerService(session, runtime, sleep=lambda _: None)
+                assert await worker.process(job_id, run_id)
+        finally:
+            await engine.dispose()
+
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        response = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-depth-root"},
+        )
+    assert response.status_code == 202, response.text
+
+    chain: list[UUID] = []
+    for expected_depth in range(4):
+        body = response.json()
+        run_id = UUID(body["generation_run_id"])
+        job_id = UUID(body["id"])
+        chain.append(run_id)
+        with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+            detail = client.get(
+                f"{generation_seed.base_path}/{run_id}",
+                headers=REVIEWER_HEADERS,
+            )
+        assert detail.status_code == 200
+        assert detail.json()["retry_depth"] == expected_depth
+        assert detail.json()["retry_of_run_id"] == (None if expected_depth == 0 else str(chain[-2]))
+        asyncio.run(fail_job(job_id, run_id))
+        with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+            response = client.post(
+                f"{generation_seed.base_path}/{run_id}/retry",
+                headers={
+                    **ADMIN_HEADERS,
+                    "Idempotency-Key": f"generation-depth-retry-{expected_depth + 1}",
+                },
+            )
+        if expected_depth < 3:
+            assert response.status_code == 202, response.text
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "generation_retry_limit_exceeded"
+    assert len(dispatcher.dispatched) == 4
+
+
+@pytest.mark.integration
+def test_concurrent_generation_retry_fork_dispatches_exactly_one_child(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.INVALID_RESPONSE,
+        fail_attempts=frozenset({1}),
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-fork-message")
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-fork-root"},
+        )
+    root_run_id = UUID(created.json()["generation_run_id"])
+    root_job_id = UUID(created.json()["id"])
+
+    async def fail_root() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                worker = GenerationWorkerService(session, runtime, sleep=lambda _: None)
+                assert await worker.process(root_job_id, root_run_id)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(fail_root())
+    dispatcher.dispatched.clear()
+    barrier = Barrier(2)
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+
+        def retry_once(index: int) -> tuple[int, dict[str, Any]]:
+            barrier.wait()
+            response = client.post(
+                f"{generation_seed.base_path}/{root_run_id}/retry",
+                headers={
+                    **ADMIN_HEADERS,
+                    "Idempotency-Key": f"generation-fork-child-{index}",
+                },
+            )
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = tuple(executor.map(retry_once, range(2)))
+
+    assert sorted(status_code for status_code, _ in results) == [202, 409]
+    assert len(dispatcher.dispatched) == 1
+
+    async def child_count() -> int:
+        engine = create_async_engine(generation_seed.database_url)
+        try:
+            async with engine.connect() as connection:
+                return int(
+                    await connection.scalar(
+                        select(func.count())
+                        .select_from(GenerationRunModel)
+                        .where(GenerationRunModel.retry_of_run_id == root_run_id)
+                    )
+                    or 0
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(child_count()) == 1
+
+
+@pytest.mark.integration
+def test_generation_retry_rejects_active_config_drift_without_dispatch(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.INVALID_RESPONSE,
+        fail_attempts=frozenset({1}),
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-config-root")
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        created = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-config-drift-root"},
+        )
+    run_id = UUID(created.json()["generation_run_id"])
+    job_id = UUID(created.json()["id"])
+
+    async def fail_root() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                worker = GenerationWorkerService(session, runtime, sleep=lambda _: None)
+                assert await worker.process(job_id, run_id)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(fail_root())
+    drifted_runtime = GenerationRuntimeRegistry(
+        replace(runtime.active_config, model_version="drifted-model-version")
+    )
+    drift_dispatcher = DeterministicGenerationDispatcher("must-not-dispatch")
+    with api_client(
+        generation_seed,
+        drift_dispatcher,
+        runtime=drifted_runtime,
+    ) as client:
+        retry = client.post(
+            f"{generation_seed.base_path}/{run_id}/retry",
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-config-drift-retry"},
+        )
+
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "generation_retry_state_invalid"
+    assert drift_dispatcher.dispatched == []
+
+
+@pytest.mark.integration
+def test_generation_database_rejects_invalid_retry_lineage_and_depth_mutation(
+    generation_seed: GenerationSeed,
+) -> None:
+    runtime = scripted_runtime(
+        generation_seed,
+        failure_code=ProviderFailureCode.INVALID_RESPONSE,
+        fail_attempts=frozenset({1}),
+    )
+    dispatcher = DeterministicGenerationDispatcher("generation-db-lineage")
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        failed_response = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-db-lineage-root"},
+        )
+        pending_response = client.post(
+            generation_seed.base_path,
+            json=payload(generation_seed),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "generation-db-lineage-pending"},
+        )
+    failed_id = UUID(failed_response.json()["generation_run_id"])
+    failed_job_id = UUID(failed_response.json()["id"])
+    pending_id = UUID(pending_response.json()["generation_run_id"])
+
+    async def fail_root() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                worker = GenerationWorkerService(session, runtime, sleep=lambda _: None)
+                assert await worker.process(failed_job_id, failed_id)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(fail_root())
+
+    async def assert_guards() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+        def clone(
+            source: GenerationRunModel,
+            *,
+            identifier: UUID,
+            retry_of_run_id: UUID | None,
+            retry_depth: int,
+            **overrides: object,
+        ) -> GenerationRunModel:
+            values: dict[str, object] = {
+                "id": identifier,
+                "curriculum_version_id": source.curriculum_version_id,
+                "paper_blueprint_id": source.paper_blueprint_id,
+                "retry_of_run_id": retry_of_run_id,
+                "retry_depth": retry_depth,
+                "slot_id": source.slot_id,
+                "idempotency_key_hash": f"sha256:{identifier.int:064x}",
+                "request_fingerprint": source.request_fingerprint,
+                "blueprint_version": source.blueprint_version,
+                "blueprint_snapshot": deepcopy(source.blueprint_snapshot),
+                "blueprint_slot_snapshot": deepcopy(source.blueprint_slot_snapshot),
+                "knowledge_chunk_ids": list(source.knowledge_chunk_ids),
+                "historical_question_ids": list(source.historical_question_ids),
+                "context_snapshot": deepcopy(source.context_snapshot),
+                "prompt_id": source.prompt_id,
+                "prompt_version": source.prompt_version,
+                "provider": source.provider,
+                "provider_version": source.provider_version,
+                "model": source.model,
+                "model_version": source.model_version,
+                "retrieval_version": source.retrieval_version,
+                "schema_version": source.schema_version,
+                "pricing_version": source.pricing_version,
+                "input_microusd_per_million_tokens": source.input_microusd_per_million_tokens,
+                "output_microusd_per_million_tokens": source.output_microusd_per_million_tokens,
+                "generation_parameters": deepcopy(source.generation_parameters),
+                "max_attempts": source.max_attempts,
+                "max_input_tokens": source.max_input_tokens,
+                "max_output_tokens": source.max_output_tokens,
+                "max_cost_microusd": source.max_cost_microusd,
+                "status": "pending",
+                "version": 0,
+                "started_at": None,
+                "completed_at": None,
+                "failure_code": None,
+                "result_attempt_id": None,
+                "attempt_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cost_microusd": 0,
+                "latency_ms": 0,
+                "candidate": None,
+                "disposition": None,
+                "created_by": source.created_by,
+            }
+            values.update(overrides)
+            return GenerationRunModel(**values)
+
+        try:
+            invalid_cases: tuple[tuple[UUID | None, int, dict[str, object]], ...] = (
+                (None, 1, {}),
+                (failed_id, 0, {}),
+                (pending_id, 1, {}),
+                (failed_id, 1, {"request_fingerprint": "sha256:" + "f" * 64}),
+                (failed_id, 1, {"curriculum_version_id": OTHER_CURRICULUM_ID}),
+                (failed_id, 1, {"blueprint_snapshot": {"tampered": True}}),
+            )
+            for offset, (predecessor_id, depth, overrides) in enumerate(invalid_cases, start=1):
+                async with sessions() as session:
+                    source = cast(
+                        GenerationRunModel,
+                        await session.get(GenerationRunModel, failed_id),
+                    )
+                    record = clone(
+                        source,
+                        identifier=UUID(int=929_100 + offset),
+                        retry_of_run_id=predecessor_id,
+                        retry_depth=depth,
+                        **overrides,
+                    )
+                    session.add(record)
+                    with pytest.raises(IntegrityError):
+                        await session.flush()
+                    await session.rollback()
+
+            child_id = UUID(int=929_200)
+            async with sessions() as session:
+                source = cast(GenerationRunModel, await session.get(GenerationRunModel, failed_id))
+                session.add(
+                    clone(
+                        source,
+                        identifier=child_id,
+                        retry_of_run_id=failed_id,
+                        retry_depth=1,
+                    )
+                )
+                await session.commit()
+
+            async with sessions() as session:
+                source = cast(GenerationRunModel, await session.get(GenerationRunModel, failed_id))
+                session.add(
+                    clone(
+                        source,
+                        identifier=UUID(int=929_201),
+                        retry_of_run_id=failed_id,
+                        retry_depth=1,
+                    )
+                )
+                with pytest.raises(IntegrityError):
+                    await session.flush()
+                await session.rollback()
+
+            for statement in (
+                update(GenerationRunModel)
+                .where(GenerationRunModel.id == child_id)
+                .values(retry_depth=2, version=GenerationRunModel.version + 1),
+                update(GenerationRunModel)
+                .where(GenerationRunModel.id == failed_id)
+                .values(
+                    retry_of_run_id=child_id,
+                    retry_depth=2,
+                    version=GenerationRunModel.version + 1,
+                ),
+            ):
+                async with sessions() as session:
+                    with pytest.raises(IntegrityError):
+                        await session.execute(statement)
+                    await session.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(assert_guards())
+
+
+@pytest.mark.integration
 def test_generation_nonretryable_provider_failure_is_sanitized_and_not_retried(
     generation_seed: GenerationSeed,
 ) -> None:

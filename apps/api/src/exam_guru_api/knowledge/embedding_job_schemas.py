@@ -1,8 +1,10 @@
 from datetime import datetime
-from typing import Literal, Self, cast
+from typing import Annotated, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 
 MAX_EMBEDDING_JOB_RECORDS = 100
 
@@ -57,6 +59,7 @@ class EmbeddingJobResponse(_FrozenStrictModel):
     id: UUID
     curriculum_version_id: UUID
     retry_of_job_id: UUID | None
+    retry_depth: Annotated[int, Field(ge=0, le=MAX_PROVIDER_JOB_RETRY_DEPTH)]
     historical_question_ids: tuple[UUID, ...]
     knowledge_chunk_ids: tuple[UUID, ...]
     configuration: EmbeddingConfigurationResponse
@@ -82,6 +85,7 @@ class EmbeddingJobResponse(_FrozenStrictModel):
             id=value.id,
             curriculum_version_id=value.curriculum_version_id,
             retry_of_job_id=value.retry_of_job_id,
+            retry_depth=value.retry_depth,
             historical_question_ids=tuple(UUID(item) for item in value.historical_question_ids),
             knowledge_chunk_ids=tuple(UUID(item) for item in value.knowledge_chunk_ids),
             configuration=EmbeddingConfigurationResponse(

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.core.config import MIN_EMBEDDING_WORKER_LEASE_SECONDS
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingJobNotFoundError,
@@ -63,6 +64,10 @@ class EmbeddingIdempotencyConflictError(RuntimeError):
 
 
 class EmbeddingQueueUnavailableError(RuntimeError):
+    pass
+
+
+class EmbeddingRetryLimitExceededError(RuntimeError):
     pass
 
 
@@ -181,6 +186,26 @@ class EmbeddingJobService:
             }
         )
         idempotency_key_hash = _fingerprint(idempotency_key)
+        existing = await self._repository.get_idempotent_job(
+            actor_id=actor_id,
+            idempotency_key_hash=idempotency_key_hash,
+        )
+        if existing is not None:
+            if not self._same_request(
+                existing,
+                curriculum_version_id=curriculum_version_id,
+                question_ids=question_ids,
+                chunk_ids=chunk_ids,
+                request_fingerprint=request_fingerprint,
+            ):
+                raise EmbeddingIdempotencyConflictError(idempotency_key_hash)
+            if (
+                existing.status == EmbeddingJobStatus.QUEUED.value
+                and existing.queue_message_id is None
+            ):
+                existing = await self._dispatch(existing)
+            return EmbeddingJobCreationResult(job=existing, deduplicated=True)
+
         job_id = uuid5(
             _EMBEDDING_JOB_NAMESPACE,
             f"{actor_id}\0{idempotency_key_hash}",
@@ -190,12 +215,15 @@ class EmbeddingJobService:
             actor_id=actor_id,
             request_fingerprint=request_fingerprint,
         )
+        if retry is not None and retry.retry_depth >= MAX_PROVIDER_JOB_RETRY_DEPTH:
+            raise EmbeddingRetryLimitExceededError(retry.id)
         config = self._active_config
         stored = await self._repository.store_job(
             {
                 "id": job_id,
                 "curriculum_version_id": curriculum_version_id,
                 "retry_of_job_id": None if retry is None else retry.id,
+                "retry_depth": 0 if retry is None else retry.retry_depth + 1,
                 "historical_question_ids": [str(value) for value in question_ids],
                 "knowledge_chunk_ids": [str(value) for value in chunk_ids],
                 "idempotency_key_hash": idempotency_key_hash,
@@ -337,6 +365,7 @@ class EmbeddingJobService:
                     "retry_of_job_id": (
                         None if job.retry_of_job_id is None else str(job.retry_of_job_id)
                     ),
+                    "retry_depth": job.retry_depth,
                     "requested_count": job.requested_count,
                     "provider": job.provider,
                     "model": job.model,

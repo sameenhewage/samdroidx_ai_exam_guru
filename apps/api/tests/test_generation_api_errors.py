@@ -18,6 +18,7 @@ from exam_guru_api.generation.models import (
 )
 from exam_guru_api.generation.repository import (
     GenerationJobNotFoundError,
+    GenerationPersistenceConflictError,
     GenerationRunNotFoundError,
 )
 from exam_guru_api.generation.run_service import (
@@ -34,6 +35,7 @@ from exam_guru_api.generation.run_service import (
     GenerationCurriculumNotFoundError,
     GenerationIdempotencyConflictError,
     GenerationQueueUnavailableError,
+    GenerationRetryLimitExceededError,
     GenerationRetryStateError,
     GenerationSlotNotFoundError,
 )
@@ -71,6 +73,11 @@ class RollbackSession:
         (GenerationCurriculumInactiveError(CURRICULUM_ID), 409, "generation_curriculum_inactive"),
         (GenerationIdempotencyConflictError("collision"), 409, "generation_idempotency_conflict"),
         (GenerationRetryStateError(RESOURCE_ID), 409, "generation_retry_state_invalid"),
+        (
+            GenerationRetryLimitExceededError(RESOURCE_ID),
+            409,
+            "generation_retry_limit_exceeded",
+        ),
         (GenerationSlotNotFoundError("slot"), 422, "generation_slot_not_found"),
         (GenerationContextNotFoundError(RESOURCE_ID), 422, "generation_context_not_found"),
         (
@@ -125,16 +132,22 @@ def test_generation_integrity_rolls_back_and_success_passes_through() -> None:
     async def exercise() -> None:
         session = RollbackSession()
 
-        async def fail() -> None:
-            raise IntegrityError("INSERT", {}, RuntimeError("constraint"))
+        for error in (
+            IntegrityError("INSERT", {}, RuntimeError("constraint")),
+            GenerationPersistenceConflictError("fork"),
+        ):
+            session.rolled_back = False
 
-        with pytest.raises(HTTPException) as raised:
-            await _execute_generation_operation(cast(AsyncSession, session), fail)
-        assert raised.value.status_code == 409
-        assert cast(dict[str, object], raised.value.detail) == {
-            "code": "generation_persistence_conflict"
-        }
-        assert session.rolled_back
+            async def fail(active_error: Exception = error) -> None:
+                raise active_error
+
+            with pytest.raises(HTTPException) as raised:
+                await _execute_generation_operation(cast(AsyncSession, session), fail)
+            assert raised.value.status_code == 409
+            assert cast(dict[str, object], raised.value.detail) == {
+                "code": "generation_persistence_conflict"
+            }
+            assert session.rolled_back
 
         async def succeed() -> str:
             return "ok"

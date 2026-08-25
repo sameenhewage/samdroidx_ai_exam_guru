@@ -35,13 +35,15 @@ from exam_guru_api.generation.run_service import (
     GenerationCurriculumNotFoundError,
     GenerationIdempotencyConflictError,
     GenerationQueueUnavailableError,
+    GenerationRetryLimitExceededError,
     GenerationRetryStateError,
     GenerationRunService,
     GenerationSlotNotFoundError,
     _context_snapshot,
+    _same_generation_retry_request,
     _slot_snapshot,
 )
-from exam_guru_api.generation.runtime import create_generation_runtime
+from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
 from exam_guru_api.knowledge.domain import ReviewState
 from tests.test_blueprint_domain import (
     COMPETENCY_A,
@@ -337,6 +339,123 @@ def test_service_resolves_snapshots_audits_dispatches_and_deduplicates() -> None
     asyncio.run(exercise())
 
 
+def test_retry_chain_allows_three_failed_retries_then_rejects_the_fourth() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, dispatcher = build_service(repository)
+
+        current = (await create(service, key="bounded-root")).run
+        assert current.retry_depth == 0
+        for expected_depth in range(1, 4):
+            current.status = "failed"
+            current = (
+                await service.retry(
+                    CURRICULUM_VERSION_ID,
+                    current.id,
+                    idempotency_key=f"bounded-retry-{expected_depth}",
+                    actor_id=ACTOR_ID,
+                )
+            ).run
+            assert current.retry_depth == expected_depth
+
+        current.status = "failed"
+        with pytest.raises(GenerationRetryLimitExceededError):
+            await service.retry(
+                CURRICULUM_VERSION_ID,
+                current.id,
+                idempotency_key="bounded-retry-4",
+                actor_id=ACTOR_ID,
+            )
+
+        assert len(repository.by_hash) == 4
+        assert len(dispatcher.dispatched) == 4
+
+    asyncio.run(exercise())
+
+
+def test_retry_rejects_active_generation_config_drift_before_creating_a_child() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, dispatcher = build_service(repository)
+        original = (await create(service, key="config-drift-root")).run
+        original.status = "failed"
+
+        active = service._runtime.active_config
+        service._runtime = GenerationRuntimeRegistry(
+            replace(active, model_version="changed-model-version")
+        )
+        with pytest.raises(GenerationRetryStateError):
+            await service.retry(
+                CURRICULUM_VERSION_ID,
+                original.id,
+                idempotency_key="config-drift-retry",
+                actor_id=ACTOR_ID,
+            )
+
+        assert len(repository.by_hash) == 1
+        assert len(dispatcher.dispatched) == 1
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "curriculum_version_id",
+        "paper_blueprint_id",
+        "slot_id",
+        "request_fingerprint",
+        "blueprint_version",
+        "blueprint_snapshot",
+        "blueprint_slot_snapshot",
+        "knowledge_chunk_ids",
+        "historical_question_ids",
+        "context_snapshot",
+        "prompt_id",
+        "prompt_version",
+        "provider",
+        "provider_version",
+        "model",
+        "model_version",
+        "retrieval_version",
+        "schema_version",
+        "pricing_version",
+        "input_microusd_per_million_tokens",
+        "output_microusd_per_million_tokens",
+        "generation_parameters",
+        "max_attempts",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_cost_microusd",
+    ],
+)
+def test_retry_request_comparison_rejects_every_mutable_snapshot_difference(
+    field_name: str,
+) -> None:
+    from tests.test_generation_repository import run_model, run_write
+
+    predecessor = run_model()
+    candidate = run_write()
+    assert _same_generation_retry_request(predecessor, candidate)
+
+    value = getattr(predecessor, field_name)
+    if isinstance(value, UUID):
+        replacement: object = UUID(int=value.int + 1)
+    elif isinstance(value, str):
+        replacement = f"{value}-changed"
+    elif isinstance(value, int):
+        replacement = value + 1
+    elif isinstance(value, list):
+        replacement = [*value, str(UUID(int=999_999))]
+    elif isinstance(value, dict):
+        replacement = {**value, "changed": True}
+    else:
+        raise AssertionError(f"unexpected retry snapshot type: {type(value)}")
+    setattr(predecessor, field_name, replacement)
+
+    assert not _same_generation_retry_request(predecessor, candidate)
+
+
 def test_service_rejects_request_scope_blueprint_and_idempotency_violations() -> None:
     async def exercise() -> None:
         repository = FakeGenerationRepository()
@@ -385,6 +504,31 @@ def test_service_rejects_request_scope_blueprint_and_idempotency_violations() ->
                 pending.run.id,
                 idempotency_key="invalid-retry",
                 actor_id=ACTOR_ID,
+            )
+        with pytest.raises(GenerationRetryStateError):
+            await service.create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=BLUEPRINT_DB_ID,
+                slot_id=PAPER.slots[0].slot_id,
+                knowledge_chunk_ids=(CHUNK_ID,),
+                historical_question_ids=(QUESTION_ID,),
+                idempotency_key="invalid-direct-retry",
+                actor_id=ACTOR_ID,
+                retry_of_run_id=pending.run.id,
+            )
+
+        pending.run.status = "failed"
+        pending.run.retry_depth = 3
+        with pytest.raises(GenerationRetryLimitExceededError):
+            await service.create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=BLUEPRINT_DB_ID,
+                slot_id=PAPER.slots[0].slot_id,
+                knowledge_chunk_ids=(CHUNK_ID,),
+                historical_question_ids=(QUESTION_ID,),
+                idempotency_key="invalid-direct-retry-depth",
+                actor_id=ACTOR_ID,
+                retry_of_run_id=pending.run.id,
             )
 
         await create(service, key="collision")

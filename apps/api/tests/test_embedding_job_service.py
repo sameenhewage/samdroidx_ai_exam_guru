@@ -23,10 +23,13 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingQueueUnavailableError,
     EmbeddingRecoveryPolicy,
     EmbeddingRecoveryService,
+    EmbeddingRetryLimitExceededError,
     EmbeddingSourceIdentityError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
     EmbeddingWorkerService,
+    _config_snapshot,
+    _fingerprint,
     _source_fingerprint,
 )
 from exam_guru_api.knowledge.embedding_jobs import DeterministicEmbeddingDispatcher
@@ -118,6 +121,7 @@ def _job(
     embedded_count: int = 0,
     deduplicated_count: int = 0,
     queue_message_id: str | None = None,
+    retry_depth: int = 0,
 ) -> EmbeddingJobModel:
     active_records = (_record(),) if records is None else records
     question_ids = [str(item.id) for item in active_records if item.kind == "historical_question"]
@@ -126,6 +130,7 @@ def _job(
         id=JOB_ID,
         curriculum_version_id=CURRICULUM_ID,
         retry_of_job_id=None,
+        retry_depth=retry_depth,
         historical_question_ids=question_ids,
         knowledge_chunk_ids=chunk_ids,
         idempotency_key_hash="sha256:" + "1" * 64,
@@ -201,6 +206,9 @@ def test_creation_canonicalizes_snapshots_prevalidates_sources_audits_and_dispat
                 assert chunk_ids == (CHUNK_ID,)
                 return (question, chunk)
 
+            async def get_idempotent_job(self, **kwargs: object) -> None:
+                return None
+
             async def latest_failed_retry(self, **kwargs: object) -> EmbeddingJobModel:
                 return retry
 
@@ -248,6 +256,7 @@ def test_creation_canonicalizes_snapshots_prevalidates_sources_audits_and_dispat
         assert result.deduplicated is False
         assert result.job.queue_message_id == "message-id"
         assert seen_values["retry_of_job_id"] == retry.id
+        assert seen_values["retry_depth"] == 1
         assert seen_values["historical_question_ids"] == [str(QUESTION_ID)]
         assert seen_values["knowledge_chunk_ids"] == [str(CHUNK_ID)]
         assert checks == [("question", QUESTION_ID), ("chunk", CHUNK_ID)]
@@ -256,6 +265,139 @@ def test_creation_canonicalizes_snapshots_prevalidates_sources_audits_and_dispat
         assert [getattr(item, "action", None) for item in session.added] == [
             "embedding_job.created"
         ]
+
+    asyncio.run(exercise())
+
+
+def test_embedding_retry_cap_is_checked_after_validation_but_idempotent_replay_wins_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.knowledge import embedding_job_service as service_module
+
+    async def exercise() -> None:
+        session = FakeSession()
+        source = _record()
+        source_fingerprint = _source_fingerprint((source,))
+        request_fingerprint = _fingerprint(
+            {
+                "configuration": _config_snapshot(CONFIG),
+                "curriculum_version_id": str(CURRICULUM_ID),
+                "historical_question_ids": [str(QUESTION_ID)],
+                "knowledge_chunk_ids": [],
+                "source_fingerprint": source_fingerprint,
+            }
+        )
+        terminal = _job(status=EmbeddingJobStatus.FAILED.value, retry_depth=3)
+        terminal.idempotency_key_hash = _fingerprint("terminal-replay")
+        terminal.request_fingerprint = request_fingerprint
+        terminal.source_fingerprint = source_fingerprint
+        calls: list[str] = []
+
+        class FakePersistence:
+            def __init__(self, actual_session: object) -> None:
+                assert actual_session is session
+
+            async def question_embedding_exists(self, *args: object) -> bool:
+                calls.append("validated")
+                return False
+
+        class Repository:
+            replay = True
+
+            async def curriculum_exists(self, _value: UUID) -> bool:
+                return True
+
+            async def load_sources(self, *args: object) -> tuple[EmbeddingSourceRecord, ...]:
+                return (source,)
+
+            async def get_idempotent_job(
+                self, *, actor_id: UUID, idempotency_key_hash: str
+            ) -> EmbeddingJobModel | None:
+                calls.append("idempotency")
+                assert actor_id == ACTOR_ID
+                return (
+                    terminal
+                    if self.replay and idempotency_key_hash == terminal.idempotency_key_hash
+                    else None
+                )
+
+            async def latest_failed_retry(self, **kwargs: object) -> EmbeddingJobModel:
+                calls.append("predecessor")
+                return terminal
+
+            async def attach_queue_message(
+                self, job_id: UUID, message_id: str
+            ) -> EmbeddingJobModel:
+                assert job_id == terminal.id
+                terminal.queue_message_id = message_id
+                return terminal
+
+            async def store_job(self, values: dict[str, object]) -> StoredEmbeddingJob:
+                raise AssertionError(f"retry cap must reject before insert: {values}")
+
+        monkeypatch.setattr(service_module, "KnowledgePersistenceService", FakePersistence)
+        repository = Repository()
+        dispatcher = DeterministicEmbeddingDispatcher()
+        service = EmbeddingJobService(
+            cast(object, session),  # type: ignore[arg-type]
+            _providers(),
+            dispatcher,
+            CONFIG,
+        )
+        service._repository = cast(object, repository)  # type: ignore[assignment]
+
+        terminal.request_fingerprint = "sha256:" + "f" * 64
+        with pytest.raises(EmbeddingIdempotencyConflictError):
+            await service.create(
+                CURRICULUM_ID,
+                historical_question_ids=(QUESTION_ID,),
+                knowledge_chunk_ids=(),
+                idempotency_key="terminal-replay",
+                actor_id=ACTOR_ID,
+            )
+        assert calls == ["validated", "idempotency"]
+        terminal.request_fingerprint = request_fingerprint
+        calls.clear()
+        terminal.status = EmbeddingJobStatus.QUEUED.value
+        terminal.queue_message_id = None
+        queued_replay = await service.create(
+            CURRICULUM_ID,
+            historical_question_ids=(QUESTION_ID,),
+            knowledge_chunk_ids=(),
+            idempotency_key="terminal-replay",
+            actor_id=ACTOR_ID,
+        )
+        assert queued_replay.deduplicated is True
+        assert terminal.queue_message_id == "deterministic-embedding-message-id"
+        assert dispatcher.dispatched == [terminal.id]
+
+        terminal.status = EmbeddingJobStatus.FAILED.value
+        calls.clear()
+        dispatcher.dispatched.clear()
+        replay = await service.create(
+            CURRICULUM_ID,
+            historical_question_ids=(QUESTION_ID,),
+            knowledge_chunk_ids=(),
+            idempotency_key="terminal-replay",
+            actor_id=ACTOR_ID,
+        )
+        assert replay.job is terminal
+        assert replay.deduplicated is True
+        assert calls == ["validated", "idempotency"]
+        assert dispatcher.dispatched == []
+
+        calls.clear()
+        repository.replay = False
+        with pytest.raises(EmbeddingRetryLimitExceededError):
+            await service.create(
+                CURRICULUM_ID,
+                historical_question_ids=(QUESTION_ID,),
+                knowledge_chunk_ids=(),
+                idempotency_key="fourth-explicit-retry",
+                actor_id=ACTOR_ID,
+            )
+        assert calls == ["validated", "idempotency", "predecessor"]
+        assert dispatcher.dispatched == []
 
     asyncio.run(exercise())
 
@@ -285,6 +427,9 @@ def test_creation_rejects_missing_curriculum_changed_idempotent_request_and_bad_
 
             async def load_sources(self, *args: object) -> tuple[EmbeddingSourceRecord, ...]:
                 return (source,)
+
+            async def get_idempotent_job(self, **kwargs: object) -> None:
+                return None
 
             async def latest_failed_retry(self, **kwargs: object) -> None:
                 return None

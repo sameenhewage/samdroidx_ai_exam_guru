@@ -23,6 +23,10 @@ class EmbeddingJobNotFoundError(LookupError):
         super().__init__(f"embedding job not found: {job_id}")
 
 
+class EmbeddingPersistenceConflictError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingSourceRecord:
     kind: Literal["historical_question", "knowledge_chunk"]
@@ -117,8 +121,24 @@ class SqlAlchemyEmbeddingJobRepository:
             )
         )
         if existing is None:
-            raise RuntimeError("idempotent embedding job winner was not found")
+            raise EmbeddingPersistenceConflictError(
+                "embedding insert conflicted outside actor idempotency"
+            )
         return StoredEmbeddingJob(job=existing, created=False)
+
+    async def get_idempotent_job(
+        self,
+        *,
+        actor_id: UUID,
+        idempotency_key_hash: str,
+    ) -> EmbeddingJobModel | None:
+        model = await self._session.scalar(
+            select(EmbeddingJobModel).where(
+                EmbeddingJobModel.created_by == actor_id,
+                EmbeddingJobModel.idempotency_key_hash == idempotency_key_hash,
+            )
+        )
+        return model if isinstance(model, EmbeddingJobModel) else None
 
     async def latest_failed_retry(
         self,

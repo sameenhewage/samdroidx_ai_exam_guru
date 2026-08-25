@@ -636,11 +636,12 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         return columns, constraints, triggers, cast(str | None, revision)
 
     columns, constraints, triggers, revision = asyncio.run(inspect())
-    assert revision == "0021_storage_reconciliation"
+    assert revision == "0022_provider_job_retry_depth"
     assert columns == {
         "id",
         "curriculum_version_id",
         "retry_of_job_id",
+        "retry_depth",
         "historical_question_ids",
         "knowledge_chunk_ids",
         "idempotency_key_hash",
@@ -670,12 +671,15 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         "ck_embedding_jobs_record_ids",
         "ck_embedding_jobs_fingerprints",
         "ck_embedding_jobs_counts",
+        "ck_embedding_jobs_retry_depth",
         "ck_embedding_jobs_state_data",
     } <= constraints
     assert triggers == {
         "enforce_embedding_job_insert_trigger",
+        "enforce_embedding_job_retry_lineage_insert_trigger",
         "enforce_embedding_job_update_trigger",
         "reject_embedding_job_delete_trigger",
+        "reject_embedding_job_retry_depth_update_trigger",
     }
 
 
@@ -732,6 +736,19 @@ def _chunk_payload(chunk_id: UUID) -> dict[str, list[str]]:
         "historical_question_ids": [],
         "knowledge_chunk_ids": [str(chunk_id)],
     }
+
+
+def _fail_embedding_job_for_retry(seed: Seed, job_id: UUID) -> bool:
+    async def process() -> bool:
+        engine = create_async_engine(seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                return await EmbeddingWorkerService(session, _registry(), None).process(job_id)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(process())
 
 
 def _run_embedding_worker(seed: Seed, job_id: UUID, provider: object) -> bool:
@@ -895,6 +912,108 @@ def test_api_authorization_scope_idempotency_listing_and_sanitized_contract(
         assert embedding_seed.texts[QUESTION_BASIC_ID].lower() not in rendered
 
     asyncio.run(audit())
+
+
+@pytest.mark.integration
+def test_embedding_automatic_retry_chain_is_bounded_and_replay_deduplicates_first(
+    embedding_seed: Seed,
+) -> None:
+    dispatcher = DeterministicEmbeddingDispatcher("embedding-depth-message")
+    request = {
+        "historical_question_ids": [str(QUESTION_BASIC_ID)],
+        "knowledge_chunk_ids": [str(CHUNK_RECOVERY_A_ID), str(CHUNK_RECOVERY_B_ID)],
+    }
+    chain: list[str] = []
+    keys = ["embedding-depth-root", *(f"embedding-depth-retry-{value}" for value in range(1, 4))]
+
+    for expected_depth, key in enumerate(keys):
+        with _client(embedding_seed, dispatcher) as client:
+            created = client.post(
+                BASE_PATH,
+                json=request,
+                headers={**ADMIN_HEADERS, "Idempotency-Key": key},
+            )
+        assert created.status_code == 202, created.text
+        body = created.json()
+        assert body["retry_depth"] == expected_depth
+        assert body["retry_of_job_id"] == (None if expected_depth == 0 else chain[-1])
+        chain.append(body["id"])
+        assert _fail_embedding_job_for_retry(embedding_seed, UUID(body["id"]))
+
+    with _client(embedding_seed, dispatcher) as client:
+        replay = client.post(
+            BASE_PATH,
+            json=request,
+            headers={**ADMIN_HEADERS, "Idempotency-Key": keys[-1]},
+        )
+        fourth = client.post(
+            BASE_PATH,
+            json=request,
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "embedding-depth-retry-4"},
+        )
+
+    assert replay.status_code == 202
+    assert replay.json()["id"] == chain[-1]
+    assert replay.json()["deduplicated"] is True
+    assert replay.json()["retry_depth"] == 3
+    assert fourth.status_code == 409
+    assert fourth.json()["detail"]["code"] == "embedding_retry_limit_exceeded"
+    assert len(dispatcher.dispatched) == 4
+
+
+@pytest.mark.integration
+def test_concurrent_embedding_retry_fork_dispatches_exactly_one_child(
+    embedding_seed: Seed,
+) -> None:
+    dispatcher = DeterministicEmbeddingDispatcher("embedding-fork-message")
+    request = {
+        "historical_question_ids": [str(QUESTION_PARTIAL_ID)],
+        "knowledge_chunk_ids": [str(CHUNK_LEASE_BOUNDARY_ID), str(CHUNK_LEASE_FRESH_ID)],
+    }
+    with _client(embedding_seed, dispatcher) as client:
+        root = client.post(
+            BASE_PATH,
+            json=request,
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "embedding-fork-root"},
+        )
+    root_id = UUID(root.json()["id"])
+    assert _fail_embedding_job_for_retry(embedding_seed, root_id)
+    dispatcher.dispatched.clear()
+    barrier = threading.Barrier(2)
+
+    with _client(embedding_seed, dispatcher) as client:
+
+        def retry_once(index: int) -> tuple[int, dict[str, object]]:
+            barrier.wait()
+            response = client.post(
+                BASE_PATH,
+                json=request,
+                headers={**ADMIN_HEADERS, "Idempotency-Key": f"embedding-fork-child-{index}"},
+            )
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = tuple(executor.map(retry_once, range(2)))
+
+    assert sorted(status_code for status_code, _ in results) == [202, 409]
+    assert len(dispatcher.dispatched) == 1
+
+    async def child_count() -> int:
+        engine = create_async_engine(embedding_seed.database_url)
+        try:
+            async with engine.connect() as connection:
+                return int(
+                    await connection.scalar(
+                        select(func.count())
+                        .select_from(EmbeddingJobModel)
+                        .where(EmbeddingJobModel.retry_of_job_id == root_id)
+                    )
+                    or 0
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(child_count()) == 1
 
 
 @pytest.mark.integration
@@ -1598,6 +1717,18 @@ def test_database_rejects_job_mutation_delete_invalid_transition_and_unsorted_ar
             headers={**ADMIN_HEADERS, "Idempotency-Key": "embedding-db-invariants"},
         )
     job_id = UUID(created.json()["id"])
+    lineage_payload = {
+        "historical_question_ids": [str(QUESTION_PARTIAL_ID)],
+        "knowledge_chunk_ids": [str(CHUNK_CONCURRENT_ID), str(CHUNK_STALE_PARTIAL_A_ID)],
+    }
+    with _client(embedding_seed, dispatcher) as client:
+        failed_root = client.post(
+            BASE_PATH,
+            json=lineage_payload,
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "embedding-db-lineage-root"},
+        )
+    failed_root_id = UUID(failed_root.json()["id"])
+    assert _fail_embedding_job_for_retry(embedding_seed, failed_root_id)
 
     async def assert_invariants() -> None:
         engine = create_async_engine(embedding_seed.database_url)
@@ -1622,6 +1753,7 @@ def test_database_rejects_job_mutation_delete_invalid_transition_and_unsorted_ar
                 id=UUID(int=1_829_100),
                 curriculum_version_id=CURRICULUM_ID,
                 retry_of_job_id=None,
+                retry_depth=0,
                 historical_question_ids=[],
                 knowledge_chunk_ids=[str(CHUNK_RETRIEVAL_ID), str(CHUNK_BASIC_ID)],
                 idempotency_key_hash="sha256:" + "a" * 64,
@@ -1647,6 +1779,139 @@ def test_database_rejects_job_mutation_delete_invalid_transition_and_unsorted_ar
             with pytest.raises(IntegrityError):
                 await session.commit()
             await session.rollback()
+
+        def clone(
+            source: EmbeddingJobModel,
+            *,
+            identifier: UUID,
+            retry_of_job_id: UUID | None,
+            retry_depth: int,
+            **overrides: object,
+        ) -> EmbeddingJobModel:
+            values: dict[str, object] = {
+                "id": identifier,
+                "curriculum_version_id": source.curriculum_version_id,
+                "retry_of_job_id": retry_of_job_id,
+                "retry_depth": retry_depth,
+                "historical_question_ids": list(source.historical_question_ids),
+                "knowledge_chunk_ids": list(source.knowledge_chunk_ids),
+                "idempotency_key_hash": f"sha256:{identifier.int:064x}",
+                "request_fingerprint": source.request_fingerprint,
+                "source_fingerprint": source.source_fingerprint,
+                "provider": source.provider,
+                "model": source.model,
+                "dimension": source.dimension,
+                "embedding_version": source.embedding_version,
+                "config_fingerprint": source.config_fingerprint,
+                "status": "queued",
+                "version": 0,
+                "queue_message_id": None,
+                "requested_count": source.requested_count,
+                "embedded_count": 0,
+                "deduplicated_count": 0,
+                "failure_code": None,
+                "created_by": source.created_by,
+                "claimed_at": None,
+                "completed_at": None,
+            }
+            values.update(overrides)
+            return EmbeddingJobModel(**values)
+
+        invalid_cases: tuple[tuple[UUID, UUID | None, int, dict[str, object]], ...] = (
+            (failed_root_id, None, 1, {}),
+            (failed_root_id, failed_root_id, 0, {}),
+            (job_id, job_id, 1, {}),
+            (
+                failed_root_id,
+                failed_root_id,
+                1,
+                {"request_fingerprint": "sha256:" + "f" * 64},
+            ),
+            (
+                failed_root_id,
+                failed_root_id,
+                1,
+                {"curriculum_version_id": OTHER_CURRICULUM_ID},
+            ),
+            (
+                failed_root_id,
+                failed_root_id,
+                1,
+                {"config_fingerprint": "changed-config-v2"},
+            ),
+            (
+                failed_root_id,
+                failed_root_id,
+                1,
+                {"created_by": REVIEWER_ID},
+            ),
+        )
+        for offset, (template_id, predecessor_id, depth, overrides) in enumerate(
+            invalid_cases, start=1
+        ):
+            async with sessions() as session:
+                source = cast(EmbeddingJobModel, await session.get(EmbeddingJobModel, template_id))
+                session.add(
+                    clone(
+                        source,
+                        identifier=UUID(int=1_829_200 + offset),
+                        retry_of_job_id=predecessor_id,
+                        retry_depth=depth,
+                        **overrides,
+                    )
+                )
+                with pytest.raises(IntegrityError):
+                    await session.flush()
+                await session.rollback()
+
+        child_id = UUID(int=1_829_300)
+        async with sessions() as session:
+            source = cast(EmbeddingJobModel, await session.get(EmbeddingJobModel, failed_root_id))
+            session.add(
+                clone(
+                    source,
+                    identifier=child_id,
+                    retry_of_job_id=failed_root_id,
+                    retry_depth=1,
+                )
+            )
+            await session.commit()
+
+        async with sessions() as session:
+            source = cast(EmbeddingJobModel, await session.get(EmbeddingJobModel, failed_root_id))
+            session.add(
+                clone(
+                    source,
+                    identifier=UUID(int=1_829_301),
+                    retry_of_job_id=failed_root_id,
+                    retry_depth=1,
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await session.flush()
+            await session.rollback()
+
+        for statement in (
+            update(EmbeddingJobModel)
+            .where(EmbeddingJobModel.id == child_id)
+            .values(
+                retry_depth=2,
+                version=EmbeddingJobModel.version + 1,
+                updated_at=func.clock_timestamp(),
+            ),
+            update(EmbeddingJobModel)
+            .where(EmbeddingJobModel.id == failed_root_id)
+            .values(
+                retry_of_job_id=child_id,
+                retry_depth=2,
+                version=EmbeddingJobModel.version + 1,
+                updated_at=func.clock_timestamp(),
+            ),
+        ):
+            async with sessions() as session:
+                with pytest.raises((DBAPIError, IntegrityError)):
+                    await session.execute(statement)
+                await session.rollback()
         await engine.dispose()
 
     asyncio.run(assert_invariants())

@@ -11,7 +11,10 @@ from exam_guru_api.api.routes.embedding_jobs import _execute_embedding_operation
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.core.config import Settings
 from exam_guru_api.knowledge.domain import ReviewState
-from exam_guru_api.knowledge.embedding_job_repository import EmbeddingJobNotFoundError
+from exam_guru_api.knowledge.embedding_job_repository import (
+    EmbeddingJobNotFoundError,
+    EmbeddingPersistenceConflictError,
+)
 from exam_guru_api.knowledge.embedding_job_schemas import (
     EmbeddingJobCreateRequest,
     EmbeddingJobResponse,
@@ -21,6 +24,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingIdempotencyConflictError,
     EmbeddingJobCreationResult,
     EmbeddingQueueUnavailableError,
+    EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
 )
@@ -71,6 +75,11 @@ class RollbackSession:
         ),
         (EmbeddingIdempotencyConflictError(), 409, "embedding_idempotency_conflict"),
         (
+            EmbeddingRetryLimitExceededError(RESOURCE_ID),
+            409,
+            "embedding_retry_limit_exceeded",
+        ),
+        (
             EmbeddingSourceConflictError(RESOURCE_ID, RESOURCE_ID),
             409,
             "embedding_source_conflict",
@@ -106,16 +115,22 @@ def test_embedding_job_integrity_rolls_back_and_success_passes_through() -> None
     async def exercise() -> None:
         session = RollbackSession()
 
-        async def fail() -> None:
-            raise IntegrityError("INSERT", {}, RuntimeError("constraint secret"))
+        for error in (
+            IntegrityError("INSERT", {}, RuntimeError("constraint secret")),
+            EmbeddingPersistenceConflictError("fork"),
+        ):
+            session.rolled_back = False
 
-        with pytest.raises(HTTPException) as raised:
-            await _execute_embedding_operation(cast(AsyncSession, session), fail)
-        assert raised.value.status_code == 409
-        assert cast(dict[str, object], raised.value.detail) == {
-            "code": "embedding_persistence_conflict"
-        }
-        assert session.rolled_back
+            async def fail(active_error: Exception = error) -> None:
+                raise active_error
+
+            with pytest.raises(HTTPException) as raised:
+                await _execute_embedding_operation(cast(AsyncSession, session), fail)
+            assert raised.value.status_code == 409
+            assert cast(dict[str, object], raised.value.detail) == {
+                "code": "embedding_persistence_conflict"
+            }
+            assert session.rolled_back
 
         async def succeed() -> str:
             return "ok"

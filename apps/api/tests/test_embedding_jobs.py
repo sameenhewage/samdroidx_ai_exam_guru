@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from exam_guru_api.core.config import Settings
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.knowledge import embedding_jobs as jobs
 from exam_guru_api.knowledge.embedding_job_schemas import (
     EmbeddingConfigurationResponse,
@@ -100,6 +101,7 @@ def test_job_response_contains_metadata_and_counts_but_never_text_or_vectors() -
         id=JOB_ID,
         curriculum_version_id=CURRICULUM_ID,
         retry_of_job_id=None,
+        retry_depth=0,
         historical_question_ids=[str(QUESTION_ID)],
         knowledge_chunk_ids=[str(CHUNK_ID)],
         idempotency_key_hash="sha256:" + "1" * 64,
@@ -135,6 +137,7 @@ def test_job_response_contains_metadata_and_counts_but_never_text_or_vectors() -
         config_fingerprint="sha256:" + "4" * 64,
     )
     assert body["counts"] == {"requested": 2, "embedded": 1, "deduplicated": 1}
+    assert body["retry_depth"] == 0
     assert "source_fingerprint" not in body
     assert "request_fingerprint" not in body
     assert "idempotency_key_hash" not in body
@@ -157,6 +160,14 @@ def test_openapi_create_contract_has_only_server_selected_record_ids() -> None:
         "knowledge_chunk_ids",
     }
     assert request_schema["additionalProperties"] is False
+    response_schema = schema["components"]["schemas"]["EmbeddingJobResponse"]
+    assert response_schema["properties"]["retry_depth"] == {
+        "type": "integer",
+        "maximum": 3.0,
+        "minimum": 0.0,
+        "title": "Retry Depth",
+    }
+    assert "retry_depth" in response_schema["required"]
     for forbidden in ("config", "provider", "model", "dimension", "vector", "text", "state"):
         assert forbidden not in request_schema["properties"]
     idempotency = next(
@@ -187,6 +198,7 @@ def test_embedding_dispatchers_enqueue_only_the_durable_job_id() -> None:
 
 
 def test_embedding_actors_are_dedicated_bounded_and_registered() -> None:
+    assert MAX_PROVIDER_JOB_RETRY_DEPTH == 3
     assert jobs.ingest_embeddings.queue_name == EMBEDDING_QUEUE_NAME
     assert jobs.ingest_embeddings.queue_name != "default"
     assert jobs.ingest_embeddings.options == {

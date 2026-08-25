@@ -15,10 +15,12 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.infrastructure.database import Base
 
 MAX_GENERATION_CONTEXT_REFERENCES = 16
@@ -90,6 +92,10 @@ class GenerationRunModel(Base):
         CheckConstraint(
             f"idempotency_key_hash ~ '{_FINGERPRINT_SQL}'",
             name="ck_generation_runs_idempotency_key_hash",
+        ),
+        CheckConstraint(
+            f"retry_depth BETWEEN 0 AND {MAX_PROVIDER_JOB_RETRY_DEPTH}",
+            name="ck_generation_runs_retry_depth",
         ),
         CheckConstraint(
             "slot_id = btrim(slot_id) AND length(slot_id) BETWEEN 1 AND 128",
@@ -206,7 +212,12 @@ class GenerationRunModel(Base):
             "id",
         ),
         Index("ix_generation_runs_status_created", "status", "created_at", "id"),
-        Index("ix_generation_runs_retry_of", "retry_of_run_id"),
+        Index(
+            "uq_generation_runs_retry_of",
+            "retry_of_run_id",
+            unique=True,
+            postgresql_where=text("retry_of_run_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -218,6 +229,12 @@ class GenerationRunModel(Base):
     retry_of_run_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("generation_runs.id", ondelete="RESTRICT"),
         nullable=True,
+    )
+    retry_depth: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
     )
     slot_id: Mapped[str] = mapped_column(String(128), nullable=False)
     idempotency_key_hash: Mapped[str] = mapped_column(String(71), nullable=False)

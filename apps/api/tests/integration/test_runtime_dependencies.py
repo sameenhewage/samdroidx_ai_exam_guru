@@ -143,7 +143,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0021_storage_reconciliation"
+    assert migration_revision == "0022_provider_job_retry_depth"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -908,7 +908,7 @@ def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
     }
     assert indexes == {"ix_source_documents_extraction_outbox"}
     assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
-    assert revision == "0021_storage_reconciliation"
+    assert revision == "0022_provider_job_retry_depth"
 
     command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
 
@@ -982,6 +982,7 @@ def test_generation_migration_has_durable_state_and_append_only_attempt_triggers
     run_columns, attempt_columns, job_columns, triggers = asyncio.run(inspect())
     assert {
         "request_fingerprint",
+        "retry_depth",
         "blueprint_snapshot",
         "blueprint_slot_snapshot",
         "context_snapshot",
@@ -1018,8 +1019,10 @@ def test_generation_migration_has_durable_state_and_append_only_attempt_triggers
     assert {"generation_run_id", "queue_message_id", "status", "version"} <= job_columns
     assert triggers == {
         "enforce_generation_run_insert_trigger",
+        "enforce_generation_run_retry_lineage_insert_trigger",
         "enforce_generation_run_update_trigger",
         "reject_generation_run_delete_trigger",
+        "reject_generation_run_retry_depth_update_trigger",
         "enforce_generation_attempt_insert_trigger",
         "reject_generation_attempt_mutation_trigger",
         "enforce_generation_job_insert_trigger",

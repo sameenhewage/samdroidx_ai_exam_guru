@@ -16,6 +16,7 @@ from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.domain import BlueprintSlot, TaxonomyTarget
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.core.config import MIN_GENERATION_WORKER_LEASE_SECONDS
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.generation.domain import (
     CandidateDisposition,
@@ -120,6 +121,10 @@ class GenerationRetryStateError(RuntimeError):
     pass
 
 
+class GenerationRetryLimitExceededError(RuntimeError):
+    pass
+
+
 class GenerationQueueUnavailableError(RuntimeError):
     pass
 
@@ -213,6 +218,17 @@ class GenerationRunService:
         if not (scope.curriculum_active and scope.exam_active and scope.medium_active):
             raise GenerationCurriculumInactiveError(curriculum_version_id)
 
+        predecessor: GenerationRunModel | None = None
+        if retry_of_run_id is not None:
+            predecessor = await self._repository.get_run(
+                curriculum_version_id,
+                retry_of_run_id,
+            )
+            if predecessor.status != GenerationRunStatus.FAILED.value:
+                raise GenerationRetryStateError(retry_of_run_id)
+            if predecessor.retry_depth >= MAX_PROVIDER_JOB_RETRY_DEPTH:
+                raise GenerationRetryLimitExceededError(retry_of_run_id)
+
         blueprint_model = await self._repository.get_blueprint(
             curriculum_version_id,
             paper_blueprint_id,
@@ -300,6 +316,7 @@ class GenerationRunService:
             curriculum_version_id=curriculum_version_id,
             paper_blueprint_id=paper_blueprint_id,
             retry_of_run_id=retry_of_run_id,
+            retry_depth=0 if predecessor is None else predecessor.retry_depth + 1,
             slot_id=slot_id,
             idempotency_key_hash=idempotency_key_hash,
             request_fingerprint=request_fingerprint,
@@ -327,6 +344,8 @@ class GenerationRunService:
             max_cost_microusd=config.budgets.max_total_cost_microusd,
             created_by=actor_id,
         )
+        if predecessor is not None and not _same_generation_retry_request(predecessor, write):
+            raise GenerationRetryStateError(predecessor.id)
         stored = await self._repository.store_run(write, job_id=job_id)
         if not stored.created and (
             stored.run.id != run_id
@@ -335,6 +354,7 @@ class GenerationRunService:
             or stored.run.slot_id != slot_id
             or stored.run.request_fingerprint != request_fingerprint
             or stored.run.retry_of_run_id != retry_of_run_id
+            or stored.run.retry_depth != write.retry_depth
         ):
             raise GenerationIdempotencyConflictError(idempotency_key_hash)
 
@@ -362,6 +382,8 @@ class GenerationRunService:
         original = await self._repository.get_run(curriculum_version_id, run_id)
         if original.status != GenerationRunStatus.FAILED.value:
             raise GenerationRetryStateError(run_id)
+        if original.retry_depth >= MAX_PROVIDER_JOB_RETRY_DEPTH:
+            raise GenerationRetryLimitExceededError(run_id)
         return await self.create(
             curriculum_version_id,
             paper_blueprint_id=original.paper_blueprint_id,
@@ -485,6 +507,7 @@ class GenerationRunService:
                     "retry_of_run_id": (
                         str(run.retry_of_run_id) if run.retry_of_run_id is not None else None
                     ),
+                    "retry_depth": run.retry_depth,
                     "slot_id": run.slot_id,
                     "request_fingerprint": run.request_fingerprint,
                     "context_count": len(run.context_snapshot["items"]),  # type: ignore[arg-type]
@@ -520,6 +543,42 @@ class GenerationRunService:
                 },
             )
         )
+
+
+def _same_generation_retry_request(
+    predecessor: GenerationRunModel,
+    candidate: GenerationRunWrite,
+) -> bool:
+    return (
+        predecessor.curriculum_version_id == candidate.curriculum_version_id
+        and predecessor.paper_blueprint_id == candidate.paper_blueprint_id
+        and predecessor.slot_id == candidate.slot_id
+        and predecessor.request_fingerprint == candidate.request_fingerprint
+        and predecessor.blueprint_version == candidate.blueprint_version
+        and predecessor.blueprint_snapshot == candidate.blueprint_snapshot
+        and predecessor.blueprint_slot_snapshot == candidate.blueprint_slot_snapshot
+        and predecessor.knowledge_chunk_ids == candidate.knowledge_chunk_ids
+        and predecessor.historical_question_ids == candidate.historical_question_ids
+        and predecessor.context_snapshot == candidate.context_snapshot
+        and predecessor.prompt_id == candidate.prompt_id
+        and predecessor.prompt_version == candidate.prompt_version
+        and predecessor.provider == candidate.provider
+        and predecessor.provider_version == candidate.provider_version
+        and predecessor.model == candidate.model
+        and predecessor.model_version == candidate.model_version
+        and predecessor.retrieval_version == candidate.retrieval_version
+        and predecessor.schema_version == candidate.schema_version
+        and predecessor.pricing_version == candidate.pricing_version
+        and predecessor.input_microusd_per_million_tokens
+        == candidate.input_microusd_per_million_tokens
+        and predecessor.output_microusd_per_million_tokens
+        == candidate.output_microusd_per_million_tokens
+        and predecessor.generation_parameters == candidate.generation_parameters
+        and predecessor.max_attempts == candidate.max_attempts
+        and predecessor.max_input_tokens == candidate.max_input_tokens
+        and predecessor.max_output_tokens == candidate.max_output_tokens
+        and predecessor.max_cost_microusd == candidate.max_cost_microusd
+    )
 
 
 class GenerationRecoveryService:

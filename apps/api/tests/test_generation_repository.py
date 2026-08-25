@@ -19,6 +19,7 @@ from exam_guru_api.generation.repository import (
     GenerationAttemptAccounting,
     GenerationClaimRecord,
     GenerationJobNotFoundError,
+    GenerationPersistenceConflictError,
     GenerationRunNotFoundError,
     GenerationRunWrite,
     SqlAlchemyGenerationRepository,
@@ -112,6 +113,7 @@ def run_write() -> GenerationRunWrite:
         curriculum_version_id=CURRICULUM_ID,
         paper_blueprint_id=BLUEPRINT_ID,
         retry_of_run_id=None,
+        retry_depth=0,
         slot_id="slot-1",
         idempotency_key_hash="sha256:" + "a" * 64,
         request_fingerprint="sha256:" + "b" * 64,
@@ -302,7 +304,7 @@ def test_repository_stores_created_and_idempotent_runs_with_defensive_failures()
         ).store_run(write, job_id=JOB_ID)
         assert duplicate == replace_stored(run, job, created=False)
 
-        with pytest.raises(RuntimeError, match="winner"):
+        with pytest.raises(GenerationPersistenceConflictError, match="outside actor"):
             await SqlAlchemyGenerationRepository(
                 cast(AsyncSession, ScriptedSession(scalar_results=(None, None)))
             ).store_run(write, job_id=JOB_ID)

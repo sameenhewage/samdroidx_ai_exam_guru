@@ -23,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.curriculum.models import AuditColumns
 from exam_guru_api.infrastructure.database import Base
 from exam_guru_api.knowledge.domain import (
@@ -634,6 +635,10 @@ class EmbeddingJobModel(Base):
             name="ck_embedding_jobs_retry_not_self",
         ),
         CheckConstraint(
+            f"retry_depth BETWEEN 0 AND {MAX_PROVIDER_JOB_RETRY_DEPTH}",
+            name="ck_embedding_jobs_retry_depth",
+        ),
+        CheckConstraint(
             "embedding_job_uuid_array_valid(historical_question_ids, 100) AND "
             "embedding_job_uuid_array_valid(knowledge_chunk_ids, 100) AND "
             "jsonb_array_length(historical_question_ids) + "
@@ -715,7 +720,12 @@ class EmbeddingJobModel(Base):
             "id",
         ),
         Index("ix_embedding_jobs_status_created", "status", "created_at", "id"),
-        Index("ix_embedding_jobs_retry_of", "retry_of_job_id"),
+        Index(
+            "uq_embedding_jobs_retry_of",
+            "retry_of_job_id",
+            unique=True,
+            postgresql_where=text("retry_of_job_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -728,6 +738,12 @@ class EmbeddingJobModel(Base):
         nullable=False,
     )
     retry_of_job_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    retry_depth: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     historical_question_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     knowledge_chunk_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     idempotency_key_hash: Mapped[str] = mapped_column(String(71), nullable=False)

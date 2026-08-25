@@ -132,6 +132,12 @@ def test_generation_openapi_exposes_async_jobs_and_bounded_authorized_reads() ->
     assert request_schema["properties"]["knowledge_chunk_ids"]["maxItems"] == 16
     assert request_schema["properties"]["historical_question_ids"]["maxItems"] == 16
 
+    for response_name in ("GenerationRunSummaryResponse", "GenerationRunResponse"):
+        retry_depth = schema["components"]["schemas"][response_name]["properties"]["retry_depth"]
+        assert retry_depth["minimum"] == 0
+        assert retry_depth["maximum"] == 3
+        assert "retry_depth" in schema["components"]["schemas"][response_name]["required"]
+
     list_parameters = {
         parameter["name"]: parameter
         for parameter in schema["paths"][BASE_PATH]["get"]["parameters"]

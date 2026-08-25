@@ -19,6 +19,7 @@ from exam_guru_api.blueprints.serialization import BlueprintSnapshotError
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.repository import (
     GenerationJobNotFoundError,
+    GenerationPersistenceConflictError,
     GenerationRunNotFoundError,
 )
 from exam_guru_api.generation.run_service import (
@@ -34,6 +35,7 @@ from exam_guru_api.generation.run_service import (
     GenerationCurriculumNotFoundError,
     GenerationIdempotencyConflictError,
     GenerationQueueUnavailableError,
+    GenerationRetryLimitExceededError,
     GenerationRetryStateError,
     GenerationRunService,
     GenerationSlotNotFoundError,
@@ -289,7 +291,7 @@ async def _execute_generation_operation[OperationResultT](
 ) -> OperationResultT:
     try:
         return await operation()
-    except IntegrityError as error:
+    except (IntegrityError, GenerationPersistenceConflictError) as error:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -329,6 +331,11 @@ async def _execute_generation_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "generation_retry_state_invalid"},
+        ) from error
+    except GenerationRetryLimitExceededError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "generation_retry_limit_exceeded"},
         ) from error
     except GenerationSlotNotFoundError as error:
         raise HTTPException(

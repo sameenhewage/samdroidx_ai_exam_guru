@@ -64,6 +64,7 @@ class GenerationRunWrite:
     curriculum_version_id: UUID
     paper_blueprint_id: UUID
     retry_of_run_id: UUID | None
+    retry_depth: int
     slot_id: str
     idempotency_key_hash: str
     request_fingerprint: str
@@ -133,6 +134,10 @@ class GenerationRunNotFoundError(LookupError):
 
 
 class GenerationJobNotFoundError(LookupError):
+    pass
+
+
+class GenerationPersistenceConflictError(RuntimeError):
     pass
 
 
@@ -237,7 +242,9 @@ class SqlAlchemyGenerationRepository:
                 )
             )
             if run is None:
-                raise RuntimeError("idempotent generation winner was not found")
+                raise GenerationPersistenceConflictError(
+                    "generation insert conflicted outside actor idempotency"
+                )
             job = await self._session.scalar(
                 select(GenerationJobModel).where(GenerationJobModel.generation_run_id == run.id)
             )

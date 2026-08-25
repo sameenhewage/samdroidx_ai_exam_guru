@@ -17,7 +17,10 @@ from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.core.config import Settings
-from exam_guru_api.knowledge.embedding_job_repository import EmbeddingJobNotFoundError
+from exam_guru_api.knowledge.embedding_job_repository import (
+    EmbeddingJobNotFoundError,
+    EmbeddingPersistenceConflictError,
+)
 from exam_guru_api.knowledge.embedding_job_schemas import (
     EmbeddingJobCreateRequest,
     EmbeddingJobResponse,
@@ -28,6 +31,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingJobReadService,
     EmbeddingJobService,
     EmbeddingQueueUnavailableError,
+    EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
 )
@@ -193,7 +197,7 @@ async def _execute_embedding_operation[OperationResultT](
 ) -> OperationResultT:
     try:
         return await operation()
-    except IntegrityError as error:
+    except (IntegrityError, EmbeddingPersistenceConflictError) as error:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -223,6 +227,11 @@ async def _execute_embedding_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "embedding_idempotency_conflict"},
+        ) from error
+    except EmbeddingRetryLimitExceededError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "embedding_retry_limit_exceeded"},
         ) from error
     except EmbeddingSourceConflictError as error:
         raise HTTPException(

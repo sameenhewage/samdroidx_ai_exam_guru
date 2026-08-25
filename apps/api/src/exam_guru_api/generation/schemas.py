@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
+
 MAX_GENERATION_CONTEXT_REFERENCES = 16
 
 
@@ -92,6 +94,7 @@ class GenerationRunSummaryResponse(_FrozenStrictModel):
     curriculum_version_id: UUID
     paper_blueprint_id: UUID
     retry_of_run_id: UUID | None
+    retry_depth: Annotated[int, Field(ge=0, le=MAX_PROVIDER_JOB_RETRY_DEPTH)]
     slot_id: str
     request_fingerprint: str
     status: Literal["pending", "running", "succeeded", "failed"]
@@ -121,6 +124,7 @@ class GenerationRunSummaryResponse(_FrozenStrictModel):
             curriculum_version_id=value.curriculum_version_id,
             paper_blueprint_id=value.paper_blueprint_id,
             retry_of_run_id=value.retry_of_run_id,
+            retry_depth=value.retry_depth,
             slot_id=value.slot_id,
             request_fingerprint=value.request_fingerprint,
             status=cast(Literal["pending", "running", "succeeded", "failed"], value.status),
