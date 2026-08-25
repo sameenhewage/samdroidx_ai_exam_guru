@@ -19,12 +19,14 @@ from exam_guru_api.operations.schemas import (
     GenerationOperationsResponse,
     GenerationStatusCountsResponse,
     LatencyMillisecondsResponse,
+    ObjectStorageOperationsResponse,
     OperationsDataBoundsResponse,
     OperationsSummaryResponse,
     OperationsUnitsResponse,
     OperationsWindowResponse,
     PracticePaperOperationsResponse,
     PracticePaperStateCountsResponse,
+    StorageReconciliationOperationsResponse,
     ValidationOperationsResponse,
     ValidationStatusCountsResponse,
 )
@@ -33,6 +35,13 @@ from exam_guru_api.papers.publication_models import (
     PaperArchiveEventModel,
     PracticePaperModel,
     PublishedPaperVersionModel,
+)
+from exam_guru_api.storage_reconciliation.models import (
+    FindingStatus as StorageFindingStatus,
+)
+from exam_guru_api.storage_reconciliation.models import (
+    StorageOrphanFindingModel,
+    StorageReconciliationRunModel,
 )
 from exam_guru_api.validation.domain import FindingStatus
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
@@ -128,12 +137,16 @@ class OperationsSummaryService:
         extraction_failures = await self._extraction_failures(window)
         embedding = await self._embedding(window)
         embedding_failures = await self._embedding_failures(window)
+        storage_reconciliation = await self._storage_reconciliation(window)
+        storage_reconciliation_failures = await self._storage_reconciliation_failures(window)
         papers = await self._papers(window)
 
         run_count = int(generation.run_count)
         return OperationsSummaryResponse(
             window=OperationsWindowResponse(start=window.start, end=window.end),
-            data_bounds=_observed_bounds((generation, validation, extraction, embedding, papers)),
+            data_bounds=_observed_bounds(
+                (generation, validation, extraction, embedding, storage_reconciliation, papers)
+            ),
             units=OperationsUnitsResponse(),
             generation=GenerationOperationsResponse(
                 run_count=run_count,
@@ -198,6 +211,21 @@ class OperationsSummaryService:
                 requested_count=int(embedding.requested_count),
                 embedded_count=int(embedding.embedded_count),
                 deduplicated_count=int(embedding.deduplicated_count),
+            ),
+            object_storage=ObjectStorageOperationsResponse(
+                reconciliation=StorageReconciliationOperationsResponse(
+                    run_count=int(storage_reconciliation.run_count),
+                    scanned_count=int(storage_reconciliation.scanned_count),
+                    referenced_count=int(storage_reconciliation.referenced_count),
+                    candidate_count=int(storage_reconciliation.candidate_count),
+                    resolved_count=int(storage_reconciliation.resolved_count),
+                    tagged_count=int(storage_reconciliation.tagged_count),
+                    failure_count=int(storage_reconciliation.failure_count),
+                    truncated_run_count=int(storage_reconciliation.truncated_run_count),
+                    current_candidate_count=int(storage_reconciliation.current_candidate_count),
+                    last_completed_at=storage_reconciliation.last_completed_at,
+                    failure_codes=storage_reconciliation_failures,
+                )
             ),
             practice_papers=PracticePaperOperationsResponse(
                 paper_count=int(papers.paper_count),
@@ -399,6 +427,57 @@ class OperationsSummaryService:
             )
             .group_by(EmbeddingJobModel.failure_code)
             .order_by(EmbeddingJobModel.failure_code)
+        )
+        rows = cast(
+            tuple[tuple[str, int], ...],
+            tuple((await self._session.execute(statement)).all()),
+        )
+        return _failure_counts(rows)
+
+    async def _storage_reconciliation(self, window: OperationsWindow) -> Any:
+        timestamp = StorageReconciliationRunModel.completed_at
+        current_candidate_count = (
+            select(func.count(StorageOrphanFindingModel.object_key))
+            .where(StorageOrphanFindingModel.status == StorageFindingStatus.CANDIDATE.value)
+            .correlate(None)
+            .scalar_subquery()
+        )
+        last_completed_at = select(func.max(timestamp)).correlate(None).scalar_subquery()
+        statement = select(
+            func.count(StorageReconciliationRunModel.id).label("run_count"),
+            _zeroed_sum(StorageReconciliationRunModel.scanned_count).label("scanned_count"),
+            _zeroed_sum(StorageReconciliationRunModel.referenced_count).label("referenced_count"),
+            _zeroed_sum(StorageReconciliationRunModel.candidate_count).label("candidate_count"),
+            _zeroed_sum(StorageReconciliationRunModel.resolved_count).label("resolved_count"),
+            _zeroed_sum(StorageReconciliationRunModel.tagged_count).label("tagged_count"),
+            _zeroed_sum(StorageReconciliationRunModel.failure_count).label("failure_count"),
+            _count_when(StorageReconciliationRunModel.truncated.is_(True)).label(
+                "truncated_run_count"
+            ),
+            current_candidate_count.label("current_candidate_count"),
+            last_completed_at.label("last_completed_at"),
+            func.min(timestamp).label("earliest_observed_at"),
+            func.max(timestamp).label("latest_observed_at"),
+        ).where(timestamp >= window.start, timestamp < window.end)
+        return (await self._session.execute(statement)).one()
+
+    async def _storage_reconciliation_failures(
+        self,
+        window: OperationsWindow,
+    ) -> list[FailureCodeCountResponse]:
+        timestamp = StorageReconciliationRunModel.completed_at
+        statement = (
+            select(
+                StorageReconciliationRunModel.failure_code,
+                func.count(StorageReconciliationRunModel.id),
+            )
+            .where(
+                timestamp >= window.start,
+                timestamp < window.end,
+                StorageReconciliationRunModel.failure_code.is_not(None),
+            )
+            .group_by(StorageReconciliationRunModel.failure_code)
+            .order_by(StorageReconciliationRunModel.failure_code)
         )
         rows = cast(
             tuple[tuple[str, int], ...],

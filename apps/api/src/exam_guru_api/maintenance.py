@@ -13,6 +13,7 @@ from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import recover_extraction_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
+from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
 
 _logger = logging.getLogger(__name__)
 
@@ -43,20 +44,22 @@ _RECOVERY_ACTORS = (
     cast(RecoveryActor, recover_extraction_jobs),
     cast(RecoveryActor, recover_generation_jobs),
     cast(RecoveryActor, recover_embedding_jobs),
+    cast(RecoveryActor, reconcile_source_objects),
 )
-_RECOVERY_NAMES = ("extraction", "generation", "embedding")
+_RECOVERY_NAMES = ("extraction", "generation", "embedding", "storage_reconciliation")
 
 
 def enqueue_recovery_jobs(
     extraction_actor: RecoveryActor = _RECOVERY_ACTORS[0],
     generation_actor: RecoveryActor = _RECOVERY_ACTORS[1],
     embedding_actor: RecoveryActor = _RECOVERY_ACTORS[2],
+    reconciliation_actor: RecoveryActor = _RECOVERY_ACTORS[3],
 ) -> MaintenanceTickResult:
     enqueued = 0
     failures = 0
     for name, actor in zip(
         _RECOVERY_NAMES,
-        (extraction_actor, generation_actor, embedding_actor),
+        (extraction_actor, generation_actor, embedding_actor, reconciliation_actor),
         strict=True,
     ):
         try:

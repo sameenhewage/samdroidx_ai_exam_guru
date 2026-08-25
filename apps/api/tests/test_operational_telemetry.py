@@ -190,6 +190,17 @@ def test_terminal_helpers_emit_fixed_low_cardinality_events_and_sanitize_failure
         embedded_count=3,
         deduplicated_count=1,
     )
+    operational.storage_reconciliation_terminal(
+        status="completed",
+        failure_code=None,
+        scanned_count=12,
+        referenced_count=4,
+        candidate_count=3,
+        resolved_count=2,
+        tagged_count=2,
+        failure_count=1,
+        truncated=False,
+    )
     operational.paper_transition(
         action="published",
         outcome="succeeded",
@@ -212,6 +223,7 @@ def test_terminal_helpers_emit_fixed_low_cardinality_events_and_sanitize_failure
         "validation.creation",
         "extraction.terminal",
         "embedding.terminal",
+        "storage_reconciliation.terminal",
         "paper.published",
         "paper.archived",
     ]
@@ -227,6 +239,19 @@ def test_terminal_helpers_emit_fixed_low_cardinality_events_and_sanitize_failure
         "cost_microusd": 9,
         "latency_ms": 20,
     }
+    assert logger.records[4][1] == {
+        "event_name": "storage_reconciliation.terminal",
+        "outcome": "completed",
+        "failure_code": None,
+        "status": "completed",
+        "scanned_count": 12,
+        "referenced_count": 4,
+        "candidate_count": 3,
+        "resolved_count": 2,
+        "tagged_count": 2,
+        "failure_count": 1,
+        "truncated": False,
+    }
     assert logger.records[-1][1] == {
         "event_name": "paper.archived",
         "outcome": "failed",
@@ -238,7 +263,7 @@ def test_terminal_helpers_emit_fixed_low_cardinality_events_and_sanitize_failure
     serialized = str(logger.records)
     assert "raw provider message" not in serialized
     assert "secret" not in serialized
-    assert len(tracer.contexts) == 6
+    assert len(tracer.contexts) == 7
     assert all(context.span.events for context in tracer.contexts)
 
 

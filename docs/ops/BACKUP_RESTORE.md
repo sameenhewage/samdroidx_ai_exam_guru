@@ -87,13 +87,16 @@ production schema.
 - `apps/api/migrations/versions/0020_restore_safe_canonical_json.py` schema-qualifies
   canonical JSON recursion so PostgreSQL's intentionally empty dump/restore
   `search_path` cannot break publication checks during `COPY`.
-  The current Alembic head is `0020_restore_safe_json`; always resolve the head
-  from the release being restored rather than assuming this literal remains
+- `apps/api/migrations/versions/0021_storage_reconciliation.py` persists bounded
+  source-object reconciliation runs, the singleton scan lease/bounded opaque
+  pagination cursor, and reversible orphan-candidate findings/tag outcomes.
+  The current Alembic head is `0021_storage_reconciliation`; always resolve the
+  head from the release being restored rather than assuming this literal remains
   current.
 - `apps/api/src/exam_guru_api/documents/domain.py:76-82` derives the source key
   as `sources/<sha256-prefix>/<sha256>.pdf`, where `<sha256-prefix>` is the first
   two lowercase checksum characters.
-- `apps/api/src/exam_guru_api/infrastructure/object_storage.py:96-159` performs
+- `apps/api/src/exam_guru_api/infrastructure/object_storage.py:166-200` performs
   conditional immutable writes and stores SHA-256 in object user metadata.
 - `apps/api/src/exam_guru_api/papers/domain.py:831-838` and
   `apps/api/src/exam_guru_api/papers/serialization.py:38-120` define canonical
@@ -107,7 +110,7 @@ post-restore evidence; it is not a suggestion to perform partial table dumps.
 | Capability | Critical relations |
 |---|---|
 | Grade 5 configuration/taxonomy | `exam_configurations`, `media`, `curriculum_versions`, `taxonomy_nodes` |
-| Source and extraction provenance | `source_documents`, `source_pages`, `extracted_blocks` |
+| Source and extraction provenance | `source_documents`, `source_pages`, `extracted_blocks`, `storage_reconciliation_state`, `storage_reconciliation_runs`, `storage_orphan_findings` |
 | Reviewed knowledge and RAG | `historical_questions`, `knowledge_chunks`, `embedding_configurations`, `knowledge_embeddings`, `embedding_jobs` |
 | Analytics and deterministic blueprint | `analytics_runs`, `paper_blueprints` |
 | Generation | `generation_runs`, `generation_attempts`, `generation_jobs` |
@@ -129,7 +132,12 @@ the configured source bucket. Each object must match both
 `source_documents.size_bytes` and `source_documents.checksum_sha256`. Preserve
 all object versions retained by policy, legal holds, tags/metadata needed by
 operations, and the application `sha256` user metadata. ETag is not a portable
-SHA-256 guarantee, especially for multipart or encrypted objects.
+SHA-256 guarantee, especially for multipart or encrypted objects. Reconciliation
+may persist findings and, only when explicitly configured, merge/remove the
+application-owned `exam-guru-orphan-candidate` and
+`exam-guru-orphan-detected-at` tags. It never deletes an object or overwrites
+operator-owned tags. Any external lifecycle deletion remains a separate,
+explicitly approved storage-policy action outside application reconciliation.
 
 The V1 architecture permits generated artifacts in S3-compatible storage. If a
 deployment adds another bucket or DB-to-object reference, add it to the signed
@@ -568,10 +576,12 @@ project database.
 4. Run read-only admin checks across source/extraction review, reviewed
    knowledge/provenance, RAG retrieval, analytics/blueprints, generation and
    validation history, review events, and published paper versions.
-5. Start one worker/recovery actor class at a time. Verify PostgreSQL-backed
-   queued/claimed/stale jobs reconcile idempotently without duplicate provider
-   calls, publications, or audit events. Keep paid/external model calls disabled
-   unless separately authorized.
+5. Start one worker/recovery actor class at a time. Run source-object
+   reconciliation in its default tag-disabled mode first; review aggregate
+   counts/findings before explicitly authorizing reversible app-owned tags.
+   Verify PostgreSQL-backed queued/claimed/stale jobs reconcile idempotently
+   without duplicate provider calls, publications, or audit events. Keep
+   paid/external model calls disabled unless separately authorized.
 6. Re-run counts, hashes, source checks, append-only probes, readiness, and
    security scans after reconciliation.
 7. Obtain recovery owner, security, data owner, and application owner sign-off

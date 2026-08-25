@@ -45,7 +45,11 @@ from exam_guru_api.infrastructure.migrations import (
     assert_database_schema_current,
     upgrade_database,
 )
-from exam_guru_api.infrastructure.object_storage import StoredObject
+from exam_guru_api.infrastructure.object_storage import (
+    ObjectPage,
+    ObjectTagMutation,
+    StoredObject,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 UPLOAD_ACTOR_ID = UUID(int=8_000)
@@ -75,6 +79,25 @@ class MemoryObjectStorage:
     def get_bytes(self, key: str) -> bytes:
         self.reads += 1
         return self.objects[key]
+
+    def list_source_objects(
+        self,
+        *,
+        max_keys: int,
+        continuation_token: str | None = None,
+    ) -> ObjectPage:
+        raise AssertionError((max_keys, continuation_token))
+
+    def merge_reconciliation_tags(
+        self,
+        key: str,
+        *,
+        candidate_detected_at: datetime | None,
+    ) -> ObjectTagMutation:
+        raise AssertionError((key, candidate_detected_at))
+
+    def close(self) -> None:
+        return None
 
 
 class CountingExtractor:

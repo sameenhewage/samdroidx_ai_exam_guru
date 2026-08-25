@@ -33,6 +33,16 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert maintenance["command"] == ["exam-guru-maintenance"]
     assert maintenance["build"] == worker["build"]
     assert maintenance["environment"] == worker["environment"]
+    assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_INTERVAL_SECONDS"] == "3600"
+    assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_GRACE_SECONDS"] == "86400"
+    assert (
+        maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_MAX_OBJECTS_PER_RUN"] == "1000"
+    )
+    assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_APPLY_TAGS"] == "false"
+    assert worker["depends_on"]["minio-init"] == {
+        "condition": "service_completed_successfully",
+        "required": True,
+    }
     assert maintenance["depends_on"] == {
         "migrate": {
             "condition": "service_completed_successfully",

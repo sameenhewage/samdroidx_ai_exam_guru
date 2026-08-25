@@ -23,6 +23,7 @@ def _register_actors(broker: RedisBroker) -> None:
     from exam_guru_api.documents.jobs import extract_document, recover_extraction_jobs
     from exam_guru_api.generation.jobs import generate_question, recover_generation_jobs
     from exam_guru_api.knowledge.embedding_jobs import ingest_embeddings, recover_embedding_jobs
+    from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
 
     extract_document.broker = broker
     recover_extraction_jobs.broker = broker
@@ -30,12 +31,14 @@ def _register_actors(broker: RedisBroker) -> None:
     recover_generation_jobs.broker = broker
     ingest_embeddings.broker = broker
     recover_embedding_jobs.broker = broker
+    reconcile_source_objects.broker = broker
     broker.declare_actor(extract_document)
     broker.declare_actor(recover_extraction_jobs)
     broker.declare_actor(generate_question)
     broker.declare_actor(recover_generation_jobs)
     broker.declare_actor(ingest_embeddings)
     broker.declare_actor(recover_embedding_jobs)
+    broker.declare_actor(reconcile_source_objects)
 
 
 def create_broker(

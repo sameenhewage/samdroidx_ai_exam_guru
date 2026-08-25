@@ -258,6 +258,19 @@ def test_postgres_summary_aggregates_known_generation_costs_statuses_and_failure
     assert body["validation"]["run_count"] == 0
     assert body["extraction"]["document_count"] == 0
     assert body["embedding"]["job_count"] == 0
+    assert body["object_storage"]["reconciliation"] == {
+        "run_count": 0,
+        "scanned_count": 0,
+        "referenced_count": 0,
+        "candidate_count": 0,
+        "resolved_count": 0,
+        "tagged_count": 0,
+        "failure_count": 0,
+        "truncated_run_count": 0,
+        "current_candidate_count": 0,
+        "last_completed_at": None,
+        "failure_codes": [],
+    }
     assert body["practice_papers"]["paper_count"] == 0
 
 

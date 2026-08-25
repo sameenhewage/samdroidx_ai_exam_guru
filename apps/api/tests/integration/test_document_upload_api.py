@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Iterator
+from datetime import datetime
 from uuid import UUID
 
 import pytest
@@ -15,7 +16,11 @@ from exam_guru_api.auth.rate_limits import NoOpRateLimiter
 from exam_guru_api.documents.jobs import DeterministicExtractionDispatcher, ExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.infrastructure.migrations import upgrade_database
-from exam_guru_api.infrastructure.object_storage import StoredObject
+from exam_guru_api.infrastructure.object_storage import (
+    ObjectPage,
+    ObjectTagMutation,
+    StoredObject,
+)
 from exam_guru_api.main import create_app
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
@@ -48,6 +53,25 @@ class RecordingObjectStorage:
 
     def get_bytes(self, key: str) -> bytes:
         raise AssertionError(key)
+
+    def list_source_objects(
+        self,
+        *,
+        max_keys: int,
+        continuation_token: str | None = None,
+    ) -> ObjectPage:
+        raise AssertionError((max_keys, continuation_token))
+
+    def merge_reconciliation_tags(
+        self,
+        key: str,
+        *,
+        candidate_detected_at: datetime | None,
+    ) -> ObjectTagMutation:
+        raise AssertionError((key, candidate_detected_at))
+
+    def close(self) -> None:
+        return None
 
 
 class FailOnceExtractionDispatcher:

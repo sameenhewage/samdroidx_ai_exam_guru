@@ -122,6 +122,22 @@ class EmptyOperationsSession:
                 EmptyResult(),
                 EmptyResult(
                     row=SimpleNamespace(
+                        run_count=0,
+                        scanned_count=0,
+                        referenced_count=0,
+                        candidate_count=0,
+                        resolved_count=0,
+                        tagged_count=0,
+                        failure_count=0,
+                        truncated_run_count=0,
+                        current_candidate_count=0,
+                        last_completed_at=None,
+                        **empty_bounds,
+                    )
+                ),
+                EmptyResult(),
+                EmptyResult(
+                    row=SimpleNamespace(
                         paper_count=0,
                         draft_count=0,
                         published_count=0,
@@ -258,6 +274,21 @@ def test_operations_service_returns_typed_zeroes_and_null_data_bounds_for_empty_
             "embedded_count": 0,
             "deduplicated_count": 0,
         },
+        "object_storage": {
+            "reconciliation": {
+                "run_count": 0,
+                "scanned_count": 0,
+                "referenced_count": 0,
+                "candidate_count": 0,
+                "resolved_count": 0,
+                "tagged_count": 0,
+                "failure_count": 0,
+                "truncated_run_count": 0,
+                "current_candidate_count": 0,
+                "last_completed_at": None,
+                "failure_codes": [],
+            }
+        },
         "practice_papers": {
             "paper_count": 0,
             "state_counts": {"draft": 0, "published": 0, "archived": 0},
@@ -265,7 +296,7 @@ def test_operations_service_returns_typed_zeroes_and_null_data_bounds_for_empty_
             "archive_count": 0,
         },
     }
-    assert len(session.statements) == 9
+    assert len(session.statements) == 11
 
 
 def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bounds() -> None:
@@ -335,6 +366,23 @@ def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bo
             EmptyResult(rows=(("embedding_provider_unavailable", 1),)),
             EmptyResult(
                 row=SimpleNamespace(
+                    run_count=2,
+                    scanned_count=12,
+                    referenced_count=5,
+                    candidate_count=4,
+                    resolved_count=2,
+                    tagged_count=3,
+                    failure_count=1,
+                    truncated_run_count=1,
+                    current_candidate_count=7,
+                    last_completed_at=START + timedelta(minutes=10),
+                    earliest_observed_at=START + timedelta(minutes=9),
+                    latest_observed_at=START + timedelta(minutes=10),
+                )
+            ),
+            EmptyResult(rows=(("object_storage_list_failed", 1),)),
+            EmptyResult(
+                row=SimpleNamespace(
                     paper_count=3,
                     draft_count=1,
                     published_count=1,
@@ -372,6 +420,21 @@ def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bo
     }
     assert summary.extraction.failure_codes[0].code == "ocr_timeout"
     assert summary.embedding.model_dump()["requested_count"] == 7
+    assert summary.object_storage.model_dump(mode="json") == {
+        "reconciliation": {
+            "run_count": 2,
+            "scanned_count": 12,
+            "referenced_count": 5,
+            "candidate_count": 4,
+            "resolved_count": 2,
+            "tagged_count": 3,
+            "failure_count": 1,
+            "truncated_run_count": 1,
+            "current_candidate_count": 7,
+            "last_completed_at": "2026-01-01T00:10:00Z",
+            "failure_codes": [{"code": "object_storage_list_failed", "count": 1}],
+        }
+    }
     assert summary.practice_papers.model_dump() == {
         "paper_count": 3,
         "state_counts": {"draft": 1, "published": 1, "archived": 1},
@@ -446,7 +509,16 @@ def test_operations_api_returns_empty_summary_without_sensitive_payload_fields()
         "latest_observed_at": None,
     }
     serialized = str(body).casefold()
-    for prohibited in ("source_text", "candidate", "prompt", "vector", "secret", "query"):
+    for prohibited in (
+        "source_text",
+        "object_key",
+        "checksum_sha256",
+        "continuation_cursor",
+        "prompt",
+        "vector",
+        "secret",
+        "query",
+    ):
         assert prohibited not in serialized
 
 
@@ -475,5 +547,6 @@ def test_operations_openapi_is_fixed_read_only_and_explicit_about_units_and_boun
         "validation",
         "extraction",
         "embedding",
+        "object_storage",
         "practice_papers",
     }

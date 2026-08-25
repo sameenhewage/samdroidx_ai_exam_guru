@@ -18,6 +18,7 @@ OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
 TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+STORAGE_RECONCILIATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 MIN_EMBEDDING_WORKER_LEASE_SECONDS = EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS + 1
 GENERATION_PROVIDER_MAX_EXECUTION_SECONDS = 3 * 120 + 2 * 2
 MIN_GENERATION_WORKER_LEASE_SECONDS = (
@@ -72,6 +73,22 @@ class Settings(BaseSettings):
     extraction_recovery_batch_size: int = Field(default=50, ge=1, le=100)
     extraction_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
     maintenance_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3_600)
+    storage_reconciliation_interval_seconds: int = Field(
+        default=3_600,
+        ge=300,
+        le=31_536_000,
+    )
+    storage_reconciliation_grace_seconds: int = Field(
+        default=86_400,
+        ge=3_600,
+        le=31_536_000,
+    )
+    storage_reconciliation_max_objects_per_run: int = Field(
+        default=1_000,
+        ge=1,
+        le=10_000,
+    )
+    storage_reconciliation_apply_tags: bool = False
     ocr_provider: Literal["tesseract"] | None = None
     ocr_tesseract_executable: str = Field(default="tesseract", min_length=1, max_length=255)
     ocr_tesseract_language: str = Field(default="sin+eng", min_length=1, max_length=64)

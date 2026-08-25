@@ -110,6 +110,24 @@ class EmbeddingOperationsResponse(_FrozenStrictModel):
     deduplicated_count: NonNegativeInt
 
 
+class StorageReconciliationOperationsResponse(_FrozenStrictModel):
+    run_count: NonNegativeInt
+    scanned_count: NonNegativeInt
+    referenced_count: NonNegativeInt
+    candidate_count: NonNegativeInt
+    resolved_count: NonNegativeInt
+    tagged_count: NonNegativeInt
+    failure_count: NonNegativeInt
+    truncated_run_count: NonNegativeInt
+    current_candidate_count: NonNegativeInt
+    last_completed_at: datetime | None
+    failure_codes: list[FailureCodeCountResponse]
+
+
+class ObjectStorageOperationsResponse(_FrozenStrictModel):
+    reconciliation: StorageReconciliationOperationsResponse
+
+
 class PracticePaperStateCountsResponse(_FrozenStrictModel):
     draft: NonNegativeInt
     published: NonNegativeInt
@@ -131,4 +149,5 @@ class OperationsSummaryResponse(_FrozenStrictModel):
     validation: ValidationOperationsResponse
     extraction: ExtractionOperationsResponse
     embedding: EmbeddingOperationsResponse
+    object_storage: ObjectStorageOperationsResponse
     practice_papers: PracticePaperOperationsResponse

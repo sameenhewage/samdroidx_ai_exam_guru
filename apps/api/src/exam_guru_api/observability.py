@@ -255,6 +255,38 @@ class OperationalTelemetry:
             },
         )
 
+    def storage_reconciliation_terminal(
+        self,
+        *,
+        status: str,
+        failure_code: str | None,
+        scanned_count: int,
+        referenced_count: int,
+        candidate_count: int,
+        resolved_count: int,
+        tagged_count: int,
+        failure_count: int,
+        truncated: bool,
+    ) -> None:
+        self._emit(
+            "storage_reconciliation.terminal",
+            {
+                "outcome": status,
+                "failure_code": _failure_code(
+                    failure_code,
+                    fallback="storage_reconciliation_internal_error",
+                ),
+                "status": status,
+                "scanned_count": scanned_count,
+                "referenced_count": referenced_count,
+                "candidate_count": candidate_count,
+                "resolved_count": resolved_count,
+                "tagged_count": tagged_count,
+                "failure_count": failure_count,
+                "truncated": truncated,
+            },
+        )
+
     def paper_transition(
         self,
         *,

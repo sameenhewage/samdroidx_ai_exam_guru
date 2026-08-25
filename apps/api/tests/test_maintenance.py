@@ -16,6 +16,7 @@ from exam_guru_api.maintenance import (
     main,
     run_maintenance_loop,
 )
+from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
 
 
 class StubMessage:
@@ -75,7 +76,7 @@ def monotonic_clock(*values: float) -> Callable[[], float]:
     return monotonic
 
 
-def test_scheduler_tick_enqueues_exact_three_recovery_actors_with_error_isolation(
+def test_scheduler_tick_enqueues_exact_four_maintenance_actors_with_error_isolation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from exam_guru_api import maintenance
@@ -91,16 +92,18 @@ def test_scheduler_tick_enqueues_exact_three_recovery_actors_with_error_isolatio
             error=RuntimeError("private valkey transport diagnostic raw-payload"),
         ),
         RecordingRecoveryActor("embedding", calls),
+        RecordingRecoveryActor("storage_reconciliation", calls),
     )
 
     result = enqueue_recovery_jobs(
         extraction_actor=actors[0],
         generation_actor=actors[1],
         embedding_actor=actors[2],
+        reconciliation_actor=actors[3],
     )
 
-    assert result == MaintenanceTickResult(enqueued=2, failures=1)
-    assert calls == ["extraction", "generation", "embedding"]
+    assert result == MaintenanceTickResult(enqueued=3, failures=1)
+    assert calls == ["extraction", "generation", "embedding", "storage_reconciliation"]
     assert logger.errors == ["maintenance recovery enqueue failed: generation"]
     assert "private" not in repr(logger.errors)
     assert "raw-payload" not in repr(logger.errors)
@@ -199,10 +202,12 @@ def test_maintenance_broker_registers_only_internal_recovery_actors() -> None:
             recover_extraction_jobs.actor_name,
             recover_generation_jobs.actor_name,
             recover_embedding_jobs.actor_name,
+            reconcile_source_objects.actor_name,
         }
         assert recover_extraction_jobs.broker is broker
         assert recover_generation_jobs.broker is broker
         assert recover_embedding_jobs.broker is broker
+        assert reconcile_source_objects.broker is broker
     finally:
         broker.close()
 
@@ -245,7 +250,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         assert interval_seconds == 17
         assert stop_signal is stop
         result = tick()
-        assert result == MaintenanceTickResult(enqueued=3, failures=0)
+        assert result == MaintenanceTickResult(enqueued=4, failures=0)
         handler = cast(Callable[[int, FrameType | None], None], handlers[0])
         handler(signal.SIGTERM, None)
         assert stop.is_set()
@@ -255,6 +260,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         RecordingRecoveryActor("extraction", calls),
         RecordingRecoveryActor("generation", calls),
         RecordingRecoveryActor("embedding", calls),
+        RecordingRecoveryActor("storage_reconciliation", calls),
     )
 
     monkeypatch.setattr(maintenance, "Settings", lambda: settings)
@@ -266,7 +272,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
 
     main()
 
-    assert calls == ["extraction", "generation", "embedding"]
+    assert calls == ["extraction", "generation", "embedding", "storage_reconciliation"]
     assert handlers == [handlers[0], previous_handler]
     assert broker.closed is True
 
