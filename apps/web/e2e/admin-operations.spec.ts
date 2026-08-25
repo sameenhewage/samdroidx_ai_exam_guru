@@ -151,6 +151,55 @@ async function expectExactSummary(page: Page, summary: Summary) {
   }
   await expectFailures(page, "embedding", summary.embedding.failure_codes);
 
+  const reconciliation = summary.object_storage.reconciliation;
+  await expectValue(page, "storage-reconciliation-run-count", count(reconciliation.run_count));
+  await expectValue(
+    page,
+    "storage-reconciliation-scanned-count",
+    count(reconciliation.scanned_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-referenced-count",
+    count(reconciliation.referenced_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-candidate-count",
+    count(reconciliation.candidate_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-resolved-count",
+    count(reconciliation.resolved_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-tagged-count",
+    count(reconciliation.tagged_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-failure-count",
+    count(reconciliation.failure_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-truncated-run-count",
+    count(reconciliation.truncated_run_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-current-candidate-count",
+    count(reconciliation.current_candidate_count),
+  );
+  await expectValue(
+    page,
+    "storage-reconciliation-last-completed-at",
+    reconciliation.last_completed_at ? utc(reconciliation.last_completed_at) : "No observations",
+  );
+  await expectFailures(page, "storage-reconciliation", reconciliation.failure_codes);
+
   await expectValue(page, "papers-paper-count", count(summary.practice_papers.paper_count));
   for (const [status, value] of Object.entries(summary.practice_papers.state_counts)) {
     await expectValue(page, `papers-status-${status}`, count(value));
@@ -206,6 +255,18 @@ test("administrator can inspect exact persisted operations while reviewer naviga
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Start inclusive · end exclusive")).toBeVisible();
   await expectExactSummary(page, summary);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Object storage reconciliation" }),
+  ).toBeVisible();
+  await expect(page.getByText("Dry-run / no-delete boundary")).toBeVisible();
+  await expect(
+    page.getByText(/it never deletes an object or overwrites operator-owned tags/i),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      /external lifecycle deletion remains a separate, explicitly approved storage-policy action outside application reconciliation/i,
+    ),
+  ).toBeVisible();
   await expect(
     page.getByText(/Logs and spans require a configured collector and dashboard/),
   ).toBeVisible();

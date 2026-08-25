@@ -65,6 +65,24 @@ const summary = {
     embedded_count: 17,
     deduplicated_count: 2,
   },
+  object_storage: {
+    reconciliation: {
+      run_count: 3,
+      scanned_count: 48,
+      referenced_count: 31,
+      candidate_count: 9,
+      resolved_count: 4,
+      tagged_count: 6,
+      failure_count: 2,
+      truncated_run_count: 1,
+      current_candidate_count: 5,
+      last_completed_at: "2026-08-24T09:15:00Z",
+      failure_codes: [
+        { code: "object_storage_list_failed", count: 1 },
+        { code: "<img src=x onerror=unsafe()>", count: 1 },
+      ],
+    },
+  },
   practice_papers: {
     paper_count: 3,
     state_counts: { draft: 1, published: 1, archived: 1 },
@@ -113,6 +131,21 @@ const emptySummary = {
     requested_count: 0,
     embedded_count: 0,
     deduplicated_count: 0,
+  },
+  object_storage: {
+    reconciliation: {
+      run_count: 0,
+      scanned_count: 0,
+      referenced_count: 0,
+      candidate_count: 0,
+      resolved_count: 0,
+      tagged_count: 0,
+      failure_count: 0,
+      truncated_run_count: 0,
+      current_candidate_count: 0,
+      last_completed_at: null,
+      failure_codes: [],
+    },
   },
   practice_papers: {
     paper_count: 0,
@@ -223,6 +256,39 @@ describe("OperationsDashboard", () => {
       "embedding_provider_unavailable — 1",
     );
 
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Object storage reconciliation" }),
+    ).toBeVisible();
+    expect(screen.getByTestId("storage-reconciliation-run-count")).toHaveTextContent("3");
+    expect(screen.getByTestId("storage-reconciliation-scanned-count")).toHaveTextContent("48");
+    expect(screen.getByTestId("storage-reconciliation-referenced-count")).toHaveTextContent("31");
+    expect(screen.getByTestId("storage-reconciliation-candidate-count")).toHaveTextContent("9");
+    expect(screen.getByTestId("storage-reconciliation-resolved-count")).toHaveTextContent("4");
+    expect(screen.getByTestId("storage-reconciliation-tagged-count")).toHaveTextContent("6");
+    expect(screen.getByTestId("storage-reconciliation-failure-count")).toHaveTextContent("2");
+    expect(screen.getByTestId("storage-reconciliation-truncated-run-count")).toHaveTextContent(
+      "1",
+    );
+    expect(screen.getByTestId("storage-reconciliation-current-candidate-count")).toHaveTextContent(
+      "5",
+    );
+    expect(screen.getByTestId("storage-reconciliation-last-completed-at")).toHaveTextContent(
+      "2026-08-24T09:15:00.000Z",
+    );
+    expect(screen.getByTestId("storage-reconciliation-failure-0")).toHaveTextContent(
+      "object_storage_list_failed — 1",
+    );
+    expect(screen.getByTestId("storage-reconciliation-failure-1")).toHaveTextContent(
+      "unrecognized_failure_code — 1",
+    );
+    expect(screen.getByText("Dry-run / no-delete boundary")).toBeVisible();
+    expect(screen.getByText(/it never deletes an object or overwrites operator-owned tags/i)).toBeVisible();
+    expect(
+      screen.getByText(
+        /external lifecycle deletion remains a separate, explicitly approved storage-policy action outside application reconciliation/i,
+      ),
+    ).toBeVisible();
+
     expect(screen.getByTestId("papers-paper-count")).toHaveTextContent("3");
     expect(screen.getByTestId("papers-status-draft")).toHaveTextContent("1");
     expect(screen.getByTestId("papers-status-published")).toHaveTextContent("1");
@@ -331,11 +397,36 @@ describe("OperationsDashboard", () => {
     expect(screen.getByTestId("generation-run-count")).toHaveTextContent("0");
     expect(screen.getByTestId("generation-cost-usd")).toHaveTextContent("0.000000 USD");
     expect(screen.getByTestId("data-earliest")).toHaveTextContent("No observations");
+    expect(screen.getByTestId("storage-reconciliation-run-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("storage-reconciliation-current-candidate-count")).toHaveTextContent(
+      "0",
+    );
+    expect(screen.getByTestId("storage-reconciliation-last-completed-at")).toHaveTextContent(
+      "No observations",
+    );
+    expect(screen.getByTestId("storage-reconciliation-failure-empty")).toHaveTextContent(
+      "No failures recorded.",
+    );
   });
 
   it("is accessible and renders only allow-listed aggregate text, sanitizing untrusted codes", async () => {
     const sensitivePayload = {
       ...summary,
+      object_storage: {
+        ...summary.object_storage,
+        continuation_cursor: "continuation-cursor-must-not-render",
+        object_key: "object-key-must-not-render",
+        reconciliation: {
+          ...summary.object_storage.reconciliation,
+          continuation_cursor: "nested-continuation-cursor-must-not-render",
+          finding_id: "finding-id-must-not-render",
+          object_key: "nested-object-key-must-not-render",
+          run_id: "run-id-must-not-render",
+          tag_values: ["tag-value-must-not-render"],
+        },
+        storage_id: "storage-id-must-not-render",
+        tag_values: ["outer-tag-value-must-not-render"],
+      },
       resource_id: "resource-id-must-not-render",
       content: "content-must-not-render",
       prompt: "prompt-must-not-render",
@@ -350,6 +441,17 @@ describe("OperationsDashboard", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(container).not.toHaveTextContent("<script>unsafe()</script>");
     for (const value of [
+      "continuation_cursor",
+      "continuation-cursor-must-not-render",
+      "nested-continuation-cursor-must-not-render",
+      "object_key",
+      "object-key-must-not-render",
+      "nested-object-key-must-not-render",
+      "tag-value-must-not-render",
+      "outer-tag-value-must-not-render",
+      "finding-id-must-not-render",
+      "run-id-must-not-render",
+      "storage-id-must-not-render",
       "resource-id-must-not-render",
       "content-must-not-render",
       "prompt-must-not-render",

@@ -211,6 +211,7 @@ function SummaryView({ summary }: { summary: Summary }) {
   const empty =
     summary.data_bounds.earliest_observed_at === null &&
     summary.data_bounds.latest_observed_at === null;
+  const reconciliation = summary.object_storage.reconciliation;
 
   return (
     <div className="grid gap-6">
@@ -527,6 +528,108 @@ function SummaryView({ summary }: { summary: Summary }) {
         </section>
       </div>
 
+      <section
+        aria-labelledby="storage-reconciliation-operations-heading"
+        className="border border-slate-300 bg-white p-5 shadow-sm"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+          <div>
+            <p className="font-mono text-xs text-slate-500">Object safety accounting</p>
+            <h2
+              className="mt-1 text-xl font-semibold"
+              id="storage-reconciliation-operations-heading"
+            >
+              Object storage reconciliation
+            </h2>
+          </div>
+          <Badge variant="foundation">Aggregate only</Badge>
+        </div>
+        <p className="mt-4 max-w-4xl text-sm leading-6 text-slate-600">
+          Run totals, object counts, failures, and truncation cover completed runs in the selected
+          half-open window. Current candidates and the last completed run are service-wide safety
+          snapshots.
+        </p>
+        <dl className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <Definition
+            label="Completed runs"
+            testId="storage-reconciliation-run-count"
+            value={formatCount(reconciliation.run_count)}
+          />
+          <Definition
+            label="Objects scanned"
+            testId="storage-reconciliation-scanned-count"
+            value={formatCount(reconciliation.scanned_count)}
+          />
+          <Definition
+            label="Referenced objects"
+            testId="storage-reconciliation-referenced-count"
+            value={formatCount(reconciliation.referenced_count)}
+          />
+          <Definition
+            label="Candidates detected"
+            testId="storage-reconciliation-candidate-count"
+            value={formatCount(reconciliation.candidate_count)}
+          />
+          <Definition
+            label="Candidates resolved"
+            testId="storage-reconciliation-resolved-count"
+            value={formatCount(reconciliation.resolved_count)}
+          />
+          <Definition
+            label="Candidates tagged"
+            testId="storage-reconciliation-tagged-count"
+            value={formatCount(reconciliation.tagged_count)}
+          />
+          <Definition
+            label="Failures"
+            testId="storage-reconciliation-failure-count"
+            value={formatCount(reconciliation.failure_count)}
+          />
+          <Definition
+            label="Truncated runs"
+            testId="storage-reconciliation-truncated-run-count"
+            value={formatCount(reconciliation.truncated_run_count)}
+          />
+          <Definition
+            label="Current candidates"
+            testId="storage-reconciliation-current-candidate-count"
+            value={formatCount(reconciliation.current_candidate_count)}
+          />
+          <Definition
+            label="Last completed run (UTC)"
+            testId="storage-reconciliation-last-completed-at"
+            value={formatUtc(reconciliation.last_completed_at)}
+          />
+        </dl>
+        <div className="mt-5 grid gap-5 border-t border-slate-200 pt-5 lg:grid-cols-[1fr_1.4fr]">
+          <div>
+            <h3 className="mb-3 text-sm font-semibold">Sanitized failure codes</h3>
+            <FailureCodes
+              failures={reconciliation.failure_codes}
+              prefix="storage-reconciliation"
+            />
+          </div>
+          <aside
+            aria-labelledby="storage-reconciliation-boundary-heading"
+            className="border-l-4 border-sky-500 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-950"
+          >
+            <h3 className="font-semibold" id="storage-reconciliation-boundary-heading">
+              Dry-run / no-delete boundary
+            </h3>
+            <p className="mt-1">
+              Reconciliation may persist findings and, only when explicitly configured, merge or
+              remove application-owned candidate tags; it never deletes an object or overwrites
+              operator-owned tags.
+            </p>
+            <p className="mt-2">
+              Any external lifecycle deletion remains a separate, explicitly approved storage-policy
+              action outside application reconciliation. This dashboard reports no lifecycle approval
+              and cannot authorize deletion.
+            </p>
+          </aside>
+        </div>
+      </section>
+
       <aside className="border-l-4 border-amber-500 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-950">
         <h2 className="font-semibold">Observability boundary</h2>
         <p className="mt-1">
@@ -629,7 +732,8 @@ export function OperationsDashboard() {
         </h1>
         <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600 sm:text-base">
           Inspect bounded pipeline throughput, validation, AI token cost, latency, extraction,
-          embedding, and publication counts without exposing resource identifiers or content.
+          embedding, object-storage reconciliation, and publication counts without exposing resource
+          identifiers or content.
         </p>
       </header>
 
