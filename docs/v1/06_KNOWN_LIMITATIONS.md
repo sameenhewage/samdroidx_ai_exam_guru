@@ -81,4 +81,4 @@ This document records limitations that remain after the implemented Priority 1 e
 
 ## Gate impact
 
-P10 remains `IN_PROGRESS` while P2-P5 retain the human-reviewed real-data evidence gaps above, live external OIDC acceptance is unavailable, and release-commit CI acceptance is incomplete. The adversarial and paid P8 baseline gates are complete. Priority 2 remains blocked.
+P10 remains `IN_PROGRESS` while P2-P5 retain the human-reviewed real-data evidence gaps above and live external OIDC acceptance is unavailable. The automated journey, adversarial review, paid P8 baseline and release-commit CI gates are complete. Priority 2 remains blocked.

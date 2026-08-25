@@ -383,7 +383,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] AI cost metrics are observable
 - [ ] representative Sinhala Grade 5 real-content quality review completed
 - [x] known limitations documented
-- [ ] CI green on the release commit
+- [x] CI green on the release commit
 
 ### Evidence
 - `a7366bd` adds deployment-level recovery scheduling and closes extraction's commit-before-dispatch window. Migration `0019` persists bounded per-attempt extraction queue identity; same-request replay and a `FOR UPDATE SKIP LOCKED` recovery actor safely redrive pending/null outbox rows with sanitized audits. A long-running maintenance service enqueues extraction, generation and embedding recovery actors every bounded interval with monotonic timing, error isolation and clean shutdown. Compose/CI require the scheduler to be healthy; the real Compose service is verified healthy. Backend gate: 1,973 passed / 2 expected optional skips at 100% statements and branches.
@@ -400,7 +400,8 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - `6c378c1`, `dfab67a` and `be2e8c4` close the one reproducible cost-amplification defect. Migration `0022` backfills and enforces immutable retry depth 0–3, failed/same-request predecessor identity and one-child lineage for both generation and embedding; corrupt legacy chains fail migration rather than being capped. Application/API and admin UI reject or hide a fourth retry, preserve same-key deduplication and serialize different-key retry forks. Final gate: 2,347 normal-CI backend tests / 2 expected skips plus isolated restore at 100% statements and branches; 324 web tests at configured 100% coverage; fresh Compose Chromium remains 8/8.
 - `71d72dd` and `6184f3e` close the automated Priority 1 journey as one same-curriculum lineage: native extraction, expected-version human correction with raw-text preservation, trust, reviewed historical records, leakage-audited held-out analytics, analytics-linked blueprint, persisted embedding, exact-scope hybrid RAG, three generated and validated slots, reviewer edit/approval, reviewer publish denial and administrator hash-verified publication. Request-generation guards also prevent stale validation responses crossing curriculum scope. A fresh clean-volume Compose run passes all 8 Chromium journeys in 31.8 seconds, with the integrated path completing in 11.9 seconds and no arbitrary sleeps.
 - The automated journey uses bounded synthetic Grade 5 mechanics fixtures so normal CI is reproducible; it does not satisfy the separate representative Sinhala/real-data quality criteria. P8 live English contract/cost evidence is recorded in its phase section.
-- Remaining repository hardening includes live production identity acceptance and green release-commit CI evidence. External blockers remain human Sinhala OCR/data review and representative P3-P5 real-data thresholds.
+- Release checkpoint `dcf3bf1` is green in CI run `32820481954`: backend lint/format/mypy, 100% coverage tests, isolated restore, OpenAPI verification and committed-file secret scan; frontend dependency audit, generated-client verification, lint/typecheck, 100% coverage tests and production build; and clean Compose health plus all 8 Chromium admin/security journeys. Backend, frontend and runtime jobs all completed successfully.
+- Remaining repository hardening requires live production identity acceptance. External blockers remain human Sinhala OCR/data review and representative P3-P5 real-data thresholds.
 
 ### Priority gate
 **Priority 2 remains BLOCKED until P10 is DONE.**
