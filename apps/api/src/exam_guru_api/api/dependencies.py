@@ -4,6 +4,7 @@ from typing import Annotated, Protocol, cast
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from exam_guru_api.auth.rate_limits import RateLimiter
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import ExtractionDispatcher
 from exam_guru_api.generation.jobs import GenerationDispatcher
@@ -27,6 +28,10 @@ def get_resources(request: Request) -> ApplicationResources:
 
 def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+
+def get_rate_limiter(request: Request) -> RateLimiter:
+    return cast(RateLimiter, request.app.state.rate_limiter)
 
 
 def get_object_storage(request: Request) -> ObjectStorage:

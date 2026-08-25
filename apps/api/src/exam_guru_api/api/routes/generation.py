@@ -11,9 +11,10 @@ from exam_guru_api.api.dependencies import (
     get_generation_dispatcher,
     get_generation_runtime_registry,
 )
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE, ApiErrorResponse
+from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.blueprints.serialization import BlueprintSnapshotError
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.repository import (
@@ -52,7 +53,12 @@ from exam_guru_api.generation.schemas import (
 router = APIRouter()
 RunPrincipal = Annotated[
     Principal,
-    Depends(require_permission(Permission.GENERATION_RUN)),
+    Depends(
+        require_rate_limit(
+            Permission.GENERATION_RUN,
+            RateLimitScope.GENERATION_CREATE_RETRY,
+        )
+    ),
 ]
 ReadPrincipal = Annotated[
     Principal,
@@ -90,13 +96,21 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "model": ApiErrorResponse,
     },
 }
+_COSTLY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_ERROR_RESPONSES,
+    status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "description": "Generation configuration, queue, or cost limiter unavailable",
+        "model": ApiErrorResponse,
+    },
+}
 
 
 @router.post(
     "/{curriculum_version_id}/generation-runs",
     operation_id="create_generation_run",
     response_model=GenerationJobResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create and queue a grounded generation run",
 )
@@ -185,7 +199,7 @@ async def get_generation_run(
     "/{curriculum_version_id}/generation-runs/{generation_run_id}/retry",
     operation_id="retry_generation_run",
     response_model=GenerationJobResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue a new run retry from a failed generation run",
 )

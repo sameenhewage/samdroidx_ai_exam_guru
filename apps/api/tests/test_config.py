@@ -4,6 +4,8 @@ from pydantic import SecretStr, ValidationError
 from exam_guru_api.core.config import (
     EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS,
     EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS,
+    MAX_RATE_LIMIT_PER_WINDOW,
+    MAX_RATE_LIMIT_WINDOW_SECONDS,
     OCR_PROVIDER_MAX_EXECUTION_SECONDS,
     TESSERACT_PROBE_COMMAND_COUNT,
     Settings,
@@ -169,3 +171,61 @@ def test_unconfigured_ocr_does_not_apply_provider_execution_budget() -> None:
 def test_ocr_settings_reject_unsafe_or_unbounded_controls(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         Settings(environment="test", **overrides)  # type: ignore[arg-type]
+
+
+def test_authenticated_cost_controls_are_enabled_with_bounded_scope_defaults() -> None:
+    settings = Settings(environment="test")
+
+    assert settings.rate_limits_enabled is True
+    assert 1 <= settings.rate_limit_window_seconds <= MAX_RATE_LIMIT_WINDOW_SECONDS
+    limits = (
+        settings.rate_limit_source_upload,
+        settings.rate_limit_extraction_trigger,
+        settings.rate_limit_embedding_job_create,
+        settings.rate_limit_generation_create_retry,
+        settings.rate_limit_validation_run,
+        settings.rate_limit_paper_publish_archive,
+    )
+    assert all(1 <= limit <= MAX_RATE_LIMIT_PER_WINDOW for limit in limits)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("rate_limit_window_seconds", 0),
+        ("rate_limit_window_seconds", MAX_RATE_LIMIT_WINDOW_SECONDS + 1),
+        ("rate_limit_source_upload", 0),
+        ("rate_limit_extraction_trigger", MAX_RATE_LIMIT_PER_WINDOW + 1),
+        ("rate_limit_embedding_job_create", 0),
+        ("rate_limit_generation_create_retry", MAX_RATE_LIMIT_PER_WINDOW + 1),
+        ("rate_limit_validation_run", 0),
+        ("rate_limit_paper_publish_archive", MAX_RATE_LIMIT_PER_WINDOW + 1),
+    ],
+)
+def test_authenticated_cost_control_configuration_rejects_unbounded_values(
+    name: str,
+    value: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="test", **{name: value})  # type: ignore[arg-type]
+
+
+def test_production_cannot_disable_authenticated_cost_controls() -> None:
+    with pytest.raises(ValidationError, match="production cost controls cannot be disabled"):
+        Settings(
+            environment="production",
+            database_url=SecretStr(
+                "postgresql+asyncpg://service:database-secret@db/app?ssl=require"
+            ),
+            object_storage_access_key=SecretStr("storage-access"),
+            object_storage_secret_key=SecretStr("storage-secret"),
+            object_storage_endpoint_url="https://storage.internal",
+            valkey_url=SecretStr("rediss://:cache-secret@valkey:6379/0"),
+            rate_limits_enabled=False,
+        )
+
+
+def test_test_runtime_can_explicitly_disable_cost_controls_for_isolated_injection() -> None:
+    settings = Settings(environment="test", rate_limits_enabled=False)
+
+    assert settings.rate_limits_enabled is False

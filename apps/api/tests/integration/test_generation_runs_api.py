@@ -24,6 +24,7 @@ from testcontainers.community.redis import RedisContainer
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.auth.rate_limits import NoOpRateLimiter
 from exam_guru_api.blueprints.service import BlueprintGenerationService
 from exam_guru_api.core.config import Settings
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
@@ -152,6 +153,7 @@ def api_client(
             generation_dispatcher=dispatcher,
             generation_runtime_registry=runtime,
             validation_pipeline=validation_pipeline,
+            rate_limiter=NoOpRateLimiter(),
         )
     ) as client:
         yield client

@@ -10,9 +10,14 @@ from exam_guru_api.api.dependencies import (
     get_object_storage,
     get_settings,
 )
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import (
+    RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
+    ApiErrorResponse,
+)
+from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.domain import SourceDocumentType, UploadValidationError
 from exam_guru_api.documents.extraction import (
@@ -44,6 +49,19 @@ from exam_guru_api.documents.service import (
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 
 router = APIRouter()
+ExtractionTriggerPrincipal = Annotated[
+    Principal,
+    Depends(
+        require_rate_limit(
+            Permission.EXTRACTION_TRIGGER,
+            RateLimitScope.EXTRACTION_TRIGGER,
+        )
+    ),
+]
+SourceUploadPrincipal = Annotated[
+    Principal,
+    Depends(require_rate_limit(Permission.SOURCE_WRITE, RateLimitScope.SOURCE_UPLOAD)),
+]
 
 
 @router.get(
@@ -74,19 +92,17 @@ async def list_source_documents(
     operation_id="trigger_source_document_extraction",
     response_model=ExtractionJobResponse,
     responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
         status.HTTP_503_SERVICE_UNAVAILABLE: {
-            "description": "Extraction queue unavailable",
+            "description": "Extraction queue or authenticated cost limiter unavailable",
             "model": ApiErrorResponse,
-        }
+        },
     },
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def trigger_source_document_extraction(
     document_id: UUID,
-    principal: Annotated[
-        Principal,
-        Depends(require_permission(Permission.EXTRACTION_TRIGGER)),
-    ],
+    principal: ExtractionTriggerPrincipal,
     session: Annotated[AsyncSession, Depends(get_database_session)],
     object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
     dispatcher: Annotated[ExtractionDispatcher, Depends(get_extraction_dispatcher)],
@@ -340,7 +356,9 @@ def _extraction_http_exception(error: Exception) -> HTTPException:
     responses={
         status.HTTP_200_OK: {"description": "Existing checksum returned idempotently"},
         status.HTTP_201_CREATED: {"description": "Source document created"},
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
         status.HTTP_422_UNPROCESSABLE_CONTENT: {"description": "Upload validation failed"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
     },
     status_code=status.HTTP_201_CREATED,
 )
@@ -348,10 +366,7 @@ async def upload_source_document(
     response: Response,
     file: Annotated[UploadFile, File()],
     document_type: Annotated[SourceDocumentType, Form()],
-    principal: Annotated[
-        Principal,
-        Depends(require_permission(Permission.SOURCE_WRITE)),
-    ],
+    principal: SourceUploadPrincipal,
     session: Annotated[AsyncSession, Depends(get_database_session)],
     object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
     settings: Annotated[Settings, Depends(get_settings)],

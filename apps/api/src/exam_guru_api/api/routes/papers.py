@@ -7,9 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.api.dependencies import get_database_session, get_operational_telemetry
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import (
+    RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
+    ApiErrorResponse,
+)
+from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.papers.domain import (
     MAX_PAPER_VERSIONS,
@@ -57,7 +62,12 @@ ReviewPrincipal = Annotated[
 ]
 PublishPrincipal = Annotated[
     Principal,
-    Depends(require_permission(Permission.PAPER_PUBLISH)),
+    Depends(
+        require_rate_limit(
+            Permission.PAPER_PUBLISH,
+            RateLimitScope.PAPER_PUBLISH_ARCHIVE,
+        )
+    ),
 ]
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 Telemetry = Annotated[OperationalTelemetry | None, Depends(get_operational_telemetry)]
@@ -82,6 +92,11 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "description": "Invalid bounded paper command or candidate selection",
         "model": ApiErrorResponse,
     },
+}
+_COSTLY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_ERROR_RESPONSES,
+    status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    status.HTTP_503_SERVICE_UNAVAILABLE: RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
 }
 
 
@@ -258,7 +273,7 @@ async def revise_practice_paper(
     "/{curriculum_version_id}/papers/{paper_id}/publish",
     operation_id="publish_practice_paper",
     response_model=PublishedPaperVersionResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     summary="Publish the current authoritative draft with optimistic concurrency",
 )
 async def publish_practice_paper(
@@ -347,7 +362,7 @@ async def get_published_paper_version(
     "/{curriculum_version_id}/papers/{paper_id}/archive",
     operation_id="archive_practice_paper",
     response_model=PaperArchiveResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     summary="Archive the current publication terminally",
 )
 async def archive_practice_paper(

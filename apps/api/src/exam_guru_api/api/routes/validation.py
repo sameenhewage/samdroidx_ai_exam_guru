@@ -11,9 +11,14 @@ from exam_guru_api.api.dependencies import (
     get_operational_telemetry,
     get_validation_pipeline,
 )
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import (
+    RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
+    ApiErrorResponse,
+)
+from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.validation.pipeline import ValidationPipeline
 from exam_guru_api.validation.repository import (
@@ -39,7 +44,7 @@ from exam_guru_api.validation.service import (
 router = APIRouter()
 RunPrincipal = Annotated[
     Principal,
-    Depends(require_permission(Permission.VALIDATION_RUN)),
+    Depends(require_rate_limit(Permission.VALIDATION_RUN, RateLimitScope.VALIDATION_RUN)),
 ]
 ReadPrincipal = Annotated[
     Principal,
@@ -66,13 +71,18 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "model": ApiErrorResponse,
     },
 }
+_COSTLY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_ERROR_RESPONSES,
+    status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    status.HTTP_503_SERVICE_UNAVAILABLE: RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
+}
 
 
 @router.post(
     "/{curriculum_version_id}/validation-runs",
     operation_id="create_validation_run",
     response_model=ValidationRunResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     status_code=status.HTTP_201_CREATED,
     summary="Run and persist canonical validation for a succeeded generation",
 )

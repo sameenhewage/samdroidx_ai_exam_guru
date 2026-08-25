@@ -11,6 +11,7 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.auth.rate_limits import NoOpRateLimiter
 from exam_guru_api.documents.jobs import DeterministicExtractionDispatcher, ExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.infrastructure.migrations import upgrade_database
@@ -100,6 +101,7 @@ def upload_client(
             object_storage=storage,
             extraction_dispatcher=dispatcher,
             resource_factory=lambda _: DatabaseTestResources(database_url),
+            rate_limiter=NoOpRateLimiter(),
         )
     )
 

@@ -23,6 +23,8 @@ GENERATION_PROVIDER_MAX_EXECUTION_SECONDS = 3 * 120 + 2 * 2
 MIN_GENERATION_WORKER_LEASE_SECONDS = (
     max(GENERATION_ACTOR_MAX_EXECUTION_SECONDS, GENERATION_PROVIDER_MAX_EXECUTION_SECONDS) + 1
 )
+MAX_RATE_LIMIT_WINDOW_SECONDS = 3_600
+MAX_RATE_LIMIT_PER_WINDOW = 10_000
 
 
 class Settings(BaseSettings):
@@ -46,6 +48,26 @@ class Settings(BaseSettings):
     otel_service_name: str = "exam-guru-api"
     trace_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     readiness_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    rate_limits_enabled: bool = True
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=MAX_RATE_LIMIT_WINDOW_SECONDS,
+    )
+    rate_limit_source_upload: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_extraction_trigger: int = Field(default=60, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_embedding_job_create: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_generation_create_retry: int = Field(
+        default=20,
+        ge=1,
+        le=MAX_RATE_LIMIT_PER_WINDOW,
+    )
+    rate_limit_validation_run: int = Field(default=60, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_paper_publish_archive: int = Field(
+        default=30,
+        ge=1,
+        le=MAX_RATE_LIMIT_PER_WINDOW,
+    )
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
     extraction_recovery_batch_size: int = Field(default=50, ge=1, le=100)
     extraction_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
@@ -195,6 +217,8 @@ class Settings(BaseSettings):
         ]
         if self.environment == "production" and deterministic_tokens:
             raise ValueError("production configuration cannot use deterministic identity tokens")
+        if self.environment == "production" and not self.rate_limits_enabled:
+            raise ValueError("production cost controls cannot be disabled")
         if (
             self.environment in {"staging", "production"}
             and self.retrieval_embedding_provider == "deterministic"

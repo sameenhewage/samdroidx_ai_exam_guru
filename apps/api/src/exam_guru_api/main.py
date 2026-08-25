@@ -8,6 +8,11 @@ from exam_guru_api.api.request_limits import RequestBodyLimitMiddleware
 from exam_guru_api.api.router import api_router
 from exam_guru_api.auth.adapters import build_identity_provider
 from exam_guru_api.auth.ports import IdentityProvider
+from exam_guru_api.auth.rate_limits import (
+    RateLimiter,
+    UnavailableRateLimiter,
+    create_rate_limiter,
+)
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import ExtractionDispatcher, create_extraction_dispatcher
 from exam_guru_api.generation.jobs import GenerationDispatcher, create_generation_dispatcher
@@ -43,6 +48,7 @@ def create_app(
     generation_runtime_registry: GenerationRuntimeRegistry | None = None,
     validation_pipeline: ValidationPipeline | None = None,
     embedding_provider_registry: EmbeddingProviderRegistry | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
 
@@ -50,6 +56,8 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         resources = resource_factory(resolved_settings)
         application.state.resources = resources
+        if rate_limiter is None:
+            application.state.rate_limiter = create_rate_limiter(resolved_settings, resources)
         try:
             yield
         finally:
@@ -68,6 +76,9 @@ def create_app(
         max_body_bytes=resolved_settings.max_upload_bytes + 1024 * 1024,
     )
     application.state.settings = resolved_settings
+    application.state.rate_limiter = (
+        rate_limiter if rate_limiter is not None else UnavailableRateLimiter()
+    )
     application.state.identity_provider = (
         identity_provider
         if identity_provider is not None

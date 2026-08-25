@@ -12,9 +12,10 @@ from exam_guru_api.api.dependencies import (
     get_embedding_provider_registry,
     get_settings,
 )
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE, ApiErrorResponse
+from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.core.config import Settings
 from exam_guru_api.knowledge.embedding_job_repository import EmbeddingJobNotFoundError
 from exam_guru_api.knowledge.embedding_job_schemas import (
@@ -46,7 +47,15 @@ from exam_guru_api.retrieval.embeddings import (
 )
 
 router = APIRouter()
-WritePrincipal = Annotated[Principal, Depends(require_permission(Permission.KNOWLEDGE_WRITE))]
+WritePrincipal = Annotated[
+    Principal,
+    Depends(
+        require_rate_limit(
+            Permission.KNOWLEDGE_WRITE,
+            RateLimitScope.EMBEDDING_JOB_CREATE,
+        )
+    ),
+]
 ReadPrincipal = Annotated[Principal, Depends(require_permission(Permission.KNOWLEDGE_READ))]
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 ProviderRegistry = Annotated[
@@ -80,13 +89,21 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "model": ApiErrorResponse,
     },
 }
+_COSTLY_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_ERROR_RESPONSES,
+    status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "description": "Embedding configuration, provider, queue, or cost limiter unavailable",
+        "model": ApiErrorResponse,
+    },
+}
 
 
 @router.post(
     "/{curriculum_version_id}/embedding-jobs",
     operation_id="create_embedding_job",
     response_model=EmbeddingJobResponse,
-    responses=_ERROR_RESPONSES,
+    responses=_COSTLY_ERROR_RESPONSES,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue reviewed curriculum records for server-owned embedding",
 )

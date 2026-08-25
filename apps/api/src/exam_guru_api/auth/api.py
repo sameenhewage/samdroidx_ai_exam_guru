@@ -4,6 +4,7 @@ from typing import Annotated, cast
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from exam_guru_api.api.dependencies import get_rate_limiter
 from exam_guru_api.auth.domain import (
     AuthorizationError,
     Permission,
@@ -14,6 +15,11 @@ from exam_guru_api.auth.ports import (
     AuthenticationError,
     AuthenticationFailureCode,
     IdentityProvider,
+)
+from exam_guru_api.auth.rate_limits import (
+    RateLimiter,
+    RateLimiterUnavailableError,
+    RateLimitScope,
 )
 
 _bearer = HTTPBearer(auto_error=False)
@@ -48,6 +54,34 @@ def require_permission(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"code": "permission_denied"},
             ) from error
+
+    return dependency
+
+
+def require_rate_limit(
+    permission: Permission,
+    scope: RateLimitScope,
+) -> Callable[..., Awaitable[Principal]]:
+    permission_dependency = require_permission(permission)
+
+    async def dependency(
+        principal: Annotated[Principal, Depends(permission_dependency)],
+        rate_limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
+    ) -> Principal:
+        try:
+            decision = await rate_limiter.consume(principal.subject_id, scope)
+        except RateLimiterUnavailableError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "rate_limiter_unavailable"},
+            ) from error
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"code": "rate_limit_exceeded", "scope": scope.value},
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+        return principal
 
     return dependency
 
