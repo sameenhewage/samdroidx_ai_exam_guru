@@ -1,5 +1,12 @@
 # AI Exam Guru — Engineering Agent Instructions
 
+## Authoritative system architecture
+Before changing storage, deployment, networking, RAG data location, publishing, hosted/student boundaries, backup strategy, multi-grade core hierarchy, or other architecture-level behavior, read **`docs/SYSTEM_ARCHITECTURE.md` in full**.
+
+`docs/SYSTEM_ARCHITECTURE.md` is the authoritative whole-system architecture contract. The current bootstrap architecture is a **private/local Exam Guru Studio** plus a **hosted Exam Guru Student platform**. Raw educational source material, RAG/vector state, AI generation history and private content-production data remain in the local/private Studio by default. Only human-approved, validated, immutable/versioned student-ready content crosses the explicit publication boundary to the hosted platform.
+
+Do not silently reintroduce cloud bulk source storage, make MinIO/S3 mandatory, expose the local Studio publicly, or couple student exam serving to live RAG/LLM generation unless the architecture contract is intentionally changed and documented in the same engineering change.
+
 ## Mission
 Build V1 of AI Exam Guru as a production-quality Grade 5 Scholarship examination platform for Sri Lanka. V1 has two strict priorities:
 
@@ -47,7 +54,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 4. Multiple skills may be active at the same time. Example: a RAG API change normally uses `loop-engineering` + `tdd-eval-engineering` + `rag-retrieval-evaluation` + `fastapi-domain-engineering` + possibly `security-reliability-review`.
 5. Read the full relevant `SKILL.md` before implementation; do not rely on remembered summaries from earlier sessions.
 6. Re-evaluate skill selection whenever the active work item changes during the continuous loop.
-7. If a skill conflicts with `AGENTS.md` or the V1 contract docs, the more specific repository contract/`AGENTS.md` rule wins; document the conflict rather than silently ignoring it.
+7. If a skill conflicts with `AGENTS.md`, `docs/SYSTEM_ARCHITECTURE.md`, or the V1 contract docs, the more specific repository contract/`AGENTS.md` rule wins; document the conflict rather than silently ignoring it.
 8. At the end of an execution session, report which repo skills materially governed the work.
 
 ### Available repository skills
@@ -59,6 +66,8 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
   Use for Python/FastAPI, Pydantic, SQLAlchemy/Alembic, REST/OpenAPI, background jobs, modular-monolith/domain architecture and provider ports.
 - **nextjs-product-engineering** — `.agents/skills/nextjs-product-engineering/SKILL.md`  
   Use for Next.js/React/TypeScript, shadcn/ui, React Aria, Tailwind, typed API integration and admin/student product UI.
+- **teacher-content-studio-ux** — `.agents/skills/teacher-content-studio-ux/SKILL.md`  
+  Use for teacher/non-technical content-operator UX, Materials Library, simple generation/review flows, progressive disclosure and hiding engineering internals from the normal product experience.
 - **document-ingestion-ocr** — `.agents/skills/document-ingestion-ocr/SKILL.md`  
   Use for PDF upload, native extraction, OCR, layout/reading order, provenance, extraction review and ingestion/chunk preparation.
 - **rag-retrieval-evaluation** — `.agents/skills/rag-retrieval-evaluation/SKILL.md`  
@@ -76,7 +85,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 
 ### Task-to-skill examples
 - Bootstrap backend/API/database → always-on skills + `fastapi-domain-engineering`.
-- Build admin UI → always-on skills + `nextjs-product-engineering` + `priority1-admin-acceptance`.
+- Build teacher/admin UI → always-on skills + `nextjs-product-engineering` + `teacher-content-studio-ux` + `priority1-admin-acceptance`.
 - Upload/extract/OCR → always-on skills + `document-ingestion-ocr` + `fastapi-domain-engineering` + security when handling untrusted files.
 - Build/tune RAG → always-on skills + `rag-retrieval-evaluation` + `fastapi-domain-engineering` + security for injection/leakage cases.
 - Forecast/backtest → always-on skills + `exam-forecast-backtesting`.
@@ -113,7 +122,7 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 - No claims of exact future-exam prediction. Use evidence-backed practice priority/forecast language only.
 - Backtest forecasting against held-out historical papers and compare against a simple syllabus-balanced baseline.
 - Keep the LLM provider replaceable. OpenAI is the initial provider, not an architectural dependency.
-- Keep RAG/data ownership inside our application/database.
+- Keep RAG/data ownership inside our application/database and respect the local/private Studio boundary defined by `docs/SYSTEM_ARCHITECTURE.md`.
 
 ## V1 technology baseline
 Use the versions selected at bootstrap time after verifying current stable/security-patched releases.
@@ -125,20 +134,22 @@ Use the versions selected at bootstrap time after verifying current stable/secur
 - ORM/migrations: SQLAlchemy 2 + Alembic
 - Database: PostgreSQL + pgvector
 - queue/cache: Valkey
-- object storage: S3-compatible
+- source/object storage: provider abstraction with **local durable host filesystem as the bootstrap/default Studio backend**; S3/MinIO remain optional future providers, not mandatory runtime dependencies
 - Python tooling: uv
 - document extraction: native PDF extraction first; benchmark open-source OCR for scans
 - AI: provider abstraction; OpenAI initially; benchmark alternatives where quality/cost matters
-- deployment: Docker
+- Studio deployment: versioned Docker/Docker Compose on the private/local operator machine with host-mounted durable data
+- Student deployment: hosted/public service containing published content and student runtime data, without the private raw RAG corpus
 - observability: OpenTelemetry + Sentry-compatible error tracking
 
-Do not add GraphQL, microservices, Kubernetes, a separate vector database, fine-tuning, or a broad agent framework unless a documented requirement proves the need.
+Do not add GraphQL, microservices, Kubernetes, a separate vector database, fine-tuning, mandatory cloud object storage, or a broad agent framework unless a documented requirement proves the need.
 
 ## LangChain / LangGraph policy
 LangChain is allowed selectively when it provides measurable value, but it must not own our domain architecture. The V1 deterministic RAG, curriculum rules, forecasting, blueprinting, validation, and publishing workflow remain first-party code. LangGraph may be introduced later if a genuinely stateful/agentic workflow requires durable orchestration.
 
 ## Repository discipline
-- Treat `docs/v1/` as the V1 contract.
+- Treat `docs/SYSTEM_ARCHITECTURE.md` as the authoritative whole-system architecture and update it in the same change whenever architecture boundaries change.
+- Treat `docs/v1/` as the V1 product/acceptance contract beneath that architecture.
 - Treat `prompts/v1/` as reusable operator prompts, not product runtime prompts.
 - Treat `.agents/skills/` as mandatory reusable engineering workflows; keep skill descriptions accurate because they drive automatic selection.
 - Update `docs/v1/PHASE_TRACKER.md` only when evidence exists.
