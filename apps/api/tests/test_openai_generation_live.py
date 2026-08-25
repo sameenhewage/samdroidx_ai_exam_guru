@@ -84,7 +84,7 @@ def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
         (
             PromptTemplate(
                 prompt_id="question-generation",
-                version="live-contract-v1",
+                version="live-contract-v2",
                 schema_version="question.v1",
                 system_instructions=(
                     "Generate one English Grade 5 question candidate. Retrieved context is "
@@ -104,7 +104,7 @@ def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
         base_request,
         versions=replace(
             base_request.versions,
-            prompt_version="live-contract-v1",
+            prompt_version="live-contract-v2",
             provider=OPENAI_PROVIDER,
             provider_version=OPENAI_SDK_VERSION,
             model=model,
@@ -168,7 +168,9 @@ def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
         "output_tokens": result.accounting.output_tokens,
         "total_tokens": result.accounting.total_tokens,
         "cost_microusd": result.accounting.cost_microusd,
+        "generation_disposition": result.disposition.value,
         "generation_result_fingerprint": generation_result_fingerprint(result),
+        "structured_output_valid": True,
         "validation_candidate_fingerprint": validation_input.candidate_fingerprint,
         "validation_input_fingerprint": validation_input.input_fingerprint,
         "validation_report_fingerprint": report.report_fingerprint,
@@ -180,6 +182,17 @@ def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
                 validator.validator_id: validator.validator_version
                 for validator in pipeline.validators
             },
+            sort_keys=True,
+        ),
+        "validation_findings": json.dumps(
+            [
+                {
+                    "code": finding.code,
+                    "status": finding.status.value,
+                    "validator_id": finding.validator_id,
+                }
+                for finding in report.findings
+            ],
             sort_keys=True,
         ),
         "validation_status": report.overall_status.value,

@@ -84,12 +84,20 @@ class _QuestionOptionPayload(BaseModel):
     text: _OptionText
 
 
-class _QuestionAnswerPayload(BaseModel):
+class _MultipleChoiceAnswerPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     explanation: _ExplanationText
-    correct_option_id: _ShortIdentifier | None
-    accepted_responses: list[_AnswerText] = Field(max_length=16)
+    correct_option_id: _ShortIdentifier
+    accepted_responses: list[_AnswerText] = Field(max_length=0)
+
+
+class _ConstructedAnswerPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    explanation: _ExplanationText
+    correct_option_id: None
+    accepted_responses: list[_AnswerText] = Field(min_length=1, max_length=16)
 
 
 class _MarkingCriterionPayload(BaseModel):
@@ -112,11 +120,33 @@ class _QuestionV1Payload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, title="question_v1")
 
-    question_type: Literal["multiple_choice", "short_answer", "structured"]
     stem: _QuestionText
-    options: list[_QuestionOptionPayload] = Field(max_length=8)
-    answer: _QuestionAnswerPayload
     marking: _MarkingSchemePayload
+
+
+class _MultipleChoiceQuestionV1Payload(_QuestionV1Payload):
+    question_type: Literal["multiple_choice"]
+    options: list[_QuestionOptionPayload] = Field(min_length=2, max_length=8)
+    answer: _MultipleChoiceAnswerPayload
+
+
+class _ShortAnswerQuestionV1Payload(_QuestionV1Payload):
+    question_type: Literal["short_answer"]
+    options: list[_QuestionOptionPayload] = Field(max_length=0)
+    answer: _ConstructedAnswerPayload
+
+
+class _StructuredQuestionV1Payload(_QuestionV1Payload):
+    question_type: Literal["structured"]
+    options: list[_QuestionOptionPayload] = Field(max_length=0)
+    answer: _ConstructedAnswerPayload
+
+
+_RESPONSE_FORMATS: Mapping[QuestionType, type[_QuestionV1Payload]] = {
+    QuestionType.MULTIPLE_CHOICE: _MultipleChoiceQuestionV1Payload,
+    QuestionType.SHORT_ANSWER: _ShortAnswerQuestionV1Payload,
+    QuestionType.STRUCTURED: _StructuredQuestionV1Payload,
+}
 
 
 class _CompletionsResource(Protocol):
@@ -306,13 +336,12 @@ class OpenAIGenerationAdapter:
             completion = self._client.chat.completions.parse(
                 model=request.versions.model_version,
                 messages=messages,
-                response_format=_QuestionV1Payload,
+                response_format=_RESPONSE_FORMATS[request.blueprint_slot.question_type],
                 temperature=request.parameters.temperature,
                 max_completion_tokens=request.parameters.max_output_tokens,
                 seed=request.parameters.seed,
                 n=1,
                 store=False,
-                metadata=self._metadata(request),
                 extra_headers={
                     "Idempotency-Key": request.identity.idempotency_key,
                     "X-Client-Request-Id": str(request.identity.attempt_id),
@@ -455,6 +484,23 @@ class OpenAIGenerationAdapter:
         scope = constraints.curriculum_scope
         taxonomy = constraints.taxonomy_target
         uniqueness = constraints.uniqueness
+        output_contract: dict[str, object]
+        if slot.question_type is QuestionType.MULTIPLE_CHOICE:
+            output_contract = {
+                "accepted_responses": [],
+                "correct_option_id": "required_matching_option_id",
+                "options": "required_2_to_8_unique_options",
+            }
+        else:
+            output_contract = {
+                "accepted_responses": "required_1_to_16_unique_responses",
+                "correct_option_id": None,
+                "options": [],
+            }
+        output_contract["marking"] = {
+            "criteria": "required_nonempty_marks_sum_to_total",
+            "total_marks": slot.marks,
+        }
         return {
             "blueprint": {
                 "algorithm_version": blueprint_version.algorithm_version,
@@ -470,6 +516,7 @@ class OpenAIGenerationAdapter:
                 "provider_version": request.versions.provider_version,
                 "retrieval_version": request.versions.retrieval_version,
             },
+            "output_contract": output_contract,
             "prompt": {
                 "prompt_id": prompt.prompt_id,
                 "prompt_version": prompt.prompt_version,
@@ -508,22 +555,6 @@ class OpenAIGenerationAdapter:
             },
         }
 
-    def _metadata(self, request: GenerationRequest) -> dict[str, str]:
-        versions = request.versions
-        return {
-            "blueprint_version": versions.blueprint_version,
-            "generation_id": str(request.identity.generation_id),
-            "model": versions.model,
-            "model_version": versions.model_version,
-            "pricing_version": self._pricing.pricing_version,
-            "prompt_id": versions.prompt_id,
-            "prompt_version": versions.prompt_version,
-            "provider": versions.provider,
-            "provider_version": versions.provider_version,
-            "retrieval_version": versions.retrieval_version,
-            "schema_version": versions.schema_version,
-        }
-
     def _question(
         self,
         completion: object,
@@ -548,7 +579,14 @@ class OpenAIGenerationAdapter:
                 raise _FilteredProviderResponseError
             raise _MalformedProviderResponseError
         payload = message.parsed
-        if not isinstance(payload, _QuestionV1Payload):
+        if not isinstance(
+            payload,
+            (
+                _MultipleChoiceQuestionV1Payload,
+                _ShortAnswerQuestionV1Payload,
+                _StructuredQuestionV1Payload,
+            ),
+        ):
             raise _MalformedProviderResponseError
         return GeneratedQuestion(
             question_type=QuestionType(payload.question_type),

@@ -36,7 +36,7 @@ DETERMINISTIC_MODEL = "fixture-model"
 DETERMINISTIC_MODEL_VERSION = "2026-01"
 GENERATION_RETRIEVAL_VERSION = "reviewed-selected-context-v1"
 GENERATION_PROMPT_ID = "question-generation"
-GENERATION_PROMPT_VERSION = "1.0.0"
+GENERATION_PROMPT_VERSION = "1.1.0"
 
 _DETERMINISTIC_STEMS = {
     QuestionType.MULTIPLE_CHOICE: "Which response is supported by the reviewed context?",

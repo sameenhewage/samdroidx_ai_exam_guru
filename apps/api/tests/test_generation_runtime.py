@@ -217,7 +217,7 @@ def test_local_and_test_runtime_use_only_the_registered_deterministic_route() ->
     assert registered.model == "fixture-model"
     assert registered.model_version == "2026-01"
     assert registered.prompt.prompt_id == "question-generation"
-    assert registered.prompt.version == "1.0.0"
+    assert registered.prompt.version == "1.1.0"
     assert registered.prompt.schema_version == "question.v1"
     assert registered.pricing.pricing_version == "deterministic-pricing-v1"
     assert registered.parameters.max_output_tokens <= 8_192

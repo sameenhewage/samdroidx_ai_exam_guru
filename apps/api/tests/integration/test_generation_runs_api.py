@@ -849,7 +849,7 @@ def test_generation_worker_persists_validation_required_result_accounting_and_im
     assert run_body["candidate"] is not None
     assert "publish" not in run_body
     assert run_body["prompt_id"] == "question-generation"
-    assert run_body["prompt_version"] == "1.0.0"
+    assert run_body["prompt_version"] == "1.1.0"
     assert run_body["provider"] == "deterministic-fake"
     assert run_body["provider_version"] == "1.0.0"
     assert run_body["model"] == "fixture-model"

@@ -279,25 +279,16 @@ def test_adapter_uses_exact_versioned_route_strict_schema_and_safe_prompt_bounda
         "Idempotency-Key": generation_request.identity.idempotency_key,
         "X-Client-Request-Id": str(generation_request.identity.attempt_id),
     }
-    assert call["metadata"] == {
-        "blueprint_version": generation_request.versions.blueprint_version,
-        "generation_id": str(generation_request.identity.generation_id),
-        "model": MODEL,
-        "model_version": MODEL_VERSION,
-        "pricing_version": "openai-test-pricing-2026-08-01",
-        "prompt_id": "question-generation",
-        "prompt_version": "1.0.0",
-        "provider": OPENAI_PROVIDER,
-        "provider_version": OPENAI_SDK_VERSION,
-        "retrieval_version": "hybrid-v2",
-        "schema_version": "question.v1",
-    }
+    assert "metadata" not in call
 
     messages = cast(list[dict[str, str]], call["messages"])
     assert [message["role"] for message in messages] == ["developer", "user"]
     assert "Generate one Grade 5 candidate" in messages[0]["content"]
     assert generation_request.blueprint_slot.slot_id in messages[0]["content"]
     assert generation_request.versions.retrieval_version in messages[0]["content"]
+    assert '"accepted_responses":[]' in messages[0]["content"]
+    assert '"correct_option_id":"required_matching_option_id"' in messages[0]["content"]
+    assert '"options":"required_2_to_8_unique_options"' in messages[0]["content"]
     assert MALICIOUS_CONTEXT not in messages[0]["content"]
     assert MALICIOUS_CONTEXT in messages[1]["content"]
     assert "UNTRUSTED_CONTEXT_BEGIN" in messages[1]["content"]
@@ -320,6 +311,16 @@ def test_adapter_uses_exact_versioned_route_strict_schema_and_safe_prompt_bounda
         "question_type",
         "stem",
     }
+    assert schema["properties"]["options"] == {
+        "items": {"$ref": "#/$defs/_QuestionOptionPayload"},
+        "maxItems": 8,
+        "minItems": 2,
+        "title": "Options",
+        "type": "array",
+    }
+    answer_schema = schema["$defs"]["_MultipleChoiceAnswerPayload"]
+    assert answer_schema["properties"]["accepted_responses"]["maxItems"] == 0
+    assert answer_schema["properties"]["correct_option_id"]["type"] == "string"
 
 
 def _walk_schema(value: object) -> list[object]:
