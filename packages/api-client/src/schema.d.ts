@@ -3533,6 +3533,36 @@ export interface components {
             exact_slots: number;
             question_type: components["schemas"]["QuestionType"];
         };
+        /** RateLimitExceededDetail */
+        RateLimitExceededDetail: {
+            /**
+             * Code
+             * @constant
+             */
+            code: "rate_limit_exceeded";
+            scope: components["schemas"]["RateLimitScope"];
+        };
+        /** RateLimitExceededResponse */
+        RateLimitExceededResponse: {
+            detail: components["schemas"]["RateLimitExceededDetail"];
+        };
+        /**
+         * RateLimitScope
+         * @enum {string}
+         */
+        RateLimitScope: "source_upload" | "extraction_trigger" | "embedding_job_create" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
+        /** RateLimiterUnavailableDetail */
+        RateLimiterUnavailableDetail: {
+            /**
+             * Code
+             * @constant
+             */
+            code: "rate_limiter_unavailable";
+        };
+        /** RateLimiterUnavailableResponse */
+        RateLimiterUnavailableResponse: {
+            detail: components["schemas"]["RateLimiterUnavailableDetail"];
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             checks: components["schemas"]["DependencyChecks"];
@@ -5163,7 +5193,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Embedding configuration, provider, or queue unavailable */
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Embedding configuration, provider, queue, or cost limiter unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5406,7 +5447,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Generation configuration or queue unavailable */
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Generation configuration, queue, or cost limiter unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5588,7 +5640,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Generation configuration or queue unavailable */
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Generation configuration, queue, or cost limiter unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6240,6 +6303,26 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
         };
     };
     list_paper_draft_versions: {
@@ -6500,6 +6583,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
                 };
             };
         };
@@ -7213,6 +7316,26 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
         };
     };
     get_validation_run: {
@@ -7825,6 +7948,26 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
         };
     };
     trigger_source_document_extraction: {
@@ -7856,7 +7999,18 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Extraction queue unavailable */
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Extraction queue or authenticated cost limiter unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

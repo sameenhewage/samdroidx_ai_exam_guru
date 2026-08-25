@@ -6320,6 +6320,78 @@
         "title": "QuestionTypeAllocationResponse",
         "type": "object"
       },
+      "RateLimitExceededDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "const": "rate_limit_exceeded",
+            "title": "Code",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RateLimitScope"
+          }
+        },
+        "required": [
+          "code",
+          "scope"
+        ],
+        "title": "RateLimitExceededDetail",
+        "type": "object"
+      },
+      "RateLimitExceededResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/RateLimitExceededDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RateLimitExceededResponse",
+        "type": "object"
+      },
+      "RateLimitScope": {
+        "enum": [
+          "source_upload",
+          "extraction_trigger",
+          "embedding_job_create",
+          "generation_create_retry",
+          "validation_run",
+          "paper_publish_archive"
+        ],
+        "title": "RateLimitScope",
+        "type": "string"
+      },
+      "RateLimiterUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "const": "rate_limiter_unavailable",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "RateLimiterUnavailableDetail",
+        "type": "object"
+      },
+      "RateLimiterUnavailableResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/RateLimiterUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RateLimiterUnavailableResponse",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -10104,6 +10176,25 @@
             },
             "description": "Selected source is not reviewed"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {
@@ -10112,7 +10203,7 @@
                 }
               }
             },
-            "description": "Embedding configuration, provider, or queue unavailable"
+            "description": "Embedding configuration, provider, queue, or cost limiter unavailable"
           }
         },
         "security": [
@@ -10484,6 +10575,25 @@
             },
             "description": "Invalid generation selection"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {
@@ -10492,7 +10602,7 @@
                 }
               }
             },
-            "description": "Generation configuration or queue unavailable"
+            "description": "Generation configuration, queue, or cost limiter unavailable"
           }
         },
         "security": [
@@ -10788,6 +10898,25 @@
             },
             "description": "Invalid generation selection"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {
@@ -10796,7 +10925,7 @@
                 }
               }
             },
-            "description": "Generation configuration or queue unavailable"
+            "description": "Generation configuration, queue, or cost limiter unavailable"
           }
         },
         "security": [
@@ -12080,6 +12209,35 @@
               }
             },
             "description": "Invalid bounded paper command or candidate selection"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
           }
         },
         "security": [
@@ -12558,6 +12716,35 @@
               }
             },
             "description": "Invalid bounded paper command or candidate selection"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
           }
         },
         "security": [
@@ -13766,6 +13953,35 @@
               }
             },
             "description": "Validation input exceeds a deterministic resource bound"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
           }
         },
         "security": [
@@ -14713,6 +14929,35 @@
           },
           "422": {
             "description": "Upload validation failed"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1.0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
           }
         },
         "security": [
@@ -14762,6 +15007,25 @@
             },
             "description": "Validation Error"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {
@@ -14770,7 +15034,7 @@
                 }
               }
             },
-            "description": "Extraction queue unavailable"
+            "description": "Extraction queue or authenticated cost limiter unavailable"
           }
         },
         "security": [
