@@ -2,7 +2,7 @@
 
 import { createApiClient, type components } from "@exam-guru/api-client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, Form } from "react-aria-components";
 
 import { Badge } from "@/components/ui/badge";
@@ -316,6 +316,10 @@ export function ValidationStudio({ role }: { role: Role }) {
   const [operationError, setOperationError] = useState<UiError | null>(null);
   const [notice, setNotice] = useState("");
 
+  const dataRequestId = useRef(0);
+  const detailRequestId = useRef(0);
+  const findingsRequestId = useRef(0);
+
   const curriculumChoices = useMemo(() => {
     const examsById = new Map(exams.map((item) => [item.id, item]));
     const mediaById = new Map(media.map((item) => [item.id, item]));
@@ -358,6 +362,7 @@ export function ValidationStudio({ role }: { role: Role }) {
   }, [api]);
 
   const loadData = useCallback(async (curriculumId: string) => {
+    const requestId = ++dataRequestId.current;
     setDataLoading(true);
     setDataError(null);
     setNotice("");
@@ -367,6 +372,7 @@ export function ValidationStudio({ role }: { role: Role }) {
         api.GET("/api/v1/admin/curricula/{curriculum_version_id}/generation-runs", { params: { path, query: { limit: LIST_LIMIT, offset: 0 } } }),
         api.GET("/api/v1/admin/curricula/{curriculum_version_id}/validation-runs", { params: { path, query: { limit: LIST_LIMIT, offset: 0 } } }),
       ]);
+      if (requestId !== dataRequestId.current) return;
       const failure = generationResponse.error !== undefined ? generationResponse : reportResponse.error !== undefined ? reportResponse : null;
       if (failure?.error !== undefined) {
         setDataError(apiError(failure.error, failure.response.status, "data"));
@@ -383,37 +389,41 @@ export function ValidationStudio({ role }: { role: Role }) {
         setFindings([]);
       }
     } catch {
-      setDataError(networkError("data"));
+      if (requestId === dataRequestId.current) setDataError(networkError("data"));
     } finally {
-      setDataLoading(false);
+      if (requestId === dataRequestId.current) setDataLoading(false);
     }
   }, [api]);
 
   const loadReport = useCallback(async (curriculumId: string, reportId: string) => {
+    const requestId = ++detailRequestId.current;
     setDetailLoading(true);
     setDetailError(null);
     try {
       const response = await api.GET("/api/v1/admin/curricula/{curriculum_version_id}/validation-runs/{validation_run_id}", { params: { path: { curriculum_version_id: curriculumId, validation_run_id: reportId } } });
+      if (requestId !== detailRequestId.current) return;
       if (response.error !== undefined) setDetailError(apiError(response.error, response.response.status, "report"));
       else setDetail(response.data ?? null);
     } catch {
-      setDetailError(networkError("report"));
+      if (requestId === detailRequestId.current) setDetailError(networkError("report"));
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestId.current) setDetailLoading(false);
     }
   }, [api]);
 
   const loadFindings = useCallback(async (curriculumId: string, reportId: string, page: number) => {
+    const requestId = ++findingsRequestId.current;
     setFindingsLoading(true);
     setDetailError(null);
     try {
       const response = await api.GET("/api/v1/admin/curricula/{curriculum_version_id}/validation-runs/{validation_run_id}/findings", { params: { path: { curriculum_version_id: curriculumId, validation_run_id: reportId }, query: { limit: FINDINGS_PAGE_SIZE, offset: page * FINDINGS_PAGE_SIZE } } });
+      if (requestId !== findingsRequestId.current) return;
       if (response.error !== undefined) setDetailError(apiError(response.error, response.response.status, "report"));
       else setFindings(response.data ?? []);
     } catch {
-      setDetailError(networkError("report"));
+      if (requestId === findingsRequestId.current) setDetailError(networkError("report"));
     } finally {
-      setFindingsLoading(false);
+      if (requestId === findingsRequestId.current) setFindingsLoading(false);
     }
   }, [api]);
 
@@ -441,6 +451,13 @@ export function ValidationStudio({ role }: { role: Role }) {
   }, [findingPage, loadFindings, selectedCurriculumId, selectedReportId]);
 
   function selectCurriculum(curriculumId: string) {
+    if (curriculumId === selectedCurriculumId) return;
+    dataRequestId.current += 1;
+    detailRequestId.current += 1;
+    findingsRequestId.current += 1;
+    setDataLoading(true);
+    setDetailLoading(false);
+    setFindingsLoading(false);
     setSelectedCurriculumId(curriculumId);
     setSelectedGenerationId("");
     setSelectedReportId("");
@@ -453,6 +470,8 @@ export function ValidationStudio({ role }: { role: Role }) {
 
   function selectReport(reportId: string) {
     if (reportId === selectedReportId) return;
+    detailRequestId.current += 1;
+    findingsRequestId.current += 1;
     setSelectedReportId(reportId);
     setDetail(null);
     setFindings([]);
@@ -460,6 +479,7 @@ export function ValidationStudio({ role }: { role: Role }) {
   }
 
   function selectFindingPage(page: number) {
+    findingsRequestId.current += 1;
     setFindings([]);
     setFindingsLoading(true);
     setFindingPage(page);

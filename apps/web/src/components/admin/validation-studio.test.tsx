@@ -1,5 +1,5 @@
 import type { components } from "@exam-guru/api-client";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,11 +17,20 @@ const ids = {
   exam: "00000000-0000-0000-0000-000000000201",
   generation: "00000000-0000-0000-0000-000000000701",
   medium: "00000000-0000-0000-0000-000000000301",
+  otherCurriculum: "00000000-0000-0000-0000-000000000102",
   pending: "00000000-0000-0000-0000-000000000702",
   report: "00000000-0000-0000-0000-000000000601",
 } as const;
 const now = "2026-08-24T09:30:00Z";
 const hash = (marker: string) => marker.repeat(64).slice(0, 64);
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  const promise = new Promise<Value>((fulfill) => {
+    resolve = fulfill;
+  });
+  return { promise, resolve };
+}
 
 const succeeded = {
   attempt_count: 1,
@@ -236,6 +245,112 @@ describe("ValidationStudio", () => {
     const payload = (await post!.json()) as Record<string, unknown>;
     expect(payload).toEqual({ generation_run_id: ids.generation });
     expect(Object.keys(payload)).toEqual(["generation_run_id"]);
+  });
+
+  it("ignores stale list responses after the curriculum scope changes", async () => {
+    const oldGenerations = deferred<Response>();
+    const oldReports = deferred<Response>();
+    const requests: Request[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requests.push(request.clone());
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/exam-configurations")) {
+        return Response.json([
+          {
+            active: true,
+            code: "G5",
+            created_at: now,
+            grade: 5,
+            id: ids.exam,
+            name: "Grade 5",
+            updated_at: now,
+          },
+        ]);
+      }
+      if (request.method === "GET" && path.endsWith("/media")) {
+        return Response.json([
+          {
+            active: true,
+            code: "en",
+            created_at: now,
+            id: ids.medium,
+            name: "English",
+            updated_at: now,
+          },
+        ]);
+      }
+      if (request.method === "GET" && path.endsWith("/curriculum-versions")) {
+        return Response.json([
+          {
+            active: true,
+            code: "G5-EN-A",
+            created_at: now,
+            exam_configuration_id: ids.exam,
+            id: ids.curriculum,
+            medium_id: ids.medium,
+            title: "Grade 5 English A",
+            updated_at: now,
+          },
+          {
+            active: true,
+            code: "G5-EN-B",
+            created_at: now,
+            exam_configuration_id: ids.exam,
+            id: ids.otherCurriculum,
+            medium_id: ids.medium,
+            title: "Grade 5 English B",
+            updated_at: now,
+          },
+        ]);
+      }
+      if (request.method === "GET" && path.endsWith("/generation-runs")) {
+        return path.includes(`/curricula/${ids.curriculum}/`)
+          ? oldGenerations.promise
+          : Response.json([]);
+      }
+      if (request.method === "GET" && path.endsWith("/validation-runs")) {
+        return path.includes(`/curricula/${ids.curriculum}/`)
+          ? oldReports.promise
+          : Response.json([]);
+      }
+      return Response.json({ detail: { code: "unexpected_request" } }, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ValidationStudio role="admin" />);
+
+    const curriculumSelect = await screen.findByLabelText("Active Grade 5 curriculum");
+    await waitFor(() =>
+      expect(
+        requests.filter((request) => {
+          const path = new URL(request.url).pathname;
+          return (
+            path.includes(`/curricula/${ids.curriculum}/`) &&
+            (path.endsWith("/generation-runs") || path.endsWith("/validation-runs"))
+          );
+        }),
+      ).toHaveLength(2),
+    );
+    fireEvent.change(curriculumSelect, { target: { value: ids.otherCurriculum } });
+    expect(curriculumSelect).toHaveValue(ids.otherCurriculum);
+    expect(await screen.findByRole("heading", { name: "No generation runs yet" })).toBeVisible();
+
+    await act(async () => {
+      oldGenerations.resolve(Response.json([pending, succeeded]));
+      oldReports.resolve(Response.json([summary(report)]));
+      await Promise.all([oldGenerations.promise, oldReports.promise]);
+    });
+
+    expect(
+      screen.queryByRole("button", { name: `Select validation report ${ids.report}` }),
+    ).not.toBeInTheDocument();
+    expect(
+      requests.some((request) =>
+        new URL(request.url).pathname.includes(
+          `/curricula/${ids.otherCurriculum}/validation-runs/${ids.report}`,
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("selects immutable reports, exposes lineage and provenance, and paginates bounded text findings", async () => {
