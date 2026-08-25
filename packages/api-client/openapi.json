@@ -4392,6 +4392,19 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "ObjectStorageOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "reconciliation": {
+            "$ref": "#/components/schemas/StorageReconciliationOperationsResponse"
+          }
+        },
+        "required": [
+          "reconciliation"
+        ],
+        "title": "ObjectStorageOperationsResponse",
+        "type": "object"
+      },
       "OperationsDataBoundsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4442,6 +4455,9 @@
           "generation": {
             "$ref": "#/components/schemas/GenerationOperationsResponse"
           },
+          "object_storage": {
+            "$ref": "#/components/schemas/ObjectStorageOperationsResponse"
+          },
           "practice_papers": {
             "$ref": "#/components/schemas/PracticePaperOperationsResponse"
           },
@@ -4463,6 +4479,7 @@
           "validation",
           "extraction",
           "embedding",
+          "object_storage",
           "practice_papers"
         ],
         "title": "OperationsSummaryResponse",
@@ -8304,6 +8321,90 @@
           "source_version"
         ],
         "title": "SourceVersionResponse",
+        "type": "object"
+      },
+      "StorageReconciliationOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "minimum": 0.0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "current_candidate_count": {
+            "minimum": 0.0,
+            "title": "Current Candidate Count",
+            "type": "integer"
+          },
+          "failure_codes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureCodeCountResponse"
+            },
+            "title": "Failure Codes",
+            "type": "array"
+          },
+          "failure_count": {
+            "minimum": 0.0,
+            "title": "Failure Count",
+            "type": "integer"
+          },
+          "last_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Completed At"
+          },
+          "referenced_count": {
+            "minimum": 0.0,
+            "title": "Referenced Count",
+            "type": "integer"
+          },
+          "resolved_count": {
+            "minimum": 0.0,
+            "title": "Resolved Count",
+            "type": "integer"
+          },
+          "run_count": {
+            "minimum": 0.0,
+            "title": "Run Count",
+            "type": "integer"
+          },
+          "scanned_count": {
+            "minimum": 0.0,
+            "title": "Scanned Count",
+            "type": "integer"
+          },
+          "tagged_count": {
+            "minimum": 0.0,
+            "title": "Tagged Count",
+            "type": "integer"
+          },
+          "truncated_run_count": {
+            "minimum": 0.0,
+            "title": "Truncated Run Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_count",
+          "scanned_count",
+          "referenced_count",
+          "candidate_count",
+          "resolved_count",
+          "tagged_count",
+          "failure_count",
+          "truncated_run_count",
+          "current_candidate_count",
+          "last_completed_at",
+          "failure_codes"
+        ],
+        "title": "StorageReconciliationOperationsResponse",
         "type": "object"
       },
       "SyllabusSkillResponse": {

@@ -2716,6 +2716,10 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ObjectStorageOperationsResponse */
+        ObjectStorageOperationsResponse: {
+            reconciliation: components["schemas"]["StorageReconciliationOperationsResponse"];
+        };
         /** OperationsDataBoundsResponse */
         OperationsDataBoundsResponse: {
             /** Earliest Observed At */
@@ -2729,6 +2733,7 @@ export interface components {
             embedding: components["schemas"]["EmbeddingOperationsResponse"];
             extraction: components["schemas"]["ExtractionOperationsResponse"];
             generation: components["schemas"]["GenerationOperationsResponse"];
+            object_storage: components["schemas"]["ObjectStorageOperationsResponse"];
             practice_papers: components["schemas"]["PracticePaperOperationsResponse"];
             units: components["schemas"]["OperationsUnitsResponse"];
             validation: components["schemas"]["ValidationOperationsResponse"];
@@ -4283,6 +4288,31 @@ export interface components {
             source_document_id: string;
             /** Source Version */
             source_version: string;
+        };
+        /** StorageReconciliationOperationsResponse */
+        StorageReconciliationOperationsResponse: {
+            /** Candidate Count */
+            candidate_count: number;
+            /** Current Candidate Count */
+            current_candidate_count: number;
+            /** Failure Codes */
+            failure_codes: components["schemas"]["FailureCodeCountResponse"][];
+            /** Failure Count */
+            failure_count: number;
+            /** Last Completed At */
+            last_completed_at: string | null;
+            /** Referenced Count */
+            referenced_count: number;
+            /** Resolved Count */
+            resolved_count: number;
+            /** Run Count */
+            run_count: number;
+            /** Scanned Count */
+            scanned_count: number;
+            /** Tagged Count */
+            tagged_count: number;
+            /** Truncated Run Count */
+            truncated_run_count: number;
         };
         /** SyllabusSkillResponse */
         SyllabusSkillResponse: {
