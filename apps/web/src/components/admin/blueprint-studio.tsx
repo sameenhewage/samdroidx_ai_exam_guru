@@ -843,6 +843,7 @@ export function BlueprintStudio({ role }: { role: Role }) {
   }, [loadDetail, selectedBlueprintId, selectedCurriculumId]);
 
   function selectCurriculum(curriculumId: string) {
+    if (curriculumId === selectedCurriculumId) return;
     listRequestId.current += 1;
     detailRequestId.current += 1;
     generateRequestId.current += 1;

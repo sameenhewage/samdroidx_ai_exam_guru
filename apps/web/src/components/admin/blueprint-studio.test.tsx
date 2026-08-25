@@ -379,6 +379,7 @@ function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
 type FixtureOptions = {
   analytics?: AnalyticsSummary[];
   beforeCreate?: () => Promise<void>;
+  beforeTaxonomyLoad?: () => Promise<void>;
   blueprints?: BlueprintSummary[];
   createStatuses?: number[];
   curricula?: Curriculum[];
@@ -414,6 +415,7 @@ function fixtureApi(options: FixtureOptions = {}) {
         : Response.json({ detail: { code: "permission_denied" } }, { status });
     }
     if (request.method === "GET" && url.pathname.endsWith("/taxonomy/nodes")) {
+      await options.beforeTaxonomyLoad?.();
       return Response.json(options.taxonomy ?? taxonomy);
     }
     if (request.method === "GET" && url.pathname.endsWith("/analytics/runs")) {
@@ -472,6 +474,21 @@ async function renderLoaded(
   await waitFor(() =>
     expect(screen.queryByText("Loading blueprint workspace…")).not.toBeInTheDocument(),
   );
+  const availableCurricula = options.curricula ?? [curriculum, gradeSixCurriculum];
+  if (availableCurricula.some((item) => item.active && item.exam_configuration_id === ids.exam)) {
+    await waitFor(() =>
+      expect(
+        fixture.requests.some(
+          (request) => request.method === "GET" && request.url.endsWith("/taxonomy/nodes"),
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Loading reviewed taxonomy, analytics and blueprints…"),
+      ).not.toBeInTheDocument(),
+    );
+  }
   return fixture;
 }
 
@@ -481,6 +498,33 @@ afterEach(() => {
 });
 
 describe("BlueprintStudio", () => {
+  it("keeps the in-flight curriculum load when the auto-selected scope is selected again", async () => {
+    let releaseTaxonomy: (() => void) | undefined;
+    const taxonomyGate = new Promise<void>((resolve) => {
+      releaseTaxonomy = resolve;
+    });
+    const { fetchMock } = fixtureApi({
+      beforeTaxonomyLoad: () => taxonomyGate,
+      curricula: [curriculum],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<BlueprintStudio role="admin" />);
+
+    const curriculumSelect = await screen.findByLabelText("Active Grade 5 curriculum");
+    await waitFor(() => expect((curriculumSelect as HTMLSelectElement).value).toBe(ids.curriculum));
+    fireEvent.change(curriculumSelect, { target: { value: ids.curriculum } });
+    await act(async () => releaseTaxonomy?.());
+
+    const taxonomySelect = await screen.findByLabelText("Taxonomy target 1");
+    expect(within(taxonomySelect).getByRole("option", { name: /Recognise polygons/ })).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([input, init]) => {
+        const request = asRequest(input as RequestInfo | URL, init as RequestInit | undefined);
+        return request.method === "GET" && request.url.endsWith("/taxonomy/nodes");
+      }),
+    ).toHaveLength(1);
+  });
+
   it("guides an admin through bounded exact controls and sends a typed baseline-only request", async () => {
     const { requests } = await renderLoaded();
 
