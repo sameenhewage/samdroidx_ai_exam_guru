@@ -1823,6 +1823,8 @@ export interface components {
             knowledge_chunk_ids: string[];
             /** Queue Message Id */
             queue_message_id: string | null;
+            /** Retry Depth */
+            retry_depth: number;
             /** Retry Of Job Id */
             retry_of_job_id: string | null;
             /**
@@ -2344,6 +2346,8 @@ export interface components {
             request_fingerprint: string;
             /** Retrieval Version */
             retrieval_version: string;
+            /** Retry Depth */
+            retry_depth: number;
             /** Retry Of Run Id */
             retry_of_run_id: string | null;
             /** Schema Version */
@@ -2409,6 +2413,8 @@ export interface components {
             provider: string;
             /** Request Fingerprint */
             request_fingerprint: string;
+            /** Retry Depth */
+            retry_depth: number;
             /** Retry Of Run Id */
             retry_of_run_id: string | null;
             /** Slot Id */

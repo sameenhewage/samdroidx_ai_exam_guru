@@ -1827,6 +1827,12 @@
             ],
             "title": "Queue Message Id"
           },
+          "retry_depth": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Retry Depth",
+            "type": "integer"
+          },
           "retry_of_job_id": {
             "anyOf": [
               {
@@ -1863,6 +1869,7 @@
           "id",
           "curriculum_version_id",
           "retry_of_job_id",
+          "retry_depth",
           "historical_question_ids",
           "knowledge_chunk_ids",
           "configuration",
@@ -3161,6 +3168,12 @@
             "title": "Retrieval Version",
             "type": "string"
           },
+          "retry_depth": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Retry Depth",
+            "type": "integer"
+          },
           "retry_of_run_id": {
             "anyOf": [
               {
@@ -3217,6 +3230,7 @@
           "curriculum_version_id",
           "paper_blueprint_id",
           "retry_of_run_id",
+          "retry_depth",
           "slot_id",
           "request_fingerprint",
           "status",
@@ -3344,6 +3358,12 @@
             "title": "Request Fingerprint",
             "type": "string"
           },
+          "retry_depth": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Retry Depth",
+            "type": "integer"
+          },
           "retry_of_run_id": {
             "anyOf": [
               {
@@ -3396,6 +3416,7 @@
           "curriculum_version_id",
           "paper_blueprint_id",
           "retry_of_run_id",
+          "retry_depth",
           "slot_id",
           "request_fingerprint",
           "status",
