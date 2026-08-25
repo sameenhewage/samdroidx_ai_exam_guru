@@ -1059,6 +1059,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Auth Session */
+        get: operations["get_auth_session"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -1128,6 +1145,11 @@ export interface components {
             /** Resource Type */
             resource_type: string;
         };
+        /**
+         * AdminRole
+         * @enum {string}
+         */
+        AdminRole: "admin" | "reviewer";
         /** AnalyticsConfigResponse */
         AnalyticsConfigResponse: {
             meaningful_improvement: components["schemas"]["ExactFraction"];
@@ -1312,6 +1334,28 @@ export interface components {
             detail: components["schemas"]["ApiErrorDetail"] | {
                 [key: string]: components["schemas"]["JsonValue"];
             }[];
+        };
+        /** AuthSessionResponse */
+        AuthSessionResponse: {
+            /** Roles */
+            roles: components["schemas"]["AdminRole"][];
+            /**
+             * Subject Id
+             * Format: uuid
+             */
+            subject_id: string;
+        };
+        /** AuthenticationErrorDetail */
+        AuthenticationErrorDetail: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "authentication_required" | "invalid_access_token";
+        };
+        /** AuthenticationErrorResponse */
+        AuthenticationErrorResponse: {
+            detail: components["schemas"]["AuthenticationErrorDetail"];
         };
         /** BacktestAggregateResponse */
         BacktestAggregateResponse: {
@@ -2547,6 +2591,18 @@ export interface components {
             total_marks: number;
             /** Years */
             years: number[];
+        };
+        /** IdentityProviderUnavailableDetail */
+        IdentityProviderUnavailableDetail: {
+            /**
+             * Code
+             * @constant
+             */
+            code: "identity_provider_unavailable";
+        };
+        /** IdentityProviderUnavailableResponse */
+        IdentityProviderUnavailableResponse: {
+            detail: components["schemas"]["IdentityProviderUnavailableDetail"];
         };
         JsonValue: unknown;
         /** KnowledgeChunkImportRequest */
@@ -8245,6 +8301,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_auth_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSessionResponse"];
+                };
+            };
+            /** @description Bearer access token is missing or invalid */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthenticationErrorResponse"];
+                };
+            };
+            /** @description Configured identity provider is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderUnavailableResponse"];
                 };
             };
         };

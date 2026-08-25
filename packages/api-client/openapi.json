@@ -49,6 +49,14 @@
         "title": "AdminAuditEventResponse",
         "type": "object"
       },
+      "AdminRole": {
+        "enum": [
+          "admin",
+          "reviewer"
+        ],
+        "title": "AdminRole",
+        "type": "string"
+      },
       "AnalyticsConfigResponse": {
         "properties": {
           "meaningful_improvement": {
@@ -492,6 +500,60 @@
           "detail"
         ],
         "title": "ApiErrorResponse",
+        "type": "object"
+      },
+      "AuthSessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/AdminRole"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "roles"
+        ],
+        "title": "AuthSessionResponse",
+        "type": "object"
+      },
+      "AuthenticationErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "authentication_required",
+              "invalid_access_token"
+            ],
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "AuthenticationErrorDetail",
+        "type": "object"
+      },
+      "AuthenticationErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthenticationErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthenticationErrorResponse",
         "type": "object"
       },
       "BacktestAggregateResponse": {
@@ -3917,6 +3979,34 @@
           "input_fingerprint"
         ],
         "title": "HistoricalStatisticsResponse",
+        "type": "object"
+      },
+      "IdentityProviderUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "const": "identity_provider_unavailable",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "IdentityProviderUnavailableDetail",
+        "type": "object"
+      },
+      "IdentityProviderUnavailableResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/IdentityProviderUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "IdentityProviderUnavailableResponse",
         "type": "object"
       },
       "JsonValue": {},
@@ -15498,6 +15588,52 @@
         "summary": "Trust Source Document",
         "tags": [
           "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "operationId": "get_auth_session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticationErrorResponse"
+                }
+              }
+            },
+            "description": "Bearer access token is missing or invalid"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityProviderUnavailableResponse"
+                }
+              }
+            },
+            "description": "Configured identity provider is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Auth Session",
+        "tags": [
+          "authentication"
         ]
       }
     },
