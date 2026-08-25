@@ -1,6 +1,16 @@
 # AI Exam Guru
 
-AI-assisted Sri Lankan examination practice platform. V1 targets the **Grade 5 Scholarship examination** and is governed by repository-first engineering instructions.
+AI-assisted Sri Lankan examination practice platform. V1 validates the **Grade 5 Scholarship examination** first while the reusable curriculum/content architecture is designed for Grades 1–13.
+
+## System architecture
+The authoritative whole-system architecture is:
+- [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md)
+
+The product is deliberately split into:
+1. **Exam Guru Studio — private/local content + AI factory** — raw educational materials, OCR/extraction, PostgreSQL + pgvector, RAG, generation, validation and teacher review stay on the operator-owned local/private environment by default.
+2. **Exam Guru Student — hosted/public student platform** — receives only human-approved, validated, immutable/versioned student-ready content and stores student runtime data.
+
+Approved papers are **published/copied**, not moved, so the local Studio remains the source-of-truth. Bulk raw materials and the private RAG corpus are not required on the hosted student server.
 
 ## V1 priority order
 1. **Priority 1 — Admin + Content Intelligence + RAG + LLM** — must reach 100% acceptance before Priority 2 starts.
@@ -11,11 +21,13 @@ This repository uses **continuous loop engineering + mandatory TDD/eval-driven d
 
 Read:
 - [`AGENTS.md`](AGENTS.md)
+- [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md)
 - [`docs/v1/00_V1_MASTER_PLAN.md`](docs/v1/00_V1_MASTER_PLAN.md)
 - [`docs/v1/01_ENGINEERING_WORKFLOW.md`](docs/v1/01_ENGINEERING_WORKFLOW.md)
 - [`docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md`](docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md)
 - [`docs/v1/03_PRIORITY_2_STUDENT_SPEC.md`](docs/v1/03_PRIORITY_2_STUDENT_SPEC.md)
 - [`docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md`](docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md)
+- [`docs/v1/05_TEACHER_FIRST_MULTI_GRADE_CONTENT_STUDIO.md`](docs/v1/05_TEACHER_FIRST_MULTI_GRADE_CONTENT_STUDIO.md)
 - [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md)
 
 ## Automatic repository skills
@@ -25,12 +37,12 @@ Reusable agent workflows live in `.agents/skills/<skill-name>/SKILL.md`.
 - `loop-engineering`
 - `tdd-eval-engineering`
 
-The agent must then automatically load all matching domain skills (FastAPI, Next.js, OCR/ingestion, RAG, forecast/backtesting, LLM generation/validation, security/acceptance, and later the P10-gated student product skill) without waiting for the operator to name them.
+The agent must then automatically load all matching domain skills, including teacher-content UX, FastAPI, Next.js, OCR/ingestion, RAG, forecast/backtesting, LLM generation/validation, security/acceptance, and later the P10-gated student product skill, without waiting for the operator to name them.
 
 See [`docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md`](docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md) for compositions and maintenance rules.
 
 ## GPT-5.6 Sol operator prompts
-Start V1 with:
+Start/resume the general V1 loop with:
 - [`prompts/v1/00_GPT_5_6_SOL_MASTER_EXECUTION.md`](prompts/v1/00_GPT_5_6_SOL_MASTER_EXECUTION.md)
 
 Resume an interrupted engineering session with:
@@ -45,34 +57,45 @@ Before unlocking student development run:
 Only after P10 is proven DONE, continue with:
 - [`prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md`](prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md)
 
+Use the local Grade 5 dataset steering prompt when working with operator-provided material:
+- [`prompts/v1/05_FULL_V1_CONTINUOUS_EXECUTION_WITH_LOCAL_DATA.md`](prompts/v1/05_FULL_V1_CONTINUOUS_EXECUTION_WITH_LOCAL_DATA.md)
+
+Use the teacher-first multi-grade product correction prompt for the current UI/domain redesign:
+- [`prompts/v1/06_TEACHER_FIRST_MULTI_GRADE_REDESIGN.md`](prompts/v1/06_TEACHER_FIRST_MULTI_GRADE_REDESIGN.md)
+
 All prompts re-apply the repository skill-routing rules so skill use survives session/resume boundaries.
 
 ## Current state
-Implementation is active in **P0 — Repository & Engineering Foundation**. Priority 2 remains blocked until P10 is DONE. See [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md) for acceptance status and evidence.
+Implementation is active across Priority 1 acceptance gates. P0 and P1 are DONE; P2 and P3 have substantial implementation evidence but remain incomplete on representative human-reviewed real-data quality gates. Later non-blocked Priority 1 engineering may continue because tracker phases are acceptance gates, not waterfall implementation locks. See [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md) for the authoritative current status and evidence.
 
-## Local bootstrap
+## Local Studio bootstrap
 
 ### Prerequisites
 - Docker Engine 29+ with Docker Compose 2.40+
 - `uv` 0.11.26+ for host-side backend development
 - Node.js 24.19 with npm 11.17 for host-side frontend development
 
-The full local stack can run without host Python or Node installations:
+The local Studio is intended to run through versioned Docker/Docker Compose while persistent source data lives on durable host storage rather than ephemeral container layers.
+
+Current repository code may still include MinIO/S3-compatible integration from the earlier bootstrap. The authoritative target architecture is the storage-provider abstraction in [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md), with **local durable host filesystem storage as the bootstrap/default Studio backend** and S3/MinIO optional rather than mandatory.
+
+Typical local startup remains:
 
 ```bash
 cp .env.example .env
 docker compose up --build --wait
 ```
 
-Services:
-- admin web: `http://localhost:3000`
-- API: `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
-- MinIO console: `http://localhost:9001`
-- PostgreSQL/pgvector: `localhost:55432`
-- Valkey: `localhost:56379`
+Core services include:
+- teacher/admin web;
+- FastAPI API;
+- PostgreSQL + pgvector;
+- Valkey/background workers;
+- durable local source storage through the configured storage provider.
 
-The committed credentials are local-development placeholders only. Production mode rejects them. Stop services without deleting persisted local data using:
+During the storage migration, the Compose stack may additionally expose MinIO compatibility services used by existing integration tests. Do not treat that temporary implementation detail as the long-term architecture requirement.
+
+Stop services without intentionally deleting durable data using:
 
 ```bash
 docker compose down
@@ -88,7 +111,7 @@ uv run --directory apps/api mypy
 uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing
 ```
 
-The integration suite uses disposable real PostgreSQL/pgvector, Valkey, and MinIO containers.
+The integration suite uses real disposable PostgreSQL/pgvector and Valkey infrastructure and exercises the configured storage provider/integration adapters as required by the active implementation.
 
 ## Frontend development
 
@@ -114,9 +137,9 @@ npm run typecheck --prefix packages/api-client
 CI regenerates both artifacts and fails if the committed output differs.
 
 ## Configuration and observability
+Backend settings use the `EXAM_GURU_` environment prefix. Secrets must remain outside Git and be redacted from logs/evidence. Local Studio production-hardening rules must respect the private/local network and durable-host-storage boundaries in `docs/SYSTEM_ARCHITECTURE.md`.
 
-Backend settings use the `EXAM_GURU_` environment prefix. Database, Valkey, and object-storage credentials are redacted through `SecretStr`. Production configuration rejects local placeholders and requires PostgreSQL TLS (`ssl=require` or stronger), `rediss://` for Valkey, and an HTTPS object-storage endpoint. Optional observability variables include:
-
+Optional observability variables include:
 - `EXAM_GURU_SENTRY_DSN`
 - `EXAM_GURU_OTEL_EXPORTER_OTLP_ENDPOINT`
 - `EXAM_GURU_OTEL_SERVICE_NAME`
@@ -124,4 +147,4 @@ Backend settings use the `EXAM_GURU_` environment prefix. Database, Valkey, and 
 
 Every API response carries a validated `X-Request-ID`. OpenTelemetry FastAPI instrumentation is active, and Sentry-compatible error reporting is enabled only when a DSN is configured.
 
-P1 browser acceptance uses deterministic admin/reviewer tokens only when `ENABLE_DETERMINISTIC_IDENTITY=true`; backend production settings reject those tokens. The development cookie is HttpOnly and SameSite=Strict. `ADMIN_COOKIE_SECURE=false` is allowed only for local HTTP, while the P10 production identity integration must set secure cookies and re-run authentication/session security tests.
+P1 browser acceptance uses deterministic admin/reviewer tokens only when `ENABLE_DETERMINISTIC_IDENTITY=true`; backend production settings reject those tokens. The development cookie is HttpOnly and SameSite=Strict. Production identity/session hardening remains a later acceptance concern and must not weaken the private Studio boundary or the hosted Student platform's public-security requirements.
