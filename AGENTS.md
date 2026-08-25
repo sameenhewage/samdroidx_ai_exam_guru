@@ -76,6 +76,8 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
   Use for historical analytics, practice-priority forecasting, held-out rolling backtests, baseline comparison and forecast calibration.
 - **llm-question-generation-validation** — `.agents/skills/llm-question-generation-validation/SKILL.md`  
   Use for LLM/provider adapters, structured generation, prompts, answer/marking generation, validation, duplicate detection, AI evals and cost/latency tracking.
+- **subject-quality-validation** — `.agents/skills/subject-quality-validation/SKILL.md`  
+  Use whenever generated educational content must be checked for subject-specific correctness: trusted subject routing, Maths solver/tool checks, factual grounding, language/ambiguity checks, structured semantic verification, reviewer correction memory and subject-quality evals. Read `docs/v1/06_SUBJECT_QUALITY_VALIDATION_ENGINE.md` in full.
 - **security-reliability-review** — `.agents/skills/security-reliability-review/SKILL.md`  
   Use for authz/security, uploads, prompt injection/RAG poisoning, leakage, retries/idempotency/races, publish bypass, provider failure, cost abuse and adversarial review.
 - **priority1-admin-acceptance** — `.agents/skills/priority1-admin-acceptance/SKILL.md`  
@@ -89,7 +91,9 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 - Upload/extract/OCR → always-on skills + `document-ingestion-ocr` + `fastapi-domain-engineering` + security when handling untrusted files.
 - Build/tune RAG → always-on skills + `rag-retrieval-evaluation` + `fastapi-domain-engineering` + security for injection/leakage cases.
 - Forecast/backtest → always-on skills + `exam-forecast-backtesting`.
-- Generate/validate questions → always-on skills + `llm-question-generation-validation` + `rag-retrieval-evaluation`; add security for prompt-injection/provider-failure work.
+- Generate questions → always-on skills + `llm-question-generation-validation` + `rag-retrieval-evaluation`; add security for prompt-injection/provider-failure work.
+- Validate subject correctness of questions/answers/marking → always-on skills + `llm-question-generation-validation` + `subject-quality-validation` + `rag-retrieval-evaluation` + `fastapi-domain-engineering`; add `security-reliability-review` for solver parsing, provider calls and publish-gate changes.
+- Build teacher-facing validation/review UX → always-on skills + `subject-quality-validation` + `teacher-content-studio-ux` + `nextjs-product-engineering` + `priority1-admin-acceptance`.
 - Close P0–P10 gates → always-on skills + `priority1-admin-acceptance`; use `security-reliability-review` before major/P10 closure.
 - After P10 only, build student product → always-on skills + `student-exam-product` + `nextjs-product-engineering` + `fastapi-domain-engineering` + security as relevant.
 
@@ -109,6 +113,7 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 - API contract tests for FastAPI/OpenAPI
 - RAG retrieval/evaluation tests using fixed Grade 5 fixtures
 - AI structured-output/validator contract tests using deterministic provider fakes
+- subject-quality regression/eval tests covering machine-verifiable answers, grounded factual claims, unsupported/ambiguous cases and reviewer corrections
 - opt-in real-model evaluation suite for quality benchmarking; never make normal CI depend on paid external model availability
 - end-to-end tests for admin workflows before Priority 1 closes
 - student end-to-end tests only after Priority 1 closes
@@ -116,6 +121,11 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 ## Quality rules
 - Do not use LLM output as source-of-truth without validation.
 - Do not let the LLM decide deterministic exam rules that can be encoded in domain logic.
+- For subject-specific correctness, use the strongest available path: `deterministic rule/tool -> grounded subject checker -> structured semantic verifier -> human review`.
+- Subject/grade/medium/curriculum scope used for validation must come from trusted server-owned domain state; never infer validator routing from generated text or filenames.
+- An inability to verify content is not a PASS. Represent uncertainty explicitly and route it to review.
+- Do not use unrestricted `eval`/`exec` or execute generated code for Maths checking; use bounded parsers and controlled tools.
+- Public-web pages are not the default educational source of truth. Prefer reviewed local curriculum/teacher-guide/past-paper material with provenance.
 - Every generated question must carry provenance, blueprint slot, retrieved context references, generation metadata, validation results, and review state.
 - Never publish a question automatically in V1 without the configured review gate.
 - Preserve original uploaded documents and immutable source references.
@@ -150,6 +160,7 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 ## Repository discipline
 - Treat `docs/SYSTEM_ARCHITECTURE.md` as the authoritative whole-system architecture and update it in the same change whenever architecture boundaries change.
 - Treat `docs/v1/` as the V1 product/acceptance contract beneath that architecture.
+- Treat `docs/v1/06_SUBJECT_QUALITY_VALIDATION_ENGINE.md` as the V1 contract for subject-aware correctness/tooling and reviewer-learning behavior.
 - Treat `prompts/v1/` as reusable operator prompts, not product runtime prompts.
 - Treat `.agents/skills/` as mandatory reusable engineering workflows; keep skill descriptions accurate because they drive automatic selection.
 - Update `docs/v1/PHASE_TRACKER.md` only when evidence exists.
@@ -159,6 +170,6 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 - Keep the default branch green.
 
 ## Definition of Priority 1 complete
-Priority 1 is complete only when an admin can ingest real Grade 5 source content, review extraction, produce a structured knowledge base, retrieve grounded context, run historical analysis/backtests, generate a complete paper from a deterministic blueprint, validate every question, review/edit/approve it, publish it, and reproduce the process with automated tests/evals and documented evidence.
+Priority 1 is complete only when an admin can ingest real Grade 5 source content, review extraction, produce a structured knowledge base, retrieve grounded context, run historical analysis/backtests, generate a complete paper from a deterministic blueprint, validate every question including applicable subject-specific correctness/grounding checks, review/edit/approve it, publish it, and reproduce the process with automated tests/evals and documented evidence.
 
 Until then, do not implement student-facing product functionality beyond minimal technical scaffolding required to support Priority 1.
