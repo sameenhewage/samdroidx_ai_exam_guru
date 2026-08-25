@@ -1,5 +1,11 @@
 import type { components } from "@exam-guru/api-client";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
@@ -8,7 +14,12 @@ type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
 type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
+type HistoricalQuestion = components["schemas"]["HistoricalQuestionResponse"];
 type KnowledgeChunk = components["schemas"]["KnowledgeChunkResponse"];
+type AnalyticsRun = components["schemas"]["AnalyticsRunResponse"];
+type AnalyticsRunSummary = components["schemas"]["AnalyticsRunSummaryResponse"];
+type EmbeddingJob = components["schemas"]["EmbeddingJobResponse"];
+type RetrievalResult = components["schemas"]["RetrievalExploreResponse"];
 type Blueprint = components["schemas"]["PaperBlueprintResponse"];
 type BlueprintSlot = components["schemas"]["BlueprintSlotResponse"];
 type BlueprintRequest = components["schemas"]["BlueprintCreateRequest"];
@@ -87,6 +98,12 @@ async function login(page: Page, role: "admin" | "reviewer") {
   await expect(page).toHaveURL(/\/admin\/curriculum$/);
 }
 
+async function selectOptionIfNeeded(select: Locator, value: string) {
+  await expect(select).toBeVisible();
+  if ((await select.inputValue()) !== value) await select.selectOption(value);
+  await expect(select).toHaveValue(value);
+}
+
 async function getJson<ResponseDto>(
   request: APIRequestContext,
   path: string,
@@ -106,12 +123,181 @@ async function postCreated<ResponseDto>(
   return (await response.json()) as ResponseDto;
 }
 
+type ReviewedHistoricalEvidence = {
+  block: ExtractedBlock;
+  page: SourcePage;
+  question: HistoricalQuestion;
+  source: SourceDocument;
+};
+
+async function createReviewedHistoricalQuestion({
+  competency,
+  curriculum,
+  marker,
+  paperCode,
+  request,
+  skill,
+  year,
+}: {
+  competency: TaxonomyNode;
+  curriculum: Curriculum;
+  marker: string;
+  paperCode: string;
+  request: APIRequestContext;
+  skill: TaxonomyNode;
+  year: number;
+}): Promise<ReviewedHistoricalEvidence> {
+  const questionText = `Historical choice ${year} ${marker}: A three; B four; answer B.`;
+  const upload = await request.post("/api/v1/admin/source-documents", {
+    multipart: {
+      curriculum_version_id: curriculum.id,
+      document_type: "past_paper",
+      file: {
+        buffer: syntheticPdf(questionText),
+        mimeType: "application/pdf",
+        name: `historical-${year}-${marker}.pdf`,
+      },
+      paper_code: paperCode,
+      year: String(year),
+    },
+  });
+  expect(upload.status()).toBe(201);
+  const uploadedSource = (await upload.json()) as SourceDocument;
+
+  expect(
+    (await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/extract`)).status(),
+  ).toBe(202);
+  await expect
+    .poll(
+      async () => {
+        const documents = await getJson<SourceDocument[]>(
+          request,
+          "/api/v1/admin/source-documents",
+        );
+        return documents.find((document) => document.id === uploadedSource.id)?.extraction_status;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("extracted");
+
+  const review = await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/review`);
+  expect(review.ok()).toBe(true);
+  const trust = await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/trust`);
+  expect(trust.ok()).toBe(true);
+  const source = (await trust.json()) as SourceDocument;
+  expect(source).toMatchObject({
+    curriculum_version_id: curriculum.id,
+    document_type: "past_paper",
+    extraction_status: "trusted",
+    paper_code: paperCode,
+    year,
+  });
+
+  const [sourcePage] = await getJson<SourcePage[]>(
+    request,
+    `/api/v1/admin/source-documents/${source.id}/pages`,
+  );
+  if (!sourcePage) throw new Error(`Historical ${year} source page was not extracted`);
+  const [sourceBlock] = await getJson<ExtractedBlock[]>(
+    request,
+    `/api/v1/admin/source-documents/${source.id}/pages/${sourcePage.page_number}/blocks`,
+  );
+  if (!sourceBlock) throw new Error(`Historical ${year} source block was not extracted`);
+  expect(sourceBlock).toMatchObject({
+    page_number: sourcePage.page_number,
+    source_document_id: source.id,
+    source_page_id: sourcePage.id,
+  });
+  expect(sourceBlock.raw_text).toContain(questionText);
+
+  const question = await postCreated<HistoricalQuestion>(
+    request,
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions`,
+    {
+      answer: "B",
+      difficulty_confidence: 0.9,
+      difficulty_label: "medium",
+      difficulty_source: "reviewer_confirmed",
+      marking_guidance: "Award two marks for option B.",
+      marks: 2,
+      options: ["A. three", "B. four"],
+      page_number: sourcePage.page_number,
+      paper_code: paperCode,
+      question_archetype: "single_best_answer",
+      question_number: `Q-${year}`,
+      question_type: "multiple_choice",
+      source_block_id: sourceBlock.id,
+      source_document_id: source.id,
+      text: sourceBlock.reviewed_text ?? sourceBlock.raw_text,
+      year,
+    } satisfies components["schemas"]["HistoricalQuestionImportRequest"],
+  );
+  const classifiedResponse = await request.patch(
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions/${question.id}/classification`,
+    {
+      data: {
+        competency_id: competency.id,
+        expected_version: question.version,
+        learning_concept_id: null,
+        skill_id: skill.id,
+        sub_skill_id: null,
+      } satisfies components["schemas"]["KnowledgeClassificationRequest"],
+    },
+  );
+  expect(classifiedResponse.ok()).toBe(true);
+  const classified = (await classifiedResponse.json()) as HistoricalQuestion;
+  const inReviewResponse = await request.post(
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions/${question.id}/review`,
+    {
+      data: {
+        expected_version: classified.version,
+        target: "in_review",
+      } satisfies components["schemas"]["KnowledgeReviewTransitionRequest"],
+    },
+  );
+  expect(inReviewResponse.ok()).toBe(true);
+  const inReview = (await inReviewResponse.json()) as HistoricalQuestion;
+  const reviewedResponse = await request.post(
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions/${question.id}/review`,
+    {
+      data: {
+        expected_version: inReview.version,
+        target: "reviewed",
+      } satisfies components["schemas"]["KnowledgeReviewTransitionRequest"],
+    },
+  );
+  expect(reviewedResponse.ok()).toBe(true);
+  const reviewed = (await reviewedResponse.json()) as HistoricalQuestion;
+  expect(reviewed).toMatchObject({
+    classification: {
+      competency_id: competency.id,
+      skill_id: skill.id,
+    },
+    paper_code: paperCode,
+    provenance: {
+      page_number: sourcePage.page_number,
+      source_block_id: sourceBlock.id,
+      source_document_id: source.id,
+    },
+    question_type: "multiple_choice",
+    review_state: "reviewed",
+    year,
+  });
+  const fetched = await getJson<HistoricalQuestion>(
+    request,
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions/${reviewed.id}`,
+  );
+  expect(fetched).toEqual(reviewed);
+  return { block: sourceBlock, page: sourcePage, question: reviewed, source };
+}
+
 function blueprintRequest(
   curriculum: Curriculum,
   medium: Medium,
   competency: TaxonomyNode,
   skill: TaxonomyNode,
   unique: string,
+  analyticsRunId: string,
 ): BlueprintRequest {
   const target = {
     competency_id: competency.id,
@@ -120,7 +306,7 @@ function blueprintRequest(
     sub_skill_id: null,
   };
   return {
-    analytics_run_id: null,
+    analytics_run_id: analyticsRunId,
     seed: 2026,
     specification: {
       config_version: "generation-complete-paper-e2e-v1",
@@ -362,7 +548,30 @@ async function generateSlotThroughUi(
   expect(run.provider).toBe("deterministic-fake");
   expect(run.model).toBe("fixture-model");
   expect(run.cost_microusd).toBe(0);
-  expect(run.context.map((item) => item.record_id)).toEqual([context.id]);
+  expect(run.paper_blueprint_id).toBe(blueprint.id);
+  expect(run.blueprint_id).toBe(blueprint.blueprint_id);
+  expect(run.blueprint_slot).toMatchObject({
+    evidence: {
+      evidence_refs: expect.arrayContaining([
+        `analytics:persisted-run:${blueprint.analytics_run_id}`,
+      ]),
+    },
+    slot_id: slot.slot_id,
+  });
+  expect(run.context).toEqual([
+    expect.objectContaining({
+      record_id: context.id,
+      record_kind: "knowledge_chunk",
+      text: context.text,
+      trust: "untrusted_data",
+      provenance: expect.objectContaining({
+        chunk_id: context.id,
+        page_number: context.provenance.page_number,
+        source_block_id: context.provenance.source_block_id,
+        source_document_id: context.provenance.source_document_id,
+      }),
+    }),
+  ]);
   expect(run.candidate).toMatchObject({
     question_type: slot.question_type,
     stem: expectedStem,
@@ -500,14 +709,14 @@ async function reviewSlotThroughUi(
   };
 }
 
-test("representative mixed paper completes generation, validation, human review, and immutable publication", async ({
+test("integrated deterministic P10 mechanics preserve one corrected lineage through publication", async ({
   page,
 }) => {
   test.setTimeout(240_000);
   test.info().annotations.push({
     type: "limitation",
     description:
-      "This deterministic three-type fixture proves representative lifecycle and exact-slot acceptance only; it makes no factual, semantic, language, curriculum, paraphrase-uniqueness, or paid-model quality claim.",
+      "This proves integrated deterministic mechanics only, not OCR, retrieval, forecast, Sinhala, semantic, or paid-model quality; it is not a P10 DONE claim.",
   });
   const browserErrors: string[] = [];
   page.on("console", (message) => {
@@ -520,7 +729,11 @@ test("representative mixed paper completes generation, validation, human review,
     .replaceAll(/\d/g, (digit) => String.fromCharCode(97 + Number(digit)));
   const code = unique.toUpperCase();
   const curriculumTitle = `Generation curriculum ${unique}`;
-  const boundary = `Even number knowledge ${unique}`;
+  const boundary = `Corrected even number knowledge ${unique}`;
+  const forbiddenBoundary = `Forbidden unreviewed knowledge ${unique}`;
+  const forbiddenMarker = `uncorrected-odd-${unique}`;
+  const retrievalMarker = `human-even-correction-${unique}`;
+  const correctedText = `Human correction ${retrievalMarker}: Four is an even number.`;
   await login(page, "admin");
 
   const exam = await postCreated<Exam>(page.request, "/api/v1/admin/exam-configurations", {
@@ -584,17 +797,17 @@ test("representative mixed paper completes generation, validation, human review,
       curriculum_version_id: curriculum.id,
       document_type: "syllabus",
       file: {
-        buffer: syntheticPdf(`Four is an even number ${unique}`),
+        buffer: syntheticPdf(`Four is incorrectly odd ${forbiddenMarker}`),
         mimeType: "application/pdf",
         name: `generation-source-${unique}.pdf`,
       },
     },
   });
   expect(upload.status()).toBe(201);
-  const source = (await upload.json()) as SourceDocument;
-  expect((await page.request.post(`/api/v1/admin/source-documents/${source.id}/extract`)).status()).toBe(
-    202,
-  );
+  const uploadedSource = (await upload.json()) as SourceDocument;
+  expect(
+    (await page.request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/extract`)).status(),
+  ).toBe(202);
   await expect
     .poll(
       async () => {
@@ -602,42 +815,147 @@ test("representative mixed paper completes generation, validation, human review,
           page.request,
           "/api/v1/admin/source-documents",
         );
-        return documents.find((document) => document.id === source.id)?.extraction_status;
+        return documents.find((document) => document.id === uploadedSource.id)?.extraction_status;
       },
       { timeout: 30_000 },
     )
     .toBe("extracted");
-  expect((await page.request.post(`/api/v1/admin/source-documents/${source.id}/review`)).ok()).toBe(
-    true,
+
+  const extractedSources = await getJson<SourceDocument[]>(
+    page.request,
+    "/api/v1/admin/source-documents",
   );
-  expect((await page.request.post(`/api/v1/admin/source-documents/${source.id}/trust`)).ok()).toBe(
-    true,
-  );
+  const extractedSource = extractedSources.find((document) => document.id === uploadedSource.id);
+  if (!extractedSource) throw new Error("Generation source was not retained after extraction");
+  expect(extractedSource).toMatchObject({
+    extraction_config: { mode: "native" },
+    extraction_status: "extracted",
+    extractor: "pymupdf",
+    native_text_page_ratio: 1,
+    needs_ocr: false,
+    ocr_page_count: 0,
+  });
 
   const [sourcePage] = await getJson<SourcePage[]>(
     page.request,
-    `/api/v1/admin/source-documents/${source.id}/pages`,
+    `/api/v1/admin/source-documents/${uploadedSource.id}/pages`,
   );
   if (!sourcePage) throw new Error("Generation source page was not extracted");
   const [sourceBlock] = await getJson<ExtractedBlock[]>(
     page.request,
-    `/api/v1/admin/source-documents/${source.id}/pages/${sourcePage.page_number}/blocks`,
+    `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}/blocks`,
   );
   if (!sourceBlock) throw new Error("Generation source block was not extracted");
+  expect(sourcePage.raw_text).toContain(forbiddenMarker);
+  expect(sourcePage.reviewed_text).toBeNull();
+  expect(sourceBlock.raw_text).toContain(forbiddenMarker);
+  expect(sourceBlock.reviewed_text).toBeNull();
 
+  const reviewResponse = await page.request.post(
+    `/api/v1/admin/source-documents/${uploadedSource.id}/review`,
+  );
+  expect(reviewResponse.ok()).toBe(true);
+  const correctionResponse = await page.request.patch(
+    `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}`,
+    {
+      data: {
+        expected_version: sourcePage.version,
+        reviewed_text: correctedText,
+      } satisfies components["schemas"]["ReviewedTextUpdate"],
+    },
+  );
+  expect(correctionResponse.ok()).toBe(true);
+  const correctedPage = (await correctionResponse.json()) as SourcePage;
+  expect(correctedPage.raw_text).toBe(sourcePage.raw_text);
+  expect(correctedPage.reviewed_text).toBe(correctedText);
+  expect(correctedPage.version).toBe(sourcePage.version + 1);
+
+  const [fetchedCorrectedPage] = await getJson<SourcePage[]>(
+    page.request,
+    `/api/v1/admin/source-documents/${uploadedSource.id}/pages`,
+  );
+  if (!fetchedCorrectedPage) throw new Error("Corrected generation page could not be fetched");
+  expect(fetchedCorrectedPage).toMatchObject({
+    id: sourcePage.id,
+    raw_text: sourcePage.raw_text,
+    reviewed_text: correctedText,
+    version: sourcePage.version + 1,
+  });
+  const [fetchedSourceBlock] = await getJson<ExtractedBlock[]>(
+    page.request,
+    `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}/blocks`,
+  );
+  if (!fetchedSourceBlock) throw new Error("Corrected generation block provenance was lost");
+  expect(fetchedSourceBlock).toMatchObject({
+    id: sourceBlock.id,
+    page_number: fetchedCorrectedPage.page_number,
+    raw_text: sourceBlock.raw_text,
+    reviewed_text: null,
+    source_document_id: uploadedSource.id,
+    source_page_id: fetchedCorrectedPage.id,
+  });
+
+  const trustResponse = await page.request.post(
+    `/api/v1/admin/source-documents/${uploadedSource.id}/trust`,
+  );
+  expect(trustResponse.ok()).toBe(true);
+  const source = (await trustResponse.json()) as SourceDocument;
+  expect(source.extraction_status).toBe("trusted");
+
+  const forbiddenDraft = await postCreated<KnowledgeChunk>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks`,
+    {
+      chunk_type: "explanation",
+      educational_boundary: forbiddenBoundary,
+      page_number: fetchedCorrectedPage.page_number,
+      sequence: 99,
+      source_block_id: fetchedSourceBlock.id,
+      source_document_id: source.id,
+      text: fetchedSourceBlock.raw_text,
+    } satisfies components["schemas"]["KnowledgeChunkImportRequest"],
+  );
+  const forbiddenClassificationResponse = await page.request.patch(
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${forbiddenDraft.id}/classification`,
+    {
+      data: {
+        competency_id: competency.id,
+        expected_version: forbiddenDraft.version,
+        learning_concept_id: null,
+        skill_id: skill.id,
+        sub_skill_id: null,
+      } satisfies components["schemas"]["KnowledgeClassificationRequest"],
+    },
+  );
+  expect(forbiddenClassificationResponse.ok()).toBe(true);
+  const classifiedForbiddenDraft =
+    (await forbiddenClassificationResponse.json()) as KnowledgeChunk;
+  expect(classifiedForbiddenDraft.review_state).toBe("draft");
+
+  if (fetchedCorrectedPage.reviewed_text === null) {
+    throw new Error("The human correction was not retained for knowledge import");
+  }
   const importedChunk = await postCreated<KnowledgeChunk>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks`,
     {
       chunk_type: "explanation",
       educational_boundary: boundary,
-      page_number: sourcePage.page_number,
+      page_number: fetchedCorrectedPage.page_number,
       sequence: 1,
-      source_block_id: sourceBlock.id,
+      source_block_id: fetchedSourceBlock.id,
       source_document_id: source.id,
-      text: sourceBlock.reviewed_text ?? sourceBlock.raw_text,
-    },
+      text: fetchedCorrectedPage.reviewed_text,
+    } satisfies components["schemas"]["KnowledgeChunkImportRequest"],
   );
+  expect(importedChunk).toMatchObject({
+    provenance: {
+      page_number: fetchedCorrectedPage.page_number,
+      source_block_id: fetchedSourceBlock.id,
+      source_document_id: source.id,
+    },
+    text: correctedText,
+  });
   const classificationResponse = await page.request.patch(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${importedChunk.id}/classification`,
     {
@@ -647,36 +965,384 @@ test("representative mixed paper completes generation, validation, human review,
         learning_concept_id: null,
         skill_id: skill.id,
         sub_skill_id: null,
-      },
+      } satisfies components["schemas"]["KnowledgeClassificationRequest"],
     },
   );
   expect(classificationResponse.ok()).toBe(true);
   const classifiedChunk = (await classificationResponse.json()) as KnowledgeChunk;
   const inReviewResponse = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${classifiedChunk.id}/review`,
-    { data: { expected_version: classifiedChunk.version, target: "in_review" } },
+    {
+      data: {
+        expected_version: classifiedChunk.version,
+        target: "in_review",
+      } satisfies components["schemas"]["KnowledgeReviewTransitionRequest"],
+    },
   );
   expect(inReviewResponse.ok()).toBe(true);
   const inReviewChunk = (await inReviewResponse.json()) as KnowledgeChunk;
   const reviewedResponse = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${inReviewChunk.id}/review`,
-    { data: { expected_version: inReviewChunk.version, target: "reviewed" } },
+    {
+      data: {
+        expected_version: inReviewChunk.version,
+        target: "reviewed",
+      } satisfies components["schemas"]["KnowledgeReviewTransitionRequest"],
+    },
   );
   expect(reviewedResponse.ok()).toBe(true);
   const reviewedChunk = (await reviewedResponse.json()) as KnowledgeChunk;
-  expect(reviewedChunk.review_state).toBe("reviewed");
+  expect(reviewedChunk).toMatchObject({
+    classification: {
+      competency_id: competency.id,
+      skill_id: skill.id,
+    },
+    provenance: {
+      page_number: fetchedCorrectedPage.page_number,
+      source_block_id: fetchedSourceBlock.id,
+      source_document_id: source.id,
+    },
+    review_state: "reviewed",
+    text: correctedText,
+  });
 
+  const historical2019 = await createReviewedHistoricalQuestion({
+    competency,
+    curriculum,
+    marker: unique,
+    paperCode: `P19-${code}`,
+    request: page.request,
+    skill,
+    year: 2019,
+  });
+  const historical2020 = await createReviewedHistoricalQuestion({
+    competency,
+    curriculum,
+    marker: unique,
+    paperCode: `P20-${code}`,
+    request: page.request,
+    skill,
+    year: 2020,
+  });
+  const historicalEvidence = [historical2019, historical2020];
+  expect(new Set(historicalEvidence.map((item) => item.question.year)).size).toBe(2);
+  expect(new Set(historicalEvidence.map((item) => item.source.id)).size).toBe(2);
+  expect(
+    historicalEvidence.every(
+      (item) =>
+        item.question.paper_code === item.source.paper_code &&
+        item.question.year === item.source.year &&
+        item.question.provenance.source_block_id === item.block.id &&
+        item.question.provenance.page_number === item.page.page_number,
+    ),
+  ).toBe(true);
+
+  await page.goto("/admin/analytics");
+  await expect(page.getByRole("heading", { name: "Analytics Report Studio" })).toBeVisible();
+  await selectOptionIfNeeded(page.getByLabel("Active analytics curriculum"), curriculum.id);
+  await expect(page.getByRole("heading", { name: "No analytics runs yet" })).toBeVisible();
+  await page.getByLabel("Minimum training years").fill("1");
+  await page.getByLabel("Top skills to evaluate").fill("1");
+  await page.getByLabel("Meaningful improvement numerator").fill("1");
+  await page.getByLabel("Meaningful improvement denominator").fill("100");
+  const analyticsResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/curricula/${curriculum.id}/analytics/runs`),
+  );
+  await page.getByRole("button", { name: "Run analysis" }).click();
+  const analyticsResponse = await analyticsResponsePromise;
+  expect(analyticsResponse.status()).toBe(201);
+  const createdAnalytics = (await analyticsResponse.json()) as AnalyticsRun;
+
+  await expect(page.getByText("Analysis run created.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Analysis report" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rolling held-out windows" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Holdout 2020" })).toBeVisible();
+  await expect(page.getByText("Training years: 2019")).toBeVisible();
+  await expect(page.getByText("Leakage audit passed")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Baseline comparison" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Syllabus-balanced practice fallback" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/safer syllabus-balanced practice method is selected/i),
+  ).toBeVisible();
+  await expect(page.getByText(/does not predict future exam questions/i)).toBeVisible();
+
+  const analyticsSummaries = await getJson<AnalyticsRunSummary[]>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/analytics/runs`,
+  );
+  expect(analyticsSummaries).toHaveLength(1);
+  const [analyticsSummary] = analyticsSummaries;
+  if (!analyticsSummary) throw new Error("The persisted analytics run ID was not returned");
+  const analyticsRunId = analyticsSummary.id;
+  expect(analyticsRunId).toBe(createdAnalytics.id);
+  await expect(page.getByText(analyticsRunId, { exact: true })).toBeVisible();
+  const analyticsRun = await getJson<AnalyticsRun>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/analytics/runs/${analyticsRunId}`,
+  );
+  expect(analyticsRun.id).toBe(analyticsRunId);
+  expect(analyticsRun.input.observation_ids.toSorted()).toEqual(
+    historicalEvidence.map((item) => item.question.id).toSorted(),
+  );
+  expect(analyticsRun.result.backtest.recommendation.mode).toBe(
+    "syllabus_balanced_practice",
+  );
+  expect(analyticsRun.result.backtest.windows).toHaveLength(1);
+  expect(analyticsRun.result.backtest.windows[0]).toMatchObject({
+    heldout_year: 2020,
+    leakage_audit: {
+      heldout_observation_ids: [historical2020.question.id],
+      overlapping_observation_ids: [],
+      passed: true,
+      training_observation_ids: [historical2019.question.id],
+    },
+    training_years: [2019],
+  });
+
+  await page.goto("/admin/knowledge");
+  await expect(page.getByRole("heading", { name: "Knowledge Studio" })).toBeVisible();
+  await selectOptionIfNeeded(page.getByLabel("Active curriculum"), curriculum.id);
+  const chunkEmbeddingSelection = page.getByRole("checkbox", {
+    name: `Select knowledge chunk ${boundary.toLowerCase()} / sequence 1`,
+  });
+  await expect(chunkEmbeddingSelection).toBeVisible();
+  await chunkEmbeddingSelection.check();
+  await expect(page.getByText("1 of 100 records selected")).toBeVisible();
+  const embeddingResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/curricula/${curriculum.id}/embedding-jobs`),
+  );
+  await page.getByRole("button", { name: "Queue selected records" }).click();
+  const embeddingResponse = await embeddingResponsePromise;
+  expect(embeddingResponse.status()).toBe(202);
+  expect(embeddingResponse.request().postDataJSON()).toEqual({
+    historical_question_ids: [],
+    knowledge_chunk_ids: [reviewedChunk.id],
+  });
+  const createdEmbeddingJob = (await embeddingResponse.json()) as EmbeddingJob;
+  expect(createdEmbeddingJob).toMatchObject({
+    curriculum_version_id: curriculum.id,
+    historical_question_ids: [],
+    knowledge_chunk_ids: [reviewedChunk.id],
+  });
+  expect(createdEmbeddingJob.configuration).toMatchObject({
+    dimension: 32,
+    model: "grade5-deterministic-shake256",
+    provider: "deterministic",
+    version: "v1",
+  });
+
+  let completedEmbeddingJob = createdEmbeddingJob;
+  await expect
+    .poll(
+      async () => {
+        completedEmbeddingJob = await getJson<EmbeddingJob>(
+          page.request,
+          `/api/v1/admin/curricula/${curriculum.id}/embedding-jobs/${createdEmbeddingJob.id}`,
+        );
+        return completedEmbeddingJob.status;
+      },
+      { intervals: [250, 500, 1_000, 2_000], timeout: 120_000 },
+    )
+    .toBe("succeeded");
+  expect(completedEmbeddingJob).toMatchObject({
+    claimed_at: expect.any(String),
+    completed_at: expect.any(String),
+    counts: { deduplicated: 0, embedded: 1, requested: 1 },
+    failure_code: null,
+    status: "succeeded",
+  });
+  await expect(page.getByText("Embedding job succeeded.")).toBeVisible({ timeout: 120_000 });
+  await page.getByRole("button", { name: "Refresh embedding data" }).click();
+  const embeddedChunkRow = page.getByRole("listitem", {
+    name: `Knowledge chunk ${boundary} / Sequence 1`,
+  });
+  const embeddingConfigurationLabel = `${completedEmbeddingJob.configuration.provider} / ${completedEmbeddingJob.configuration.model} / ${completedEmbeddingJob.configuration.version} / ${completedEmbeddingJob.configuration.dimension}d`;
+  await expect(embeddedChunkRow.getByText("Embedded", { exact: true })).toBeVisible();
+  await expect(
+    embeddedChunkRow.getByText(embeddingConfigurationLabel, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    embeddedChunkRow.getByText(completedEmbeddingJob.configuration.config_fingerprint, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const refreshedChunk = await getJson<KnowledgeChunk>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${reviewedChunk.id}`,
+  );
+  expect(refreshedChunk.embedding_status).toBe("embedded");
+  expect(refreshedChunk.embedding_configurations).toEqual([
+    expect.objectContaining(completedEmbeddingJob.configuration),
+  ]);
+  const refreshedForbiddenDraft = await getJson<KnowledgeChunk>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${classifiedForbiddenDraft.id}`,
+  );
+  expect(refreshedForbiddenDraft.embedding_status).toBe("not_embedded");
+
+  await page.getByRole("link", { name: "RAG Explorer" }).click();
+  await expect(page.getByRole("heading", { name: "RAG Explorer" })).toBeVisible();
+  await selectOptionIfNeeded(page.getByLabel("Active retrieval curriculum"), curriculum.id);
+  const competencySelect = page.locator(`select:has(option[value="${competency.id}"])`);
+  const skillSelect = page.locator(`select:has(option[value="${skill.id}"])`);
+  const embeddingSelect = page.locator(
+    `select:has(option[value="${completedEmbeddingJob.configuration.config_fingerprint}"])`,
+  );
+  await expect(embeddingSelect).toBeVisible();
+  await competencySelect.selectOption(competency.id);
+  await skillSelect.selectOption(skill.id);
+  await embeddingSelect.selectOption(completedEmbeddingJob.configuration.config_fingerprint);
+  await page.getByLabel("Retrieval query").fill(retrievalMarker);
+  const retrievalResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().endsWith("/admin/retrieval/explore"),
+  );
+  await page.getByRole("button", { name: "Run retrieval" }).click();
+  const retrievalResponse = await retrievalResponsePromise;
+  expect(retrievalResponse.status()).toBe(200);
+  const retrievalRequest = retrievalResponse.request().postDataJSON() as components["schemas"]["RetrievalExploreRequest"];
+  expect(retrievalRequest.embedding_config).toEqual(completedEmbeddingJob.configuration);
+  expect(retrievalRequest.query).toBe(retrievalMarker);
+  expect(retrievalRequest.scope).toEqual({
+    curriculum_version_id: curriculum.id,
+    exam_id: exam.id,
+    grade: 5,
+    medium_id: medium.id,
+    taxonomy: {
+      competency_id: competency.id,
+      learning_concept_id: null,
+      skill_id: skill.id,
+      sub_skill_id: null,
+    },
+  });
+  const retrieval = (await retrievalResponse.json()) as RetrievalResult;
+  expect(retrieval.channels.lexical.length).toBeGreaterThan(0);
+  expect(retrieval.channels.vector.length).toBeGreaterThan(0);
+  expect(retrieval.fused_candidates.length).toBeGreaterThan(0);
+  expect(retrieval.context.items.length).toBeGreaterThan(0);
+  expect(retrieval.context.character_count).toBeGreaterThan(0);
+  expect(retrieval.context.trust).toBe("untrusted_source_data");
+  expect(retrieval.diagnostics.hard_scope_filter_applied).toBe(true);
+  expect(retrieval.embedding_config).toEqual(completedEmbeddingJob.configuration);
+  expect(retrieval.scope).toEqual(retrievalRequest.scope);
+  for (const candidate of [...retrieval.channels.lexical, ...retrieval.channels.vector]) {
+    expect(candidate).toMatchObject({
+      chunk_id: reviewedChunk.id,
+      provenance: {
+        page_number: fetchedCorrectedPage.page_number,
+        source_block_id: fetchedSourceBlock.id,
+        source_document_id: source.id,
+      },
+      scope: retrievalRequest.scope,
+      text: correctedText,
+      trust: "untrusted_source_data",
+    });
+  }
+  for (const candidate of retrieval.fused_candidates) {
+    expect(candidate.source_chunk_ids).toEqual([reviewedChunk.id]);
+    expect(candidate.provenances).toEqual([
+      {
+        page_number: fetchedCorrectedPage.page_number,
+        source_block_id: fetchedSourceBlock.id,
+        source_document_id: source.id,
+      },
+    ]);
+    expect(candidate.scope).toMatchObject(retrievalRequest.scope);
+    expect(candidate.text).toBe(correctedText);
+    expect(candidate.trust).toBe("untrusted_source_data");
+  }
+  for (const item of retrieval.context.items) {
+    expect(item.source_chunk_ids).toEqual([reviewedChunk.id]);
+    expect(item.provenances).toEqual([
+      {
+        page_number: fetchedCorrectedPage.page_number,
+        source_block_id: fetchedSourceBlock.id,
+        source_document_id: source.id,
+      },
+    ]);
+    expect(item.scope).toMatchObject(retrievalRequest.scope);
+    expect(item.text).toBe(correctedText);
+    expect(item.trust).toBe("untrusted_source_data");
+  }
+  expect(JSON.stringify(retrieval)).not.toContain(classifiedForbiddenDraft.id);
+  expect(JSON.stringify(retrieval)).not.toContain(classifiedForbiddenDraft.text);
+  expect(JSON.stringify(retrieval)).not.toContain(forbiddenMarker);
+
+  const lexicalSection = page
+    .getByRole("heading", { name: "Lexical channel" })
+    .locator("xpath=ancestor::section[1]");
+  const vectorSection = page
+    .getByRole("heading", { name: "Vector channel" })
+    .locator("xpath=ancestor::section[1]");
+  const fusedSection = page
+    .getByRole("heading", { name: "Fused ranking" })
+    .locator("xpath=ancestor::section[1]");
+  const contextSection = page
+    .getByRole("heading", { name: "Bounded context" })
+    .locator("xpath=ancestor::section[1]");
+  const diagnosticsSection = page
+    .getByRole("heading", { name: "Retrieval diagnostics" })
+    .locator("xpath=ancestor::section[1]");
+  await expect(lexicalSection.locator("ol > li").first()).toBeVisible();
+  await expect(vectorSection.locator("ol > li").first()).toBeVisible();
+  await expect(fusedSection.locator("ol > li").first()).toBeVisible();
+  await expect(contextSection.locator("ol > li").first()).toBeVisible();
+  await expect(contextSection.getByRole("list", { name: "Source provenance" }).first()).toBeVisible();
+  await expect(diagnosticsSection.getByText("Yes", { exact: true })).toBeVisible();
+  await expect(page.getByText("Untrusted source data").first()).toBeVisible();
+  await expect(page.getByText(correctedText, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(reviewedChunk.id, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(source.id, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(fetchedSourceBlock.id, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(classifiedForbiddenDraft.id, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(classifiedForbiddenDraft.text, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(forbiddenMarker, { exact: true })).toHaveCount(0);
+
+  const createBlueprintRequest = blueprintRequest(
+    curriculum,
+    medium,
+    competency,
+    skill,
+    unique,
+    analyticsRunId,
+  );
+  expect(createBlueprintRequest.analytics_run_id).toBe(analyticsRunId);
+  expect(Object.keys(createBlueprintRequest.specification.taxonomy_requirements[0]?.priority ?? {})).toEqual(
+    ["baseline_evidence_refs", "baseline_score", "baseline_version"],
+  );
+  expect(JSON.stringify(createBlueprintRequest)).not.toContain("forecast_");
   const blueprint = await postCreated<Blueprint>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/blueprints`,
-    blueprintRequest(curriculum, medium, competency, skill, unique),
+    createBlueprintRequest,
   );
   assertRepresentativeBlueprint(blueprint, competency, skill);
+  const analyticsEvidenceRef = `analytics:persisted-run:${analyticsRunId}`;
+  expect(blueprint.analytics_run_id).toBe(analyticsRunId);
+  expect(
+    blueprint.specification.taxonomy_requirements[0]?.priority.forecast_evidence_refs,
+  ).toContain(analyticsEvidenceRef);
+  expect(blueprint.specification.taxonomy_requirements[0]?.priority.forecast_score).not.toBeNull();
+  for (const slot of blueprint.blueprint.slots) {
+    expect(slot.evidence.evidence_refs).toContain(analyticsEvidenceRef);
+    expect(slot.rationale.priority_mode).toBe("baseline_fallback");
+  }
+  const persistedBlueprint = await getJson<Blueprint>(
+    page.request,
+    `/api/v1/admin/curricula/${curriculum.id}/blueprints/${blueprint.id}`,
+  );
+  expect(persistedBlueprint).toEqual(blueprint);
   const exactSlots = blueprint.blueprint.slots;
 
   await page.goto("/admin/generation");
   await expect(page.getByRole("heading", { name: "Generation Studio" })).toBeVisible();
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   await page.getByLabel("Immutable blueprint").selectOption(blueprint.id);
   const generatedSlots: GeneratedSlot[] = [];
   for (const slot of exactSlots) {
@@ -694,11 +1360,17 @@ test("representative mixed paper completes generation, validation, human review,
 
   await page.goto("/admin/validation");
   await expect(page.getByRole("heading", { name: "Validation Studio" })).toBeVisible();
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   const validatedSlots: ValidatedSlot[] = [];
   for (const [index, generated] of generatedSlots.entries()) {
     validatedSlots.push(
-      await validateSlotThroughUi(page, curriculum, source, generated, index),
+      await validateSlotThroughUi(
+        page,
+        curriculum,
+        source,
+        generated,
+        historicalEvidence.length + index,
+      ),
     );
   }
   await expect(
@@ -709,7 +1381,7 @@ test("representative mixed paper completes generation, validation, human review,
   await login(page, "reviewer");
   await page.goto("/admin/review");
   await expect(page.getByRole("heading", { name: "Reviewer Studio" })).toBeVisible();
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   const reviewedSlots: ReviewedSlot[] = [];
   for (const validated of validatedSlots) {
     const editStem =
@@ -803,7 +1475,7 @@ test("representative mixed paper completes generation, validation, human review,
 
   await page.goto("/admin/papers");
   await expect(page.getByRole("heading", { name: "Paper Studio" })).toBeVisible();
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   await page.getByLabel("Immutable paper blueprint").selectOption(blueprint.id);
   const slotRows = page.getByTestId("exact-blueprint-slot");
   await expect(slotRows).toHaveCount(3);
@@ -864,7 +1536,7 @@ test("representative mixed paper completes generation, validation, human review,
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "admin");
   await page.goto("/admin/papers");
-  await page.getByLabel("Active Grade 5 curriculum").selectOption(curriculum.id);
+  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   await page.getByRole("button", { name: `Select paper ${persistedPaper.id}` }).click();
   await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
     "Draft",
@@ -936,6 +1608,7 @@ test("representative mixed paper completes generation, validation, human review,
       expect.arrayContaining([
         expect.objectContaining({
           chunk_id: reviewedChunk.id,
+          page_number: fetchedCorrectedPage.page_number,
           source_document_id: source.id,
         }),
       ]),
