@@ -152,6 +152,12 @@ function apiError(error: unknown, status: number, phase: "create" | "load" | "po
         "The durable job could not be dispatched to the queue. Retry the unchanged selection to recover the same idempotent operation.",
       title: "Embedding queue unavailable",
     },
+    embedding_retry_limit_exceeded: {
+      code,
+      message:
+        "This exact actor-scoped provider-job lineage already used all three explicit retries. Change the reviewed source/configuration identity to submit a fresh root job.",
+      title: "Embedding retry limit reached",
+    },
     embedding_source_conflict: {
       code,
       message:
@@ -485,6 +491,7 @@ function JobCard({ item }: { item: EmbeddingJob }) {
             <Timestamp label="Queued at" value={item.created_at} />
             <Timestamp label="Claimed at" value={item.claimed_at} />
             <Timestamp label="Completed at" value={item.completed_at} />
+            <Definition label="Retry depth" value={`Retry depth ${item.retry_depth} of 3`} />
             <Definition
               label="Retry of job"
               mono
@@ -523,6 +530,7 @@ export function EmbeddingIngestion({
   const [loadError, setLoadError] = useState<UiError | null>(null);
   const [createError, setCreateError] = useState<UiError | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
+  const [retryLimitFingerprint, setRetryLimitFingerprint] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [pollTarget, setPollTarget] = useState<PollTarget | null>(null);
   const [pollError, setPollError] = useState<PollError | null>(null);
@@ -551,6 +559,25 @@ export function EmbeddingIngestion({
     [candidates],
   );
   const selectedCount = selected.size;
+  const selectedRequestFingerprint = useMemo(() => {
+    const selectedCandidates = [...selected.entries()].flatMap(([id, kind]) => {
+      const candidate = candidatesById.get(id);
+      return candidate && candidate.kind === kind ? [candidate] : [];
+    });
+    if (selectedCandidates.length < 1 || selectedCandidates.length > MAX_SELECTION) return null;
+    return JSON.stringify({
+      historical_question_ids: selectedCandidates
+        .filter((candidate) => candidate.kind === "questions")
+        .map((candidate) => candidate.record.id)
+        .sort(),
+      knowledge_chunk_ids: selectedCandidates
+        .filter((candidate) => candidate.kind === "chunks")
+        .map((candidate) => candidate.record.id)
+        .sort(),
+    } satisfies EmbeddingJobCreateRequest);
+  }, [candidatesById, selected]);
+  const retryLimitReached =
+    selectedRequestFingerprint !== null && selectedRequestFingerprint === retryLimitFingerprint;
   const selectionLocked = createBusy || pollTarget !== null;
 
   useEffect(() => {
@@ -571,6 +598,7 @@ export function EmbeddingIngestion({
         setPollTarget(null);
         setPollError(null);
         setNotice("");
+        setRetryLimitFingerprint(null);
         setSelected(new Map());
         setQuestions([]);
         setChunks([]);
@@ -864,12 +892,15 @@ export function EmbeddingIngestion({
     const body: EmbeddingJobCreateRequest = {
       historical_question_ids: selectedCandidates
         .filter((candidate) => candidate.kind === "questions")
-        .map((candidate) => candidate.record.id),
+        .map((candidate) => candidate.record.id)
+        .sort(),
       knowledge_chunk_ids: selectedCandidates
         .filter((candidate) => candidate.kind === "chunks")
-        .map((candidate) => candidate.record.id),
+        .map((candidate) => candidate.record.id)
+        .sort(),
     };
     const requestFingerprint = JSON.stringify(body);
+    if (requestFingerprint === retryLimitFingerprint) return;
     let idempotency = pendingIdempotency.current;
     try {
       if (!idempotency || idempotency.fingerprint !== requestFingerprint) {
@@ -911,6 +942,9 @@ export function EmbeddingIngestion({
       if (!response.response.ok || !response.data) {
         const code = detailCode(response.error);
         if (response.response.status === 409) pendingIdempotency.current = null;
+        if (code === "embedding_retry_limit_exceeded") {
+          setRetryLimitFingerprint(requestFingerprint);
+        }
         if (response.response.status === 422) {
           pendingIdempotency.current = null;
           setSelected(new Map());
@@ -1136,7 +1170,11 @@ export function EmbeddingIngestion({
                   <Button
                     className={primaryButton}
                     isDisabled={
-                      createBusy || pollTarget !== null || selectedCount < 1 || selectedCount > MAX_SELECTION
+                      createBusy ||
+                      pollTarget !== null ||
+                      retryLimitReached ||
+                      selectedCount < 1 ||
+                      selectedCount > MAX_SELECTION
                     }
                     type="submit"
                   >

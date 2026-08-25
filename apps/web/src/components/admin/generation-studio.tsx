@@ -166,10 +166,16 @@ function apiError(
           "The generated operation identity conflicts with a different immutable request. Reload persisted runs and start a new explicit operation.",
         title: "Idempotency conflict",
       },
+      generation_retry_limit_exceeded: {
+        code,
+        message:
+          "This provider-job lineage already used all three explicit retries. Submit a fresh root run instead of extending this failed lineage.",
+        title: "Generation retry limit reached",
+      },
       generation_retry_state_invalid: {
         code,
         message:
-          "Only a failed generation run can be retried. Reload the run because its durable state has changed.",
+          "Only a failed generation run with the exact active request and configuration snapshot can be retried. Reload it or submit a fresh root run.",
         title: "Run cannot be retried",
       },
     };
@@ -354,6 +360,7 @@ function summaryFromRun(value: GenerationRun): GenerationRunSummary {
     prompt_version: value.prompt_version,
     provider: value.provider,
     request_fingerprint: value.request_fingerprint,
+    retry_depth: value.retry_depth,
     retry_of_run_id: value.retry_of_run_id,
     slot_id: value.slot_id,
     started_at: value.started_at,
@@ -636,7 +643,7 @@ function RunList({
                     {run.id}
                   </span>
                   <span className={`mt-2 block text-xs ${selected ? "text-slate-300" : "text-slate-600"}`}>
-                    Version {run.version} · {run.attempt_count} attempt{run.attempt_count === 1 ? "" : "s"} · {run.total_tokens} tokens · {displayCost(run.cost_microusd)}
+                    Version {run.version} · Retry depth {run.retry_depth} of 3 · {run.attempt_count} attempt{run.attempt_count === 1 ? "" : "s"} · {run.total_tokens} tokens · {displayCost(run.cost_microusd)}
                   </span>
                 </button>
               </li>
@@ -813,6 +820,7 @@ function RunInspection({
   onRetry,
   polling,
   retrying,
+  retryLimitReached,
   role,
   run,
 }: {
@@ -821,6 +829,7 @@ function RunInspection({
   onRetry: () => void;
   polling: boolean;
   retrying: boolean;
+  retryLimitReached: boolean;
   role: Role;
   run: GenerationRun;
 }) {
@@ -844,7 +853,10 @@ function RunInspection({
             <span className="text-sm font-semibold">Version {run.version}</span>
             {polling ? <span className="text-sm text-blue-700">Polling durable state…</span> : null}
           </div>
-          {role === "admin" && run.status === "failed" ? (
+          {role === "admin" &&
+          run.status === "failed" &&
+          run.retry_depth < 3 &&
+          !retryLimitReached ? (
             <Button className={primaryButton} isDisabled={retrying} onPress={onRetry}>
               {retrying ? "Queuing failed-run retry…" : "Retry failed run"}
             </Button>
@@ -855,6 +867,7 @@ function RunInspection({
           <Definition label="Status" value={displayEnum(run.status)} />
           <Definition label="Version" value={run.version} />
           <Definition label="Request fingerprint" mono value={run.request_fingerprint} />
+          <Definition label="Retry depth" value={`Retry depth ${run.retry_depth} of 3`} />
           <Definition label="Retry of run" mono value={run.retry_of_run_id ?? "None"} />
           <Definition label="Failure code" mono value={run.failure_code ?? "None"} />
           <Definition label="Disposition" mono value={run.disposition ?? "None"} />
@@ -872,6 +885,15 @@ function RunInspection({
           <Definition label="Job version" value={job?.version ?? "Not loaded"} />
           <Definition label="Job failure code" mono value={job?.failure_code ?? "None"} />
         </dl>
+        {run.status === "failed" && (run.retry_depth >= 3 || retryLimitReached) ? (
+          <p
+            className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-950"
+            role="status"
+          >
+            The retry limit has been reached for this provider-job lineage. Submit a fresh root run
+            if the exact active request or configuration should be attempted again.
+          </p>
+        ) : null}
         {run.status === "pending" || run.status === "running" ? (
           <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950" role="status">
             {run.status === "pending"
@@ -1586,7 +1608,8 @@ export function GenerationStudio({ role }: { role: Role }) {
       operationInFlight.current ||
       !selectedCurriculumId ||
       !runDetail ||
-      runDetail.status !== "failed"
+      runDetail.status !== "failed" ||
+      runDetail.retry_depth >= 3
     ) return;
     const curriculumId = selectedCurriculumId;
     const failedRunId = runDetail.id;
@@ -1884,6 +1907,7 @@ export function GenerationStudio({ role }: { role: Role }) {
           onRetry={() => void retryRun()}
           polling={pollTarget?.runId === runDetail.id}
           retrying={retryLoading}
+          retryLimitReached={operationError?.code === "generation_retry_limit_exceeded"}
           role={role}
           run={runDetail}
         />

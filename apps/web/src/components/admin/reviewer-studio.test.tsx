@@ -248,6 +248,7 @@ const generation = {
   provider_version: "provider.v1",
   request_fingerprint: hash("a"),
   retrieval_version: "retrieval.v1",
+  retry_depth: 0,
   retry_of_run_id: null,
   schema_version: "question.v1",
   slot_id: "REV-A-001",

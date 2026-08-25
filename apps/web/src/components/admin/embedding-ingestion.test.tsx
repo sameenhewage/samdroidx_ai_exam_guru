@@ -130,6 +130,7 @@ function job(overrides: Partial<EmbeddingJob> = {}): EmbeddingJob {
     id: ids.job,
     knowledge_chunk_ids: [ids.chunk],
     queue_message_id: "queue-message-1",
+    retry_depth: 0,
     retry_of_job_id: null,
     status: "queued",
     updated_at: "2026-08-25T00:01:00Z",
@@ -529,6 +530,48 @@ describe("EmbeddingIngestion", () => {
     expect(onRecordsEmbedded).not.toHaveBeenCalled();
   });
 
+  it("exposes a capped embedding lineage and disables the forbidden unchanged selection", async () => {
+    const capped = job({
+      claimed_at: "2026-08-25T00:01:01Z",
+      completed_at: "2026-08-25T00:01:03Z",
+      failure_code: "embedding_provider_unavailable",
+      retry_depth: 3,
+      retry_of_job_id: ids.retryJob,
+      status: "failed",
+      version: 2,
+    });
+    const fixture = fixtureApi({
+      jobs: [capped],
+      questions: [question(), question(uuid(3_333))],
+      onPost: () =>
+        Response.json(
+          { detail: { code: "embedding_retry_limit_exceeded" } },
+          { status: 409 },
+        ),
+    });
+    await renderLoaded("admin", fixture);
+
+    expect(
+      within(screen.getByRole("region", { name: `Embedding job ${ids.job}` })).getByText(
+        "Retry depth 3 of 3",
+      ),
+    ).toBeVisible();
+    const questionChoices = screen.getAllByRole("checkbox", {
+      name: /Select historical question/,
+    });
+    fireEvent.click(questionChoices[0]!);
+    fireEvent.click(questionChoices[1]!);
+    const submit = screen.getByRole("button", { name: "Queue selected records" });
+    fireEvent.click(submit);
+
+    expect(await screen.findByRole("heading", { name: "Embedding retry limit reached" })).toBeVisible();
+    expect(submit).toBeDisabled();
+
+    fireEvent.click(questionChoices[0]!);
+    fireEvent.click(questionChoices[0]!);
+    expect(submit).toBeDisabled();
+  });
+
   it("handles configuration, provider, queue, review, conflict, permission, and network failures without leaking details", async () => {
     const replies: Array<{ code: string; status: number } | "network"> = [
       { code: "embedding_config_unavailable", status: 503 },
@@ -605,6 +648,7 @@ describe("EmbeddingIngestion", () => {
       completed_at: "2026-08-25T00:01:03Z",
       counts: { deduplicated: 1, embedded: 1, requested: 2 },
       deduplicated: true,
+      retry_depth: 1,
       retry_of_job_id: ids.retryJob,
       status: "succeeded",
       version: 3,
@@ -638,6 +682,8 @@ describe("EmbeddingIngestion", () => {
       within(succeededCard).getByText("sha256:fixture-config", { exact: true }),
     ).toBeInTheDocument();
     expect(within(succeededCard).getByText(ids.retryJob, { exact: true })).toBeInTheDocument();
+    expect(within(succeededCard).getByText("Retry depth 1 of 3")).toBeInTheDocument();
+    expect(within(failedCard).getByText("Retry depth 0 of 3")).toBeInTheDocument();
     expect(
       within(failedCard).getByText("embedding_internal_error", { exact: true }),
     ).toBeInTheDocument();

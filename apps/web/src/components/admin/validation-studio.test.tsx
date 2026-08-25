@@ -39,6 +39,7 @@ const succeeded = {
   prompt_version: "prompt.v1",
   provider: "deterministic-fake",
   request_fingerprint: hash("a"),
+  retry_depth: 0,
   retry_of_run_id: null,
   slot_id: "P8-A-001",
   started_at: now,

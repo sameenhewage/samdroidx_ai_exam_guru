@@ -472,6 +472,7 @@ const succeededRun = {
   provider_version: "1.0.0",
   request_fingerprint: hash("r"),
   retrieval_version: "reviewed-selected-context-v1",
+  retry_depth: 1,
   retry_of_run_id: ids.failedRun,
   schema_version: "question.v1",
   slot_id: slot.slot_id,
@@ -491,10 +492,17 @@ const failedRun = {
   id: ids.failedRun,
   input_tokens: 0,
   output_tokens: 0,
+  retry_depth: 0,
   retry_of_run_id: null,
   status: "failed" as const,
   total_tokens: 0,
   version: 2,
+} satisfies GenerationRun;
+
+const cappedFailedRun = {
+  ...failedRun,
+  retry_depth: 3,
+  retry_of_run_id: ids.run,
 } satisfies GenerationRun;
 
 const pendingRun = {
@@ -508,6 +516,7 @@ const pendingRun = {
   input_tokens: 0,
   latency_ms: 0,
   output_tokens: 0,
+  retry_depth: 0,
   retry_of_run_id: null,
   started_at: null,
   status: "pending" as const,
@@ -539,6 +548,7 @@ function runSummary(value: GenerationRun): GenerationRunSummary {
     prompt_version: value.prompt_version,
     provider: value.provider,
     request_fingerprint: value.request_fingerprint,
+    retry_depth: value.retry_depth,
     retry_of_run_id: value.retry_of_run_id,
     slot_id: value.slot_id,
     started_at: value.started_at,
@@ -874,6 +884,7 @@ describe("GenerationStudio", () => {
     const overview = await screen.findByRole("region", { name: "Generation run overview" });
     expect(overview).toHaveTextContent("Succeeded");
     expect(overview).toHaveTextContent("Version 4");
+    expect(overview).toHaveTextContent("Retry depth 1 of 3");
     expect(overview).toHaveTextContent(ids.failedRun);
     expect(overview).toHaveTextContent(succeededRun.request_fingerprint);
 
@@ -961,6 +972,30 @@ describe("GenerationStudio", () => {
     expect(key).toMatch(/^generation-retry-[A-Za-z0-9-]+$/);
     expect(key.length).toBeLessThanOrEqual(128);
     expect(key).not.toMatch(/\s/);
+  });
+
+  it("exposes the bounded retry depth and never enables a fourth failed-run retry", async () => {
+    await renderLoaded("admin", {
+      runDetails: { [ids.failedRun]: cappedFailedRun },
+      runs: [runSummary(cappedFailedRun)],
+    });
+
+    const overview = await screen.findByRole("region", { name: "Generation run overview" });
+    expect(overview).toHaveTextContent("Retry depth 3 of 3");
+    expect(screen.queryByRole("button", { name: "Retry failed run" })).not.toBeInTheDocument();
+    expect(screen.getByText(/retry limit has been reached/i)).toBeVisible();
+  });
+
+  it("turns a server retry-limit race into a stable disabled state", async () => {
+    await renderLoaded("admin", {
+      retryReplies: [{ code: "generation_retry_limit_exceeded", status: 409 }],
+      runDetails: { [ids.failedRun]: failedRun },
+      runs: [runSummary(failedRun)],
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry failed run" }));
+    expect(await screen.findByRole("heading", { name: "Generation retry limit reached" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry failed run" })).not.toBeInTheDocument();
   });
 
   it("blocks duplicate explicit retry clicks while the first retry request is in flight", async () => {
