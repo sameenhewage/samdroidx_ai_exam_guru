@@ -39,6 +39,7 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
         maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_MAX_OBJECTS_PER_RUN"] == "1000"
     )
     assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_APPLY_TAGS"] == "false"
+    assert maintenance["environment"]["EXAM_GURU_IDENTITY_PROVIDER"] == "deterministic"
     assert worker["depends_on"]["minio-init"] == {
         "condition": "service_completed_successfully",
         "required": True,

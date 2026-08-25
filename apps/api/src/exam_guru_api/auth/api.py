@@ -87,6 +87,11 @@ def require_rate_limit(
 
 
 def _authentication_exception(code: AuthenticationFailureCode) -> HTTPException:
+    if code is AuthenticationFailureCode.UNAVAILABLE:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": code.value},
+        )
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={"code": code.value},

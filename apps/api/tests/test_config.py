@@ -70,13 +70,18 @@ def test_production_requires_encrypted_service_connections(
 
 
 def test_production_accepts_explicit_service_credentials() -> None:
-    settings = Settings(
-        environment="production",
-        database_url=SecretStr("postgresql+asyncpg://service:database-secret@db/app?ssl=require"),
-        object_storage_access_key=SecretStr("storage-access"),
-        object_storage_secret_key=SecretStr("storage-secret"),
-        object_storage_endpoint_url="https://storage.internal",
-        valkey_url=SecretStr("rediss://:cache-secret@valkey:6379/0"),
+    settings = Settings.model_validate(
+        {
+            "environment": "production",
+            "database_url": SecretStr(
+                "postgresql+asyncpg://service:database-secret@db/app?ssl=require"
+            ),
+            "object_storage_access_key": SecretStr("storage-access"),
+            "object_storage_secret_key": SecretStr("storage-secret"),
+            "object_storage_endpoint_url": "https://storage.internal",
+            "valkey_url": SecretStr("rediss://:cache-secret@valkey:6379/0"),
+            **production_oidc_config(),
+        }
     )
 
     assert settings.environment == "production"
@@ -229,3 +234,20 @@ def test_test_runtime_can_explicitly_disable_cost_controls_for_isolated_injectio
     settings = Settings(environment="test", rate_limits_enabled=False)
 
     assert settings.rate_limits_enabled is False
+
+
+def production_oidc_config() -> dict[str, object]:
+    return {
+        "identity_provider": "oidc",
+        "oidc_issuer": "https://identity.internal.example/issuer",
+        "oidc_audience": "exam-guru-api",
+        "oidc_jwks_url": "https://identity.internal.example/issuer/jwks",
+        "oidc_role_claim_name": "roles",
+        "oidc_admin_role": "exam-guru-admin",
+        "oidc_reviewer_role": "exam-guru-reviewer",
+        "oidc_max_token_age_seconds": 3_600,
+        "oidc_clock_skew_seconds": 30,
+        "oidc_jwks_timeout_seconds": 2.0,
+        "oidc_jwks_cache_seconds": 300,
+        "oidc_jwks_max_cached_keys": 16,
+    }

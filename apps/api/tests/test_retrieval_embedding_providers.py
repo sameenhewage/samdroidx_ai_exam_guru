@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -27,6 +27,23 @@ CONFIG = EmbeddingConfig(
     version="v1",
     config_fingerprint="grade5-fixture-v1-d3",
 )
+
+
+def production_oidc_config() -> dict[str, Any]:
+    return {
+        "identity_provider": "oidc",
+        "oidc_issuer": "https://identity.internal.example/issuer",
+        "oidc_audience": "exam-guru-api",
+        "oidc_jwks_url": "https://identity.internal.example/issuer/jwks",
+        "oidc_role_claim_name": "roles",
+        "oidc_admin_role": "exam-guru-admin",
+        "oidc_reviewer_role": "exam-guru-reviewer",
+        "oidc_max_token_age_seconds": 3_600,
+        "oidc_clock_skew_seconds": 30,
+        "oidc_jwks_timeout_seconds": 2.0,
+        "oidc_jwks_cache_seconds": 300,
+        "oidc_jwks_max_cached_keys": 16,
+    }
 
 
 class FailingProvider:
@@ -80,6 +97,7 @@ def test_staging_and_production_registry_fail_closed_without_a_real_adapter() ->
             object_storage_secret_key=SecretStr("storage-" + "credential"),
             object_storage_endpoint_url="https://storage.internal",
             valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
+            **production_oidc_config(),
         )
     )
 
@@ -238,6 +256,7 @@ def test_server_owned_active_config_fails_closed_without_real_provider(
             object_storage_secret_key=SecretStr("storage-" + "credential"),
             object_storage_endpoint_url="https://storage.internal",
             valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
+            **production_oidc_config(),
         )
 
     with pytest.raises(ActiveEmbeddingConfigUnavailableError) as raised:

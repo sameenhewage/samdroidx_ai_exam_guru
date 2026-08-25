@@ -6,6 +6,8 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
+IdentityProviderMode = Literal["deterministic", "oidc", "deny"]
+OIDCAlgorithm = Literal["RS256", "ES256"]
 LOCAL_DATABASE_URL = "postgresql+asyncpg://exam_guru@localhost:5432/exam_guru"
 LOCAL_VALKEY_URL = "redis://localhost:6379/0"
 LOCAL_STORAGE_ACCESS_KEY = "exam-guru-local"
@@ -26,6 +28,57 @@ MIN_GENERATION_WORKER_LEASE_SECONDS = (
 )
 MAX_RATE_LIMIT_WINDOW_SECONDS = 3_600
 MAX_RATE_LIMIT_PER_WINDOW = 10_000
+MAX_OIDC_URL_LENGTH = 2_048
+MAX_OIDC_AUDIENCE_LENGTH = 256
+MAX_OIDC_CLAIM_NAME_LENGTH = 128
+MAX_OIDC_ROLE_VALUE_LENGTH = 256
+MAX_OIDC_TOKEN_AGE_SECONDS = 86_400
+MAX_OIDC_CLOCK_SKEW_SECONDS = 300
+MAX_OIDC_JWKS_TIMEOUT_SECONDS = 10.0
+MAX_OIDC_JWKS_CACHE_SECONDS = 86_400
+MAX_OIDC_JWKS_CACHED_KEYS = 128
+
+
+def _parse_oidc_url(value: str, *, label: str = "OIDC URL") -> tuple[str, str, int]:
+    if (
+        not value
+        or len(value) > MAX_OIDC_URL_LENGTH
+        or value != value.strip()
+        or not value.isprintable()
+        or any(character.isspace() for character in value)
+        or "\\" in value
+    ):
+        raise ValueError(f"{label} must be bounded control-free text")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        username = parsed.username
+        password = parsed.password
+    except ValueError as error:
+        raise ValueError(f"{label} must be a valid absolute HTTP URL") from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.hostname is None
+        or username is not None
+        or password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"{label} must be absolute HTTP(S) without userinfo, query, or fragment")
+    normalized_port = port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme, parsed.hostname.lower(), normalized_port
+
+
+def _validate_oidc_token(value: str, *, maximum_length: int, label: str) -> None:
+    if (
+        not value
+        or len(value) > maximum_length
+        or value != value.strip()
+        or not value.isprintable()
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(f"{label} must be a bounded printable token")
 
 
 class Settings(BaseSettings):
@@ -177,6 +230,64 @@ class Settings(BaseSettings):
         ge=MIN_GENERATION_WORKER_LEASE_SECONDS,
         le=86_400,
     )
+    identity_provider: IdentityProviderMode = "deterministic"
+    oidc_issuer: str | None = Field(default=None, min_length=1, max_length=MAX_OIDC_URL_LENGTH)
+    oidc_audience: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_OIDC_AUDIENCE_LENGTH,
+    )
+    oidc_jwks_url: str | None = Field(default=None, min_length=1, max_length=MAX_OIDC_URL_LENGTH)
+    oidc_trusted_jwks_origin: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_OIDC_URL_LENGTH,
+    )
+    oidc_role_claim_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_OIDC_CLAIM_NAME_LENGTH,
+    )
+    oidc_admin_role: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_OIDC_ROLE_VALUE_LENGTH,
+    )
+    oidc_reviewer_role: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_OIDC_ROLE_VALUE_LENGTH,
+    )
+    oidc_max_token_age_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_OIDC_TOKEN_AGE_SECONDS,
+    )
+    oidc_clock_skew_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_OIDC_CLOCK_SKEW_SECONDS,
+    )
+    oidc_jwks_timeout_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        le=MAX_OIDC_JWKS_TIMEOUT_SECONDS,
+    )
+    oidc_jwks_cache_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_OIDC_JWKS_CACHE_SECONDS,
+    )
+    oidc_jwks_max_cached_keys: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_OIDC_JWKS_CACHED_KEYS,
+    )
+    oidc_algorithms: tuple[OIDCAlgorithm, ...] = Field(
+        default=("RS256", "ES256"),
+        min_length=1,
+        max_length=2,
+    )
     deterministic_admin_token: SecretStr | None = None
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None
@@ -227,6 +338,81 @@ class Settings(BaseSettings):
         ):
             raise ValueError("embedding configuration identifiers must be bounded printable tokens")
 
+        oidc_required_values = (
+            self.oidc_issuer,
+            self.oidc_audience,
+            self.oidc_jwks_url,
+            self.oidc_role_claim_name,
+            self.oidc_admin_role,
+            self.oidc_reviewer_role,
+            self.oidc_max_token_age_seconds,
+            self.oidc_clock_skew_seconds,
+            self.oidc_jwks_timeout_seconds,
+            self.oidc_jwks_cache_seconds,
+            self.oidc_jwks_max_cached_keys,
+        )
+        oidc_has_any_value = (
+            any(value is not None for value in oidc_required_values)
+            or self.oidc_trusted_jwks_origin is not None
+            or "oidc_algorithms" in self.model_fields_set
+        )
+        oidc_is_complete = all(value is not None for value in oidc_required_values)
+        if (oidc_has_any_value or self.identity_provider == "oidc") and not oidc_is_complete:
+            raise ValueError("identity provider requires complete explicit OIDC configuration")
+        if len(self.oidc_algorithms) != len(set(self.oidc_algorithms)):
+            raise ValueError("OIDC algorithms must be distinct")
+        if oidc_is_complete:
+            issuer = cast(str, self.oidc_issuer)
+            audience = cast(str, self.oidc_audience)
+            jwks_url = cast(str, self.oidc_jwks_url)
+            role_claim_name = cast(str, self.oidc_role_claim_name)
+            admin_role = cast(str, self.oidc_admin_role)
+            reviewer_role = cast(str, self.oidc_reviewer_role)
+            issuer_origin = _parse_oidc_url(issuer)
+            jwks_origin = _parse_oidc_url(jwks_url)
+            _validate_oidc_token(
+                audience,
+                maximum_length=MAX_OIDC_AUDIENCE_LENGTH,
+                label="OIDC audience",
+            )
+            _validate_oidc_token(
+                role_claim_name,
+                maximum_length=MAX_OIDC_CLAIM_NAME_LENGTH,
+                label="OIDC role claim name",
+            )
+            _validate_oidc_token(
+                admin_role,
+                maximum_length=MAX_OIDC_ROLE_VALUE_LENGTH,
+                label="OIDC admin role",
+            )
+            _validate_oidc_token(
+                reviewer_role,
+                maximum_length=MAX_OIDC_ROLE_VALUE_LENGTH,
+                label="OIDC reviewer role",
+            )
+            if admin_role == reviewer_role:
+                raise ValueError("OIDC role values must be distinct")
+            trusted_origin = None
+            if self.oidc_trusted_jwks_origin is not None:
+                trusted_url = urlsplit(self.oidc_trusted_jwks_origin)
+                trusted_origin = _parse_oidc_url(
+                    self.oidc_trusted_jwks_origin,
+                    label="trusted JWKS origin",
+                )
+                if trusted_url.path not in {"", "/"}:
+                    raise ValueError("trusted JWKS origin must contain only scheme and authority")
+            if issuer_origin != jwks_origin:
+                if trusted_origin is None:
+                    raise ValueError("OIDC JWKS origin must match the issuer origin")
+                if trusted_origin != jwks_origin:
+                    raise ValueError("configured trusted JWKS origin must match the JWKS URL")
+            elif trusted_origin is not None and trusted_origin != jwks_origin:
+                raise ValueError("configured trusted JWKS origin must match the JWKS URL")
+            if self.environment == "production" and (
+                issuer_origin[0] != "https" or jwks_origin[0] != "https"
+            ):
+                raise ValueError("production OIDC URLs must use HTTPS")
+
         deterministic_tokens = [
             token.get_secret_value()
             for token in (self.deterministic_admin_token, self.deterministic_reviewer_token)
@@ -234,6 +420,10 @@ class Settings(BaseSettings):
         ]
         if self.environment == "production" and deterministic_tokens:
             raise ValueError("production configuration cannot use deterministic identity tokens")
+        if deterministic_tokens and self.identity_provider != "deterministic":
+            raise ValueError(
+                "deterministic identity tokens require identity_provider=deterministic"
+            )
         if self.environment == "production" and not self.rate_limits_enabled:
             raise ValueError("production cost controls cannot be disabled")
         if (
@@ -302,4 +492,6 @@ class Settings(BaseSettings):
             )
             if not encrypted_connections:
                 raise ValueError("production configuration requires encrypted service connections")
+            if self.identity_provider != "oidc":
+                raise ValueError("production identity provider must be OIDC")
         return self

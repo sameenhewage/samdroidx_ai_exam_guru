@@ -62,7 +62,7 @@ def test_default_identity_provider_denies_access() -> None:
             headers={"Authorization": "Bearer unavailable-provider"},
         )
 
-    assert response.status_code == 401
+    assert response.status_code == 503
     assert response.json() == {"detail": {"code": "identity_provider_unavailable"}}
 
 
