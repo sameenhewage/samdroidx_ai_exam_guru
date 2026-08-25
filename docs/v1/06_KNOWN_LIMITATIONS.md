@@ -25,12 +25,12 @@ This document records limitations that remain after the implemented Priority 1 e
 - P5 remains open until the same report is run on representative human-reviewed historical records.
 - The product must use syllabus-balanced practice wording whenever measured improvement is not meaningful. It must never claim exact future-paper prediction.
 
-### Live generation and validation baseline
+### Live generation and validation baseline scope
 
-- The OpenAI adapter and opt-in generation-to-validation harness record versions, token use, latency, integer-microusd cost and validation findings.
+- The opt-in OpenAI generation-to-validation baseline has been executed for the versioned English `gpt-4o-mini-2024-07-18` configuration, with tokens, latency, integer-microusd cost, fingerprints and validation finding codes recorded in the phase tracker.
 - Normal CI intentionally does not call a paid model.
-- P8 remains open until an explicitly selected paid model/configuration is executed and its quality/cost baseline is recorded.
-- Deterministic and mocked outputs are not evidence of Sinhala fluency, factual correctness, age appropriateness or semantic uniqueness.
+- This single non-failing English structured-contract run closes P8's baseline-execution gate; it is not a statistical quality study or evidence of Sinhala fluency, factual correctness, age appropriateness or semantic uniqueness.
+- Every generated result remains untrusted, requires canonical validation and cannot publish without human approval.
 
 ### Live production identity provider
 
@@ -81,4 +81,4 @@ This document records limitations that remain after the implemented Priority 1 e
 
 ## Gate impact
 
-P10 remains `IN_PROGRESS` while P2-P5 and P8 have the evidence gaps above, live external OIDC acceptance is unavailable, and final adversarial/release CI acceptance is incomplete. Priority 2 remains blocked.
+P10 remains `IN_PROGRESS` while P2-P5 retain the human-reviewed real-data evidence gaps above, live external OIDC acceptance is unavailable, and release-commit CI acceptance is incomplete. The adversarial and paid P8 baseline gates are complete. Priority 2 remains blocked.
