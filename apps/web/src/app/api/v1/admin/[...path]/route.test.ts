@@ -119,6 +119,85 @@ describe("admin API proxy browser request boundary", () => {
     expect(options.cache).toBe("no-store");
   });
 
+  it("streams only authorized original PDFs with private same-origin framing headers", async () => {
+    vi.mocked(cookies).mockResolvedValue({
+      get: (name: string) =>
+        name === "exam_guru_admin_token" ? { name, value: "server-session-token" } : undefined,
+    } as never);
+    const disposition =
+      "inline; filename=\"source.pdf\"; filename*=UTF-8''Scholarship%20source.pdf";
+    const upstreamFetch = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+        headers: {
+          "Cache-Control": "public, max-age=3600",
+          "Content-Disposition": disposition,
+          "Content-Type": "application/pdf",
+          "X-Content-Type-Options": "nosniff",
+        },
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", upstreamFetch);
+    const documentId = "00000000-0000-0000-0000-000000000901";
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/admin/source-documents/${documentId}/content`,
+    );
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ["source-documents", documentId, "content"] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    );
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Content-Disposition")).toBe(disposition);
+    expect(response.headers.get("Content-Type")).toBe("application/pdf");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    expect(response.headers.get("Content-Security-Policy")).toBe(
+      "default-src 'none'; frame-ancestors 'self'; sandbox",
+    );
+    const options = upstreamFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(options.headers).get("Authorization")).toBe(
+      "Bearer server-session-token",
+    );
+  });
+
+  it("rejects unsafe upstream PDF disposition metadata instead of relaying it", async () => {
+    vi.mocked(cookies).mockResolvedValue({
+      get: () => ({ name: "exam_guru_admin_token", value: "server-session-token" }),
+    } as never);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+          headers: {
+            "Content-Disposition":
+              "inline; filename=\"../private.pdf\"; filename*=UTF-8''..%2Fprivate.pdf",
+            "Content-Type": "application/pdf",
+          },
+          status: 200,
+        }),
+      ),
+    );
+    const documentId = "00000000-0000-0000-0000-000000000901";
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/admin/source-documents/${documentId}/content`,
+    );
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ["source-documents", documentId, "content"] }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(response.headers.has("Content-Disposition")).toBe(false);
+    await expect(response.json()).resolves.toEqual({
+      detail: { code: "upstream_unavailable" },
+    });
+  });
+
   it("never turns a spoofed display-role cookie into API privilege", async () => {
     vi.mocked(cookies).mockResolvedValue({
       get: (name: string) => {

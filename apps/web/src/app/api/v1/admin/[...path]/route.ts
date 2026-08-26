@@ -34,6 +34,20 @@ export function upstreamHeadersForRequest(
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
+function isSourceContentPath(path: string[]): boolean {
+  return path.length === 3 && path[0] === "source-documents" && path[2] === "content";
+}
+
+function safeInlineDisposition(value: string | null): string | null {
+  return value !== null &&
+    value.length <= 1_024 &&
+    /^inline; filename="[A-Za-z0-9._ -]+[.]pdf"; filename\*=UTF-8''/i.test(value) &&
+    !/[\u0000-\u001F\u007F/\\]/.test(value) &&
+    !/%(?:0a|0d|2f|5c)/i.test(value)
+    ? value
+    : null;
+}
+
 async function proxy(request: NextRequest, context: RouteContext) {
   const config = parseWebAppConfig();
   const rejection = guardBrowserRequest(request, config);
@@ -49,6 +63,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ detail: { code: "invalid_proxy_path" } }, { status: 400 });
   }
 
+  const sourceContentRequest = isSourceContentPath(path);
   const body = request.method === "GET" ? undefined : await request.arrayBuffer();
   const bodyLimit = bodyLimitForRequest(
     request.method,
@@ -65,6 +80,9 @@ async function proxy(request: NextRequest, context: RouteContext) {
   );
   upstream.search = request.nextUrl.search;
 
+  const upstreamHeaders = upstreamHeadersForRequest(request.headers, token);
+  if (sourceContentRequest) upstreamHeaders.Accept = "application/pdf";
+
   let response: Response;
   try {
     // The display-only role cookie is deliberately ignored. Every target API endpoint receives
@@ -72,7 +90,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     response = await fetch(upstream, {
       body,
       cache: "no-store",
-      headers: upstreamHeadersForRequest(request.headers, token),
+      headers: upstreamHeaders,
       method: request.method,
       redirect: "error",
       signal: AbortSignal.timeout(config.httpTimeoutMs),
@@ -87,11 +105,30 @@ async function proxy(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ detail: { code: "upstream_unavailable" } }, { status: 502 });
   }
 
+  const responseContentType = response.headers.get("Content-Type") ?? "application/json";
+  const disposition = safeInlineDisposition(response.headers.get("Content-Disposition"));
+  if (
+    sourceContentRequest &&
+    response.ok &&
+    (responseContentType.toLowerCase().split(";", 1)[0] !== "application/pdf" || !disposition)
+  ) {
+    return NextResponse.json({ detail: { code: "upstream_unavailable" } }, { status: 502 });
+  }
+  const responseHeaders: Record<string, string> = {
+    "Cache-Control": sourceContentRequest ? "private, no-store" : "no-store",
+    "Content-Type": responseContentType,
+  };
+  if (sourceContentRequest) {
+    responseHeaders["Content-Security-Policy"] =
+      "default-src 'none'; frame-ancestors 'self'; sandbox";
+    responseHeaders["Cross-Origin-Resource-Policy"] = "same-origin";
+    responseHeaders["X-Content-Type-Options"] = "nosniff";
+    responseHeaders["X-Frame-Options"] = "SAMEORIGIN";
+    if (disposition) responseHeaders["Content-Disposition"] = disposition;
+  }
+
   return new NextResponse(response.body, {
-    headers: {
-      "Cache-Control": "no-store",
-      "Content-Type": response.headers.get("Content-Type") ?? "application/json",
-    },
+    headers: responseHeaders,
     status: response.status,
   });
 }

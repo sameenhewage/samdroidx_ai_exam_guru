@@ -4,10 +4,13 @@ x-api-environment: &api-environment
   EXAM_GURU_ENVIRONMENT: local
   EXAM_GURU_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-exam_guru}:${POSTGRES_PASSWORD:-exam-guru-local-db}@postgres:5432/${POSTGRES_DB:-exam_guru}
   EXAM_GURU_VALKEY_URL: redis://valkey:6379/0
-  EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL: http://minio:9000
-  EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-exam-guru-local}
-  EXAM_GURU_OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-exam-guru-local-secret}
-  EXAM_GURU_OBJECT_STORAGE_BUCKET: exam-guru-sources
+  EXAM_GURU_STORAGE_BACKEND: ${EXAM_GURU_STORAGE_BACKEND:-local}
+  EXAM_GURU_STORAGE_ROOT: /data
+  EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL: ${EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL:-}
+  EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY: ${EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY:-}
+  EXAM_GURU_OBJECT_STORAGE_SECRET_KEY: ${EXAM_GURU_OBJECT_STORAGE_SECRET_KEY:-}
+  EXAM_GURU_OBJECT_STORAGE_BUCKET: ${EXAM_GURU_OBJECT_STORAGE_BUCKET:-}
+  EXAM_GURU_OBJECT_STORAGE_REGION: ${EXAM_GURU_OBJECT_STORAGE_REGION:-}
   EXAM_GURU_STORAGE_RECONCILIATION_INTERVAL_SECONDS: ${EXAM_GURU_STORAGE_RECONCILIATION_INTERVAL_SECONDS:-3600}
   EXAM_GURU_STORAGE_RECONCILIATION_GRACE_SECONDS: ${EXAM_GURU_STORAGE_RECONCILIATION_GRACE_SECONDS:-86400}
   EXAM_GURU_STORAGE_RECONCILIATION_MAX_OBJECTS_PER_RUN: ${EXAM_GURU_STORAGE_RECONCILIATION_MAX_OBJECTS_PER_RUN:-1000}
@@ -23,6 +26,11 @@ x-api-environment: &api-environment
   EXAM_GURU_RATE_LIMIT_GENERATION_CREATE_RETRY: ${EXAM_GURU_RATE_LIMIT_GENERATION_CREATE_RETRY:-20}
   EXAM_GURU_RATE_LIMIT_VALIDATION_RUN: ${EXAM_GURU_RATE_LIMIT_VALIDATION_RUN:-60}
   EXAM_GURU_RATE_LIMIT_PAPER_PUBLISH_ARCHIVE: ${EXAM_GURU_RATE_LIMIT_PAPER_PUBLISH_ARCHIVE:-30}
+
+x-studio-storage: &studio-storage
+  - type: bind
+    source: ${EXAM_GURU_DATA_PATH:-./.exam-guru-data}
+    target: /data
 
 services:
   postgres:
@@ -55,6 +63,7 @@ services:
       - valkey-data:/data
 
   minio:
+    profiles: ["s3"]
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -67,6 +76,7 @@ services:
       - minio-data:/data
 
   minio-init:
+    profiles: ["s3"]
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     depends_on:
       minio:
@@ -96,11 +106,10 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
       valkey:
         condition: service_healthy
     environment: *api-environment
+    volumes: *studio-storage
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
       interval: 5s
@@ -118,11 +127,10 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
       valkey:
         condition: service_healthy
     environment: *api-environment
+    volumes: *studio-storage
 
   maintenance:
     build:
@@ -135,6 +143,7 @@ services:
       valkey:
         condition: service_healthy
     environment: *api-environment
+    volumes: *studio-storage
     healthcheck:
       test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
       interval: 5s

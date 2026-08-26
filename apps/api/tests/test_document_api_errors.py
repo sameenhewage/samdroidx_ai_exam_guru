@@ -754,6 +754,57 @@ def test_source_response_backfills_legacy_defaults_and_exposes_derived_subject()
     assert missing_curriculum_response.subject_id is None
 
 
+def test_material_transition_routes_return_updated_typed_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = source_document()
+    session_value = cast(AsyncSession, RouteSession(document))
+    values = arguments()
+
+    async def return_document(
+        _service: SourceDocumentService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> SourceDocumentModel:
+        return document
+
+    monkeypatch.setattr(SourceDocumentService, "remove_from_ai_use", return_document)
+    removed = asyncio.run(
+        remove_material_from_use(
+            document.id,
+            MaterialRemoveRequest(reason="Wrong assignment.", expected_version=0),
+            values.principal,
+            session_value,
+            values.object_storage,
+            values.settings,
+        )
+    )
+    monkeypatch.setattr(SourceDocumentService, "restore_to_ai_use", return_document)
+    restored = asyncio.run(
+        restore_material_to_use(
+            document.id,
+            MaterialRestoreRequest(expected_version=0),
+            values.principal,
+            session_value,
+            values.object_storage,
+            values.settings,
+        )
+    )
+    monkeypatch.setattr(SourceDocumentService, "correct_scope", return_document)
+    corrected = asyncio.run(
+        correct_material_scope(
+            document.id,
+            MaterialScopeCorrectionRequest(curriculum_version_id=None, expected_version=0),
+            values.principal,
+            session_value,
+            values.object_storage,
+            values.settings,
+        )
+    )
+
+    assert (removed.id, restored.id, corrected.id) == (document.id, document.id, document.id)
+
+
 def test_material_routes_cover_reads_and_sanitized_transition_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

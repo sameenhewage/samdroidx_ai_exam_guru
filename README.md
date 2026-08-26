@@ -77,9 +77,9 @@ Implementation is active across Priority 1 acceptance gates. P0 and P1 are DONE;
 
 The local Studio is intended to run through versioned Docker/Docker Compose while persistent source data lives on durable host storage rather than ephemeral container layers.
 
-Current repository code may still include MinIO/S3-compatible integration from the earlier bootstrap. The authoritative target architecture is the storage-provider abstraction in [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md), with **local durable host filesystem storage as the bootstrap/default Studio backend** and S3/MinIO optional rather than mandatory.
+The storage-provider abstraction follows [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md): **local durable host filesystem storage is the bootstrap/default Studio backend**, while S3/MinIO is an optional profile/provider.
 
-Typical local startup remains:
+Typical local startup is:
 
 ```bash
 cp .env.example .env
@@ -91,9 +91,11 @@ Core services include:
 - FastAPI API;
 - PostgreSQL + pgvector;
 - Valkey/background workers;
-- durable local source storage through the configured storage provider.
+- durable local source storage bind-mounted from `EXAM_GURU_DATA_PATH` (default `./.exam-guru-data`) to `/data` in the API, worker, and maintenance containers.
 
-During the storage migration, the Compose stack may additionally expose MinIO compatibility services used by existing integration tests. Do not treat that temporary implementation detail as the long-term architecture requirement.
+The container startup makes the storage root private and runs backend processes as the bind-directory owner when possible. Use a local POSIX-compatible filesystem that supports hard links, atomic replacement, directory `fsync`, and Unix permissions; pre-create/chown a custom host path if Docker cannot manage its ownership. Do not use an ephemeral container path as `EXAM_GURU_DATA_PATH`. Local reconciliation metadata is kept in private bounded sidecars that preserve the reserved operator-tag map, but local storage has no external provider-console tagging interface.
+
+MinIO remains available only when explicitly selected and configured, for example with `EXAM_GURU_STORAGE_BACKEND=s3 docker compose --profile s3 up --build --wait`. Existing objects in the retained `minio-data` volume are **not** silently copied into local storage: migration requires an explicit checksum-preserving export/import process before switching the database's storage backend. Never remove the MinIO volume until that migration and its backup have been verified.
 
 Stop services without intentionally deleting durable data using:
 

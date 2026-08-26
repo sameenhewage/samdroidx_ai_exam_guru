@@ -61,6 +61,7 @@ def create_ocr_port(settings: Settings) -> OCRPort | None:
 async def _extract_document(document_id: UUID, *, actor_id: UUID) -> None:
     settings = Settings()
     resources = create_resources(settings)
+    object_storage = None
     try:
         object_storage = create_object_storage(settings)
         extractor = PyMuPdfExtractor(max_pages=NATIVE_EXTRACTION_MAX_PAGES)
@@ -73,7 +74,11 @@ async def _extract_document(document_id: UUID, *, actor_id: UUID) -> None:
                 ocr_port=ocr_port,
             ).extract_native(document_id, actor_id=actor_id, preclaimed=True)
     finally:
-        await resources.close()
+        try:
+            if object_storage is not None:
+                object_storage.close()
+        finally:
+            await resources.close()
 
 
 async def _recover_extraction_jobs() -> None:

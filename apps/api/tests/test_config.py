@@ -9,6 +9,7 @@ from exam_guru_api.core.config import (
     OCR_PROVIDER_MAX_EXECUTION_SECONDS,
     TESSERACT_PROBE_COMMAND_COUNT,
     Settings,
+    StorageBackend,
 )
 
 
@@ -28,28 +29,147 @@ def test_settings_redact_connection_credentials() -> None:
     assert "cache-secret" not in rendered
 
 
+def test_storage_defaults_to_bounded_local_root_without_s3_credentials() -> None:
+    settings = Settings(environment="test")
+
+    assert settings.storage_backend is StorageBackend.LOCAL
+    assert settings.storage_root == "/data"
+    assert settings.object_storage_endpoint_url is None
+    assert settings.object_storage_access_key is None
+    assert settings.object_storage_secret_key is None
+
+
+@pytest.mark.parametrize(
+    "storage_root",
+    ["relative/data", "/", "/data/../private", "/data\nprivate", "/" + "x" * 1_025],
+)
+def test_local_storage_root_must_be_bounded_absolute_and_control_free(storage_root: str) -> None:
+    with pytest.raises(ValidationError, match="storage root"):
+        Settings(environment="test", storage_root=storage_root)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "object_storage_endpoint_url",
+        "object_storage_access_key",
+        "object_storage_secret_key",
+        "object_storage_bucket",
+        "object_storage_region",
+    ],
+)
+def test_s3_backend_requires_complete_explicit_provider_configuration(missing_field: str) -> None:
+    values: dict[str, object] = {
+        "environment": "test",
+        "storage_backend": "s3",
+        "object_storage_endpoint_url": "http://localhost:9000",
+        "object_storage_access_key": SecretStr("storage-access"),
+        "object_storage_secret_key": SecretStr("storage-secret"),
+        "object_storage_bucket": "exam-guru-sources",
+        "object_storage_region": "us-east-1",
+    }
+    values[missing_field] = None
+
+    with pytest.raises(ValidationError, match="S3 storage requires complete"):
+        Settings.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"object_storage_endpoint_url": "not-an-http-url"},
+        {"object_storage_access_key": SecretStr("")},
+        {"object_storage_access_key": SecretStr(" access")},
+        {"object_storage_access_key": SecretStr("x" * 257)},
+        {"object_storage_bucket": "private bucket"},
+        {"object_storage_region": "us-east-1\n"},
+        {"object_storage_secret_key": SecretStr("")},
+        {"object_storage_secret_key": SecretStr(" secret")},
+        {"object_storage_secret_key": SecretStr("secret value")},
+        {"object_storage_secret_key": SecretStr("x" * 4_097)},
+        {"object_storage_secret_key": SecretStr("secret\x00value")},
+    ],
+)
+def test_s3_backend_rejects_unsafe_provider_configuration(override: dict[str, object]) -> None:
+    values: dict[str, object] = {
+        "environment": "test",
+        "storage_backend": "s3",
+        "object_storage_endpoint_url": "http://localhost:9000",
+        "object_storage_access_key": SecretStr("storage-access"),
+        "object_storage_secret_key": SecretStr("storage-secret"),
+        "object_storage_bucket": "exam-guru-sources",
+        "object_storage_region": "us-east-1",
+    }
+    values.update(override)
+
+    with pytest.raises(ValidationError, match="S3"):
+        Settings.model_validate(values)
+
+
+def test_production_accepts_secure_durable_local_storage_without_s3_configuration() -> None:
+    settings = Settings.model_validate(
+        {
+            "environment": "production",
+            "database_url": SecretStr(
+                "postgresql+asyncpg://service:database-secret@db/app?ssl=require"
+            ),
+            "valkey_url": SecretStr("rediss://:cache-secret@valkey:6379/0"),
+            "storage_backend": "local",
+            "storage_root": "/srv/exam-guru-data",
+            **production_oidc_config(),
+        }
+    )
+
+    assert settings.storage_backend is StorageBackend.LOCAL
+    assert settings.storage_root == "/srv/exam-guru-data"
+    assert settings.object_storage_endpoint_url is None
+
+
+def test_production_rejects_insecure_s3_while_accepting_the_same_local_service_security() -> None:
+    with pytest.raises(ValidationError, match="production S3 endpoint must use HTTPS"):
+        Settings.model_validate(
+            {
+                "environment": "production",
+                "database_url": SecretStr(
+                    "postgresql+asyncpg://service:database-secret@db/app?ssl=require"
+                ),
+                "valkey_url": SecretStr("rediss://:cache-secret@valkey:6379/0"),
+                "storage_backend": "s3",
+                "object_storage_endpoint_url": "http://storage.internal",
+                "object_storage_access_key": SecretStr("storage-access"),
+                "object_storage_secret_key": SecretStr("storage-secret"),
+                "object_storage_bucket": "exam-guru-sources",
+                "object_storage_region": "us-east-1",
+                **production_oidc_config(),
+            }
+        )
+
+
 def test_production_rejects_local_development_credentials() -> None:
     with pytest.raises(ValidationError, match="production configuration"):
         Settings(environment="production")
 
 
 @pytest.mark.parametrize(
-    ("database_url", "valkey_url", "object_storage_endpoint_url"),
+    ("database_url", "valkey_url", "object_storage_endpoint_url", "failure"),
     [
         (
             "postgresql+asyncpg://service:database-secret@db/app",
             "rediss://:cache-secret@valkey:6379/0",
             "https://storage.internal",
+            "encrypted service connections",
         ),
         (
             "postgresql+asyncpg://service:database-secret@db/app?ssl=require",
             "redis://:cache-secret@valkey:6379/0",
             "https://storage.internal",
+            "encrypted service connections",
         ),
         (
             "postgresql+asyncpg://service:database-secret@db/app?ssl=require",
             "rediss://:cache-secret@valkey:6379/0",
             "http://storage.internal",
+            "production S3 endpoint must use HTTPS",
         ),
     ],
 )
@@ -57,14 +177,18 @@ def test_production_requires_encrypted_service_connections(
     database_url: str,
     valkey_url: str,
     object_storage_endpoint_url: str,
+    failure: str,
 ) -> None:
-    with pytest.raises(ValidationError, match="encrypted service connections"):
+    with pytest.raises(ValidationError, match=failure):
         Settings(
             environment="production",
             database_url=SecretStr(database_url),
+            storage_backend=StorageBackend.S3,
             object_storage_access_key=SecretStr("storage-access"),
             object_storage_secret_key=SecretStr("storage-secret"),
             object_storage_endpoint_url=object_storage_endpoint_url,
+            object_storage_bucket="exam-guru-sources",
+            object_storage_region="us-east-1",
             valkey_url=SecretStr(valkey_url),
         )
 
@@ -76,9 +200,12 @@ def test_production_accepts_explicit_service_credentials() -> None:
             "database_url": SecretStr(
                 "postgresql+asyncpg://service:database-secret@db/app?ssl=require"
             ),
+            "storage_backend": "s3",
             "object_storage_access_key": SecretStr("storage-access"),
             "object_storage_secret_key": SecretStr("storage-secret"),
             "object_storage_endpoint_url": "https://storage.internal",
+            "object_storage_bucket": "exam-guru-sources",
+            "object_storage_region": "us-east-1",
             "valkey_url": SecretStr("rediss://:cache-secret@valkey:6379/0"),
             **production_oidc_config(),
         }

@@ -12,9 +12,11 @@ from exam_guru_api.infrastructure.object_storage import (
     APP_ORPHAN_CANDIDATE_TAG,
     APP_ORPHAN_DETECTED_AT_TAG,
     InvalidObjectKeyError,
+    ObjectAlreadyExistsError,
     ObjectStorageOperationError,
     ObjectTagCapacityError,
     S3ObjectStorage,
+    StoredObject,
     validate_object_key,
 )
 
@@ -53,6 +55,7 @@ class ScriptedS3Client:
         head_bucket_results: list[dict[str, object] | ClientError] | None = None,
         head_object_results: list[dict[str, object] | ClientError] | None = None,
         put_object_result: dict[str, object] | ClientError | None = None,
+        get_results: list[dict[str, object] | Exception] | None = None,
         list_results: list[dict[str, object] | ClientError] | None = None,
         tag_results: list[dict[str, object] | ClientError] | None = None,
         put_tag_result: dict[str, object] | ClientError | None = None,
@@ -60,6 +63,7 @@ class ScriptedS3Client:
         self.head_bucket_results = head_bucket_results or []
         self.head_object_results = head_object_results or []
         self.put_object_result = put_object_result or {"ETag": '"etag"'}
+        self.get_results = get_results or []
         self.list_results = list_results or []
         self.tag_results = tag_results or []
         self.put_tag_result = put_tag_result or {}
@@ -67,6 +71,7 @@ class ScriptedS3Client:
         self.list_calls: list[dict[str, object]] = []
         self.get_tag_calls: list[dict[str, object]] = []
         self.put_tag_calls: list[dict[str, object]] = []
+        self.close_calls = 0
         self.closed = False
 
     @staticmethod
@@ -88,6 +93,12 @@ class ScriptedS3Client:
     def put_object(self, **_: object) -> dict[str, object]:
         return self._resolve(self.put_object_result)
 
+    def get_object(self, **_: object) -> dict[str, object]:
+        result = self.get_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
     def list_objects_v2(self, **values: object) -> dict[str, object]:
         self.list_calls.append(values)
         return self._resolve(self.list_results.pop(0))
@@ -101,13 +112,31 @@ class ScriptedS3Client:
         return self._resolve(self.put_tag_result)
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
+
+
+class ScriptedBody:
+    def __init__(self, value: bytes | Exception) -> None:
+        self.value = value
+        self.read_amounts: list[int] = []
+        self.close_calls = 0
+
+    def read(self, amount: int) -> bytes:
+        self.read_amounts.append(amount)
+        if isinstance(self.value, Exception):
+            raise self.value
+        return self.value
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def storage_with_client(
     client: ScriptedS3Client,
     *,
     region: str = "us-east-1",
+    max_object_bytes: int = 100 * 1024 * 1024,
 ) -> S3ObjectStorage:
     storage = S3ObjectStorage(
         endpoint_url="http://localhost:9000",
@@ -115,6 +144,7 @@ def storage_with_client(
         secret_access_key="x",
         bucket="test-bucket",
         region=region,
+        max_object_bytes=max_object_bytes,
     )
     storage._client = cast(S3Client, client)
     return storage
@@ -163,6 +193,14 @@ def test_bucket_access_error_is_not_hidden() -> None:
     assert raised.value is error
 
 
+def test_default_region_bucket_creation_omits_location_constraint() -> None:
+    client = ScriptedS3Client(head_bucket_results=[s3_error("404", "HeadBucket")])
+
+    storage_with_client(client).ensure_bucket()
+
+    assert client.created_buckets == [{"Bucket": "test-bucket"}]
+
+
 def test_regional_bucket_creation_sets_location_constraint() -> None:
     client = ScriptedS3Client(head_bucket_results=[s3_error("404", "HeadBucket")])
 
@@ -174,6 +212,40 @@ def test_regional_bucket_creation_sets_location_constraint() -> None:
             "CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"},
         }
     ]
+
+
+def test_s3_normal_put_and_existing_head_retry_paths_are_exact() -> None:
+    payload = b"data"
+    checksum = hashlib.sha256(payload).hexdigest()
+    normal = storage_with_client(
+        ScriptedS3Client(head_object_results=[s3_error("404", "HeadObject")])
+    ).put_immutable("sources/file.pdf", payload, content_type="application/pdf")
+    assert normal == StoredObject(
+        key="sources/file.pdf",
+        checksum_sha256=checksum,
+        size=4,
+        etag="etag",
+    )
+
+    existing_response = {
+        "ContentLength": 4,
+        "ETag": '"existing"',
+        "Metadata": {"sha256": checksum},
+    }
+    retried = storage_with_client(
+        ScriptedS3Client(head_object_results=[existing_response])
+    ).put_immutable("sources/file.pdf", payload, content_type="application/pdf")
+    assert retried.etag == "existing"
+
+    conflict_response = {
+        "ContentLength": 5,
+        "ETag": '"conflict"',
+        "Metadata": {"sha256": "f" * 64},
+    }
+    with pytest.raises(ObjectAlreadyExistsError):
+        storage_with_client(
+            ScriptedS3Client(head_object_results=[conflict_response])
+        ).put_immutable("sources/file.pdf", payload, content_type="application/pdf")
 
 
 def test_unexpected_put_error_is_not_hidden() -> None:
@@ -189,6 +261,103 @@ def test_unexpected_put_error_is_not_hidden() -> None:
         )
 
     assert raised.value is error
+
+
+@pytest.mark.parametrize("max_object_bytes", [0, True, (100 * 1024 * 1024) + 1])
+def test_s3_storage_rejects_invalid_object_bounds(max_object_bytes: int) -> None:
+    with pytest.raises(ValueError, match="byte limit"):
+        storage_with_client(ScriptedS3Client(), max_object_bytes=max_object_bytes)
+
+
+def test_s3_storage_enforces_write_bound_before_provider_calls() -> None:
+    client = ScriptedS3Client()
+
+    with pytest.raises(ObjectStorageOperationError) as raised:
+        storage_with_client(client, max_object_bytes=3).put_immutable(
+            "sources/file.pdf",
+            b"four",
+            content_type="application/pdf",
+        )
+
+    assert raised.value.failure_code == "object_storage_write_too_large"
+    assert client.head_object_results == []
+
+
+def test_s3_get_is_bounded_and_closes_stream() -> None:
+    body = ScriptedBody(b"data")
+    storage = storage_with_client(
+        ScriptedS3Client(get_results=[{"Body": body, "ContentLength": 4}]),
+        max_object_bytes=4,
+    )
+
+    assert storage.get_bytes("sources/file.pdf") == b"data"
+    assert body.read_amounts == [5]
+    assert body.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "failure_code"),
+    [
+        (s3_error("NoSuchKey", "GetObject"), "object_storage_not_found"),
+        (s3_error("AccessDenied-private", "GetObject"), "object_storage_read_failed"),
+        (RuntimeError("private transport detail"), "object_storage_read_failed"),
+    ],
+)
+def test_s3_get_sanitizes_provider_failures(
+    provider_error: Exception,
+    failure_code: str,
+) -> None:
+    storage = storage_with_client(ScriptedS3Client(get_results=[provider_error]))
+
+    with pytest.raises(ObjectStorageOperationError) as raised:
+        storage.get_bytes("sources/file.pdf")
+
+    assert raised.value.failure_code == failure_code
+    assert "private" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("content_length", "body_value", "failure_code"),
+    [
+        (True, b"x", "object_storage_invalid_response"),
+        (-1, b"", "object_storage_invalid_response"),
+        (6, b"123456", "object_storage_read_too_large"),
+        (4, b"bad", "object_storage_invalid_response"),
+        (4, b"123456", "object_storage_read_too_large"),
+        (4, "text", "object_storage_invalid_response"),
+        (4, RuntimeError("private body failure"), "object_storage_read_failed"),
+    ],
+)
+def test_s3_get_rejects_unbounded_or_malformed_responses_and_closes_body(
+    content_length: object,
+    body_value: bytes | str | Exception,
+    failure_code: str,
+) -> None:
+    body = ScriptedBody(cast(bytes | Exception, body_value))
+    storage = storage_with_client(
+        ScriptedS3Client(get_results=[{"Body": body, "ContentLength": content_length}]),
+        max_object_bytes=5,
+    )
+
+    with pytest.raises(ObjectStorageOperationError) as raised:
+        storage.get_bytes("sources/file.pdf")
+
+    assert raised.value.failure_code == failure_code
+    assert "private" not in str(raised.value)
+    assert body.close_calls == 1
+
+
+def test_s3_get_rejects_missing_or_invalid_body() -> None:
+    results: tuple[dict[str, object], ...] = (
+        {"ContentLength": 0},
+        {"Body": object(), "ContentLength": 0},
+    )
+    for result in results:
+        storage = storage_with_client(ScriptedS3Client(get_results=[result]))
+        with pytest.raises(ObjectStorageOperationError) as raised:
+            storage.get_bytes("sources/file.pdf")
+        assert raised.value.failure_code == "object_storage_invalid_response"
 
 
 def test_conditional_write_race_resolves_an_idempotent_retry() -> None:
@@ -615,6 +784,9 @@ def test_reconciliation_tag_errors_are_sanitized(
 def test_storage_close_closes_the_sdk_client() -> None:
     client = ScriptedS3Client()
 
-    storage_with_client(client).close()
+    storage = storage_with_client(client)
+    storage.close()
+    storage.close()
 
     assert client.closed is True
+    assert client.close_calls == 1

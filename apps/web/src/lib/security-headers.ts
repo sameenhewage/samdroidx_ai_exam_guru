@@ -7,6 +7,7 @@ export const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob:",
   "font-src 'self'",
   "connect-src 'self'",
+  "frame-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -27,6 +28,18 @@ const BASE_SECURITY_HEADERS: readonly SecurityHeader[] = [
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
 ];
 
+const SOURCE_CONTENT_SECURITY_HEADERS: readonly SecurityHeader[] = [
+  {
+    key: "Content-Security-Policy",
+    value: "default-src 'none'; frame-ancestors 'self'; sandbox",
+  },
+  { key: "Cache-Control", value: "private, no-store" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+];
+
 const HSTS_HEADER: SecurityHeader = {
   key: "Strict-Transport-Security",
   value: "max-age=63072000; includeSubDomains; preload",
@@ -39,5 +52,11 @@ export function securityHeaders(config: WebAppConfig): SecurityHeader[] {
 }
 
 export function securityHeaderRules(config: WebAppConfig) {
-  return [{ headers: securityHeaders(config), source: "/(.*)" }];
+  return [
+    { headers: securityHeaders(config), source: "/(.*)" },
+    {
+      headers: [...SOURCE_CONTENT_SECURITY_HEADERS],
+      source: "/api/v1/admin/source-documents/:documentId/content",
+    },
+  ];
 }

@@ -59,6 +59,34 @@ test("admin uploads, extracts, corrects, trusts, and reuses an immutable source"
     )
     .toBe("extracted");
 
+  const contentResponse = await page.request.get(
+    `/api/v1/admin/source-documents/${source.id}/content`,
+  );
+  expect(contentResponse.ok()).toBe(true);
+  expect(contentResponse.headers()).toMatchObject({
+    "cache-control": "private, no-store",
+    "content-type": "application/pdf",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "SAMEORIGIN",
+  });
+  expect(contentResponse.headers()["content-disposition"]).toContain("inline;");
+
+  await page.goto(`/admin/materials/${source.id}/review-text`);
+  await expect(page.getByRole("heading", { name: "Review text" })).toBeVisible();
+  const originalPreview = page.getByTitle("Original PDF preview");
+  await expect(originalPreview).toBeVisible();
+  await expect(originalPreview).toHaveAttribute(
+    "src",
+    new RegExp(`/api/v1/admin/source-documents/${source.id}/content#page=1&view=FitH$`),
+  );
+  await expect(page.getByRole("region", { name: "Extracted and corrected text" })).toContainText(
+    "Grade 5 source text",
+  );
+  await expect(page.locator("details").filter({ hasText: "Technical details" })).not.toHaveAttribute(
+    "open",
+    "",
+  );
+
   await page.goto(`/admin/documents/${source.id}`);
   await expect(page.locator("pre").filter({ hasText: "Grade 5 source text" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Begin human review" }).click();

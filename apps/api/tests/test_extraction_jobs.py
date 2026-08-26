@@ -41,6 +41,14 @@ class RecordingActor:
         return StubMessage()
 
 
+class ClosingStorage:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class StubResources:
     def __init__(self, session: object) -> None:
         self.session = session
@@ -145,7 +153,7 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
 ) -> None:
     settings = Settings(environment="test")
     session = object()
-    storage = object()
+    storage = ClosingStorage()
     extractor = object()
     expected_ocr_port = object()
     resources = StubResources(session)
@@ -204,6 +212,7 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
     jobs.extract_document(str(DOCUMENT_ID), str(ACTOR_ID))
 
     assert calls == [(DOCUMENT_ID, ACTOR_ID)]
+    assert storage.closed is True
     assert resources.closed is True
 
 
@@ -211,6 +220,7 @@ def test_extraction_actor_closes_resources_when_the_service_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     resources = StubResources(object())
+    storage = ClosingStorage()
 
     class FailingExtractionService:
         def __init__(self, *_dependencies: object, **_named_dependencies: object) -> None:
@@ -228,13 +238,14 @@ def test_extraction_actor_closes_resources_when_the_service_fails(
             raise RuntimeError("transient extraction failure")
 
     monkeypatch.setattr(jobs, "create_resources", lambda _settings: resources)
-    monkeypatch.setattr(jobs, "create_object_storage", lambda _settings: object())
+    monkeypatch.setattr(jobs, "create_object_storage", lambda _settings: storage)
     monkeypatch.setattr(jobs, "PyMuPdfExtractor", lambda *, max_pages: object())
     monkeypatch.setattr(jobs, "DocumentExtractionService", FailingExtractionService)
 
     with pytest.raises(RuntimeError, match="transient extraction failure"):
         jobs.extract_document(str(DOCUMENT_ID), str(ACTOR_ID))
 
+    assert storage.closed is True
     assert resources.closed is True
 
 

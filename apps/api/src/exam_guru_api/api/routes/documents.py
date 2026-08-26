@@ -1,4 +1,7 @@
+import re
+import unicodedata
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -63,6 +66,7 @@ from exam_guru_api.documents.service import (
     MaterialScopeImmutableError,
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
+    SourceDocumentContentUnavailableError,
     SourceDocumentNotFoundError,
     SourceDocumentService,
     SourceLearningScopeInactiveError,
@@ -85,6 +89,31 @@ SourceUploadPrincipal = Annotated[
     Principal,
     Depends(require_rate_limit(Permission.SOURCE_WRITE, RateLimitScope.SOURCE_UPLOAD)),
 ]
+_MAX_CONTENT_FILENAME_CHARACTERS = 180
+_MAX_ENCODED_CONTENT_FILENAME_CHARACTERS = 700
+_UNSAFE_FILENAME_CHARACTERS = re.compile(r"[^A-Za-z0-9._ -]+")
+
+
+def _content_disposition(filename: str) -> str:
+    normalized = unicodedata.normalize("NFC", filename)[:_MAX_CONTENT_FILENAME_CHARACTERS]
+    cleaned = "".join(
+        character if character.isprintable() and character not in {"/", "\\", '"', "'"} else "_"
+        for character in normalized
+    ).strip(" .")
+    unicode_stem = cleaned[:-4] if cleaned.casefold().endswith(".pdf") else cleaned
+    bounded_stem = ""
+    for character in unicode_stem:
+        candidate = f"{bounded_stem}{character}.pdf"
+        if len(quote(candidate, safe="!#$&+-.^_`|~")) > _MAX_ENCODED_CONTENT_FILENAME_CHARACTERS:
+            break
+        bounded_stem += character
+    bounded_stem = bounded_stem.strip(" .")
+    safe_unicode = f"{bounded_stem or 'source'}.pdf"
+    ascii_stem = unicodedata.normalize("NFKD", bounded_stem).encode("ascii", "ignore").decode()
+    ascii_stem = _UNSAFE_FILENAME_CHARACTERS.sub("_", ascii_stem).strip(" .")
+    ascii_value = f"{ascii_stem or 'source'}.pdf"
+    encoded = quote(safe_unicode, safe="!#$&+-.^_`|~")
+    return f"inline; filename=\"{ascii_value}\"; filename*=UTF-8''{encoded}"
 
 
 @router.get(
@@ -268,6 +297,71 @@ async def list_source_documents(
         max_upload_bytes=settings.max_upload_bytes,
     ).list_documents()
     return [await _source_document_response(session, document) for document in documents]
+
+
+@router.get(
+    "/source-documents/{document_id}/content",
+    operation_id="get_source_document_content",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {
+            "description": "Verified immutable original PDF",
+            "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Authentication required",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Source read permission required",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Source document not found",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Source document content unavailable or corrupt",
+            "model": ApiErrorResponse,
+        },
+    },
+)
+async def get_source_document_content(
+    document_id: UUID,
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    del principal
+    try:
+        content = await SourceDocumentService(
+            session,
+            object_storage,
+            max_upload_bytes=settings.max_upload_bytes,
+        ).read_original(document_id)
+    except SourceDocumentNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "source_document_not_found"},
+        ) from None
+    except SourceDocumentContentUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "source_document_content_unavailable"},
+        ) from None
+    return Response(
+        content=content.data,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": _content_disposition(content.filename),
+            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "SAMEORIGIN",
+        },
+    )
 
 
 @router.post(

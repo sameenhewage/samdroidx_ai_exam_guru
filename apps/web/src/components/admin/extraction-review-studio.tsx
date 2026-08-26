@@ -1,6 +1,6 @@
 "use client";
 
-import { createApiClient, type components } from "@exam-guru/api-client";
+import { createApiClient, type components, type paths } from "@exam-guru/api-client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
@@ -52,6 +52,8 @@ const MAX_ENGINE_CHARACTERS = 64;
 const MAX_ENGINE_VERSION_CHARACTERS = 128;
 const MAX_OCR_PAGE_NUMBERS = 50;
 const MAX_SOURCE_PAGE_NUMBER = 1_000;
+const SOURCE_CONTENT_ROUTE: keyof paths =
+  "/api/v1/admin/source-documents/{document_id}/content";
 const unsafeTextControls = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const secretConfigSegments = new Set(["apikey", "credential", "password", "secret", "token"]);
 
@@ -65,6 +67,11 @@ function characterCount(value: string): number {
 
 function plainText(value: string): string {
   return value.replace(unsafeTextControls, "�");
+}
+
+function sourceContentUrl(documentId: string, pageNumber: number): string {
+  const path = SOURCE_CONTENT_ROUTE.replace("{document_id}", encodeURIComponent(documentId));
+  return `${path}#page=${pageNumber}&view=FitH`;
 }
 
 function boundedIdentity(value: unknown, maximumCharacters: number): string | null {
@@ -499,6 +506,9 @@ export function ExtractionReviewStudio({
     const selectedPage = pages[selectedPageIndex] ?? pages[0] ?? null;
     const selectedBlocks = selectedPage ? blocks[selectedPage.page_number] ?? [] : [];
     const canEdit = role === "admin" && document.extraction_status === "in_review";
+    const originalPdfUrl = selectedPage
+      ? sourceContentUrl(documentId, selectedPage.page_number)
+      : null;
 
     return (
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:py-12">
@@ -522,7 +532,7 @@ export function ExtractionReviewStudio({
             </span>
           </div>
           <p className="mt-4 max-w-3xl leading-7 text-slate-600">
-            Compare the immutable text captured from each source page with the editable review copy.
+            Compare each page of the original PDF with the extracted or corrected text beside it.
             Uploaded content is untrusted until a person checks it and marks it ready.
           </p>
 
@@ -588,20 +598,44 @@ export function ExtractionReviewStudio({
 
             <div className="mt-5 grid gap-5 lg:grid-cols-2">
               <section
-                aria-label="Original extracted page"
+                aria-label="Original PDF"
                 className="rounded-lg border border-slate-300 bg-slate-50 p-4"
               >
-                <h2 className="text-lg font-semibold">Original extracted page</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Immutable text recorded when the PDF was read.
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Original PDF</h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Authorized, read-only view of the uploaded source page.
+                    </p>
+                  </div>
+                  {originalPdfUrl && (
+                    <a
+                      className={secondaryButton}
+                      href={originalPdfUrl}
+                      rel="noreferrer noopener"
+                      target="_blank"
+                    >
+                      Open original PDF
+                    </a>
+                  )}
+                </div>
+                {originalPdfUrl && (
+                  <iframe
+                    className="mt-4 min-h-[32rem] w-full rounded-md border border-slate-300 bg-white"
+                    referrerPolicy="no-referrer"
+                    sandbox="allow-same-origin"
+                    src={originalPdfUrl}
+                    title="Original PDF preview"
+                  />
+                )}
+                <p className="mt-3 text-xs leading-5 text-slate-600">
+                  If your browser cannot display PDFs here, use Open original PDF. The file remains
+                  behind your signed-in Studio session.
                 </p>
-                <pre className="mt-4 min-h-56 whitespace-pre-wrap rounded-md bg-slate-950 p-4 text-sm text-white">
-                  {selectedPage.raw_text}
-                </pre>
               </section>
 
               <section
-                aria-label="Extracted text"
+                aria-label="Extracted and corrected text"
                 className="rounded-lg border border-slate-300 bg-white p-4"
               >
                 <h2 className="text-lg font-semibold">Reviewed text</h2>

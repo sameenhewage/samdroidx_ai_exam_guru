@@ -430,6 +430,26 @@ def test_job_create_detects_winner_conflict_queue_failure_and_attached_duplicate
     assert dispatcher.calls == []
 
 
+def test_job_create_attaches_the_successful_queue_dispatch() -> None:
+    dummy = DummySession()
+    dispatcher = RecordingDispatcher()
+    repository = CreateRepository()
+    service = job_service(dummy, dispatcher, repository)
+
+    result = asyncio.run(
+        service.create(
+            create_request(),
+            idempotency_key="successful-queue-key",
+            principal=principal(),
+        )
+    )
+
+    assert result.deduplicated is False
+    assert len(dispatcher.calls) == 1
+    assert repository.attachments == [(dispatcher.calls[0], "message-id")]
+    assert dummy.commits == 2
+
+
 class JobCommandRepository:
     def __init__(self, record: StoredTeacherPaper) -> None:
         self.record = record
@@ -1311,6 +1331,7 @@ class ReviewRepository:
     def __init__(self, record: StoredTeacherPaper, active_slot: TeacherPaperSlotModel) -> None:
         self.record = record
         self.active_slot = active_slot
+        self.slot_updates: list[dict[str, object]] = []
 
     async def get(self, job_id: UUID) -> StoredTeacherPaper:
         assert job_id == JOB_ID
@@ -1332,6 +1353,38 @@ class ReviewRepository:
             setattr(self.record.job, field, value)
         self.record.job.version += 1
         return self.record.job
+
+    async def cas_slot(
+        self,
+        slot: TeacherPaperSlotModel,
+        values: dict[str, object],
+    ) -> TeacherPaperSlotModel:
+        self.slot_updates.append(values)
+        for field, value in values.items():
+            setattr(slot, field, value)
+        slot.version += 1
+        return slot
+
+
+class SuccessfulCandidateService:
+    def __init__(self) -> None:
+        self.actions: list[str] = []
+
+    async def start_review(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.actions.append("start")
+
+    async def edit(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.actions.append("edit")
+
+    async def approve(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.actions.append("approve")
+
+    async def reject(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        self.actions.append("reject")
 
 
 class RaisingCandidateService:
@@ -1517,6 +1570,103 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
                 principal=principal(),
             )
         )
+
+
+def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.teacher_papers import service as service_module
+
+    active_job = job(status=PaperJobStatus.READY_FOR_REVIEW.value)
+    active_slot = paper_slot(status=PaperSlotStatus.AWAITING_REVIEW.value)
+    active_slot.current_candidate_id = UUID(int=25_930_001)
+    repository = ReviewRepository(
+        StoredTeacherPaper(active_job, (active_slot,)),
+        active_slot,
+    )
+    dummy_session = DummySession()
+    service = TeacherPaperReviewService(
+        session(dummy_session),
+        DeterministicPaperGenerationDispatcher(),
+        DeterministicGenerationDispatcher(),
+        create_generation_runtime(Settings(environment="test")),
+    )
+    service._repository = repository  # type: ignore[assignment]
+    candidate_service = SuccessfulCandidateService()
+    monkeypatch.setattr(service_module, "ReviewCandidateService", lambda _: candidate_service)
+
+    async def aggregate_counts(_repository: object, _job_id: UUID) -> dict[str, int]:
+        return {
+            "generated_count": 1,
+            "validated_count": 1,
+            "candidate_count": 1,
+            "approved_count": 0,
+            "failed_count": 0,
+            "total_tokens": 10,
+            "cost_microusd": 20,
+        }
+
+    marker = cast(ReviewQuestionResponse, object())
+
+    async def get_question(
+        _job_id: UUID,
+        _question_id: UUID,
+        _principal: Principal,
+    ) -> ReviewQuestionResponse:
+        return marker
+
+    monkeypatch.setattr(service_module, "_aggregate_counts", aggregate_counts)
+    monkeypatch.setattr(service, "_get_question", get_question)
+
+    assert (
+        asyncio.run(
+            service.start(
+                JOB_ID,
+                RUN_ID,
+                expected_version=2,
+                principal=principal(),
+            )
+        )
+        is marker
+    )
+    assert (
+        asyncio.run(service.edit(JOB_ID, RUN_ID, edit_request(), principal=principal())) is marker
+    )
+    active_slot.requires_revalidation = False
+    assert (
+        asyncio.run(
+            service.approve(
+                JOB_ID,
+                RUN_ID,
+                expected_version=3,
+                note="Reviewed.",
+                principal=principal(),
+            )
+        )
+        is marker
+    )
+    assert (
+        asyncio.run(
+            service.reject(
+                JOB_ID,
+                RUN_ID,
+                expected_version=4,
+                reason="Replace this question.",
+                principal=principal(),
+            )
+        )
+        is marker
+    )
+
+    assert candidate_service.actions == ["start", "edit", "approve", "reject"]
+    assert [update["status"] for update in repository.slot_updates] == [
+        PaperSlotStatus.IN_REVIEW.value,
+        PaperSlotStatus.REVALIDATION_REQUIRED.value,
+        PaperSlotStatus.APPROVED.value,
+        PaperSlotStatus.REJECTED.value,
+    ]
+    assert repository.slot_updates[1]["requires_revalidation"] is True
+    assert dummy_session.commits == 8
 
 
 def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(

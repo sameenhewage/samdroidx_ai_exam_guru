@@ -193,8 +193,15 @@ test("contract 5: text correction compares immutable and editable extraction", a
   await expect(page).toHaveURL(
     new RegExp(`/admin/materials/${fixture.materialIds.ocr}/review-text$`),
   );
-  await expect(page.getByRole("region", { name: "Original extracted page" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Extracted text" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Original PDF" })).toBeVisible();
+  await expect(page.getByTitle("Original PDF preview")).toHaveAttribute(
+    "src",
+    new RegExp(
+      `/api/v1/admin/source-documents/${fixture.materialIds.ocr}/content#page=1&view=FitH$`,
+    ),
+  );
+  await expect(page.getByRole("link", { name: "Open original PDF" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Extracted and corrected text" })).toBeVisible();
   await expect(page.getByText("Page 1 of 2")).toBeVisible();
   await page.getByRole("button", { name: "Begin text review" }).click();
 

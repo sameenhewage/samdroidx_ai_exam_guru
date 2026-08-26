@@ -1,5 +1,5 @@
 import type { components } from "@exam-guru/api-client";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe, { type AxeResults } from "axe-core";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -193,10 +193,12 @@ it("reframes extraction review as an accessible teacher text-check flow", async 
   );
 
   expect(await screen.findByRole("heading", { level: 1, name: "Review text" })).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Original extracted page" })).toHaveTextContent(
-    "Original text",
+  const originalPdf = screen.getByRole("region", { name: "Original PDF" });
+  expect(within(originalPdf).getByTitle("Original PDF preview")).toHaveAttribute(
+    "src",
+    `/api/v1/admin/source-documents/${documentId}/content#page=1&view=FitH`,
   );
-  expect(screen.getByRole("region", { name: "Extracted text" })).toHaveTextContent(
+  expect(screen.getByRole("region", { name: "Extracted and corrected text" })).toHaveTextContent(
     "Original text",
   );
   expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
@@ -216,11 +218,88 @@ it("reframes extraction review as an accessible teacher text-check flow", async 
   let results: AxeResults | undefined;
   await act(async () => {
     results = await axe.run(view.container, {
+      iframes: false,
       rules: { "color-contrast": { enabled: false } },
     });
   });
   if (!results) throw new Error("Accessibility scan did not return a result");
   expect(results.violations).toEqual([]);
+});
+
+it("shows the authorized original PDF beside corrected text and follows page navigation", async () => {
+  const firstPage = sourcePage();
+  const secondPage = sourcePage({
+    id: ocrPageId,
+    page_number: 2,
+    raw_text: "Second page text",
+    reviewed_text: "Corrected second page text",
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = requestOf(input, init);
+      if (request.method === "GET" && request.url.endsWith("/source-documents")) {
+        return Response.json([
+          sourceDocument("in_review", {
+            extracted_block_count: 2,
+            extracted_character_count: 28,
+            extracted_page_count: 2,
+          }),
+        ]);
+      }
+      if (request.method === "GET" && request.url.endsWith("/pages")) {
+        return Response.json([firstPage, secondPage]);
+      }
+      if (request.method === "GET" && request.url.endsWith("/pages/1/blocks")) {
+        return Response.json([sourceBlock()]);
+      }
+      if (request.method === "GET" && request.url.endsWith("/pages/2/blocks")) {
+        return Response.json([
+          sourceBlock({
+            id: "00000000-0000-0000-0000-000000000026",
+            page_number: 2,
+            raw_text: "Second page text",
+            reviewed_text: "Corrected second page text",
+            source_page_id: ocrPageId,
+          }),
+        ]);
+      }
+      return Response.json({ detail: { code: "unexpected_request" } }, { status: 500 });
+    }),
+  );
+
+  render(<ExtractionReviewStudio documentId={documentId} experience="materials" role="admin" />);
+
+  const original = await screen.findByRole("region", { name: "Original PDF" });
+  const preview = within(original).getByTitle("Original PDF preview");
+  const firstUrl = `/api/v1/admin/source-documents/${documentId}/content#page=1&view=FitH`;
+  expect(preview).toHaveAttribute("src", firstUrl);
+  expect(preview).toHaveAttribute("sandbox", "allow-same-origin");
+  expect(preview).toHaveAttribute("referrerpolicy", "no-referrer");
+  expect(within(original).getByRole("link", { name: "Open original PDF" })).toHaveAttribute(
+    "href",
+    firstUrl,
+  );
+  expect(within(original).getByRole("link", { name: "Open original PDF" })).toHaveAttribute(
+    "rel",
+    "noreferrer noopener",
+  );
+  expect(screen.getByRole("region", { name: "Extracted and corrected text" })).toHaveTextContent(
+    "Original text",
+  );
+  const technicalDetails = screen.getByText("Technical details").closest("details");
+  expect(technicalDetails).not.toHaveAttribute("open");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await waitFor(() =>
+    expect(preview).toHaveAttribute(
+      "src",
+      `/api/v1/admin/source-documents/${documentId}/content#page=2&view=FitH`,
+    ),
+  );
+  expect(screen.getByRole("region", { name: "Extracted and corrected text" })).toHaveTextContent(
+    "Corrected second page text",
+  );
 });
 
 it("shows a recoverable teacher-facing error when text review cannot load", async () => {
@@ -411,6 +490,7 @@ it("renders bounded mixed native and OCR provenance as accessible untrusted plai
   let results: AxeResults | undefined;
   await act(async () => {
     results = await axe.run(view.container, {
+      iframes: false,
       rules: { "color-contrast": { enabled: false } },
     });
   });

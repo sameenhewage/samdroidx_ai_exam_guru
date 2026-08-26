@@ -1,4 +1,5 @@
 import asyncio
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from exam_guru_api.cli import main as run_api
 from exam_guru_api.core.config import Settings
+from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.main import create_app
 
 
@@ -30,6 +32,14 @@ class StubResources:
 class SlowDatabaseResources(StubResources):
     async def check_database(self) -> None:
         await asyncio.sleep(0.05)
+
+
+class ClosingStorage:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def test_liveness_contract() -> None:
@@ -84,6 +94,15 @@ def test_readiness_reports_dependencies_and_closes_resources() -> None:
         "checks": {"database": "ok", "valkey": "ok"},
     }
     assert resources.closed
+
+
+def test_application_shutdown_closes_object_storage_once() -> None:
+    storage = ClosingStorage()
+
+    with TestClient(create_app(object_storage=cast(ObjectStorage, storage))) as client:
+        assert client.get("/api/v1/health/live").status_code == 200
+
+    assert storage.close_calls == 1
 
 
 def test_readiness_returns_service_unavailable_without_leaking_errors() -> None:

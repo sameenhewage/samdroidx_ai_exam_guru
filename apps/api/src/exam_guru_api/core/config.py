@@ -1,3 +1,5 @@
+from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Literal, Self, cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -8,6 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 Environment = Literal["local", "test", "staging", "production"]
 IdentityProviderMode = Literal["deterministic", "oidc", "deny"]
 OIDCAlgorithm = Literal["RS256", "ES256"]
+
+
+class StorageBackend(StrEnum):
+    LOCAL = "local"
+    S3 = "s3"
+
+
 LOCAL_DATABASE_URL = "postgresql+asyncpg://exam_guru@localhost:5432/exam_guru"
 LOCAL_VALKEY_URL = "redis://localhost:6379/0"
 LOCAL_STORAGE_ACCESS_KEY = "exam-guru-local"
@@ -39,6 +48,39 @@ MAX_OIDC_CLOCK_SKEW_SECONDS = 300
 MAX_OIDC_JWKS_TIMEOUT_SECONDS = 10.0
 MAX_OIDC_JWKS_CACHE_SECONDS = 86_400
 MAX_OIDC_JWKS_CACHED_KEYS = 128
+MAX_STORAGE_ROOT_LENGTH = 1_024
+MAX_STORAGE_PROVIDER_TOKEN_LENGTH = 256
+MAX_STORAGE_SECRET_LENGTH = 4_096
+
+
+def _validate_storage_root(value: str) -> None:
+    if (
+        not value
+        or len(value) > MAX_STORAGE_ROOT_LENGTH
+        or value != value.strip()
+        or not value.isprintable()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("storage root must be bounded control-free text")
+    segments = value.split("/")
+    if (
+        not PurePosixPath(value).is_absolute()
+        or value == "/"
+        or "\\" in value
+        or any(segment in {"", ".", ".."} for segment in segments[1:])
+    ):
+        raise ValueError("storage root must be a normalized absolute non-root path")
+
+
+def _validate_storage_token(value: str, *, label: str) -> None:
+    if (
+        not value
+        or len(value) > MAX_STORAGE_PROVIDER_TOKEN_LENGTH
+        or value != value.strip()
+        or not value.isprintable()
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(f"{label} must be a bounded printable token")
 
 
 def _parse_oidc_url(value: str, *, label: str = "OIDC URL") -> tuple[str, str, int]:
@@ -94,11 +136,13 @@ class Settings(BaseSettings):
     environment: Environment = "local"
     database_url: SecretStr = SecretStr(LOCAL_DATABASE_URL)
     valkey_url: SecretStr = SecretStr(LOCAL_VALKEY_URL)
-    object_storage_endpoint_url: str = "http://localhost:9000"
-    object_storage_access_key: SecretStr = SecretStr(LOCAL_STORAGE_ACCESS_KEY)
-    object_storage_secret_key: SecretStr = SecretStr(LOCAL_STORAGE_SECRET_KEY)
-    object_storage_bucket: str = "exam-guru-sources"
-    object_storage_region: str = "us-east-1"
+    storage_backend: StorageBackend = StorageBackend.LOCAL
+    storage_root: str = "/data"
+    object_storage_endpoint_url: str | None = None
+    object_storage_access_key: SecretStr | None = None
+    object_storage_secret_key: SecretStr | None = None
+    object_storage_bucket: str | None = None
+    object_storage_region: str | None = None
     sentry_dsn: SecretStr | None = None
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "exam-guru-api"
@@ -303,6 +347,36 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_local_credentials_in_production(self) -> Self:
+        _validate_storage_root(self.storage_root)
+        s3_values = (
+            self.object_storage_endpoint_url,
+            self.object_storage_access_key,
+            self.object_storage_secret_key,
+            self.object_storage_bucket,
+            self.object_storage_region,
+        )
+        if self.storage_backend is StorageBackend.S3:
+            if any(value is None for value in s3_values):
+                raise ValueError("S3 storage requires complete explicit provider configuration")
+            endpoint = cast(str, self.object_storage_endpoint_url)
+            access_key = cast(SecretStr, self.object_storage_access_key).get_secret_value()
+            secret_key = cast(SecretStr, self.object_storage_secret_key).get_secret_value()
+            bucket = cast(str, self.object_storage_bucket)
+            region = cast(str, self.object_storage_region)
+            endpoint_scheme, _, _ = _parse_oidc_url(endpoint, label="S3 endpoint")
+            _validate_storage_token(access_key, label="S3 access key")
+            _validate_storage_token(bucket, label="S3 bucket")
+            _validate_storage_token(region, label="S3 region")
+            if (
+                not secret_key
+                or len(secret_key) > MAX_STORAGE_SECRET_LENGTH
+                or secret_key != secret_key.strip()
+                or not secret_key.isprintable()
+                or any(character.isspace() for character in secret_key)
+            ):
+                raise ValueError("S3 secret key must be bounded secret text")
+            if self.environment == "production" and endpoint_scheme != "https":
+                raise ValueError("production S3 endpoint must use HTTPS")
         if (
             self.ocr_tesseract_executable != self.ocr_tesseract_executable.strip()
             or not self.ocr_tesseract_executable.isprintable()
@@ -479,11 +553,17 @@ class Settings(BaseSettings):
         if len(deterministic_tokens) != len(set(deterministic_tokens)):
             raise ValueError("deterministic identity tokens must be distinct")
 
+        local_s3_credentials = False
+        if self.storage_backend is StorageBackend.S3:
+            access_key = cast(SecretStr, self.object_storage_access_key).get_secret_value()
+            secret_key = cast(SecretStr, self.object_storage_secret_key).get_secret_value()
+            local_s3_credentials = (
+                access_key == LOCAL_STORAGE_ACCESS_KEY or secret_key == LOCAL_STORAGE_SECRET_KEY
+            )
         local_credentials = (
             self.database_url.get_secret_value() == LOCAL_DATABASE_URL
             or self.valkey_url.get_secret_value() == LOCAL_VALKEY_URL
-            or self.object_storage_access_key.get_secret_value() == LOCAL_STORAGE_ACCESS_KEY
-            or self.object_storage_secret_key.get_secret_value() == LOCAL_STORAGE_SECRET_KEY
+            or local_s3_credentials
         )
         if self.environment == "production" and local_credentials:
             raise ValueError("production configuration must replace local development credentials")
@@ -496,7 +576,6 @@ class Settings(BaseSettings):
                     for value in database_ssl
                 )
                 and urlsplit(self.valkey_url.get_secret_value()).scheme == "rediss"
-                and urlsplit(self.object_storage_endpoint_url).scheme == "https"
             )
             if not encrypted_connections:
                 raise ValueError("production configuration requires encrypted service connections")

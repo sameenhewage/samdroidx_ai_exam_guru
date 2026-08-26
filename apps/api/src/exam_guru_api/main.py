@@ -69,7 +69,12 @@ def create_app(
             try:
                 await resources.close()
             finally:
-                observability_runtime.shutdown()
+                try:
+                    close_storage = getattr(application.state.object_storage, "close", None)
+                    if close_storage is not None:
+                        close_storage()
+                finally:
+                    observability_runtime.shutdown()
 
     application = FastAPI(
         title="AI Exam Guru API",

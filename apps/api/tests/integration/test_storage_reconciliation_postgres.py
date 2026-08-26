@@ -15,7 +15,7 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
-from exam_guru_api.core.config import Settings
+from exam_guru_api.core.config import Settings, StorageBackend
 from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     assert_database_schema_current,
@@ -76,14 +76,17 @@ def reconciliation_runtime() -> Iterator[tuple[str, S3ObjectStorage]]:
         storage = create_object_storage(
             Settings(
                 environment="test",
+                storage_backend=StorageBackend.S3,
                 object_storage_endpoint_url=(
                     f"http://{minio.get_container_host_ip()}:{minio.get_exposed_port(9000)}"
                 ),
                 object_storage_access_key=SecretStr("reconciliation-access"),
                 object_storage_secret_key=SecretStr("reconciliation-secret"),
                 object_storage_bucket="exam-guru-reconciliation",
+                object_storage_region="us-east-1",
             )
         )
+        assert isinstance(storage, S3ObjectStorage)
         storage.ensure_bucket()
         try:
             yield database_url, storage

@@ -5,7 +5,7 @@ from pydantic import SecretStr
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
-from exam_guru_api.core.config import Settings
+from exam_guru_api.core.config import Settings, StorageBackend
 from exam_guru_api.infrastructure.object_storage import (
     ObjectAlreadyExistsError,
     S3ObjectStorage,
@@ -30,12 +30,15 @@ def object_storage() -> Iterator[S3ObjectStorage]:
         host = minio.get_container_host_ip()
         port = minio.get_exposed_port(9000)
         settings = Settings(
+            storage_backend=StorageBackend.S3,
             object_storage_endpoint_url=f"http://{host}:{port}",
             object_storage_access_key=SecretStr(MINIO_ACCESS_KEY),
             object_storage_secret_key=SecretStr(MINIO_SECRET_KEY),
             object_storage_bucket="exam-guru-integration",
+            object_storage_region="us-east-1",
         )
         storage = create_object_storage(settings)
+        assert isinstance(storage, S3ObjectStorage)
         storage.ensure_bucket()
         yield storage
 

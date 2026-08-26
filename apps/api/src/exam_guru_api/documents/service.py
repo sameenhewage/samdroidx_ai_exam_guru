@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,7 +32,12 @@ from exam_guru_api.documents.schemas import (
     MaterialListItemResponse,
     MaterialStatus,
 )
-from exam_guru_api.infrastructure.object_storage import ObjectStorage
+from exam_guru_api.infrastructure.object_storage import (
+    InvalidObjectKeyError,
+    ObjectStorage,
+    ObjectStorageOperationError,
+    validate_source_object_key,
+)
 from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
 
 
@@ -58,6 +65,10 @@ class SourceDocumentNotFoundError(LookupError):
     pass
 
 
+class SourceDocumentContentUnavailableError(RuntimeError):
+    pass
+
+
 class ConcurrentMaterialScopeVersionError(RuntimeError):
     def __init__(self, expected: int, actual: int) -> None:
         self.expected = expected
@@ -80,6 +91,12 @@ class SourceUploadResult:
     likely_metadata_duplicate_of_id: UUID | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SourceDocumentContent:
+    filename: str
+    data: bytes
+
+
 class SourceDocumentService:
     def __init__(
         self,
@@ -98,6 +115,39 @@ class SourceDocumentService:
                 select(SourceDocumentModel).order_by(SourceDocumentModel.created_at.desc())
             )
         ).all()
+
+    async def read_original(self, document_id: UUID) -> SourceDocumentContent:
+        document = await self._session.get(SourceDocumentModel, document_id)
+        if document is None:
+            raise SourceDocumentNotFoundError
+        if (
+            document.content_type != "application/pdf"
+            or not 1 <= document.size_bytes <= self._max_upload_bytes
+            or len(document.checksum_sha256) != 64
+        ):
+            raise SourceDocumentContentUnavailableError
+        try:
+            validate_source_object_key(document.object_key)
+            data = await to_thread.run_sync(self._object_storage.get_bytes, document.object_key)
+        except ObjectStorageOperationError as error:
+            if error.failure_code == "object_storage_not_found":
+                raise SourceDocumentNotFoundError from None
+            raise SourceDocumentContentUnavailableError from None
+        except InvalidObjectKeyError:
+            raise SourceDocumentContentUnavailableError from None
+        except Exception:
+            raise SourceDocumentContentUnavailableError from None
+        if (
+            not isinstance(data, bytes)
+            or len(data) != document.size_bytes
+            or len(data) > self._max_upload_bytes
+            or not hmac.compare_digest(
+                hashlib.sha256(data).hexdigest(),
+                document.checksum_sha256,
+            )
+        ):
+            raise SourceDocumentContentUnavailableError
+        return SourceDocumentContent(filename=document.original_filename, data=data)
 
     async def upload_pdf(
         self,

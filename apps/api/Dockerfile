@@ -18,12 +18,14 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/api/alembic.ini ./alembic.ini
 COPY apps/api/migrations ./migrations
 COPY apps/api/src ./src
+COPY apps/api/docker-entrypoint.py /usr/local/bin/exam-guru-container-entrypoint.py
 RUN uv sync --frozen --no-dev --no-editable \
-    && groupadd --system exam-guru \
-    && useradd --system --gid exam-guru --home-dir /app exam-guru \
+    && groupadd --system --gid 10001 exam-guru \
+    && useradd --system --uid 10001 --gid exam-guru --home-dir /app exam-guru \
+    && install -d -m 0700 -o exam-guru -g exam-guru /data \
     && chown -R exam-guru:exam-guru /app
 
-USER exam-guru
+ENTRYPOINT ["python", "/usr/local/bin/exam-guru-container-entrypoint.py"]
 
 EXPOSE 8000
 

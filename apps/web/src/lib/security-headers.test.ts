@@ -18,11 +18,24 @@ const expectedContentSecurityPolicy = [
   "img-src 'self' data: blob:",
   "font-src 'self'",
   "connect-src 'self'",
+  "frame-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
 ].join("; ");
+
+const expectedSourceContentHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: "default-src 'none'; frame-ancestors 'self'; sandbox",
+  },
+  { key: "Cache-Control", value: "private, no-store" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+];
 
 const expectedBaseHeaders = [
   { key: "Content-Security-Policy", value: expectedContentSecurityPolicy },
@@ -56,6 +69,10 @@ describe("web security response headers", () => {
     expect(securityHeaders(config)).toEqual(expectedBaseHeaders);
     expect(securityHeaderRules(config)).toEqual([
       { headers: expectedBaseHeaders, source: "/(.*)" },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/source-documents/:documentId/content",
+      },
     ]);
   });
 
@@ -98,6 +115,10 @@ describe("web security response headers", () => {
 
     await expect(nextConfig.headers?.()).resolves.toEqual([
       { headers: expectedBaseHeaders, source: "/(.*)" },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/source-documents/:documentId/content",
+      },
     ]);
   });
 });
