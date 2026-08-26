@@ -236,27 +236,37 @@ def test_review_candidate_api_is_server_derived_scoped_audited_and_terminal(
         assert immutable_type.status_code == 422
         assert immutable_type.json()["detail"]["code"] == "review_candidate_content_invalid"
 
-        approved = client.post(
+        stale_validation_approval = client.post(
             f"{path}/{candidate_id}/approve",
             json={"expected_version": 4, "note": "Source, answer, and explanation reviewed."},
             headers=REVIEWER_HEADERS,
         )
-        assert approved.status_code == 200
-        assert approved.json()["state"] == "approved"
-        assert approved.json()["version"] == 5
-        assert approved.json()["events"][-1]["action"] == "approved"
+        assert stale_validation_approval.status_code == 409
+        assert stale_validation_approval.json()["detail"]["code"] == (
+            "review_candidate_revalidation_required"
+        )
+
+        rejected = client.post(
+            f"{path}/{candidate_id}/reject",
+            json={"expected_version": 4, "reason": "Edit requires replacement generation."},
+            headers=REVIEWER_HEADERS,
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["state"] == "rejected"
+        assert rejected.json()["version"] == 5
+        assert rejected.json()["events"][-1]["action"] == "rejected"
 
         terminal_edit = client.patch(
             f"{path}/{candidate_id}",
-            json={**review_edit_payload(approved.json()), "expected_version": 5},
+            json={**review_edit_payload(rejected.json()), "expected_version": 5},
             headers=REVIEWER_HEADERS,
         )
-        terminal_reject = client.post(
-            f"{path}/{candidate_id}/reject",
-            json={"expected_version": 5, "reason": "Attempt to reverse approval."},
+        terminal_approve = client.post(
+            f"{path}/{candidate_id}/approve",
+            json={"expected_version": 5, "note": "Attempt to reverse rejection."},
             headers=REVIEWER_HEADERS,
         )
-        for terminal_response in (terminal_edit, terminal_reject):
+        for terminal_response in (terminal_edit, terminal_approve):
             assert terminal_response.status_code == 409
             assert terminal_response.json()["detail"]["code"] == "review_candidate_state_conflict"
 
@@ -279,7 +289,7 @@ def test_review_candidate_api_is_server_derived_scoped_audited_and_terminal(
                     "question_candidate.created",
                     "question_candidate.review_started",
                     "question_candidate.edited",
-                    "question_candidate.approved",
+                    "question_candidate.rejected",
                 )
         finally:
             await engine.dispose()

@@ -19,6 +19,7 @@ from exam_guru_api.papers.repository import (
 )
 from exam_guru_api.papers.review_service import (
     ReviewCandidateIdempotencyConflictError,
+    ReviewCandidateRevalidationRequiredError,
     ReviewCandidateStateConflictError,
     ReviewCandidateVersionConflictError,
     ReviewUpstreamIntegrityError,
@@ -119,6 +120,11 @@ def test_review_route_error_mapping_is_stable() -> None:
                 ReviewCandidateVersionConflictError(),
                 409,
                 "review_candidate_version_conflict",
+            ),
+            (
+                ReviewCandidateRevalidationRequiredError(),
+                409,
+                "review_candidate_revalidation_required",
             ),
             (
                 ReviewCandidateStateConflictError(),

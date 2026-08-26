@@ -158,6 +158,21 @@ def test_registry_rejects_malformed_registration_and_inputs() -> None:
         registry.ensure_provider(cast(EmbeddingConfig, "invalid"))
 
 
+def test_registry_active_configuration_requires_and_exposes_an_exact_provider() -> None:
+    with pytest.raises(ValueError, match="active embedding configuration"):
+        EmbeddingProviderRegistry({}, active_config=CONFIG)
+
+    unavailable = EmbeddingProviderRegistry({})
+    with pytest.raises(ActiveEmbeddingConfigUnavailableError):
+        _ = unavailable.active_config
+
+    available = EmbeddingProviderRegistry(
+        {"deterministic": DeterministicEmbeddingProvider()},
+        active_config=CONFIG,
+    )
+    assert available.active_config == CONFIG
+
+
 def test_staging_app_cannot_register_the_deterministic_test_adapter() -> None:
     injected = EmbeddingProviderRegistry(
         {

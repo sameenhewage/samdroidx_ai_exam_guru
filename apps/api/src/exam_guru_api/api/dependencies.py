@@ -15,6 +15,7 @@ from exam_guru_api.knowledge.embedding_jobs import EmbeddingDispatcher
 from exam_guru_api.observability import OperationalTelemetry
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
 from exam_guru_api.retrieval.explorer import RetrievalExplorerService
+from exam_guru_api.teacher_papers.jobs import PaperGenerationDispatcher
 from exam_guru_api.validation.pipeline import ValidationPipeline
 
 
@@ -44,6 +45,10 @@ def get_extraction_dispatcher(request: Request) -> ExtractionDispatcher:
 
 def get_generation_dispatcher(request: Request) -> GenerationDispatcher:
     return cast(GenerationDispatcher, request.app.state.generation_dispatcher)
+
+
+def get_paper_generation_dispatcher(request: Request) -> PaperGenerationDispatcher:
+    return cast(PaperGenerationDispatcher, request.app.state.paper_generation_dispatcher)
 
 
 def get_embedding_dispatcher(request: Request) -> EmbeddingDispatcher:

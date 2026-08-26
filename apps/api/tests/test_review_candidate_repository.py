@@ -204,9 +204,9 @@ def test_candidate_payloads_round_trip_every_persisted_review_state() -> None:
         expected_version=3,
     )
     approved = approve_candidate(
-        edited,
+        reviewing,
         reviewer_id=REVIEWER_ID,
-        expected_version=4,
+        expected_version=3,
         note="Reviewed.",
     )
     rejected = reject_candidate(

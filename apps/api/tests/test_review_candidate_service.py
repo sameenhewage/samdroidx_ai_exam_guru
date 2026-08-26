@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -16,6 +17,7 @@ from exam_guru_api.papers.domain import (
     ReviewAction,
     ValidationNotPassedError,
     approve_candidate,
+    edit_candidate,
     start_candidate_review,
 )
 from exam_guru_api.papers.repository import (
@@ -27,6 +29,7 @@ from exam_guru_api.papers.repository import (
 )
 from exam_guru_api.papers.review_service import (
     ReviewCandidateIdempotencyConflictError,
+    ReviewCandidateRevalidationRequiredError,
     ReviewCandidateService,
     ReviewCandidateStateConflictError,
     ReviewCandidateVersionConflictError,
@@ -399,6 +402,23 @@ def test_review_candidate_transition_commands_and_domain_conflicts() -> None:
         assert repository.revisions
         assert repository.events[-1]["action"] is ReviewAction.EDITED
         assert session.flushes == 1
+
+        edited_domain = edit_candidate(
+            reviewing,
+            content=replace(reviewing.content, stem="Edited stem."),
+            reviewer_id=REVIEWER_ID,
+            reason="Edit reason.",
+            expected_version=3,
+        )
+        service, _session, _repository = service_with(edited_domain)
+        with pytest.raises(ReviewCandidateRevalidationRequiredError):
+            await service.approve(
+                CURRICULUM_ID,
+                edited_domain.candidate_id,
+                expected_version=4,
+                note=None,
+                principal=PRINCIPAL,
+            )
 
         service, _session, repository = service_with(reviewing)
         await service.approve(

@@ -21,6 +21,7 @@ from exam_guru_api.papers import (
     RejectCandidateCommand,
     RevisePaperCommand,
     StartCandidateReviewCommand,
+    ValidationNotPassedError,
 )
 from tests.test_paper_domain import (
     REVIEWER_ID,
@@ -66,12 +67,30 @@ def test_authorized_reviewer_can_start_edit_approve_and_reject_candidates() -> N
             expected_version=in_review.version,
         ),
     )
+    with pytest.raises(ValidationNotPassedError):
+        service.approve(
+            reviewer(),
+            ApproveCandidateCommand(
+                candidate=edited,
+                note="Old validation cannot authorize the edited revision.",
+                expected_version=edited.version,
+            ),
+        )
+
+    approval_source = validated_candidate("slot-c", candidate_number=3)
+    approval_review = service.start_review(
+        reviewer(),
+        StartCandidateReviewCommand(
+            candidate=approval_source,
+            expected_version=approval_source.version,
+        ),
+    )
     approved = service.approve(
         reviewer(),
         ApproveCandidateCommand(
-            candidate=edited,
+            candidate=approval_review,
             note="Grounding and answer checked.",
-            expected_version=edited.version,
+            expected_version=approval_review.version,
         ),
     )
 
@@ -94,7 +113,7 @@ def test_authorized_reviewer_can_start_edit_approve_and_reject_candidates() -> N
 
     assert approved.decision is not None
     assert approved.decision.reviewer_id == REVIEWER_ID
-    assert approved.revisions[-1].reviewer_id == REVIEWER_ID
+    assert edited.revisions[-1].reviewer_id == REVIEWER_ID
     assert rejected.decision is not None
     assert rejected.decision.reason == "Too similar to a historical question."
 

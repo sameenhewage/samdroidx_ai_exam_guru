@@ -263,6 +263,25 @@ def test_reviewer_edit_is_a_new_immutable_revision_with_original_lineage() -> No
     assert edited.review_history[-1].candidate_version == edited.version
 
 
+def test_reviewer_edit_cannot_be_approved_against_stale_generated_validation() -> None:
+    original = in_review_candidate("slot-a")
+    edited = edit_candidate(
+        original,
+        content=replace(original.content, stem="A corrected stem that requires fresh validation"),
+        reviewer_id=OTHER_REVIEWER_ID,
+        reason="Correct the stem and require a fresh canonical validation run.",
+        expected_version=original.version,
+    )
+
+    with pytest.raises(ValidationNotPassedError):
+        approve_candidate(
+            edited,
+            reviewer_id=REVIEWER_ID,
+            expected_version=edited.version,
+            note="The old generated revision validation must not authorize this edit.",
+        )
+
+
 def test_reviewer_cannot_change_generated_question_type_or_marks() -> None:
     original = in_review_candidate("slot-a")
 

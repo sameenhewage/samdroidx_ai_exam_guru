@@ -60,6 +60,10 @@ class ReviewCandidateStateConflictError(RuntimeError):
     pass
 
 
+class ReviewCandidateRevalidationRequiredError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewCandidateCreationResult:
     record: StoredQuestionCandidate
@@ -290,6 +294,8 @@ class ReviewCandidateService:
             raise ReviewCandidateVersionConflictError(candidate_id) from error
         except InvalidCandidateTransitionError as error:
             raise ReviewCandidateStateConflictError(candidate_id) from error
+        except ValidationNotPassedError as error:
+            raise ReviewCandidateRevalidationRequiredError(candidate_id) from error
         return await self._persist_transition(
             curriculum_version_id=curriculum_version_id,
             record=record,

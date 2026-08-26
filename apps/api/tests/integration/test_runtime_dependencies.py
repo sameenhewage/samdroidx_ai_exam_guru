@@ -28,6 +28,10 @@ from exam_guru_api.storage_reconciliation.jobs import (
     RECONCILIATION_QUEUE_NAME,
     reconcile_source_objects,
 )
+from exam_guru_api.teacher_papers.jobs import (
+    PAPER_GENERATION_QUEUE_NAME,
+    recover_teacher_papers,
+)
 from exam_guru_api.worker import create_broker
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
@@ -143,7 +147,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0024_subject_quality_validation_scope"
+    assert migration_revision == "0025_durable_teacher_papers"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -908,7 +912,7 @@ def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
     }
     assert indexes == {"ix_source_documents_extraction_outbox"}
     assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
-    assert revision == "0024_subject_quality_validation_scope"
+    assert revision == "0025_durable_teacher_papers"
 
     command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
 
@@ -1063,12 +1067,13 @@ def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
         GENERATION_QUEUE_NAME: recover_generation_jobs.actor_name,
         EMBEDDING_QUEUE_NAME: recover_embedding_jobs.actor_name,
         RECONCILIATION_QUEUE_NAME: reconcile_source_objects.actor_name,
+        PAPER_GENERATION_QUEUE_NAME: recover_teacher_papers.actor_name,
     }
 
     try:
         result = enqueue_recovery_jobs()
 
-        assert result.enqueued == 4
+        assert result.enqueued == 5
         assert result.failures == 0
         assert {queue: broker.do_qsize(queue) for queue in expected} == dict.fromkeys(
             expected,

@@ -1111,6 +1111,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/paper-generation/curricula": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List matching active curriculum labels without exposing internal IDs */
+        get: operations["list_teacher_paper_curricula"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create and dispatch a durable teacher paper job */
+        post: operations["create_teacher_paper_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get durable paper progress, partial failures, and current slot lineage */
+        get: operations["get_teacher_paper_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}/advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request one idempotent bounded aggregate advance */
+        post: operations["advance_teacher_paper_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create bounded auditable generation lineage for failed slots */
+        post: operations["retry_teacher_paper_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List normalized active lesson labels for one exact curriculum */
+        get: operations["list_teacher_paper_lessons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List teacher-readable paper generation options */
+        get: operations["get_teacher_paper_generation_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/retrieval/explore": {
         parameters: {
             query?: never;
@@ -1122,6 +1241,142 @@ export interface paths {
         put?: never;
         /** Explore hard-scoped hybrid retrieval evidence */
         post: operations["explore_retrieval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List teacher-readable generated paper aggregates */
+        get: operations["list_teacher_review_papers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get questions, answers, marking, readable sources, and validation together */
+        get: operations["get_teacher_review_paper"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/create-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an immutable draft only after every question is approved */
+        post: operations["create_teacher_review_paper_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Append an edit and require fresh generation validation before approval */
+        patch: operations["edit_teacher_review_question"];
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve only a currently validated unedited question */
+        post: operations["approve_teacher_review_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue bounded replacement generation and full canonical revalidation */
+        post: operations["regenerate_teacher_review_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a question with an expected version and reason */
+        post: operations["reject_teacher_review_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start review with an expected candidate version */
+        post: operations["start_teacher_review_question"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1593,6 +1848,15 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             }[];
         };
+        /** AssessmentProgrammeOption */
+        AssessmentProgrammeOption: {
+            /** Code */
+            code: string;
+            /** Grade */
+            grade: number;
+            /** Label */
+            label: string;
+        };
         /** AuthSessionResponse */
         AuthSessionResponse: {
             /** Roles */
@@ -1832,6 +2096,22 @@ export interface components {
          * @enum {string}
          */
         ContextTrust: "untrusted_source_data";
+        /** CurriculumLabelResponse */
+        CurriculumLabelResponse: {
+            /** Assessment Label */
+            assessment_label: string;
+            /** Assessment Programme */
+            assessment_programme: string;
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+        };
+        /** CurriculumLabelsResponse */
+        CurriculumLabelsResponse: {
+            /** Items */
+            items: components["schemas"]["CurriculumLabelResponse"][];
+        };
         /** CurriculumLessonCreate */
         CurriculumLessonCreate: {
             /** Code */
@@ -2440,6 +2720,14 @@ export interface components {
             code: string;
             /** Count */
             count: number;
+        };
+        /** FullSubjectScopeRequest */
+        FullSubjectScopeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "full_subject";
         };
         /** FusedRetrievalCandidateResponse */
         FusedRetrievalCandidateResponse: {
@@ -3161,6 +3449,43 @@ export interface components {
             /** Training Observation Ids */
             training_observation_ids: string[];
         };
+        /** LessonLabelsResponse */
+        LessonLabelsResponse: {
+            curriculum: components["schemas"]["CurriculumLabelResponse"];
+            /** Grade */
+            grade: number;
+            /** Lessons */
+            lessons: components["schemas"]["LessonOption"][];
+            /** Medium */
+            medium: string;
+            /** Subject */
+            subject: string;
+        };
+        /** LessonOption */
+        LessonOption: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+            /** Number */
+            number: number;
+            /** Taxonomy */
+            taxonomy: string[];
+            /** Unit */
+            unit: string;
+        };
+        /** LessonRangeScopeRequest */
+        LessonRangeScopeRequest: {
+            /** End Lesson */
+            end_lesson: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lesson_range";
+            /** Start Lesson */
+            start_lesson: number;
+        };
         /** MaterialGradeSummaryResponse */
         MaterialGradeSummaryResponse: {
             /** Grade */
@@ -3254,6 +3579,13 @@ export interface components {
             code: string;
             /** Name */
             name: string;
+        };
+        /** MediumOption */
+        MediumOption: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
         };
         /** MediumResponse */
         MediumResponse: {
@@ -3575,6 +3907,11 @@ export interface components {
             /** Total Marks */
             total_marks: number;
         };
+        /**
+         * PaperDifficulty
+         * @enum {string}
+         */
+        PaperDifficulty: "balanced" | "easier" | "challenging";
         /** PaperDraftCandidateResponse */
         PaperDraftCandidateResponse: {
             /** Blueprint Slot Id */
@@ -4568,11 +4905,282 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ReviewMarkingSchemeResponse */
+        ReviewMarkingSchemeResponse: {
+            /** Criteria */
+            criteria: string[];
+            /** Total Marks */
+            total_marks: number;
+        };
+        /** ReviewPaperCreateDraftRequest */
+        ReviewPaperCreateDraftRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** ReviewPaperDetailResponse */
+        ReviewPaperDetailResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            draft: components["schemas"]["ReviewPaperDraftResponse"] | null;
+            /** Grade */
+            grade: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Medium */
+            medium: string;
+            /** Paper Reference */
+            paper_reference: string;
+            /** Questions */
+            questions: components["schemas"]["ReviewQuestionResponse"][];
+            /** Scope Summary */
+            scope_summary: string;
+            /** Status */
+            status: string;
+            /** Subject */
+            subject: string;
+            technical_details: components["schemas"]["ReviewPaperTechnicalDetailsResponse"];
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
+        };
+        /** ReviewPaperDraftCreatedResponse */
+        ReviewPaperDraftCreatedResponse: {
+            /**
+             * Draft Id
+             * Format: uuid
+             */
+            draft_id: string;
+            /** Draft Version */
+            draft_version: number;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Paper Reference */
+            paper_reference: string;
+            /** Publication Path */
+            publication_path: string;
+        };
+        /** ReviewPaperDraftResponse */
+        ReviewPaperDraftResponse: {
+            /**
+             * Draft Id
+             * Format: uuid
+             */
+            draft_id: string;
+            /** Version */
+            version: number;
+        };
+        /** ReviewPaperListResponse */
+        ReviewPaperListResponse: {
+            /** Items */
+            items: components["schemas"]["ReviewPaperSummaryResponse"][];
+        };
+        /** ReviewPaperSummaryResponse */
+        ReviewPaperSummaryResponse: {
+            /** Approved Count */
+            approved_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Grade */
+            grade: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Paper Reference */
+            paper_reference: string;
+            /** Question Count */
+            question_count: number;
+            /** Scope Summary */
+            scope_summary: string;
+            /** Status */
+            status: string;
+            /** Subject */
+            subject: string;
+            /** Title */
+            title: string;
+        };
+        /** ReviewPaperTechnicalDetailsResponse */
+        ReviewPaperTechnicalDetailsResponse: {
+            /** Cost Microusd */
+            cost_microusd: number;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Paper Blueprint Id
+             * Format: uuid
+             */
+            paper_blueprint_id: string;
+            /** Request Fingerprint */
+            request_fingerprint: string;
+            /** Total Tokens */
+            total_tokens: number;
+        };
+        /** ReviewQuestionEditRequest */
+        ReviewQuestionEditRequest: {
+            content: components["schemas"]["QuestionContentRequest"];
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ReviewQuestionOptionResponse */
+        ReviewQuestionOptionResponse: {
+            /** Label */
+            label: string;
+            /** Text */
+            text: string;
+        };
+        /** ReviewQuestionRegenerateRequest */
+        ReviewQuestionRegenerateRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ReviewQuestionRegenerationResponse */
+        ReviewQuestionRegenerationResponse: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Question Id
+             * Format: uuid
+             */
+            question_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "generating";
+            /** Version */
+            version: number;
+        };
+        /** ReviewQuestionResponse */
+        ReviewQuestionResponse: {
+            /**
+             * Aggregate Slot Version
+             * @default 0
+             */
+            aggregate_slot_version: number;
+            /** Answer */
+            answer: string;
+            content?: components["schemas"]["QuestionContentResponse"] | null;
+            /** Explanation */
+            explanation: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            marking_scheme: components["schemas"]["ReviewMarkingSchemeResponse"];
+            /** Number */
+            number: number;
+            /** Options */
+            options: components["schemas"]["ReviewQuestionOptionResponse"][];
+            /**
+             * Requires Revalidation
+             * @default false
+             */
+            requires_revalidation: boolean;
+            /** Review State */
+            review_state: string;
+            scope: components["schemas"]["ReviewQuestionScopeResponse"];
+            /** Sources */
+            sources: components["schemas"]["ReviewSourceResponse"][];
+            /** Stem */
+            stem: string;
+            technical_details: components["schemas"]["ReviewQuestionTechnicalDetailsResponse"];
+            validation: components["schemas"]["ReviewValidationResponse"];
+            /** Version */
+            version: number;
+        };
+        /** ReviewQuestionScopeResponse */
+        ReviewQuestionScopeResponse: {
+            /** Grade */
+            grade: number;
+            /** Lesson */
+            lesson: string;
+            /** Lessons */
+            lessons: string;
+            /** Subject */
+            subject: string;
+            /** Taxonomy */
+            taxonomy: string;
+            /** Unit */
+            unit: string;
+        };
+        /** ReviewQuestionTechnicalDetailsResponse */
+        ReviewQuestionTechnicalDetailsResponse: {
+            /** Blueprint Slot Id */
+            blueprint_slot_id: string;
+            /** Candidate Id */
+            candidate_id: string | null;
+            /** Context Ids */
+            context_ids: string[];
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /** Model Version */
+            model_version: string;
+            /** Provider */
+            provider: string;
+            /** Validation Run Id */
+            validation_run_id: string | null;
+            /** Validator Findings */
+            validator_findings: components["schemas"]["TechnicalValidationFindingResponse"][];
+        };
+        /** ReviewSourceResponse */
+        ReviewSourceResponse: {
+            /** Filename */
+            filename: string;
+            /** Page */
+            page: number;
+            /** Title */
+            title: string;
+        };
         /**
          * ReviewState
          * @enum {string}
          */
         ReviewState: "draft" | "in_review" | "reviewed" | "rejected";
+        /** ReviewValidationResponse */
+        ReviewValidationResponse: {
+            /** Findings */
+            findings: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "needs_attention" | "failed_check";
+            /** Summary */
+            summary: string;
+        };
         /** ReviewedTaxonomyNodeSnapshotResponse */
         ReviewedTaxonomyNodeSnapshotResponse: {
             /** Active */
@@ -4930,6 +5538,23 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** SubjectOption */
+        SubjectOption: {
+            /** Assessment Programme */
+            assessment_programme: string;
+            /** Code */
+            code: string;
+            /** Grade */
+            grade: number;
+            /** Label */
+            label: string;
+            /** Lessons */
+            lessons: components["schemas"]["LessonOption"][];
+            /** Medium */
+            medium: string;
+            /** Units */
+            units: components["schemas"]["UnitOption"][];
+        };
         /** SubjectResponse */
         SubjectResponse: {
             /** Active */
@@ -5104,6 +5729,198 @@ export interface components {
             /** Sub Skill Id */
             sub_skill_id: string | null;
         };
+        /** TeacherPaperAdvanceRequest */
+        TeacherPaperAdvanceRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** TeacherPaperCountsResponse */
+        TeacherPaperCountsResponse: {
+            /** Approved */
+            approved: number;
+            /** Candidates */
+            candidates: number;
+            /** Failed */
+            failed: number;
+            /** Generated */
+            generated: number;
+            /** Requested */
+            requested: number;
+            /** Validated */
+            validated: number;
+        };
+        /** TeacherPaperDefaults */
+        TeacherPaperDefaults: {
+            /** @default balanced */
+            difficulty: components["schemas"]["PaperDifficulty"];
+            /**
+             * Duration Minutes
+             * @default 45
+             */
+            duration_minutes: number;
+            /**
+             * Question Count
+             * @default 10
+             */
+            question_count: number;
+        };
+        /** TeacherPaperFailureResponse */
+        TeacherPaperFailureResponse: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** TeacherPaperJobCreateRequest */
+        TeacherPaperJobCreateRequest: {
+            /** Scope */
+            scope: components["schemas"]["FullSubjectScopeRequest"] | components["schemas"]["LessonRangeScopeRequest"];
+            settings: components["schemas"]["TeacherPaperSettingsRequest"];
+            target: components["schemas"]["TeacherPaperTargetRequest"];
+        };
+        /** TeacherPaperJobResponse */
+        TeacherPaperJobResponse: {
+            /** Completed At */
+            completed_at: string | null;
+            /** Cost Microusd */
+            cost_microusd: number;
+            counts: components["schemas"]["TeacherPaperCountsResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            failure: components["schemas"]["TeacherPaperFailureResponse"] | null;
+            /** Grade */
+            grade: number;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Medium */
+            medium: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Paper Reference */
+            paper_reference: string;
+            /** Progress */
+            progress: string[];
+            /** Review Url */
+            review_url: string | null;
+            /** Scope Summary */
+            scope_summary: string;
+            /** Slots */
+            slots: components["schemas"]["TeacherPaperSlotProgressResponse"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "preparing" | "generating" | "checking_answers" | "ready_for_review" | "failed";
+            /** Subject */
+            subject: string;
+            /** Title */
+            title: string;
+            /** Total Tokens */
+            total_tokens: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** TeacherPaperOptionsResponse */
+        TeacherPaperOptionsResponse: {
+            /** Assessment Programmes */
+            assessment_programmes: components["schemas"]["AssessmentProgrammeOption"][];
+            /**
+             * @default {
+             *       "difficulty": "balanced",
+             *       "duration_minutes": 45,
+             *       "question_count": 10
+             *     }
+             */
+            defaults: components["schemas"]["TeacherPaperDefaults"];
+            /** Grades */
+            grades: number[];
+            /** Media */
+            media: components["schemas"]["MediumOption"][];
+            /** Subjects */
+            subjects: components["schemas"]["SubjectOption"][];
+        };
+        /** TeacherPaperRetryRequest */
+        TeacherPaperRetryRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** TeacherPaperSettingsRequest */
+        TeacherPaperSettingsRequest: {
+            difficulty: components["schemas"]["PaperDifficulty"];
+            /** Duration Minutes */
+            duration_minutes: number;
+            /** Question Count */
+            question_count: number;
+        };
+        /** TeacherPaperSlotProgressResponse */
+        TeacherPaperSlotProgressResponse: {
+            /** Candidate Id */
+            candidate_id: string | null;
+            failure: components["schemas"]["TeacherPaperFailureResponse"] | null;
+            /** Generation Run Id */
+            generation_run_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Lesson */
+            lesson: string | null;
+            /** Number */
+            number: number;
+            /** Status */
+            status: string;
+            /** Validation */
+            validation: ("ready" | "needs_attention" | "failed_check") | null;
+            /** Version */
+            version: number;
+        };
+        /** TeacherPaperTargetRequest */
+        TeacherPaperTargetRequest: {
+            /** Assessment Programme */
+            assessment_programme?: string | null;
+            /** Grade */
+            grade: number;
+            /** Medium */
+            medium: string;
+            /** Subject */
+            subject: string;
+        };
+        /** TechnicalValidationFindingResponse */
+        TechnicalValidationFindingResponse: {
+            /** Code */
+            code: string;
+            /** Evidence */
+            evidence: {
+                [key: string]: string;
+            }[];
+            /** Message */
+            message: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "warn" | "fail";
+        };
         /** UniquenessPolicyRequest */
         UniquenessPolicyRequest: {
             /**
@@ -5137,6 +5954,13 @@ export interface components {
             max_similarity_basis_points: number;
             /** Minimum Distinct Contexts */
             minimum_distinct_contexts: number;
+        };
+        /** UnitOption */
+        UnitOption: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -8979,6 +9803,463 @@ export interface operations {
             };
         };
     };
+    list_teacher_paper_curricula: {
+        parameters: {
+            query: {
+                grade: number;
+                medium: string;
+                subject: string;
+                assessment_programme?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurriculumLabelsResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_teacher_paper_job: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherPaperJobCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherPaperJobResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
+        };
+    };
+    get_teacher_paper_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherPaperJobResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    advance_teacher_paper_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherPaperAdvanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherPaperJobResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
+        };
+    };
+    retry_teacher_paper_job: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                paper_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherPaperRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherPaperJobResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
+        };
+    };
+    list_teacher_paper_lessons: {
+        parameters: {
+            query: {
+                grade: number;
+                medium: string;
+                subject: string;
+                assessment_programme?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LessonLabelsResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_teacher_paper_generation_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherPaperOptionsResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     explore_retrieval: {
         parameters: {
             query?: never;
@@ -9021,6 +10302,450 @@ export interface operations {
             };
             /** @description Configured embedding provider is unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_teacher_review_papers: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewPaperListResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_teacher_review_paper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewPaperDetailResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_teacher_review_paper_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewPaperCreateDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewPaperDraftCreatedResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    edit_teacher_review_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewQuestionEditRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQuestionResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    approve_teacher_review_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQuestionResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    regenerate_teacher_review_question: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                paper_job_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewQuestionRegenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQuestionRegenerationResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
+        };
+    };
+    reject_teacher_review_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQuestionResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    start_teacher_review_question: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_job_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCandidateStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQuestionResponse"];
+                };
+            };
+            /** @description The review paper or question was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Review version, state, revalidation, cost, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid bounded review content or command */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -49,7 +49,12 @@ class EmbeddingProviderUnavailableError(RuntimeError):
 class EmbeddingProviderRegistry:
     """Immutable exact-name registry for configured embedding adapters."""
 
-    def __init__(self, providers: Mapping[str, EmbeddingProvider]) -> None:
+    def __init__(
+        self,
+        providers: Mapping[str, EmbeddingProvider],
+        *,
+        active_config: EmbeddingConfig | None = None,
+    ) -> None:
         if not isinstance(providers, Mapping):
             raise ValueError("providers must be a mapping")
         snapshot: dict[str, EmbeddingProvider] = {}
@@ -59,20 +64,37 @@ class EmbeddingProviderRegistry:
             if not callable(getattr(provider, "embed", None)):
                 raise ValueError("provider must implement embed")
             snapshot[name] = provider
+        if active_config is not None:
+            valid_active_config = validate_embedding_config(active_config)
+            if valid_active_config.provider not in snapshot:
+                raise ValueError("active embedding configuration requires a registered provider")
+        else:
+            valid_active_config = None
         self._providers = MappingProxyType(snapshot)
+        self._active_config = valid_active_config
+
+    @property
+    def active_config(self) -> EmbeddingConfig:
+        if self._active_config is None:
+            raise ActiveEmbeddingConfigUnavailableError
+        return self._active_config
 
     @property
     def registered_provider_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
 
     def without_deterministic_providers(self) -> EmbeddingProviderRegistry:
-        return EmbeddingProviderRegistry(
-            {
-                name: provider
-                for name, provider in self._providers.items()
-                if not isinstance(provider, DeterministicEmbeddingProvider)
-            }
+        providers = {
+            name: provider
+            for name, provider in self._providers.items()
+            if not isinstance(provider, DeterministicEmbeddingProvider)
+        }
+        active_config = (
+            self._active_config
+            if self._active_config is not None and self._active_config.provider in providers
+            else None
         )
+        return EmbeddingProviderRegistry(providers, active_config=active_config)
 
     def ensure_provider(self, config: EmbeddingConfig) -> None:
         """Fail closed before database work when no exact adapter is registered."""
@@ -157,6 +179,7 @@ def create_embedding_provider_registry(settings: Settings) -> EmbeddingProviderR
 
     if settings.environment in {"local", "test"}:
         return EmbeddingProviderRegistry(
-            {DETERMINISTIC_PROVIDER_NAME: DeterministicEmbeddingProvider()}
+            {DETERMINISTIC_PROVIDER_NAME: DeterministicEmbeddingProvider()},
+            active_config=create_active_embedding_config(settings),
         )
     return EmbeddingProviderRegistry({})

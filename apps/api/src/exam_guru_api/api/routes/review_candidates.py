@@ -19,6 +19,7 @@ from exam_guru_api.papers.repository import (
 )
 from exam_guru_api.papers.review_service import (
     ReviewCandidateIdempotencyConflictError,
+    ReviewCandidateRevalidationRequiredError,
     ReviewCandidateService,
     ReviewCandidateStateConflictError,
     ReviewCandidateVersionConflictError,
@@ -300,6 +301,11 @@ async def _execute_review_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "review_candidate_version_conflict"},
+        ) from error
+    except ReviewCandidateRevalidationRequiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "review_candidate_revalidation_required"},
         ) from error
     except ReviewCandidateStateConflictError as error:
         raise HTTPException(

@@ -548,6 +548,11 @@ def approve_candidate(
     _require_candidate_state(candidate, CandidateState.IN_REVIEW, CandidateState.APPROVED)
     _require_uuid(reviewer_id, "reviewer_id")
     _require_optional_text(note, "approval note")
+    if (
+        candidate.validation is None
+        or candidate.validation.validated_revision != candidate.revisions[-1].revision
+    ):
+        raise ValidationNotPassedError(candidate.candidate_id)
     version = candidate.version + 1
     record = ReviewRecord(
         action=ReviewAction.APPROVED,

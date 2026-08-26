@@ -502,6 +502,30 @@
         "title": "ApiErrorResponse",
         "type": "object"
       },
+      "AssessmentProgrammeOption": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "grade",
+          "label"
+        ],
+        "title": "AssessmentProgrammeOption",
+        "type": "object"
+      },
       "AuthSessionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1247,6 +1271,52 @@
         ],
         "title": "ContextTrust",
         "type": "string"
+      },
+      "CurriculumLabelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_label": {
+            "title": "Assessment Label",
+            "type": "string"
+          },
+          "assessment_programme": {
+            "title": "Assessment Programme",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assessment_programme",
+          "assessment_label",
+          "code",
+          "label"
+        ],
+        "title": "CurriculumLabelResponse",
+        "type": "object"
+      },
+      "CurriculumLabelsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CurriculumLabelResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CurriculumLabelsResponse",
+        "type": "object"
       },
       "CurriculumLessonCreate": {
         "additionalProperties": false,
@@ -2695,6 +2765,21 @@
           "count"
         ],
         "title": "FailureCodeCountResponse",
+        "type": "object"
+      },
+      "FullSubjectScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "full_subject",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FullSubjectScopeRequest",
         "type": "object"
       },
       "FusedRetrievalCandidateResponse": {
@@ -4807,6 +4892,108 @@
         "title": "LeakageAuditResponse",
         "type": "object"
       },
+      "LessonLabelsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum": {
+            "$ref": "#/components/schemas/CurriculumLabelResponse"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/LessonOption"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade",
+          "medium",
+          "subject",
+          "curriculum",
+          "lessons"
+        ],
+        "title": "LessonLabelsResponse",
+        "type": "object"
+      },
+      "LessonOption": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "taxonomy": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Taxonomy",
+            "type": "array"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "code",
+          "label",
+          "unit",
+          "taxonomy"
+        ],
+        "title": "LessonOption",
+        "type": "object"
+      },
+      "LessonRangeScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "end_lesson": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "End Lesson",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "lesson_range",
+            "title": "Kind",
+            "type": "string"
+          },
+          "start_lesson": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Start Lesson",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "start_lesson",
+          "end_lesson"
+        ],
+        "title": "LessonRangeScopeRequest",
+        "type": "object"
+      },
       "MaterialGradeSummaryResponse": {
         "properties": {
           "grade": {
@@ -5134,6 +5321,25 @@
           "name"
         ],
         "title": "MediumCreate",
+        "type": "object"
+      },
+      "MediumOption": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label"
+        ],
+        "title": "MediumOption",
         "type": "object"
       },
       "MediumResponse": {
@@ -5801,6 +6007,15 @@
         ],
         "title": "PaperBlueprintSummaryResponse",
         "type": "object"
+      },
+      "PaperDifficulty": {
+        "enum": [
+          "balanced",
+          "easier",
+          "challenging"
+        ],
+        "title": "PaperDifficulty",
+        "type": "string"
       },
       "PaperDraftCandidateResponse": {
         "additionalProperties": false,
@@ -8256,6 +8471,637 @@
         "title": "ReviewCandidateSummaryResponse",
         "type": "object"
       },
+      "ReviewMarkingSchemeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "criteria": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Criteria",
+            "type": "array"
+          },
+          "total_marks": {
+            "title": "Total Marks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_marks",
+          "criteria"
+        ],
+        "title": "ReviewMarkingSchemeResponse",
+        "type": "object"
+      },
+      "ReviewPaperCreateDraftRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReviewPaperCreateDraftRequest",
+        "type": "object"
+      },
+      "ReviewPaperDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewPaperDraftResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "paper_reference": {
+            "title": "Paper Reference",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewQuestionResponse"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "scope_summary": {
+            "title": "Scope Summary",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "technical_details": {
+            "$ref": "#/components/schemas/ReviewPaperTechnicalDetailsResponse"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "paper_reference",
+          "title",
+          "grade",
+          "medium",
+          "subject",
+          "scope_summary",
+          "status",
+          "version",
+          "created_at",
+          "questions",
+          "draft",
+          "technical_details"
+        ],
+        "title": "ReviewPaperDetailResponse",
+        "type": "object"
+      },
+      "ReviewPaperDraftCreatedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "draft_id": {
+            "format": "uuid",
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_version": {
+            "title": "Draft Version",
+            "type": "integer"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_reference": {
+            "title": "Paper Reference",
+            "type": "string"
+          },
+          "publication_path": {
+            "title": "Publication Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id",
+          "paper_reference",
+          "draft_id",
+          "draft_version",
+          "publication_path"
+        ],
+        "title": "ReviewPaperDraftCreatedResponse",
+        "type": "object"
+      },
+      "ReviewPaperDraftResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "draft_id": {
+            "format": "uuid",
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft_id",
+          "version"
+        ],
+        "title": "ReviewPaperDraftResponse",
+        "type": "object"
+      },
+      "ReviewPaperListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewPaperSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ReviewPaperListResponse",
+        "type": "object"
+      },
+      "ReviewPaperSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_count": {
+            "title": "Approved Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_reference": {
+            "title": "Paper Reference",
+            "type": "string"
+          },
+          "question_count": {
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "scope_summary": {
+            "title": "Scope Summary",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "paper_reference",
+          "title",
+          "grade",
+          "subject",
+          "scope_summary",
+          "status",
+          "question_count",
+          "approved_count",
+          "created_at"
+        ],
+        "title": "ReviewPaperSummaryResponse",
+        "type": "object"
+      },
+      "ReviewPaperTechnicalDetailsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_microusd": {
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "paper_blueprint_id": {
+            "format": "uuid",
+            "title": "Paper Blueprint Id",
+            "type": "string"
+          },
+          "request_fingerprint": {
+            "title": "Request Fingerprint",
+            "type": "string"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "paper_blueprint_id",
+          "request_fingerprint",
+          "cost_microusd",
+          "total_tokens"
+        ],
+        "title": "ReviewPaperTechnicalDetailsResponse",
+        "type": "object"
+      },
+      "ReviewQuestionEditRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/QuestionContentRequest"
+          },
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "reason",
+          "expected_version"
+        ],
+        "title": "ReviewQuestionEditRequest",
+        "type": "object"
+      },
+      "ReviewQuestionOptionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "text"
+        ],
+        "title": "ReviewQuestionOptionResponse",
+        "type": "object"
+      },
+      "ReviewQuestionRegenerateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "reason"
+        ],
+        "title": "ReviewQuestionRegenerateRequest",
+        "type": "object"
+      },
+      "ReviewQuestionRegenerationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "question_id": {
+            "format": "uuid",
+            "title": "Question Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "generating",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "paper_id",
+          "question_id",
+          "status",
+          "version"
+        ],
+        "title": "ReviewQuestionRegenerationResponse",
+        "type": "object"
+      },
+      "ReviewQuestionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregate_slot_version": {
+            "default": 0,
+            "title": "Aggregate Slot Version",
+            "type": "integer"
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionContentResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "marking_scheme": {
+            "$ref": "#/components/schemas/ReviewMarkingSchemeResponse"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewQuestionOptionResponse"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "requires_revalidation": {
+            "default": false,
+            "title": "Requires Revalidation",
+            "type": "boolean"
+          },
+          "review_state": {
+            "title": "Review State",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ReviewQuestionScopeResponse"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewSourceResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "stem": {
+            "title": "Stem",
+            "type": "string"
+          },
+          "technical_details": {
+            "$ref": "#/components/schemas/ReviewQuestionTechnicalDetailsResponse"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/ReviewValidationResponse"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "version",
+          "review_state",
+          "stem",
+          "options",
+          "answer",
+          "explanation",
+          "marking_scheme",
+          "scope",
+          "sources",
+          "validation",
+          "technical_details"
+        ],
+        "title": "ReviewQuestionResponse",
+        "type": "object"
+      },
+      "ReviewQuestionScopeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "lesson": {
+            "title": "Lesson",
+            "type": "string"
+          },
+          "lessons": {
+            "title": "Lessons",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "taxonomy": {
+            "title": "Taxonomy",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade",
+          "subject",
+          "lessons",
+          "unit",
+          "lesson",
+          "taxonomy"
+        ],
+        "title": "ReviewQuestionScopeResponse",
+        "type": "object"
+      },
+      "ReviewQuestionTechnicalDetailsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint_slot_id": {
+            "title": "Blueprint Slot Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "context_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Context Ids",
+            "type": "array"
+          },
+          "generation_run_id": {
+            "format": "uuid",
+            "title": "Generation Run Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "validation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Run Id"
+          },
+          "validator_findings": {
+            "items": {
+              "$ref": "#/components/schemas/TechnicalValidationFindingResponse"
+            },
+            "title": "Validator Findings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation_run_id",
+          "validation_run_id",
+          "candidate_id",
+          "blueprint_slot_id",
+          "context_ids",
+          "provider",
+          "model_version",
+          "validator_findings"
+        ],
+        "title": "ReviewQuestionTechnicalDetailsResponse",
+        "type": "object"
+      },
+      "ReviewSourceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "title",
+          "page"
+        ],
+        "title": "ReviewSourceResponse",
+        "type": "object"
+      },
       "ReviewState": {
         "enum": [
           "draft",
@@ -8265,6 +9111,38 @@
         ],
         "title": "ReviewState",
         "type": "string"
+      },
+      "ReviewValidationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "findings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "needs_attention",
+              "failed_check"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "summary",
+          "findings"
+        ],
+        "title": "ReviewValidationResponse",
+        "type": "object"
       },
       "ReviewedTaxonomyNodeSnapshotResponse": {
         "additionalProperties": false,
@@ -9385,6 +10263,56 @@
         "title": "SubjectCreate",
         "type": "object"
       },
+      "SubjectOption": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_programme": {
+            "title": "Assessment Programme",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/LessonOption"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/UnitOption"
+            },
+            "title": "Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "grade",
+          "medium",
+          "assessment_programme",
+          "label",
+          "units",
+          "lessons"
+        ],
+        "title": "SubjectOption",
+        "type": "object"
+      },
       "SubjectResponse": {
         "properties": {
           "active": {
@@ -9873,6 +10801,559 @@
         "title": "TaxonomyTargetResponse",
         "type": "object"
       },
+      "TeacherPaperAdvanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "TeacherPaperAdvanceRequest",
+        "type": "object"
+      },
+      "TeacherPaperCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "candidates": {
+            "title": "Candidates",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "generated": {
+            "title": "Generated",
+            "type": "integer"
+          },
+          "requested": {
+            "title": "Requested",
+            "type": "integer"
+          },
+          "validated": {
+            "title": "Validated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requested",
+          "generated",
+          "validated",
+          "candidates",
+          "approved",
+          "failed"
+        ],
+        "title": "TeacherPaperCountsResponse",
+        "type": "object"
+      },
+      "TeacherPaperDefaults": {
+        "additionalProperties": false,
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/PaperDifficulty",
+            "default": "balanced"
+          },
+          "duration_minutes": {
+            "default": 45,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "question_count": {
+            "default": 10,
+            "title": "Question Count",
+            "type": "integer"
+          }
+        },
+        "title": "TeacherPaperDefaults",
+        "type": "object"
+      },
+      "TeacherPaperFailureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "TeacherPaperFailureResponse",
+        "type": "object"
+      },
+      "TeacherPaperJobCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "discriminator": {
+              "mapping": {
+                "full_subject": "#/components/schemas/FullSubjectScopeRequest",
+                "lesson_range": "#/components/schemas/LessonRangeScopeRequest"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FullSubjectScopeRequest"
+              },
+              {
+                "$ref": "#/components/schemas/LessonRangeScopeRequest"
+              }
+            ],
+            "title": "Scope"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/TeacherPaperSettingsRequest"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TeacherPaperTargetRequest"
+          }
+        },
+        "required": [
+          "target",
+          "scope",
+          "settings"
+        ],
+        "title": "TeacherPaperJobCreateRequest",
+        "type": "object"
+      },
+      "TeacherPaperJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "cost_microusd": {
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/TeacherPaperCountsResponse"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherPaperFailureResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_reference": {
+            "title": "Paper Reference",
+            "type": "string"
+          },
+          "progress": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Progress",
+            "type": "array"
+          },
+          "review_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Url"
+          },
+          "scope_summary": {
+            "title": "Scope Summary",
+            "type": "string"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherPaperSlotProgressResponse"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "preparing",
+              "generating",
+              "checking_answers",
+              "ready_for_review",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "paper_id",
+          "paper_reference",
+          "title",
+          "grade",
+          "medium",
+          "subject",
+          "scope_summary",
+          "status",
+          "progress",
+          "counts",
+          "cost_microusd",
+          "total_tokens",
+          "version",
+          "created_at",
+          "updated_at",
+          "completed_at",
+          "review_url",
+          "failure",
+          "slots"
+        ],
+        "title": "TeacherPaperJobResponse",
+        "type": "object"
+      },
+      "TeacherPaperOptionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_programmes": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentProgrammeOption"
+            },
+            "title": "Assessment Programmes",
+            "type": "array"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/TeacherPaperDefaults",
+            "default": {
+              "difficulty": "balanced",
+              "duration_minutes": 45,
+              "question_count": 10
+            }
+          },
+          "grades": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Grades",
+            "type": "array"
+          },
+          "media": {
+            "items": {
+              "$ref": "#/components/schemas/MediumOption"
+            },
+            "title": "Media",
+            "type": "array"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectOption"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "grades",
+          "media",
+          "assessment_programmes",
+          "subjects"
+        ],
+        "title": "TeacherPaperOptionsResponse",
+        "type": "object"
+      },
+      "TeacherPaperRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "TeacherPaperRetryRequest",
+        "type": "object"
+      },
+      "TeacherPaperSettingsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/PaperDifficulty"
+          },
+          "duration_minutes": {
+            "maximum": 600.0,
+            "minimum": 1.0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "question_count": {
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Question Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "question_count",
+          "duration_minutes",
+          "difficulty"
+        ],
+        "title": "TeacherPaperSettingsRequest",
+        "type": "object"
+      },
+      "TeacherPaperSlotProgressResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherPaperFailureResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ready",
+                  "needs_attention",
+                  "failed_check"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "status",
+          "version",
+          "lesson",
+          "validation",
+          "generation_run_id",
+          "candidate_id",
+          "failure"
+        ],
+        "title": "TeacherPaperSlotProgressResponse",
+        "type": "object"
+      },
+      "TeacherPaperTargetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_programme": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessment Programme"
+          },
+          "grade": {
+            "maximum": 13.0,
+            "minimum": 1.0,
+            "title": "Grade",
+            "type": "integer"
+          },
+          "medium": {
+            "maxLength": 16,
+            "minLength": 2,
+            "title": "Medium",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade",
+          "medium",
+          "subject"
+        ],
+        "title": "TeacherPaperTargetRequest",
+        "type": "object"
+      },
+      "TechnicalValidationFindingResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "warn",
+              "fail"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "status",
+          "message",
+          "evidence"
+        ],
+        "title": "TechnicalValidationFindingResponse",
+        "type": "object"
+      },
       "UniquenessPolicyRequest": {
         "additionalProperties": false,
         "properties": {
@@ -9931,6 +11412,25 @@
           "minimum_distinct_contexts"
         ],
         "title": "UniquenessPolicyResponse",
+        "type": "object"
+      },
+      "UnitOption": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label"
+        ],
+        "title": "UnitOption",
         "type": "object"
       },
       "ValidationError": {
@@ -16783,6 +18283,723 @@
         ]
       }
     },
+    "/api/v1/admin/paper-generation/curricula": {
+      "get": {
+        "operationId": "list_teacher_paper_curricula",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "grade",
+            "required": true,
+            "schema": {
+              "maximum": 13,
+              "minimum": 1,
+              "title": "Grade",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "medium",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Medium",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assessment_programme",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assessment Programme"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumLabelsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The configured generation runtime or durable queue is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List matching active curriculum labels without exposing internal IDs",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/jobs": {
+      "post": {
+        "operationId": "create_teacher_paper_job",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherPaperJobCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherPaperJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create and dispatch a durable teacher paper job",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}": {
+      "get": {
+        "operationId": "get_teacher_paper_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherPaperJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The configured generation runtime or durable queue is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get durable paper progress, partial failures, and current slot lineage",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}/advance": {
+      "post": {
+        "operationId": "advance_teacher_paper_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherPaperAdvanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherPaperJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request one idempotent bounded aggregate advance",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/jobs/{paper_job_id}/retry": {
+      "post": {
+        "operationId": "retry_teacher_paper_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherPaperRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherPaperJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create bounded auditable generation lineage for failed slots",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/lessons": {
+      "get": {
+        "operationId": "list_teacher_paper_lessons",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "grade",
+            "required": true,
+            "schema": {
+              "maximum": 13,
+              "minimum": 1,
+              "title": "Grade",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "medium",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Medium",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assessment_programme",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assessment Programme"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonLabelsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The configured generation runtime or durable queue is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List normalized active lesson labels for one exact curriculum",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
+    "/api/v1/admin/paper-generation/options": {
+      "get": {
+        "operationId": "get_teacher_paper_generation_options",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherPaperOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The requested active curriculum or paper job was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Curriculum ambiguity, idempotency, version, state, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The teacher scope or bounded command is invalid"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The configured generation runtime or durable queue is unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List teacher-readable paper generation options",
+        "tags": [
+          "teacher-paper-generation"
+        ]
+      }
+    },
     "/api/v1/admin/retrieval/explore": {
       "post": {
         "operationId": "explore_retrieval",
@@ -16846,6 +19063,715 @@
         "summary": "Explore hard-scoped hybrid retrieval evidence",
         "tags": [
           "admin-retrieval"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers": {
+      "get": {
+        "operationId": "list_teacher_review_papers",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewPaperListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List teacher-readable generated paper aggregates",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}": {
+      "get": {
+        "operationId": "get_teacher_review_paper",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewPaperDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get questions, answers, marking, readable sources, and validation together",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/create-draft": {
+      "post": {
+        "operationId": "create_teacher_review_paper_draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewPaperCreateDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewPaperDraftCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create an immutable draft only after every question is approved",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}": {
+      "patch": {
+        "operationId": "edit_teacher_review_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewQuestionEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Append an edit and require fresh generation validation before approval",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/approve": {
+      "post": {
+        "operationId": "approve_teacher_review_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve only a currently validated unedited question",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/regenerate": {
+      "post": {
+        "operationId": "regenerate_teacher_review_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewQuestionRegenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQuestionRegenerationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Queue bounded replacement generation and full canonical revalidation",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/reject": {
+      "post": {
+        "operationId": "reject_teacher_review_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateRejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject a question with an expected version and reason",
+        "tags": [
+          "teacher-paper-review"
+        ]
+      }
+    },
+    "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/start": {
+      "post": {
+        "operationId": "start_teacher_review_question",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCandidateStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQuestionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The review paper or question was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Review version, state, revalidation, cost, or lineage conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid bounded review content or command"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start review with an expected candidate version",
+        "tags": [
+          "teacher-paper-review"
         ]
       }
     },

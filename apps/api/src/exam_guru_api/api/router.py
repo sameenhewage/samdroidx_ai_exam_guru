@@ -14,7 +14,9 @@ from exam_guru_api.api.routes.operations import router as operations_router
 from exam_guru_api.api.routes.papers import router as paper_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.review_candidates import router as review_candidate_router
+from exam_guru_api.api.routes.review_papers import router as review_paper_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
+from exam_guru_api.api.routes.teacher_papers import router as teacher_paper_router
 from exam_guru_api.api.routes.validation import router as validation_router
 
 api_router = APIRouter()
@@ -35,6 +37,16 @@ api_router.include_router(
     tags=["admin-blueprints"],
 )
 api_router.include_router(retrieval_router, prefix="/admin", tags=["admin-retrieval"])
+api_router.include_router(
+    teacher_paper_router,
+    prefix="/admin/paper-generation",
+    tags=["teacher-paper-generation"],
+)
+api_router.include_router(
+    review_paper_router,
+    prefix="/admin/review-papers",
+    tags=["teacher-paper-review"],
+)
 api_router.include_router(
     embedding_job_router,
     prefix="/admin/curricula",

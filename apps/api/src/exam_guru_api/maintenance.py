@@ -14,6 +14,7 @@ from exam_guru_api.documents.jobs import recover_extraction_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
 from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
+from exam_guru_api.teacher_papers.jobs import recover_teacher_papers
 
 _logger = logging.getLogger(__name__)
 
@@ -45,8 +46,15 @@ _RECOVERY_ACTORS = (
     cast(RecoveryActor, recover_generation_jobs),
     cast(RecoveryActor, recover_embedding_jobs),
     cast(RecoveryActor, reconcile_source_objects),
+    cast(RecoveryActor, recover_teacher_papers),
 )
-_RECOVERY_NAMES = ("extraction", "generation", "embedding", "storage_reconciliation")
+_RECOVERY_NAMES = (
+    "extraction",
+    "generation",
+    "embedding",
+    "storage_reconciliation",
+    "teacher_papers",
+)
 
 
 def enqueue_recovery_jobs(
@@ -54,12 +62,19 @@ def enqueue_recovery_jobs(
     generation_actor: RecoveryActor = _RECOVERY_ACTORS[1],
     embedding_actor: RecoveryActor = _RECOVERY_ACTORS[2],
     reconciliation_actor: RecoveryActor = _RECOVERY_ACTORS[3],
+    teacher_paper_actor: RecoveryActor = _RECOVERY_ACTORS[4],
 ) -> MaintenanceTickResult:
     enqueued = 0
     failures = 0
     for name, actor in zip(
         _RECOVERY_NAMES,
-        (extraction_actor, generation_actor, embedding_actor, reconciliation_actor),
+        (
+            extraction_actor,
+            generation_actor,
+            embedding_actor,
+            reconciliation_actor,
+            teacher_paper_actor,
+        ),
         strict=True,
     ):
         try:

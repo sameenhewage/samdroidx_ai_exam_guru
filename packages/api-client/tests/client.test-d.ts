@@ -16,6 +16,43 @@ const taxonomyRequest = client.POST(
     params: { path: { curriculum_version_id: "00000000-0000-0000-0000-000000000001" } },
   },
 );
+const paperJob = client.POST("/api/v1/admin/paper-generation/jobs", {
+  body: {
+    target: {
+      assessment_programme: "SCHOOL-G7",
+      grade: 7,
+      medium: "en",
+      subject: "MATHEMATICS",
+    },
+    scope: { end_lesson: 3, kind: "lesson_range", start_lesson: 1 },
+    settings: { difficulty: "balanced", duration_minutes: 50, question_count: 12 },
+  },
+  params: { header: { "Idempotency-Key": "teacher-paper-request-1" } },
+});
+const paperProgress = client.GET("/api/v1/admin/paper-generation/jobs/{paper_job_id}", {
+  params: { path: { paper_job_id: "00000000-0000-0000-0000-000000000801" } },
+});
+const reviewPaper = client.GET("/api/v1/admin/review-papers/{paper_job_id}", {
+  params: { path: { paper_job_id: "00000000-0000-0000-0000-000000000801" } },
+});
+const regenerateQuestion = client.POST(
+  "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/regenerate",
+  {
+    body: { expected_version: 4, reason: "Prepare and validate a replacement." },
+    params: {
+      header: { "Idempotency-Key": "replacement-1" },
+      path: {
+        paper_job_id: "00000000-0000-0000-0000-000000000801",
+        question_id: "00000000-0000-0000-0000-000000000811",
+      },
+    },
+  },
+);
+const intent: components["schemas"]["TeacherPaperJobCreateRequest"] = {
+  target: { grade: 7, medium: "en", subject: "MATHEMATICS" },
+  scope: { kind: "full_subject" },
+  settings: { difficulty: "challenging", duration_minutes: 60, question_count: 20 },
+};
 const health: components["schemas"]["HealthResponse"] = { status: "ok" };
 const session: components["schemas"]["AuthSessionResponse"] = {
   roles: ["admin", "reviewer"],
@@ -25,5 +62,10 @@ const session: components["schemas"]["AuthSessionResponse"] = {
 void request;
 void sessionRequest;
 void taxonomyRequest;
+void paperJob;
+void paperProgress;
+void reviewPaper;
+void regenerateQuestion;
+void intent;
 void health;
 void session;

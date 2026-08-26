@@ -118,9 +118,13 @@ class _ConfiguredDeterministicProvider:
                 explanation="The response is grounded in the reviewed context.",
                 accepted_responses=("A context-grounded response",),
             )
+        stem = _DETERMINISTIC_STEMS[slot.question_type]
+        if slot.paper_code.startswith("EGP-"):
+            draft_reference = request.identity.generation_id.hex[:8]
+            stem = f"{slot.paper_code} question {slot.ordinal} draft {draft_reference}: {stem}"
         question = GeneratedQuestion(
             question_type=slot.question_type,
-            stem=_DETERMINISTIC_STEMS[slot.question_type],
+            stem=stem,
             options=options,
             answer=answer,
             marking=MarkingScheme(

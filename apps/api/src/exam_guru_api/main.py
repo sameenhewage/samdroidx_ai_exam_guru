@@ -31,6 +31,10 @@ from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
     create_embedding_provider_registry,
 )
+from exam_guru_api.teacher_papers.jobs import (
+    PaperGenerationDispatcher,
+    create_paper_generation_dispatcher,
+)
 from exam_guru_api.validation.pipeline import ValidationPipeline, build_default_pipeline
 
 ResourceFactory = Callable[[Settings], ApplicationResources]
@@ -44,6 +48,7 @@ def create_app(
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
     generation_dispatcher: GenerationDispatcher | None = None,
+    paper_generation_dispatcher: PaperGenerationDispatcher | None = None,
     embedding_dispatcher: EmbeddingDispatcher | None = None,
     generation_runtime_registry: GenerationRuntimeRegistry | None = None,
     validation_pipeline: ValidationPipeline | None = None,
@@ -96,6 +101,11 @@ def create_app(
         generation_dispatcher
         if generation_dispatcher is not None
         else create_generation_dispatcher(resolved_settings)
+    )
+    application.state.paper_generation_dispatcher = (
+        paper_generation_dispatcher
+        if paper_generation_dispatcher is not None
+        else create_paper_generation_dispatcher(resolved_settings)
     )
     application.state.embedding_dispatcher = (
         embedding_dispatcher
