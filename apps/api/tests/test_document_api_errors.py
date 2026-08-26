@@ -12,18 +12,26 @@ from starlette.datastructures import Headers
 
 from exam_guru_api.api.routes.documents import (
     _extraction_http_exception,
+    _material_http_exception,
+    _source_document_response,
     begin_source_document_review,
+    correct_material_scope,
     correct_source_document_block,
     correct_source_document_page,
+    list_material_grade_summary,
+    list_materials,
     list_source_document_pages,
     list_source_documents,
     list_source_page_blocks,
+    remove_material_from_use,
+    restore_material_to_use,
     trigger_source_document_extraction,
     trust_source_document,
     upload_source_document,
 )
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.core.config import Settings
+from exam_guru_api.curriculum.models import CurriculumVersionModel
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.extraction import InvalidExtractionTransitionError
 from exam_guru_api.documents.extraction_service import (
@@ -43,13 +51,23 @@ from exam_guru_api.documents.models import (
 )
 from exam_guru_api.documents.schemas import (
     ExtractionJobResponse,
+    MaterialRemoveRequest,
+    MaterialRestoreRequest,
+    MaterialScopeCorrectionRequest,
     ReviewedTextUpdate,
     SourceDocumentResponse,
 )
 from exam_guru_api.documents.service import (
+    ConcurrentMaterialScopeVersionError,
+    InvalidMaterialRemovalReasonError,
+    MaterialScopeImmutableError,
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
+    SourceDocumentNotFoundError,
     SourceDocumentService,
+    SourceLearningScopeInactiveError,
+    SourceLearningScopeMismatchError,
+    SourceLearningScopeNotFoundError,
     SourceUploadResult,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
@@ -634,6 +652,9 @@ def test_extraction_error_mapping(error: Exception, status_code: int, code: str)
     [
         (SourceCurriculumNotFoundError(), 404, "curriculum_version_not_found"),
         (SourceCurriculumInactiveError(), 409, "curriculum_version_inactive"),
+        (SourceLearningScopeNotFoundError(), 404, "learning_scope_not_found"),
+        (SourceLearningScopeInactiveError(), 409, "learning_scope_inactive"),
+        (SourceLearningScopeMismatchError(), 422, "learning_scope_mismatch"),
     ],
 )
 def test_upload_route_maps_curriculum_errors(
@@ -655,3 +676,189 @@ def test_upload_route_maps_curriculum_errors(
 
     assert raised.value.status_code == status_code
     assert cast(dict[str, str], raised.value.detail)["code"] == code
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "code"),
+    [
+        (SourceDocumentNotFoundError(UUID(int=1)), 404, "source_document_not_found"),
+        (SourceCurriculumNotFoundError(), 404, "material_scope_not_found"),
+        (SourceLearningScopeNotFoundError(), 404, "material_scope_not_found"),
+        (
+            ConcurrentMaterialScopeVersionError(0, 1),
+            409,
+            "concurrent_material_scope_modification",
+        ),
+        (
+            MaterialScopeImmutableError(UUID(int=1)),
+            409,
+            "trusted_material_scope_immutable_remove_from_use",
+        ),
+        (SourceCurriculumInactiveError(), 409, "material_scope_inactive"),
+        (SourceLearningScopeInactiveError(), 409, "material_scope_inactive"),
+        (SourceLearningScopeMismatchError(), 422, "material_scope_mismatch"),
+        (InvalidMaterialRemovalReasonError(), 422, "invalid_removal_reason"),
+    ],
+)
+def test_material_error_mapping(error: Exception, status_code: int, code: str) -> None:
+    response = _material_http_exception(error)
+    assert response.status_code == status_code
+    assert cast(dict[str, object], response.detail)["code"] == code
+
+
+def test_source_response_backfills_legacy_defaults_and_exposes_derived_subject() -> None:
+    document = source_document()
+    document.curriculum_version_id = UUID(int=700)
+    document.active_for_ai = None  # type: ignore[assignment]
+    document.metadata_scope_version = None  # type: ignore[assignment]
+    curriculum = CurriculumVersionModel(
+        id=document.curriculum_version_id,
+        exam_configuration_id=UUID(int=701),
+        medium_id=UUID(int=702),
+        subject_id=UUID(int=703),
+        code="CURR",
+        title="Curriculum",
+        active=True,
+        created_by=UUID(int=2),
+        updated_by=UUID(int=2),
+    )
+
+    class CurriculumSession:
+        async def get(self, _model: object, _identifier: UUID) -> CurriculumVersionModel:
+            return curriculum
+
+    response = asyncio.run(
+        _source_document_response(
+            cast(AsyncSession, CurriculumSession()),
+            document,
+            deduplicated=True,
+            likely_metadata_duplicate_of_id=UUID(int=704),
+        )
+    )
+    assert response.active_for_ai is True
+    assert response.metadata_scope_version == 0
+    assert response.subject_id == curriculum.subject_id
+    assert response.deduplicated is True
+    assert response.likely_metadata_duplicate_of_id == UUID(int=704)
+
+    class MissingCurriculumSession:
+        async def get(self, _model: object, _identifier: UUID) -> None:
+            return None
+
+    missing_curriculum_response = asyncio.run(
+        _source_document_response(
+            cast(AsyncSession, MissingCurriculumSession()),
+            document,
+        )
+    )
+    assert missing_curriculum_response.subject_id is None
+
+
+def test_material_routes_cover_reads_and_sanitized_transition_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = arguments()
+
+    async def empty_materials(
+        _service: SourceDocumentService,
+        **_kwargs: object,
+    ) -> tuple[object, ...]:
+        return ()
+
+    async def empty_summary(_service: SourceDocumentService) -> tuple[object, ...]:
+        return ()
+
+    async def fail_remove(
+        _service: SourceDocumentService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> SourceDocumentModel:
+        raise InvalidMaterialRemovalReasonError
+
+    async def fail_restore(
+        _service: SourceDocumentService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> SourceDocumentModel:
+        raise SourceLearningScopeInactiveError
+
+    async def fail_scope(
+        _service: SourceDocumentService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> SourceDocumentModel:
+        raise MaterialScopeImmutableError(UUID(int=1))
+
+    monkeypatch.setattr(SourceDocumentService, "list_materials", empty_materials)
+    monkeypatch.setattr(SourceDocumentService, "grade_summary", empty_summary)
+    assert (
+        asyncio.run(
+            list_materials(
+                values.principal,
+                values.session,
+                values.object_storage,
+                values.settings,
+                7,
+                UUID(int=1),
+                50,
+                0,
+            )
+        )
+        == []
+    )
+    assert (
+        asyncio.run(
+            list_material_grade_summary(
+                values.principal,
+                values.session,
+                values.object_storage,
+                values.settings,
+            )
+        )
+        == []
+    )
+
+    monkeypatch.setattr(SourceDocumentService, "remove_from_ai_use", fail_remove)
+    with pytest.raises(HTTPException) as removed:
+        asyncio.run(
+            remove_material_from_use(
+                UUID(int=1),
+                MaterialRemoveRequest(reason="reason", expected_version=0),
+                values.principal,
+                values.session,
+                values.object_storage,
+                values.settings,
+            )
+        )
+    assert removed.value.status_code == 422
+
+    monkeypatch.setattr(SourceDocumentService, "restore_to_ai_use", fail_restore)
+    with pytest.raises(HTTPException) as restored:
+        asyncio.run(
+            restore_material_to_use(
+                UUID(int=1),
+                MaterialRestoreRequest(expected_version=0),
+                values.principal,
+                values.session,
+                values.object_storage,
+                values.settings,
+            )
+        )
+    assert restored.value.status_code == 409
+
+    monkeypatch.setattr(SourceDocumentService, "correct_scope", fail_scope)
+    with pytest.raises(HTTPException) as corrected:
+        asyncio.run(
+            correct_material_scope(
+                UUID(int=1),
+                MaterialScopeCorrectionRequest(
+                    curriculum_version_id=None,
+                    expected_version=0,
+                ),
+                values.principal,
+                values.session,
+                values.object_storage,
+                values.settings,
+            )
+        )
+    assert corrected.value.status_code == 409

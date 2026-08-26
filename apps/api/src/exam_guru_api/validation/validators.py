@@ -1043,7 +1043,7 @@ class PromptInjectionResidueValidator:
 class HeuristicPolicy:
     """Explicitly versioned, bounded indicators for deterministic review triage."""
 
-    policy_version: str = "grade5-bounded-indicators.v1"
+    policy_version: str = "multigrade-bounded-indicators.v2"
     maximum_student_characters: int = 16_000
     maximum_words: int = 2_000
     primary_max_age: int = 12

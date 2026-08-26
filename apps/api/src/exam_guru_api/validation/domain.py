@@ -113,6 +113,11 @@ def _require_integer(value: object, field_name: str, *, minimum: int, maximum: i
     return value
 
 
+def grade_age_bounds(grade: int) -> tuple[int, int]:
+    _require_integer(grade, "grade", minimum=1, maximum=13)
+    return grade + 4, grade + 6
+
+
 def canonicalize_text(value: str) -> str:
     """Return the version-one exact-match normalization, not a similarity score."""
 
@@ -192,7 +197,7 @@ class BlueprintRequirements:
         _require_integer(self.marks, "marks", minimum=1, maximum=100)
         _require_machine_value(self.language, "language", maximum=32)
         _require_integer(self.minimum_age, "minimum_age", minimum=1, maximum=18)
-        _require_integer(self.maximum_age, "maximum_age", minimum=1, maximum=18)
+        _require_integer(self.maximum_age, "maximum_age", minimum=1, maximum=19)
         if self.minimum_age > self.maximum_age:
             raise ValidationContractError("minimum_age cannot exceed maximum_age")
         _require_integer(self.minimum_options, "minimum_options", minimum=1, maximum=16)

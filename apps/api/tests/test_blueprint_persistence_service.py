@@ -69,11 +69,13 @@ class FakeBlueprintRepository:
         *,
         analytics: object | None = None,
         created_sequence: tuple[bool, ...] = (True,),
+        learning_scope_valid: bool = True,
     ) -> None:
         self.scope = scope
         self.taxonomy = taxonomy
         self.analytics = analytics
         self.created_sequence = list(created_sequence)
+        self.learning_scope_valid = learning_scope_valid
         self.stored: PaperBlueprintRecord | None = None
 
     async def get_curriculum_scope(
@@ -81,6 +83,15 @@ class FakeBlueprintRepository:
     ) -> CurriculumScopeRecord | None:
         del curriculum_version_id
         return self.scope
+
+    async def learning_scope_exists(
+        self,
+        curriculum_version_id: UUID,
+        unit_ids: tuple[UUID, ...],
+        lesson_ids: tuple[UUID, ...],
+    ) -> bool:
+        del curriculum_version_id, unit_ids, lesson_ids
+        return self.learning_scope_valid
 
     async def list_taxonomy_nodes(
         self,
@@ -372,6 +383,29 @@ def test_service_rejects_curriculum_scope_taxonomy_and_snapshot_limit_violations
             await inactive_service.create_blueprint(
                 specification.curriculum_scope.curriculum_version_id,
                 specification,
+                seed=0,
+                analytics_run_id=None,
+                actor_id=ACTOR_ID,
+            )
+
+        selected_specification = replace(
+            specification,
+            curriculum_scope=replace(
+                specification.curriculum_scope,
+                unit_ids=(UUID(int=123_001),),
+            ),
+        )
+        invalid_learning_service, _ = service_with(
+            FakeBlueprintRepository(
+                active_scope(selected_specification),
+                valid_taxonomy,
+                learning_scope_valid=False,
+            )
+        )
+        with pytest.raises(BlueprintCurriculumScopeMismatchError):
+            await invalid_learning_service.create_blueprint(
+                specification.curriculum_scope.curriculum_version_id,
+                selected_specification,
                 seed=0,
                 analytics_run_id=None,
                 actor_id=ACTOR_ID,

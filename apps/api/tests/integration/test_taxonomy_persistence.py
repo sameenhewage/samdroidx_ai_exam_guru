@@ -145,7 +145,7 @@ def test_taxonomy_round_trip_preserves_hierarchy_and_audit_metadata(
 
 
 @pytest.mark.integration
-def test_database_rejects_non_grade_five_exam_configuration(
+def test_database_rejects_grade_outside_school_range(
     taxonomy_database_url: str,
 ) -> None:
     async def exercise() -> None:
@@ -155,9 +155,9 @@ def test_database_rejects_non_grade_five_exam_configuration(
             session.add(
                 ExamConfigurationModel(
                     id=UUID(int=4_001),
-                    code="G6S",
+                    code="G14",
                     name="Invalid grade",
-                    grade=6,
+                    grade=14,
                     active=True,
                     created_by=ACTOR_ID,
                     updated_by=ACTOR_ID,

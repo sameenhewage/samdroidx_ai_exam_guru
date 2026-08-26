@@ -7,10 +7,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.blueprints.models import PaperBlueprintModel
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
 from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.documents.models import SourceDocumentModel
@@ -36,6 +38,8 @@ class GenerationScopeRecord:
     curriculum_active: bool
     exam_active: bool
     medium_active: bool
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    subject_active: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,9 @@ class GenerationContextRecord:
     source_status: ExtractionStatus
     page_number: int
     source_block_id: UUID | None
+    source_active_for_ai: bool = True
+    unit_id: UUID | None = None
+    lesson_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,29 +161,45 @@ class SqlAlchemyGenerationRepository:
                     MediumModel.id,
                     ExamConfigurationModel.grade,
                     MediumModel.code,
+                    SubjectModel.id,
                     CurriculumVersionModel.active,
                     ExamConfigurationModel.active,
                     MediumModel.active,
+                    SubjectModel.active,
                 )
                 .join(
                     ExamConfigurationModel,
                     ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
                 )
                 .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+                .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
                 .where(CurriculumVersionModel.id == curriculum_version_id)
             )
         ).one_or_none()
         if row is None:
             return None
+        if len(row) == 8:  # Compatibility for legacy repository test adapters.
+            return GenerationScopeRecord(
+                curriculum_version_id=row[0],
+                exam_id=row[1],
+                medium_id=row[2],
+                grade=row[3],
+                medium=row[4],
+                curriculum_active=row[5],
+                exam_active=row[6],
+                medium_active=row[7],
+            )
         return GenerationScopeRecord(
             curriculum_version_id=row[0],
             exam_id=row[1],
             medium_id=row[2],
             grade=row[3],
             medium=row[4],
-            curriculum_active=row[5],
-            exam_active=row[6],
-            medium_active=row[7],
+            subject_id=row[5],
+            curriculum_active=row[6],
+            exam_active=row[7],
+            medium_active=row[8],
+            subject_active=row[9],
         )
 
     async def get_blueprint(
@@ -568,6 +591,9 @@ class SqlAlchemyGenerationRepository:
             source_curriculum_version_id=source.curriculum_version_id,
             source_checksum_sha256=source.checksum_sha256,
             source_status=source.extraction_status,
+            source_active_for_ai=source.active_for_ai,
+            unit_id=chunk.unit_id,
+            lesson_id=chunk.lesson_id,
             page_number=chunk.page_number,
             source_block_id=chunk.source_block_id,
         )
@@ -592,6 +618,9 @@ class SqlAlchemyGenerationRepository:
             source_curriculum_version_id=source.curriculum_version_id,
             source_checksum_sha256=source.checksum_sha256,
             source_status=source.extraction_status,
+            source_active_for_ai=source.active_for_ai,
+            unit_id=question.unit_id,
+            lesson_id=question.lesson_id,
             page_number=question.page_number,
             source_block_id=question.source_block_id,
         )

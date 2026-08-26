@@ -34,6 +34,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
+    EmbeddingSourceRemovedError,
 )
 from exam_guru_api.knowledge.embedding_jobs import EmbeddingDispatcher
 from exam_guru_api.knowledge.models import EmbeddingJobStatus
@@ -222,6 +223,11 @@ async def _execute_embedding_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "embedding_source_not_reviewed"},
+        ) from error
+    except EmbeddingSourceRemovedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "embedding_source_removed_from_use"},
         ) from error
     except EmbeddingIdempotencyConflictError as error:
         raise HTTPException(

@@ -32,6 +32,7 @@ from exam_guru_api.knowledge.schemas import (
     KnowledgeReviewTransitionRequest,
 )
 from exam_guru_api.knowledge.service import (
+    ActiveKnowledgeSourceRequiredError,
     FinalKnowledgeRecordError,
     KnowledgeCurriculumNotFoundError,
     KnowledgePersistenceService,
@@ -415,6 +416,7 @@ async def _execute_knowledge_operation[OperationResultT](
             detail={"code": integrity_code},
         ) from error
     except (
+        ActiveKnowledgeSourceRequiredError,
         ConcurrentKnowledgeVersionError,
         FinalKnowledgeRecordError,
         KnowledgeContractError,
@@ -456,6 +458,8 @@ def _knowledge_http_exception(error: Exception) -> HTTPException:
         code = "source_curriculum_mismatch"
     elif isinstance(error, TrustedKnowledgeSourceRequiredError):
         code = "trusted_source_required"
+    elif isinstance(error, ActiveKnowledgeSourceRequiredError):
+        code = "active_source_required"
     elif isinstance(error, KnowledgeSourceMetadataMismatchError):
         code = "source_metadata_mismatch"
     else:

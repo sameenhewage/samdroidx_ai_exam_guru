@@ -30,6 +30,9 @@ def test_canonical_specification_and_blueprint_snapshots_round_trip_without_loss
         "curriculum_version_id": str(specification.curriculum_scope.curriculum_version_id),
         "grade": 5,
         "medium": "si",
+        "subject_id": str(specification.curriculum_scope.subject_id),
+        "unit_ids": [],
+        "lesson_ids": [],
     }
     serialized_slots = cast(list[dict[str, Any]], blueprint_snapshot["slots"])
     assert len(serialized_slots) == len(blueprint.slots)
@@ -40,6 +43,26 @@ def test_canonical_specification_and_blueprint_snapshots_round_trip_without_loss
     assert fingerprint_snapshot(blueprint_snapshot) == fingerprint_snapshot(
         serialize_blueprint(generate_blueprint(specification, seed=2025))
     )
+
+
+def test_curriculum_scope_deserialization_accepts_legacy_and_rejects_bad_shapes() -> None:
+    current = serialize_specification(make_specification())
+    legacy = deepcopy(current)
+    legacy_scope = cast(dict[str, object], legacy["curriculum_scope"])
+    for field_name in ("subject_id", "unit_ids", "lesson_ids"):
+        del legacy_scope[field_name]
+    assert (
+        deserialize_specification(legacy).curriculum_scope == make_specification().curriculum_scope
+    )
+
+    non_object = deepcopy(current)
+    non_object["curriculum_scope"] = []
+    with pytest.raises(BlueprintSnapshotError, match="curriculum_scope"):
+        deserialize_specification(non_object)
+    unexpected = deepcopy(current)
+    cast(dict[str, object], unexpected["curriculum_scope"])["unexpected"] = True
+    with pytest.raises(BlueprintSnapshotError, match="curriculum_scope"):
+        deserialize_specification(unexpected)
 
 
 def test_snapshot_deserialization_revalidates_nested_domain_invariants() -> None:

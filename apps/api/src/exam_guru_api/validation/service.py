@@ -50,6 +50,9 @@ from exam_guru_api.validation.domain import (
     ValidationReport,
     canonical_text_sha256,
 )
+from exam_guru_api.validation.domain import (
+    grade_age_bounds as domain_grade_age_bounds,
+)
 from exam_guru_api.validation.generation_adapter import (
     GenerationAdapterError,
     adapt_generation_result,
@@ -72,9 +75,7 @@ from exam_guru_api.validation.repository import (
     ValidationGenerationRecord,
 )
 
-VALIDATION_INPUT_SCHEMA_VERSION = "question-validation-input.v1"
-_GRADE_5_MINIMUM_AGE = 9
-_GRADE_5_MAXIMUM_AGE = 11
+VALIDATION_INPUT_SCHEMA_VERSION = "question-validation-input.v2"
 _VALIDATION_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/validation-runs")
 
 
@@ -145,6 +146,15 @@ def _fingerprint(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def grade_age_bounds(grade: int) -> tuple[int, int]:
+    try:
+        return domain_grade_age_bounds(grade)
+    except ValidationContractError as error:
+        raise ValidationGenerationIntegrityError(
+            "blueprint grade must be between 1 and 13"
+        ) from error
 
 
 def _request_fingerprint_payload(run: GenerationRunModel) -> dict[str, object]:
@@ -227,21 +237,28 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     }
     observed_records: set[tuple[str, str]] = set()
     items: list[RetrievedContextItem] = []
+    legacy_item_keys = frozenset(
+        {
+            "context_id",
+            "record_kind",
+            "record_id",
+            "record_version",
+            "text",
+            "trust",
+            "provenance",
+            "taxonomy",
+        }
+    )
     for index, raw_item in enumerate(raw_items):
+        raw_item_keys = frozenset(raw_item) if isinstance(raw_item, Mapping) else frozenset()
+        item_keys = (
+            legacy_item_keys | {"learning_scope"}
+            if "learning_scope" in raw_item_keys
+            else legacy_item_keys
+        )
         item = _object(
             raw_item,
-            keys=frozenset(
-                {
-                    "context_id",
-                    "record_kind",
-                    "record_id",
-                    "record_version",
-                    "text",
-                    "trust",
-                    "provenance",
-                    "taxonomy",
-                }
-            ),
+            keys=item_keys,
             label=f"generation context item {index}",
         )
         provenance = _object(
@@ -262,6 +279,18 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
             keys=frozenset({"competency_id", "skill_id", "sub_skill_id", "learning_concept_id"}),
             label=f"generation context taxonomy {index}",
         )
+        if "learning_scope" in item:
+            learning_scope = _object(
+                item["learning_scope"],
+                keys=frozenset({"unit_id", "lesson_id"}),
+                label=f"generation context learning scope {index}",
+            )
+            unit_id = _optional_text(learning_scope["unit_id"], label="unit_id")
+            lesson_id = _optional_text(learning_scope["lesson_id"], label="lesson_id")
+            if lesson_id is not None and unit_id is None:
+                raise ValidationGenerationIntegrityError(
+                    "generation context lesson scope requires a unit"
+                )
         record_kind = _text(item["record_kind"], label="record_kind")
         record_id = _text(item["record_id"], label="record_id")
         context_id = _text(item["context_id"], label="context_id")
@@ -831,6 +860,9 @@ class ValidationRunService:
         )
         duplicate_references, duplicate_provenance = _duplicate_references(duplicate_records)
         slot = result.request.blueprint_slot
+        minimum_age, maximum_age = grade_age_bounds(
+            slot.generation_constraints.curriculum_scope.grade
+        )
         try:
             validation_input = adapt_generation_result(
                 result,
@@ -840,8 +872,8 @@ class ValidationRunService:
                     question_type=slot.question_type.value,
                     marks=slot.marks,
                     language=slot.generation_constraints.response_language,
-                    minimum_age=_GRADE_5_MINIMUM_AGE,
-                    maximum_age=_GRADE_5_MAXIMUM_AGE,
+                    minimum_age=minimum_age,
+                    maximum_age=maximum_age,
                 ),
                 duplicate_references=duplicate_references,
             )

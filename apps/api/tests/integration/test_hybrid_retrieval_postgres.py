@@ -6,16 +6,22 @@ from hashlib import sha256
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, literal, select
 from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
 
-from exam_guru_api.curriculum.domain import TaxonomyReviewState
+from exam_guru_api.curriculum.domain import (
+    LEGACY_UNCLASSIFIED_SUBJECT_ID,
+    TaxonomyReviewState,
+)
 from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -59,6 +65,7 @@ class ScopeSeed:
     medium_id: UUID
     curriculum_id: UUID
     competency_id: UUID
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,9 +136,25 @@ async def seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ...]:
         curriculum_id=UUID(int=730_004),
         competency_id=UUID(int=740_004),
     )
+    forbidden_subject = ScopeSeed(
+        grade=5,
+        exam_id=allowed.exam_id,
+        medium_id=allowed.medium_id,
+        curriculum_id=UUID(int=730_005),
+        competency_id=UUID(int=740_005),
+        subject_id=UUID(int=745_005),
+    )
 
     session.add_all(
         [
+            SubjectModel(
+                id=forbidden_subject.subject_id,
+                code="SCIENCE",
+                name="Science",
+                active=True,
+                created_by=ACTOR_ID,
+                updated_by=ACTOR_ID,
+            ),
             ExamConfigurationModel(
                 id=allowed.exam_id,
                 code="G5RET",
@@ -178,13 +201,20 @@ async def seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ...]:
     )
     await session.flush()
 
-    scopes = (allowed, forbidden_grade, forbidden_medium, forbidden_curriculum)
+    scopes = (
+        allowed,
+        forbidden_grade,
+        forbidden_medium,
+        forbidden_curriculum,
+        forbidden_subject,
+    )
     session.add_all(
         [
             CurriculumVersionModel(
                 id=scope.curriculum_id,
                 exam_configuration_id=scope.exam_id,
                 medium_id=scope.medium_id,
+                subject_id=scope.subject_id,
                 code=f"RET{index}",
                 title=f"Retrieval curriculum {index}",
                 active=True,
@@ -225,6 +255,9 @@ async def seed_chunk(
     chunk_text: str,
     embedding: tuple[float, float, float] | None,
     review_state: ReviewState = ReviewState.REVIEWED,
+    unit_id: UUID | None = None,
+    lesson_id: UUID | None = None,
+    remove_after_embedding: bool = False,
 ) -> None:
     document_id = UUID(int=750_000 + offset)
     page_id = UUID(int=760_000 + offset)
@@ -240,6 +273,13 @@ async def seed_chunk(
         document_type=SourceDocumentType.SYLLABUS,
         extraction_status=ExtractionStatus.EXTRACTION_PENDING,
         curriculum_version_id=scope.curriculum_id,
+        unit_id=unit_id,
+        lesson_id=lesson_id,
+        active_for_ai=True,
+        removal_reason=None,
+        removed_by=None,
+        removed_at=None,
+        metadata_scope_version=0,
         year=None,
         paper_code=None,
         extraction_attempt_count=1,
@@ -311,6 +351,8 @@ async def seed_chunk(
             educational_boundary=f"Fixed retrieval boundary {offset}",
             sequence=0,
             source_document_id=document_id,
+            unit_id=unit_id,
+            lesson_id=lesson_id,
             page_number=1,
             source_block_id=block_id,
             review_state=review_state,
@@ -336,6 +378,13 @@ async def seed_chunk(
                 created_by=ACTOR_ID,
             )
         )
+        await session.flush()
+    if remove_after_embedding:
+        document.active_for_ai = False
+        document.removal_reason = "Wrong-grade material removed from AI use"
+        document.removed_by = ACTOR_ID
+        document.removed_at = datetime.now(UTC)
+        document.metadata_scope_version = 1
         await session.flush()
 
 
@@ -380,20 +429,28 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
         engine = create_async_engine(retrieval_database_url)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-        # The production V1 schema correctly constrains exams to Grade 5. This isolated
-        # adversarial database removes only that defense so the adapter's grade predicate
-        # is independently proven against a physically present stronger Grade 6 record.
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "ALTER TABLE exam_configurations "
-                    "DROP CONSTRAINT ck_exam_configurations_grade_five"
-                )
-            )
-
         relevant_ids = frozenset({UUID(int=790_001), UUID(int=790_002), UUID(int=790_003)})
-        forbidden_ids = frozenset({UUID(int=791_001), UUID(int=791_002), UUID(int=791_003)})
+        forbidden_ids = frozenset(
+            {
+                UUID(int=791_001),
+                UUID(int=791_002),
+                UUID(int=791_003),
+                UUID(int=791_004),
+                UUID(int=791_005),
+                UUID(int=791_006),
+                UUID(int=791_007),
+            }
+        )
         draft_id = UUID(int=792_001)
+        selected_unit_id = UUID(int=793_001)
+        other_unit_id = UUID(int=793_002)
+        selected_lesson_ids = (
+            UUID(int=794_001),
+            UUID(int=794_002),
+            UUID(int=794_003),
+        )
+        other_lesson_id = UUID(int=794_004)
+        unselected_lesson_id = UUID(int=794_005)
 
         async with sessions() as session:
             (
@@ -401,6 +458,7 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 forbidden_grade,
                 forbidden_medium,
                 forbidden_curriculum,
+                forbidden_subject,
             ) = await seed_scope_entities(session)
             session.add(
                 EmbeddingConfigurationModel.from_domain(
@@ -410,6 +468,55 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 )
             )
             await session.flush()
+            session.add_all(
+                [
+                    CurriculumUnitModel(
+                        id=selected_unit_id,
+                        curriculum_version_id=allowed.curriculum_id,
+                        code="UNIT-1",
+                        title="Selected unit",
+                        ordinal=1,
+                        active=True,
+                        created_by=ACTOR_ID,
+                        updated_by=ACTOR_ID,
+                    ),
+                    CurriculumUnitModel(
+                        id=other_unit_id,
+                        curriculum_version_id=allowed.curriculum_id,
+                        code="UNIT-2",
+                        title="Forbidden unit",
+                        ordinal=2,
+                        active=True,
+                        created_by=ACTOR_ID,
+                        updated_by=ACTOR_ID,
+                    ),
+                ]
+            )
+            await session.flush()
+            session.add_all(
+                [
+                    CurriculumLessonModel(
+                        id=lesson_id,
+                        curriculum_version_id=allowed.curriculum_id,
+                        unit_id=(
+                            selected_unit_id
+                            if lesson_id in (*selected_lesson_ids, unselected_lesson_id)
+                            else other_unit_id
+                        ),
+                        code=f"LESSON-{ordinal}",
+                        title=f"Lesson {ordinal}",
+                        ordinal=ordinal,
+                        active=True,
+                        created_by=ACTOR_ID,
+                        updated_by=ACTOR_ID,
+                    )
+                    for ordinal, lesson_id in enumerate(
+                        (*selected_lesson_ids, other_lesson_id, unselected_lesson_id),
+                        start=1,
+                    )
+                ]
+            )
+            await session.flush()
             await seed_chunk(
                 session,
                 scope=allowed,
@@ -417,6 +524,8 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 chunk_id=UUID(int=790_001),
                 chunk_text="Square perimeter is found by adding the four boundary sides.",
                 embedding=(0.70, 0.30, 0.0),
+                unit_id=selected_unit_id,
+                lesson_id=selected_lesson_ids[0],
             )
             await seed_chunk(
                 session,
@@ -425,6 +534,8 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 chunk_id=UUID(int=790_002),
                 chunk_text="Four equal boundary lengths are combined for this measurement.",
                 embedding=(0.90, 0.10, 0.0),
+                unit_id=selected_unit_id,
+                lesson_id=selected_lesson_ids[1],
             )
             await seed_chunk(
                 session,
@@ -433,6 +544,8 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 chunk_id=UUID(int=790_003),
                 chunk_text=PROMPT_INJECTION_TEXT,
                 embedding=(0.80, 0.20, 0.0),
+                unit_id=selected_unit_id,
+                lesson_id=selected_lesson_ids[2],
             )
             stronger_text = " ".join(["square perimeter"] * 20)
             await seed_chunk(
@@ -461,12 +574,53 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
             )
             await seed_chunk(
                 session,
+                scope=forbidden_subject,
+                offset=14,
+                chunk_id=UUID(int=791_004),
+                chunk_text=stronger_text,
+                embedding=(1.0, 0.0, 0.0),
+            )
+            await seed_chunk(
+                session,
+                scope=allowed,
+                offset=15,
+                chunk_id=UUID(int=791_005),
+                chunk_text=stronger_text,
+                embedding=(1.0, 0.0, 0.0),
+                unit_id=other_unit_id,
+                lesson_id=other_lesson_id,
+            )
+            await seed_chunk(
+                session,
+                scope=allowed,
+                offset=16,
+                chunk_id=UUID(int=791_006),
+                chunk_text=stronger_text,
+                embedding=(1.0, 0.0, 0.0),
+                unit_id=selected_unit_id,
+                lesson_id=unselected_lesson_id,
+            )
+            await seed_chunk(
+                session,
+                scope=allowed,
+                offset=17,
+                chunk_id=UUID(int=791_007),
+                chunk_text=stronger_text,
+                embedding=(1.0, 0.0, 0.0),
+                unit_id=selected_unit_id,
+                lesson_id=selected_lesson_ids[0],
+                remove_after_embedding=True,
+            )
+            await seed_chunk(
+                session,
                 scope=allowed,
                 offset=21,
                 chunk_id=draft_id,
                 chunk_text=stronger_text,
                 embedding=None,
                 review_state=ReviewState.DRAFT,
+                unit_id=selected_unit_id,
+                lesson_id=selected_lesson_ids[0],
             )
             await session.commit()
 
@@ -474,7 +628,10 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 grade=5,
                 exam_id=allowed.exam_id,
                 medium_id=allowed.medium_id,
+                subject_id=allowed.subject_id,
                 curriculum_version_id=allowed.curriculum_id,
+                unit_ids=(selected_unit_id,),
+                lesson_ids=selected_lesson_ids,
                 taxonomy=TaxonomyScope(competency_id=allowed.competency_id),
             )
             repository = PostgresHybridRetrievalRepository(
@@ -559,6 +716,26 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
             )
             assert lexical_scores[UUID(int=791_001)] > lexical_scores[UUID(int=790_001)]
             assert vector_scores[UUID(int=791_001)] > vector_scores[UUID(int=790_001)]
+
+            removed_source = await session.get(SourceDocumentModel, UUID(int=750_017))
+            assert removed_source is not None
+            removed_source.active_for_ai = True
+            removed_source.removal_reason = None
+            removed_source.removed_by = None
+            removed_source.removed_at = None
+            removed_source.metadata_scope_version = 2
+            await session.commit()
+            restored_channels = await repository.retrieve_candidates(
+                query="square perimeter",
+                query_vector=QUERY_VECTOR,
+                filters=filters,
+            )
+            assert UUID(int=791_007) in {
+                candidate.record.chunk_id for candidate in restored_channels.lexical_candidates
+            }
+            assert UUID(int=791_007) in {
+                candidate.record.chunk_id for candidate in restored_channels.vector_candidates
+            }
 
         await engine.dispose()
 

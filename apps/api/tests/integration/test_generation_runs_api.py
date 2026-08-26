@@ -849,12 +849,12 @@ def test_generation_worker_persists_validation_required_result_accounting_and_im
     assert run_body["candidate"] is not None
     assert "publish" not in run_body
     assert run_body["prompt_id"] == "question-generation"
-    assert run_body["prompt_version"] == "1.1.0"
+    assert run_body["prompt_version"] == "2.0.0"
     assert run_body["provider"] == "deterministic-fake"
     assert run_body["provider_version"] == "1.0.0"
     assert run_body["model"] == "fixture-model"
     assert run_body["model_version"] == "2026-01"
-    assert run_body["retrieval_version"] == "reviewed-selected-context-v1"
+    assert run_body["retrieval_version"] == "active-reviewed-multigrade-scope-v2"
     assert run_body["schema_version"] == "question.v1"
     assert run_body["pricing_version"] == "deterministic-pricing-v1"
     assert run_body["attempt_count"] == 1
@@ -2007,7 +2007,7 @@ def test_validation_report_is_transactional_idempotent_audited_readable_and_immu
         second = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
         listed = client.get(validation_path(generation_seed), headers=REVIEWER_HEADERS)
 
-        assert first.status_code == second.status_code == 201
+        assert first.status_code == second.status_code == 201, first.text
         assert first.json()["id"] == second.json()["id"]
         assert first.json()["deduplicated"] is False
         assert second.json()["deduplicated"] is True
@@ -2140,22 +2140,22 @@ def test_validation_concurrent_create_converges_and_new_pipeline_version_reruns(
     assert sorted(result["deduplicated"] for _, result in results) == [False, True]
     first_id = results[0][1]["id"]
 
-    pipeline_v3 = replace(
+    pipeline_v4 = replace(
         build_default_pipeline(),
-        version="deterministic-question-validation.v3",
+        version="deterministic-question-validation.v4",
     )
     with api_client(
         generation_seed,
         dispatcher,
         runtime=runtime,
-        validation_pipeline=pipeline_v3,
+        validation_pipeline=pipeline_v4,
     ) as client:
         rerun = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
         duplicate = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
 
     assert rerun.status_code == duplicate.status_code == 201
     assert rerun.json()["id"] != first_id
-    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v3"
+    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v4"
     assert rerun.json()["deduplicated"] is False
     assert duplicate.json()["id"] == rerun.json()["id"]
     assert duplicate.json()["deduplicated"] is True

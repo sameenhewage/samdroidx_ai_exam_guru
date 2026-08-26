@@ -16,7 +16,11 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
 from exam_guru_api.core.config import Settings
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
+from exam_guru_api.curriculum.domain import (
+    LEGACY_UNCLASSIFIED_SUBJECT_ID,
+    TaxonomyLevel,
+    TaxonomyReviewState,
+)
 from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
@@ -541,6 +545,9 @@ def test_real_postgres_retrieval_explorer_is_authorized_bounded_and_leakage_safe
     expected_scope = cast(dict[str, object], _payload()["scope"])
     assert body["scope"] == {
         **expected_scope,
+        "subject_id": str(LEGACY_UNCLASSIFIED_SUBJECT_ID),
+        "unit_ids": [],
+        "lesson_ids": [],
         "taxonomy": {
             "competency_id": str(ALLOWED_COMPETENCY_ID),
             "skill_id": None,

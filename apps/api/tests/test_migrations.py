@@ -79,6 +79,365 @@ def test_alembic_uses_database_url_from_environment() -> None:
 
 
 @pytest.mark.integration
+def test_0023_multigrade_backfill_clean_downgrade_and_scope_loss_guard() -> None:
+    credentials = ("exam_guru", "migration-multigrade-only")
+    with PostgresContainer(
+        image="pgvector/pgvector:0.8.6-pg18-trixie",
+        username=credentials[0],
+        password=credentials[1],
+        dbname="exam_guru_multigrade_migration_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        config = _config_for_database(database_url)
+        command.upgrade(config, "0022_provider_job_retry_depth")
+        exam_id = UUID(int=23_001)
+        medium_id = UUID(int=23_002)
+        curriculum_id = UUID(int=23_003)
+        actor_id = UUID(int=23_004)
+        source_id = UUID(int=23_005)
+
+        async def seed_legacy_scope() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO exam_configurations "
+                            "(id, code, name, grade, created_by, updated_by) "
+                            "VALUES (:id, 'LEGACY-G5', 'Legacy Grade 5', 5, :actor, :actor)"
+                        ),
+                        {"id": exam_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO media (id, code, name, created_by, updated_by) "
+                            "VALUES (:id, 'en', 'English', :actor, :actor)"
+                        ),
+                        {"id": medium_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO curriculum_versions "
+                            "(id, exam_configuration_id, medium_id, code, title, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :exam, :medium, 'LEGACY-V1', 'Legacy curriculum', "
+                            ":actor, :actor)"
+                        ),
+                        {
+                            "id": curriculum_id,
+                            "exam": exam_id,
+                            "medium": medium_id,
+                            "actor": actor_id,
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO source_documents "
+                            "(id, checksum_sha256, object_key, original_filename, content_type, "
+                            "size_bytes, document_type, curriculum_version_id, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :checksum, 'sources/legacy.pdf', 'legacy.pdf', "
+                            "'application/pdf', 10, 'syllabus', :curriculum, :actor, :actor)"
+                        ),
+                        {
+                            "id": source_id,
+                            "checksum": "c" * 64,
+                            "curriculum": curriculum_id,
+                            "actor": actor_id,
+                        },
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed_legacy_scope())
+        command.upgrade(config, "head")
+
+        async def inspect_backfill_and_grade_range() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    row = (
+                        await connection.execute(
+                            text(
+                                "SELECT cv.id, s.code FROM curriculum_versions cv "
+                                "JOIN subjects s ON s.id = cv.subject_id WHERE cv.id = :id"
+                            ),
+                            {"id": curriculum_id},
+                        )
+                    ).one()
+                    assert row == (curriculum_id, "LEGACY_UNCLASSIFIED")
+                    source_scope = (
+                        await connection.execute(
+                            text(
+                                "SELECT id, unit_id, lesson_id, active_for_ai, "
+                                "metadata_scope_version FROM source_documents WHERE id = :id"
+                            ),
+                            {"id": source_id},
+                        )
+                    ).one()
+                    assert source_scope == (source_id, None, None, True, 0)
+                    grade_seven_id = UUID(int=23_007)
+                    await connection.execute(
+                        text(
+                            "INSERT INTO exam_configurations "
+                            "(id, code, name, grade, created_by, updated_by) "
+                            "VALUES (:id, 'GRADE-7', 'Grade 7', 7, :actor, :actor)"
+                        ),
+                        {"id": grade_seven_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text("DELETE FROM exam_configurations WHERE id = :id"),
+                        {"id": grade_seven_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(inspect_backfill_and_grade_range())
+        command.downgrade(config, "0022_provider_job_retry_depth")
+
+        async def inspect_clean_downgrade() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.connect() as connection:
+                    preserved = await connection.scalar(
+                        text("SELECT id FROM curriculum_versions WHERE id = :id"),
+                        {"id": curriculum_id},
+                    )
+                    preserved_source = await connection.scalar(
+                        text("SELECT id FROM source_documents WHERE id = :id"),
+                        {"id": source_id},
+                    )
+                    subjects_regclass = await connection.scalar(
+                        text("SELECT to_regclass('public.subjects')")
+                    )
+                assert preserved == curriculum_id
+                assert preserved_source == source_id
+                assert subjects_regclass is None
+            finally:
+                await engine.dispose()
+
+        asyncio.run(inspect_clean_downgrade())
+        command.upgrade(config, "head")
+
+        async def seed_new_scope() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO exam_configurations "
+                            "(id, code, name, grade, created_by, updated_by) "
+                            "VALUES (:id, 'GRADE-7-KEPT', 'Grade 7 kept', 7, :actor, :actor)"
+                        ),
+                        {"id": UUID(int=23_107), "actor": actor_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed_new_scope())
+        with pytest.raises(DBAPIError):
+            command.downgrade(config, "0022_provider_job_retry_depth")
+
+
+@pytest.mark.integration
+def test_0023_direct_sql_enforces_learning_scope_and_material_cas() -> None:
+    credentials = ("exam_guru", "direct-scope-constraints")
+    with PostgresContainer(
+        image="pgvector/pgvector:0.8.6-pg18-trixie",
+        username=credentials[0],
+        password=credentials[1],
+        dbname="exam_guru_direct_scope_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        command.upgrade(_config_for_database(database_url), "head")
+        actor_id = UUID(int=23_200)
+        subject_id = UUID(int=23_201)
+        exam_id = UUID(int=23_202)
+        medium_id = UUID(int=23_203)
+        curriculum_id = UUID(int=23_204)
+        unit_a = UUID(int=23_205)
+        unit_b = UUID(int=23_206)
+        lesson_id = UUID(int=23_207)
+        document_id = UUID(int=23_208)
+
+        async def seed_valid_scope() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO subjects (id, code, name, created_by, updated_by) "
+                            "VALUES (:id, 'MATHEMATICS', 'Mathematics', :actor, :actor)"
+                        ),
+                        {"id": subject_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO exam_configurations "
+                            "(id, code, name, grade, created_by, updated_by) "
+                            "VALUES (:id, 'SCHOOL-G7', 'School Grade 7', 7, :actor, :actor)"
+                        ),
+                        {"id": exam_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO media (id, code, name, created_by, updated_by) "
+                            "VALUES (:id, 'en', 'English', :actor, :actor)"
+                        ),
+                        {"id": medium_id, "actor": actor_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO curriculum_versions "
+                            "(id, exam_configuration_id, medium_id, subject_id, code, title, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :exam, :medium, :subject, 'G7-MATH-V1', "
+                            "'Grade 7 Mathematics', :actor, :actor)"
+                        ),
+                        {
+                            "id": curriculum_id,
+                            "exam": exam_id,
+                            "medium": medium_id,
+                            "subject": subject_id,
+                            "actor": actor_id,
+                        },
+                    )
+                    for unit_id, code, ordinal in (
+                        (unit_a, "UNIT-A", 1),
+                        (unit_b, "UNIT-B", 2),
+                    ):
+                        await connection.execute(
+                            text(
+                                "INSERT INTO curriculum_units "
+                                "(id, curriculum_version_id, code, title, ordinal, "
+                                "created_by, updated_by) VALUES "
+                                "(:id, :curriculum, :code, :code, :ordinal, :actor, :actor)"
+                            ),
+                            {
+                                "id": unit_id,
+                                "curriculum": curriculum_id,
+                                "code": code,
+                                "ordinal": ordinal,
+                                "actor": actor_id,
+                            },
+                        )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO curriculum_lessons "
+                            "(id, curriculum_version_id, unit_id, code, title, ordinal, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :curriculum, :unit, 'LESSON-1', 'Lesson 1', 1, "
+                            ":actor, :actor)"
+                        ),
+                        {
+                            "id": lesson_id,
+                            "curriculum": curriculum_id,
+                            "unit": unit_a,
+                            "actor": actor_id,
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO source_documents "
+                            "(id, checksum_sha256, object_key, original_filename, content_type, "
+                            "size_bytes, document_type, curriculum_version_id, unit_id, lesson_id, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :checksum, :object_key, 'lesson.pdf', 'application/pdf', 10, "
+                            "'syllabus', :curriculum, :unit, :lesson, :actor, :actor)"
+                        ),
+                        {
+                            "id": document_id,
+                            "checksum": "a" * 64,
+                            "object_key": "sources/direct-scope.pdf",
+                            "curriculum": curriculum_id,
+                            "unit": unit_a,
+                            "lesson": lesson_id,
+                            "actor": actor_id,
+                        },
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed_valid_scope())
+
+        async def invalid_lesson_scope() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO source_documents "
+                            "(id, checksum_sha256, object_key, original_filename, content_type, "
+                            "size_bytes, document_type, curriculum_version_id, unit_id, lesson_id, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :checksum, :object_key, 'wrong.pdf', 'application/pdf', 10, "
+                            "'syllabus', :curriculum, :unit, :lesson, :actor, :actor)"
+                        ),
+                        {
+                            "id": UUID(int=23_209),
+                            "checksum": "b" * 64,
+                            "object_key": "sources/wrong-scope.pdf",
+                            "curriculum": curriculum_id,
+                            "unit": unit_b,
+                            "lesson": lesson_id,
+                            "actor": actor_id,
+                        },
+                    )
+            finally:
+                await engine.dispose()
+
+        with pytest.raises(DBAPIError):
+            asyncio.run(invalid_lesson_scope())
+
+        async def stale_use_state_update() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "UPDATE source_documents SET active_for_ai = FALSE, "
+                            "removal_reason = 'Wrong grade', removed_by = :actor, "
+                            "removed_at = now() WHERE id = :id"
+                        ),
+                        {"id": document_id, "actor": actor_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        with pytest.raises(DBAPIError):
+            asyncio.run(stale_use_state_update())
+
+        async def valid_cas_update() -> tuple[bool, int]:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "UPDATE source_documents SET active_for_ai = FALSE, "
+                            "removal_reason = 'Wrong grade', removed_by = :actor, "
+                            "removed_at = now(), metadata_scope_version = 1 WHERE id = :id"
+                        ),
+                        {"id": document_id, "actor": actor_id},
+                    )
+                    row = (
+                        await connection.execute(
+                            text(
+                                "SELECT active_for_ai, metadata_scope_version "
+                                "FROM source_documents WHERE id = :id"
+                            ),
+                            {"id": document_id},
+                        )
+                    ).one()
+                    return row[0], row[1]
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(valid_cas_update()) == (False, 1)
+
+
+@pytest.mark.integration
 def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legacy_graphs() -> None:
     credentials = ("exam_guru", "migration-retry-depth-only")
     with PostgresContainer(

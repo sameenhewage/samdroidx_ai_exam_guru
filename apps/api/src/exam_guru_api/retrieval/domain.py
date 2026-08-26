@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+
 MAX_RECORD_CHARACTERS = 100_000
 MAX_FINGERPRINT_CHARACTERS = 512
 
@@ -92,6 +94,9 @@ class RetrievalScope:
     medium_id: UUID
     curriculum_version_id: UUID
     taxonomy: TaxonomyScope
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    unit_ids: tuple[UUID, ...] = ()
+    lesson_ids: tuple[UUID, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -102,9 +107,19 @@ class RetrievalScope:
             raise RetrievalContractError("grade must be an integer between 1 and 13")
         _require_uuid(self.exam_id, field_name="exam_id")
         _require_uuid(self.medium_id, field_name="medium_id")
+        _require_uuid(self.subject_id, field_name="subject_id")
         _require_uuid(self.curriculum_version_id, field_name="curriculum_version_id")
         if not isinstance(self.taxonomy, TaxonomyScope):
             raise RetrievalContractError("taxonomy must be a TaxonomyScope")
+        for field_name, values in (("unit_ids", self.unit_ids), ("lesson_ids", self.lesson_ids)):
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, UUID) for value in values
+            ):
+                raise RetrievalContractError(f"{field_name} must be a tuple of UUID values")
+            if len(values) != len(set(values)):
+                raise RetrievalContractError(f"{field_name} must not contain duplicates")
+        if self.lesson_ids and not self.unit_ids:
+            raise RetrievalContractError("lesson_ids require unit_ids")
 
     def allows(self, candidate: RetrievalScope) -> bool:
         """Apply all hard metadata boundaries before relevance ranking."""
@@ -114,9 +129,18 @@ class RetrievalScope:
             and self.grade == candidate.grade
             and self.exam_id == candidate.exam_id
             and self.medium_id == candidate.medium_id
+            and self.subject_id == candidate.subject_id
             and self.curriculum_version_id == candidate.curriculum_version_id
+            and self._selection_allows(self.unit_ids, candidate.unit_ids)
+            and self._selection_allows(self.lesson_ids, candidate.lesson_ids)
             and self.taxonomy.allows(candidate.taxonomy)
         )
+
+    @staticmethod
+    def _selection_allows(selected: tuple[UUID, ...], candidate: tuple[UUID, ...]) -> bool:
+        if not selected:
+            return True
+        return bool(candidate) and set(candidate).issubset(selected)
 
 
 @dataclass(frozen=True, slots=True)

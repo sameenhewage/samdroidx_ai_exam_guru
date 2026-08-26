@@ -22,6 +22,11 @@ class ExtractionStatus(StrEnum):
     FAILED = "failed"
 
 
+class MaterialUseState(StrEnum):
+    ACTIVE = "active"
+    REMOVED = "removed"
+
+
 class UploadViolation(StrEnum):
     EMPTY_FILE = "empty_file"
     FILE_TOO_LARGE = "file_too_large"

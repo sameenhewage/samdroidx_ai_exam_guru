@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
@@ -27,6 +28,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingSourceIdentityError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
+    EmbeddingSourceRemovedError,
     EmbeddingWorkerService,
     _config_snapshot,
     _fingerprint,
@@ -527,6 +529,13 @@ def test_command_validators_and_source_checks_cover_adversarial_values() -> None
             (),
             (_record(state=ReviewState.IN_REVIEW),),
         )
+    with pytest.raises(EmbeddingSourceRemovedError):
+        EmbeddingJobService._validate_sources(
+            CURRICULUM_ID,
+            (QUESTION_ID,),
+            (),
+            (replace(_record(), active_for_ai=False),),
+        )
 
     job = _job()
     assert EmbeddingJobService._same_request(
@@ -610,6 +619,7 @@ def test_read_service_rejects_missing_curriculum_and_delegates_reads() -> None:
         (EmbeddingSpaceConflictError(CONFIG), "embedding_config_conflict"),
         (EmbeddingSourceNotFoundError(), "embedding_source_invalid"),
         (EmbeddingSourceNotReviewedError(), "embedding_source_invalid"),
+        (EmbeddingSourceRemovedError(), "embedding_source_invalid"),
         (
             EmbeddingRequiresReviewedRecordError(QUESTION_ID, ReviewState.DRAFT),
             "embedding_source_invalid",

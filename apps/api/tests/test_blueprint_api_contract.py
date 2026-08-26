@@ -120,6 +120,42 @@ def test_blueprint_create_contract_accepts_only_explicit_baseline_safe_prioritie
         BlueprintCreateRequest.model_validate(missing_baseline)
 
 
+def test_grade_seven_math_lessons_one_to_three_and_full_subject_api_scopes() -> None:
+    payload = baseline_request_payload()
+    scope = payload["specification"]["curriculum_scope"]
+    scope.update(
+        {
+            "grade": 7,
+            "medium": "en",
+            "subject_id": str(UUID(int=7_001)),
+            "unit_ids": [str(UUID(int=7_010))],
+            "lesson_ids": [
+                str(UUID(int=7_011)),
+                str(UUID(int=7_012)),
+                str(UUID(int=7_013)),
+            ],
+        }
+    )
+
+    lessons_one_to_three = BlueprintCreateRequest.model_validate(payload).to_domain()
+    assert lessons_one_to_three.curriculum_scope.grade == 7
+    assert lessons_one_to_three.curriculum_scope.subject_id == UUID(int=7_001)
+    assert lessons_one_to_three.curriculum_scope.lesson_ids == (
+        UUID(int=7_011),
+        UUID(int=7_012),
+        UUID(int=7_013),
+    )
+
+    full_payload = deepcopy(payload)
+    full_scope = full_payload["specification"]["curriculum_scope"]
+    full_scope["unit_ids"] = []
+    full_scope["lesson_ids"] = []
+    full_subject = BlueprintCreateRequest.model_validate(full_payload).to_domain()
+    assert full_subject.curriculum_scope.grade == 7
+    assert full_subject.curriculum_scope.unit_ids == ()
+    assert full_subject.curriculum_scope.lesson_ids == ()
+
+
 def test_blueprint_request_bounds_seed_nested_collections_and_scope() -> None:
     payload = baseline_request_payload()
     payload["seed"] = 2**63

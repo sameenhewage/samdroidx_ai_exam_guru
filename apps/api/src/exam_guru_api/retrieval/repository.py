@@ -17,13 +17,21 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.selectable import CTE
 
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
+from exam_guru_api.curriculum.domain import (
+    LEGACY_UNCLASSIFIED_SUBJECT_ID,
+    TaxonomyLevel,
+    TaxonomyReviewState,
+)
 from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
+from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.knowledge.models import (
@@ -53,7 +61,10 @@ _RECORD_COLUMNS = (
     "grade",
     "exam_id",
     "medium_id",
+    "subject_id",
     "curriculum_version_id",
+    "unit_id",
+    "lesson_id",
     "competency_id",
     "skill_id",
     "sub_skill_id",
@@ -197,10 +208,15 @@ class PostgresHybridRetrievalRepository:
             KnowledgeChunkModel.review_state == ReviewState.REVIEWED,
             ExamConfigurationModel.active.is_(True),
             MediumModel.active.is_(True),
+            SubjectModel.active.is_(True),
             CurriculumVersionModel.active.is_(True),
+            SourceDocumentModel.active_for_ai.is_(True),
+            or_(KnowledgeChunkModel.unit_id.is_(None), CurriculumUnitModel.active.is_(True)),
+            or_(KnowledgeChunkModel.lesson_id.is_(None), CurriculumLessonModel.active.is_(True)),
             ExamConfigurationModel.grade == filters.grade,
             ExamConfigurationModel.id == filters.exam_id,
             MediumModel.id == filters.medium_id,
+            SubjectModel.id == filters.subject_id,
             CurriculumVersionModel.id == filters.curriculum_version_id,
             competency.id == filters.taxonomy.competency_id,
             or_(
@@ -241,6 +257,10 @@ class PostgresHybridRetrievalRepository:
             conditions.append(
                 KnowledgeChunkModel.learning_concept_id == filters.taxonomy.learning_concept_id
             )
+        if filters.unit_ids:
+            conditions.append(KnowledgeChunkModel.unit_id.in_(filters.unit_ids))
+        if filters.lesson_ids:
+            conditions.append(KnowledgeChunkModel.lesson_id.in_(filters.lesson_ids))
         return (
             select(
                 literal("knowledge_chunk").label("record_kind"),
@@ -249,7 +269,10 @@ class PostgresHybridRetrievalRepository:
                 ExamConfigurationModel.grade.label("grade"),
                 ExamConfigurationModel.id.label("exam_id"),
                 MediumModel.id.label("medium_id"),
+                SubjectModel.id.label("subject_id"),
                 CurriculumVersionModel.id.label("curriculum_version_id"),
+                KnowledgeChunkModel.unit_id.label("unit_id"),
+                KnowledgeChunkModel.lesson_id.label("lesson_id"),
                 KnowledgeChunkModel.competency_id.label("competency_id"),
                 KnowledgeChunkModel.skill_id.label("skill_id"),
                 KnowledgeChunkModel.sub_skill_id.label("sub_skill_id"),
@@ -268,6 +291,28 @@ class PostgresHybridRetrievalRepository:
                 ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
             )
             .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+            .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+            .join(
+                SourceDocumentModel,
+                SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
+            )
+            .outerjoin(
+                CurriculumUnitModel,
+                and_(
+                    CurriculumUnitModel.id == KnowledgeChunkModel.unit_id,
+                    CurriculumUnitModel.curriculum_version_id
+                    == KnowledgeChunkModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                CurriculumLessonModel,
+                and_(
+                    CurriculumLessonModel.id == KnowledgeChunkModel.lesson_id,
+                    CurriculumLessonModel.unit_id == KnowledgeChunkModel.unit_id,
+                    CurriculumLessonModel.curriculum_version_id
+                    == KnowledgeChunkModel.curriculum_version_id,
+                ),
+            )
             .join(
                 competency,
                 and_(
@@ -312,10 +357,18 @@ class PostgresHybridRetrievalRepository:
             HistoricalQuestionModel.review_state == ReviewState.REVIEWED,
             ExamConfigurationModel.active.is_(True),
             MediumModel.active.is_(True),
+            SubjectModel.active.is_(True),
             CurriculumVersionModel.active.is_(True),
+            SourceDocumentModel.active_for_ai.is_(True),
+            or_(HistoricalQuestionModel.unit_id.is_(None), CurriculumUnitModel.active.is_(True)),
+            or_(
+                HistoricalQuestionModel.lesson_id.is_(None),
+                CurriculumLessonModel.active.is_(True),
+            ),
             ExamConfigurationModel.grade == filters.grade,
             ExamConfigurationModel.id == filters.exam_id,
             MediumModel.id == filters.medium_id,
+            SubjectModel.id == filters.subject_id,
             CurriculumVersionModel.id == filters.curriculum_version_id,
             competency.id == filters.taxonomy.competency_id,
             or_(
@@ -356,6 +409,10 @@ class PostgresHybridRetrievalRepository:
             conditions.append(
                 HistoricalQuestionModel.learning_concept_id == filters.taxonomy.learning_concept_id
             )
+        if filters.unit_ids:
+            conditions.append(HistoricalQuestionModel.unit_id.in_(filters.unit_ids))
+        if filters.lesson_ids:
+            conditions.append(HistoricalQuestionModel.lesson_id.in_(filters.lesson_ids))
         return (
             select(
                 literal("historical_question").label("record_kind"),
@@ -364,7 +421,10 @@ class PostgresHybridRetrievalRepository:
                 ExamConfigurationModel.grade.label("grade"),
                 ExamConfigurationModel.id.label("exam_id"),
                 MediumModel.id.label("medium_id"),
+                SubjectModel.id.label("subject_id"),
                 CurriculumVersionModel.id.label("curriculum_version_id"),
+                HistoricalQuestionModel.unit_id.label("unit_id"),
+                HistoricalQuestionModel.lesson_id.label("lesson_id"),
                 HistoricalQuestionModel.competency_id.label("competency_id"),
                 HistoricalQuestionModel.skill_id.label("skill_id"),
                 HistoricalQuestionModel.sub_skill_id.label("sub_skill_id"),
@@ -383,6 +443,28 @@ class PostgresHybridRetrievalRepository:
                 ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
             )
             .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+            .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+            .join(
+                SourceDocumentModel,
+                SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
+            )
+            .outerjoin(
+                CurriculumUnitModel,
+                and_(
+                    CurriculumUnitModel.id == HistoricalQuestionModel.unit_id,
+                    CurriculumUnitModel.curriculum_version_id
+                    == HistoricalQuestionModel.curriculum_version_id,
+                ),
+            )
+            .outerjoin(
+                CurriculumLessonModel,
+                and_(
+                    CurriculumLessonModel.id == HistoricalQuestionModel.lesson_id,
+                    CurriculumLessonModel.unit_id == HistoricalQuestionModel.unit_id,
+                    CurriculumLessonModel.curriculum_version_id
+                    == HistoricalQuestionModel.curriculum_version_id,
+                ),
+            )
             .join(
                 competency,
                 and_(
@@ -574,7 +656,15 @@ class PostgresHybridRetrievalRepository:
                 grade=cast(int, row["grade"]),
                 exam_id=cast(UUID, row["exam_id"]),
                 medium_id=cast(UUID, row["medium_id"]),
+                subject_id=cast(
+                    UUID,
+                    row.get("subject_id", LEGACY_UNCLASSIFIED_SUBJECT_ID),
+                ),
                 curriculum_version_id=cast(UUID, row["curriculum_version_id"]),
+                unit_ids=(() if row.get("unit_id") is None else (cast(UUID, row["unit_id"]),)),
+                lesson_ids=(
+                    () if row.get("lesson_id") is None else (cast(UUID, row["lesson_id"]),)
+                ),
                 taxonomy=taxonomy,
             ),
             provenance=SourceProvenance(

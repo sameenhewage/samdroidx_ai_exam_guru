@@ -145,6 +145,27 @@ def test_paper_helper_reuses_the_canonical_validation_subject_without_losing_con
     )
 
 
+def test_paper_adapter_uses_the_selected_grade_age_bounds() -> None:
+    result = generation_result()
+    constraints = result.request.blueprint_slot.generation_constraints
+    grade_seven_scope = replace(constraints.curriculum_scope, grade=7)
+    grade_seven_slot = replace(
+        result.request.blueprint_slot,
+        generation_constraints=replace(constraints, curriculum_scope=grade_seven_scope),
+    )
+    grade_seven_result = replace(
+        result,
+        request=replace(result.request, blueprint_slot=grade_seven_slot),
+    )
+
+    validation_input = build_generation_validation_input(grade_seven_result)
+
+    assert (validation_input.blueprint.minimum_age, validation_input.blueprint.maximum_age) == (
+        11,
+        13,
+    )
+
+
 def test_passing_generation_and_report_become_only_a_validated_paper_candidate() -> None:
     result = generation_result()
     report = passing_report(result)

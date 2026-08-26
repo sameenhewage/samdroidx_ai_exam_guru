@@ -113,8 +113,26 @@ class BlueprintGenerationService:
     ) -> BlueprintCreationResult:
         scope = await self._require_curriculum_scope(curriculum_version_id)
         self._validate_scope(scope, specification)
-        if not (scope.curriculum_active and scope.exam_active and scope.medium_active):
+        if not (
+            scope.curriculum_active
+            and scope.exam_active
+            and scope.medium_active
+            and scope.subject_active
+        ):
             raise BlueprintCurriculumInactiveError(curriculum_version_id)
+        learning_scope = specification.curriculum_scope
+        if (
+            learning_scope.unit_ids or learning_scope.lesson_ids
+        ) and not await self._repository.learning_scope_exists(
+            curriculum_version_id,
+            learning_scope.unit_ids,
+            learning_scope.lesson_ids,
+        ):
+            raise BlueprintCurriculumScopeMismatchError(
+                "unit_ids_or_lesson_ids",
+                "active curriculum-owned selections",
+                "unknown, inactive, or cross-curriculum selections",
+            )
 
         node_ids = _taxonomy_node_ids(specification)
         taxonomy = await self._repository.list_taxonomy_nodes(
@@ -271,11 +289,13 @@ class BlueprintGenerationService:
             "curriculum_version_id": scope.curriculum_version_id,
             "grade": scope.grade,
             "medium": scope.medium,
+            "subject_id": scope.subject_id,
         }
         actual_values = {
             "curriculum_version_id": supplied.curriculum_version_id,
             "grade": supplied.grade,
             "medium": supplied.medium,
+            "subject_id": supplied.subject_id,
         }
         for field, expected in expected_values.items():
             actual = actual_values[field]

@@ -9,15 +9,18 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Protocol
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
 from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
@@ -338,6 +341,27 @@ class RetrievalExplorerService:
         return model.to_domain()
 
     async def _scope_exists(self, scope: RetrievalScope) -> bool:
+        if scope.unit_ids:
+            unit_count = await self._session.scalar(
+                select(func.count(CurriculumUnitModel.id)).where(
+                    CurriculumUnitModel.id.in_(scope.unit_ids),
+                    CurriculumUnitModel.curriculum_version_id == scope.curriculum_version_id,
+                    CurriculumUnitModel.active.is_(True),
+                )
+            )
+            if unit_count != len(scope.unit_ids):
+                return False
+        if scope.lesson_ids:
+            lesson_count = await self._session.scalar(
+                select(func.count(CurriculumLessonModel.id)).where(
+                    CurriculumLessonModel.id.in_(scope.lesson_ids),
+                    CurriculumLessonModel.curriculum_version_id == scope.curriculum_version_id,
+                    CurriculumLessonModel.unit_id.in_(scope.unit_ids),
+                    CurriculumLessonModel.active.is_(True),
+                )
+            )
+            if lesson_count != len(scope.lesson_ids):
+                return False
         competency = aliased(TaxonomyNodeModel, name="explorer_competency")
         statement = (
             select(CurriculumVersionModel.id)
@@ -346,6 +370,7 @@ class RetrievalExplorerService:
                 ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
             )
             .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+            .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
             .join(
                 competency,
                 and_(
@@ -363,6 +388,8 @@ class RetrievalExplorerService:
                 ExamConfigurationModel.active.is_(True),
                 MediumModel.id == scope.medium_id,
                 MediumModel.active.is_(True),
+                SubjectModel.id == scope.subject_id,
+                SubjectModel.active.is_(True),
                 CurriculumVersionModel.id == scope.curriculum_version_id,
                 CurriculumVersionModel.active.is_(True),
             )

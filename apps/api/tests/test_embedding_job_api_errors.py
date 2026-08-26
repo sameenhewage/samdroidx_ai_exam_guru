@@ -27,6 +27,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
     EmbeddingSourceNotReviewedError,
+    EmbeddingSourceRemovedError,
 )
 from exam_guru_api.knowledge.embedding_jobs import DeterministicEmbeddingDispatcher
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
@@ -68,6 +69,7 @@ class RollbackSession:
             "embedding_source_not_found",
         ),
         (EmbeddingSourceNotReviewedError(), 422, "embedding_source_not_reviewed"),
+        (EmbeddingSourceRemovedError(), 409, "embedding_source_removed_from_use"),
         (
             EmbeddingRequiresReviewedRecordError(RESOURCE_ID, ReviewState.DRAFT),
             422,

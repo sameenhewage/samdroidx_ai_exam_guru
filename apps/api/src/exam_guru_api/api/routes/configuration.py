@@ -10,6 +10,13 @@ from exam_guru_api.api.dependencies import get_database_session
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.curriculum.configuration_schemas import (
+    CurriculumLessonCreate,
+    CurriculumLessonResponse,
+    CurriculumLessonTaxonomyUpdate,
+    CurriculumLessonUpdate,
+    CurriculumUnitCreate,
+    CurriculumUnitResponse,
+    CurriculumUnitUpdate,
     CurriculumVersionCreate,
     CurriculumVersionResponse,
     CurriculumVersionUpdate,
@@ -19,13 +26,19 @@ from exam_guru_api.curriculum.configuration_schemas import (
     MediumCreate,
     MediumResponse,
     MediumUpdate,
+    SubjectCreate,
+    SubjectResponse,
+    SubjectUpdate,
 )
 from exam_guru_api.curriculum.configuration_service import (
     ConfigurationInactiveError,
     ConfigurationInUseError,
     ConfigurationNotFoundError,
+    ConfigurationScopeMismatchError,
     ConfigurationService,
 )
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+from exam_guru_api.curriculum.models import CurriculumVersionModel
 
 router = APIRouter()
 
@@ -176,6 +189,78 @@ async def deactivate_medium(
     return MediumResponse.model_validate(model)
 
 
+@router.get("/subjects", operation_id="list_subjects", response_model=list[SubjectResponse])
+async def list_subjects(
+    principal: Annotated[Principal, read_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> list[SubjectResponse]:
+    del principal
+    return [
+        SubjectResponse.model_validate(model)
+        for model in await ConfigurationService(session).list_subjects()
+    ]
+
+
+@router.post(
+    "/subjects",
+    operation_id="create_subject",
+    response_model=SubjectResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_subject(
+    request: SubjectCreate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> SubjectResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).create_subject(
+            request,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return SubjectResponse.model_validate(model)
+
+
+@router.patch(
+    "/subjects/{resource_id}",
+    operation_id="update_subject",
+    response_model=SubjectResponse,
+)
+async def update_subject(
+    resource_id: UUID,
+    request: SubjectUpdate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> SubjectResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).update_subject(
+            resource_id, request.name, actor_id=principal.subject_id
+        ),
+    )
+    return SubjectResponse.model_validate(model)
+
+
+@router.post(
+    "/subjects/{resource_id}/deactivate",
+    operation_id="deactivate_subject",
+    response_model=SubjectResponse,
+)
+async def deactivate_subject(
+    resource_id: UUID,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> SubjectResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).deactivate_subject(
+            resource_id, actor_id=principal.subject_id
+        ),
+    )
+    return SubjectResponse.model_validate(model)
+
+
 @router.get(
     "/curriculum-versions",
     operation_id="list_curriculum_versions",
@@ -187,7 +272,7 @@ async def list_curriculum_versions(
 ) -> list[CurriculumVersionResponse]:
     del principal
     return [
-        CurriculumVersionResponse.model_validate(model)
+        _curriculum_response(model)
         for model in await ConfigurationService(session).list_curricula()
     ]
 
@@ -209,7 +294,7 @@ async def create_curriculum_version(
             request, actor_id=principal.subject_id
         ),
     )
-    return CurriculumVersionResponse.model_validate(model)
+    return _curriculum_response(model)
 
 
 @router.patch(
@@ -229,7 +314,7 @@ async def update_curriculum_version(
             resource_id, request.title, actor_id=principal.subject_id
         ),
     )
-    return CurriculumVersionResponse.model_validate(model)
+    return _curriculum_response(model)
 
 
 @router.post(
@@ -248,6 +333,210 @@ async def deactivate_curriculum_version(
             resource_id, actor_id=principal.subject_id
         ),
     )
+    return _curriculum_response(model)
+
+
+@router.get(
+    "/curriculum-versions/{curriculum_version_id}/units",
+    operation_id="list_curriculum_units",
+    response_model=list[CurriculumUnitResponse],
+)
+async def list_curriculum_units(
+    curriculum_version_id: UUID,
+    principal: Annotated[Principal, read_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> list[CurriculumUnitResponse]:
+    del principal
+    models = await _write(
+        session,
+        lambda: ConfigurationService(session).list_units(curriculum_version_id),
+    )
+    return [CurriculumUnitResponse.model_validate(model) for model in models]
+
+
+@router.post(
+    "/curriculum-versions/{curriculum_version_id}/units",
+    operation_id="create_curriculum_unit",
+    response_model=CurriculumUnitResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_curriculum_unit(
+    curriculum_version_id: UUID,
+    request: CurriculumUnitCreate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumUnitResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).create_unit(
+            curriculum_version_id,
+            request,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumUnitResponse.model_validate(model)
+
+
+@router.patch(
+    "/curriculum-versions/{curriculum_version_id}/units/{unit_id}",
+    operation_id="update_curriculum_unit",
+    response_model=CurriculumUnitResponse,
+)
+async def update_curriculum_unit(
+    curriculum_version_id: UUID,
+    unit_id: UUID,
+    request: CurriculumUnitUpdate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumUnitResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).update_unit(
+            curriculum_version_id,
+            unit_id,
+            request.title,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumUnitResponse.model_validate(model)
+
+
+@router.post(
+    "/curriculum-versions/{curriculum_version_id}/units/{unit_id}/deactivate",
+    operation_id="deactivate_curriculum_unit",
+    response_model=CurriculumUnitResponse,
+)
+async def deactivate_curriculum_unit(
+    curriculum_version_id: UUID,
+    unit_id: UUID,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumUnitResponse:
+    model = await _write(
+        session,
+        lambda: ConfigurationService(session).deactivate_unit(
+            curriculum_version_id,
+            unit_id,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumUnitResponse.model_validate(model)
+
+
+@router.get(
+    "/curriculum-versions/{curriculum_version_id}/lessons",
+    operation_id="list_curriculum_lessons",
+    response_model=list[CurriculumLessonResponse],
+)
+async def list_curriculum_lessons(
+    curriculum_version_id: UUID,
+    principal: Annotated[Principal, read_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> list[CurriculumLessonResponse]:
+    del principal
+    records = await _write(
+        session,
+        lambda: ConfigurationService(session).list_lessons(curriculum_version_id),
+    )
+    return [CurriculumLessonResponse.model_validate(record) for record in records]
+
+
+@router.post(
+    "/curriculum-versions/{curriculum_version_id}/lessons",
+    operation_id="create_curriculum_lesson",
+    response_model=CurriculumLessonResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_curriculum_lesson(
+    curriculum_version_id: UUID,
+    request: CurriculumLessonCreate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumLessonResponse:
+    record = await _write(
+        session,
+        lambda: ConfigurationService(session).create_lesson(
+            curriculum_version_id,
+            request,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumLessonResponse.model_validate(record)
+
+
+@router.patch(
+    "/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}",
+    operation_id="update_curriculum_lesson",
+    response_model=CurriculumLessonResponse,
+)
+async def update_curriculum_lesson(
+    curriculum_version_id: UUID,
+    lesson_id: UUID,
+    request: CurriculumLessonUpdate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumLessonResponse:
+    record = await _write(
+        session,
+        lambda: ConfigurationService(session).update_lesson(
+            curriculum_version_id,
+            lesson_id,
+            request.title,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumLessonResponse.model_validate(record)
+
+
+@router.put(
+    "/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}/taxonomy",
+    operation_id="replace_curriculum_lesson_taxonomy",
+    response_model=CurriculumLessonResponse,
+)
+async def replace_curriculum_lesson_taxonomy(
+    curriculum_version_id: UUID,
+    lesson_id: UUID,
+    request: CurriculumLessonTaxonomyUpdate,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumLessonResponse:
+    record = await _write(
+        session,
+        lambda: ConfigurationService(session).replace_lesson_taxonomy(
+            curriculum_version_id,
+            lesson_id,
+            request.taxonomy_node_ids,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumLessonResponse.model_validate(record)
+
+
+@router.post(
+    "/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}/deactivate",
+    operation_id="deactivate_curriculum_lesson",
+    response_model=CurriculumLessonResponse,
+)
+async def deactivate_curriculum_lesson(
+    curriculum_version_id: UUID,
+    lesson_id: UUID,
+    principal: Annotated[Principal, write_principal()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> CurriculumLessonResponse:
+    record = await _write(
+        session,
+        lambda: ConfigurationService(session).deactivate_lesson(
+            curriculum_version_id,
+            lesson_id,
+            actor_id=principal.subject_id,
+        ),
+    )
+    return CurriculumLessonResponse.model_validate(record)
+
+
+def _curriculum_response(model: CurriculumVersionModel) -> CurriculumVersionResponse:
+    if model.subject_id is None:
+        model.subject_id = LEGACY_UNCLASSIFIED_SUBJECT_ID
     return CurriculumVersionResponse.model_validate(model)
 
 
@@ -271,6 +560,11 @@ async def _write[ModelT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "configuration_in_use", "resource_type": error.resource_type},
+        ) from error
+    except ConfigurationScopeMismatchError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "configuration_scope_mismatch", "resource_type": error.resource_type},
         ) from error
     except IntegrityError as error:
         await session.rollback()

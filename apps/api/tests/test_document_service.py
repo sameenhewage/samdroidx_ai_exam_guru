@@ -1,19 +1,35 @@
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumUnitModel,
+    CurriculumVersionModel,
+    SubjectModel,
+)
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.documents.schemas import MaterialScopeCorrectionRequest, MaterialStatus
 from exam_guru_api.documents.service import (
+    ConcurrentMaterialScopeVersionError,
+    InvalidMaterialRemovalReasonError,
+    MaterialScopeImmutableError,
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
+    SourceDocumentNotFoundError,
     SourceDocumentService,
+    SourceLearningScopeInactiveError,
+    SourceLearningScopeMismatchError,
+    SourceLearningScopeNotFoundError,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage, StoredObject
 
@@ -56,7 +72,12 @@ class StubSession:
     async def scalars(self, _query: object) -> ScalarRows:
         return ScalarRows(self.list_rows)
 
-    async def get(self, _model: object, _identifier: UUID) -> object | None:
+    async def get(
+        self,
+        _model: object,
+        _identifier: UUID,
+        **_kwargs: object,
+    ) -> object | None:
         return self.curriculum
 
     def add(self, model: object) -> None:
@@ -75,6 +96,50 @@ class StubSession:
         model.updated_at = now
 
 
+class ExecuteRows:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[object]:
+        return self._rows
+
+
+class MaterialSession:
+    def __init__(self) -> None:
+        self.objects: dict[tuple[type[object], UUID], object] = {}
+        self.scalar_results: list[object | None] = []
+        self.execute_results: list[list[object]] = []
+        self.added: list[object] = []
+        self.commits = 0
+
+    def put(self, value: object) -> None:
+        identifier = cast(Any, value).id
+        self.objects[(type(value), identifier)] = value
+
+    async def get(
+        self,
+        model: type[object],
+        identifier: UUID,
+        **_kwargs: object,
+    ) -> object | None:
+        return self.objects.get((model, identifier))
+
+    async def scalar(self, _query: object) -> object | None:
+        return self.scalar_results.pop(0)
+
+    async def execute(self, _query: object) -> ExecuteRows:
+        return ExecuteRows(self.execute_results.pop(0))
+
+    def add(self, value: object) -> None:
+        self.added.append(value)
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def refresh(self, _value: object) -> None:
+        return None
+
+
 def existing_document() -> SourceDocumentModel:
     now = datetime.now(UTC)
     return SourceDocumentModel(
@@ -87,6 +152,13 @@ def existing_document() -> SourceDocumentModel:
         document_type=SourceDocumentType.SYLLABUS,
         extraction_status=ExtractionStatus.UPLOADED,
         curriculum_version_id=None,
+        unit_id=None,
+        lesson_id=None,
+        active_for_ai=True,
+        removal_reason=None,
+        removed_by=None,
+        removed_at=None,
+        metadata_scope_version=0,
         year=None,
         paper_code=None,
         created_by=ACTOR_ID,
@@ -116,7 +188,7 @@ def test_source_document_service_lists_documents() -> None:
 def test_source_document_service_uploads_and_deduplicates() -> None:
     session = StubSession()
     storage = StubStorage()
-    session.scalar_results = [None]
+    session.scalar_results = [None, None]
 
     created = asyncio.run(
         service(session, storage).upload_pdf(
@@ -186,7 +258,7 @@ def test_source_document_service_recovers_unique_insert_race() -> None:
     session = StubSession()
     storage = StubStorage()
     raced = existing_document()
-    session.scalar_results = [None, raced]
+    session.scalar_results = [None, None, raced]
     session.fail_commit = True
 
     result = asyncio.run(
@@ -207,7 +279,7 @@ def test_source_document_service_recovers_unique_insert_race() -> None:
 def test_source_document_service_reraises_unresolved_insert_race() -> None:
     session = StubSession()
     storage = StubStorage()
-    session.scalar_results = [None, None]
+    session.scalar_results = [None, None, None]
     session.fail_commit = True
 
     with pytest.raises(IntegrityError):
@@ -219,4 +291,411 @@ def test_source_document_service_reraises_unresolved_insert_race() -> None:
                 document_type=SourceDocumentType.SYLLABUS,
                 actor_id=ACTOR_ID,
             )
+        )
+
+
+def test_material_remove_restore_is_audited_idempotent_and_cas_protected() -> None:
+    session = StubSession()
+    storage = StubStorage()
+    document = existing_document()
+    session.curriculum = document
+    material_service = service(session, storage)
+
+    removed = asyncio.run(
+        material_service.remove_from_ai_use(
+            document.id,
+            reason="Uploaded to the wrong grade",
+            expected_version=0,
+            actor_id=ACTOR_ID,
+        )
+    )
+    assert removed.active_for_ai is False
+    assert removed.metadata_scope_version == 1
+    assert removed.removal_reason == "Uploaded to the wrong grade"
+
+    with pytest.raises(ConcurrentMaterialScopeVersionError):
+        asyncio.run(
+            material_service.restore_to_ai_use(
+                document.id,
+                expected_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+
+    restored = asyncio.run(
+        material_service.restore_to_ai_use(
+            document.id,
+            expected_version=1,
+            actor_id=ACTOR_ID,
+        )
+    )
+    assert restored.active_for_ai is True
+    assert restored.metadata_scope_version == 2
+    assert restored.removal_reason is None
+    assert [item.action for item in session.added if isinstance(item, AdminAuditEventModel)] == [
+        "source_document.removed_from_ai_use",
+        "source_document.restored_to_ai_use",
+    ]
+
+
+@pytest.mark.parametrize("reason", ["", " padded", "x" * 513, "bad\nreason", cast(str, 1)])
+def test_material_remove_rejects_invalid_bounded_reasons(reason: str) -> None:
+    session = StubSession()
+    session.curriculum = existing_document()
+    with pytest.raises(InvalidMaterialRemovalReasonError):
+        asyncio.run(
+            service(session, StubStorage()).remove_from_ai_use(
+                UUID(int=2),
+                reason=reason,
+                expected_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+
+
+def test_material_use_idempotency_and_missing_resource_paths() -> None:
+    session = StubSession()
+    storage = StubStorage()
+    document = existing_document()
+    document.active_for_ai = False
+    document.removal_reason = "Already removed"
+    document.removed_by = ACTOR_ID
+    document.removed_at = datetime.now(UTC)
+    session.curriculum = document
+    material_service = service(session, storage)
+
+    assert (
+        asyncio.run(
+            material_service.remove_from_ai_use(
+                document.id,
+                reason="Repeated remove",
+                expected_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+        is document
+    )
+    document.active_for_ai = True
+    document.removal_reason = None
+    document.removed_by = None
+    document.removed_at = None
+    assert (
+        asyncio.run(
+            material_service.restore_to_ai_use(
+                document.id,
+                expected_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+        is document
+    )
+    session.curriculum = None
+    with pytest.raises(SourceDocumentNotFoundError):
+        asyncio.run(
+            material_service.remove_from_ai_use(
+                document.id,
+                reason="Missing",
+                expected_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+
+
+def test_material_scope_correction_is_server_validated_audited_and_provenance_safe() -> None:
+    session = MaterialSession()
+    storage = StubStorage()
+    now = datetime.now(UTC)
+    subject = SubjectModel(
+        id=UUID(int=300),
+        code="MATHEMATICS",
+        name="Mathematics",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    curriculum = CurriculumVersionModel(
+        id=UUID(int=301),
+        exam_configuration_id=UUID(int=302),
+        medium_id=UUID(int=303),
+        subject_id=subject.id,
+        code="G7-MATH",
+        title="Grade 7 Mathematics",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    unit = CurriculumUnitModel(
+        id=UUID(int=304),
+        curriculum_version_id=curriculum.id,
+        code="UNIT-1",
+        title="Numbers",
+        ordinal=1,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    lesson = CurriculumLessonModel(
+        id=UUID(int=305),
+        curriculum_version_id=curriculum.id,
+        unit_id=unit.id,
+        code="LESSON-1",
+        title="Whole numbers",
+        ordinal=1,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    document = existing_document()
+    document.created_at = now
+    session.put(subject)
+    session.put(curriculum)
+    session.put(unit)
+    session.put(lesson)
+    session.put(document)
+    session.scalar_results = [False]
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, storage),
+        max_upload_bytes=1_024,
+    )
+
+    corrected = asyncio.run(
+        material_service.correct_scope(
+            document.id,
+            curriculum_version_id=curriculum.id,
+            unit_id=unit.id,
+            lesson_id=lesson.id,
+            expected_version=0,
+            actor_id=ACTOR_ID,
+        )
+    )
+    assert (corrected.curriculum_version_id, corrected.unit_id, corrected.lesson_id) == (
+        curriculum.id,
+        unit.id,
+        lesson.id,
+    )
+    assert corrected.metadata_scope_version == 1
+    assert any(
+        isinstance(item, AdminAuditEventModel) and item.action == "source_document.scope_corrected"
+        for item in session.added
+    )
+    assert (
+        asyncio.run(
+            material_service.correct_scope(
+                document.id,
+                curriculum_version_id=curriculum.id,
+                unit_id=unit.id,
+                lesson_id=lesson.id,
+                expected_version=1,
+                actor_id=ACTOR_ID,
+            )
+        )
+        is document
+    )
+
+    document.extraction_status = ExtractionStatus.TRUSTED
+    session.scalar_results = [False]
+    with pytest.raises(MaterialScopeImmutableError):
+        asyncio.run(
+            material_service.correct_scope(
+                document.id,
+                curriculum_version_id=None,
+                unit_id=None,
+                lesson_id=None,
+                expected_version=1,
+                actor_id=ACTOR_ID,
+            )
+        )
+    document.extraction_status = ExtractionStatus.UPLOADED
+    session.scalar_results = [True]
+    with pytest.raises(MaterialScopeImmutableError):
+        asyncio.run(
+            material_service.correct_scope(
+                document.id,
+                curriculum_version_id=None,
+                unit_id=None,
+                lesson_id=None,
+                expected_version=1,
+                actor_id=ACTOR_ID,
+            )
+        )
+
+
+def test_material_learning_scope_validation_covers_every_consistency_boundary() -> None:
+    async def validate(
+        session: MaterialSession,
+        curriculum_id: UUID | None,
+        unit_id: UUID | None,
+        lesson_id: UUID | None,
+    ) -> None:
+        await SourceDocumentService(
+            cast(AsyncSession, session),
+            cast(ObjectStorage, StubStorage()),
+            max_upload_bytes=1_024,
+        )._validate_learning_scope(curriculum_id, unit_id, lesson_id)
+
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(validate(MaterialSession(), None, UUID(int=1), None))
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(validate(MaterialSession(), UUID(int=1), None, UUID(int=2)))
+    asyncio.run(validate(MaterialSession(), None, None, None))
+
+    session = MaterialSession()
+    with pytest.raises(SourceCurriculumNotFoundError):
+        asyncio.run(validate(session, UUID(int=10), None, None))
+    subject = SubjectModel(
+        id=UUID(int=11),
+        code="SCIENCE",
+        name="Science",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    curriculum = CurriculumVersionModel(
+        id=UUID(int=10),
+        exam_configuration_id=UUID(int=12),
+        medium_id=UUID(int=13),
+        subject_id=subject.id,
+        code="CURR",
+        title="Curriculum",
+        active=False,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    session.put(curriculum)
+    with pytest.raises(SourceCurriculumInactiveError):
+        asyncio.run(validate(session, curriculum.id, None, None))
+    curriculum.active = True
+    session.put(subject)
+    subject.active = False
+    with pytest.raises(SourceCurriculumInactiveError):
+        asyncio.run(validate(session, curriculum.id, None, None))
+    subject.active = True
+    asyncio.run(validate(session, curriculum.id, None, None))
+
+    unit = CurriculumUnitModel(
+        id=UUID(int=14),
+        curriculum_version_id=UUID(int=999),
+        code="UNIT",
+        title="Unit",
+        ordinal=1,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    session.put(unit)
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(validate(session, curriculum.id, unit.id, None))
+    unit.curriculum_version_id = curriculum.id
+    unit.active = False
+    with pytest.raises(SourceLearningScopeInactiveError):
+        asyncio.run(validate(session, curriculum.id, unit.id, None))
+    unit.active = True
+    with pytest.raises(SourceLearningScopeNotFoundError):
+        asyncio.run(validate(session, curriculum.id, UUID(int=404), None))
+    asyncio.run(validate(session, curriculum.id, unit.id, None))
+
+    lesson = CurriculumLessonModel(
+        id=UUID(int=15),
+        curriculum_version_id=UUID(int=999),
+        unit_id=unit.id,
+        code="LESSON",
+        title="Lesson",
+        ordinal=1,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    session.put(lesson)
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(validate(session, curriculum.id, unit.id, lesson.id))
+    lesson.curriculum_version_id = curriculum.id
+    lesson.unit_id = UUID(int=998)
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(validate(session, curriculum.id, unit.id, lesson.id))
+    lesson.unit_id = unit.id
+    lesson.active = False
+    with pytest.raises(SourceLearningScopeInactiveError):
+        asyncio.run(validate(session, curriculum.id, unit.id, lesson.id))
+    lesson.active = True
+    with pytest.raises(SourceLearningScopeNotFoundError):
+        asyncio.run(validate(session, curriculum.id, unit.id, UUID(int=405)))
+    asyncio.run(validate(session, curriculum.id, unit.id, lesson.id))
+
+
+def test_material_listing_summary_statuses_and_pagination_are_bounded() -> None:
+    session = MaterialSession()
+    storage = StubStorage()
+    now = datetime.now(UTC)
+    statuses = (
+        (ExtractionStatus.TRUSTED, True, MaterialStatus.READY_FOR_AI),
+        (ExtractionStatus.IN_REVIEW, True, MaterialStatus.NEEDS_REVIEW),
+        (ExtractionStatus.UPLOADED, True, MaterialStatus.PROCESSING),
+        (ExtractionStatus.TRUSTED, False, MaterialStatus.REMOVED),
+    )
+    rows: list[object] = []
+    for index, (extraction_status, active_for_ai, _) in enumerate(statuses, start=1):
+        document = existing_document()
+        document.id = UUID(int=400 + index)
+        document.original_filename = f"material-{index}.pdf"
+        document.extraction_status = extraction_status
+        document.active_for_ai = active_for_ai
+        document.created_at = now
+        rows.append(
+            (
+                document,
+                7,
+                UUID(int=500),
+                "Mathematics",
+                "English",
+                "Grade 7 Mathematics",
+                "Numbers",
+                "Whole numbers",
+            )
+        )
+    session.execute_results = [rows, [(7, 4, 1, 1, 1, 1, 1)]]
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, storage),
+        max_upload_bytes=1_024,
+    )
+    listed = asyncio.run(
+        material_service.list_materials(
+            grade=7,
+            subject_id=UUID(int=500),
+            limit=4,
+            offset=1,
+        )
+    )
+    assert tuple(item.status for item in listed) == tuple(item[2] for item in statuses)
+    summary = asyncio.run(material_service.grade_summary())
+    grade_seven = next(item for item in summary if item.grade == 7)
+    assert grade_seven.model_dump() == {
+        "grade": 7,
+        "material_count": 4,
+        "subject_count": 1,
+        "ready_count": 1,
+        "needs_review_count": 1,
+        "processing_count": 1,
+        "removed_count": 1,
+    }
+    assert next(item for item in summary if item.grade == 1).material_count == 0
+    session.execute_results = [[]]
+    assert asyncio.run(material_service.list_materials()) == ()
+    with pytest.raises(ValueError, match="pagination"):
+        asyncio.run(material_service.list_materials(limit=0))
+
+
+def test_material_scope_request_shape_rejects_forged_lesson_relationships() -> None:
+    with pytest.raises(ValidationError, match="unit_id requires curriculum_version_id"):
+        MaterialScopeCorrectionRequest(
+            curriculum_version_id=None,
+            unit_id=UUID(int=1),
+            expected_version=0,
+        )
+    with pytest.raises(ValidationError, match="lesson_id requires unit_id"):
+        MaterialScopeCorrectionRequest(
+            curriculum_version_id=UUID(int=1),
+            lesson_id=UUID(int=2),
+            expected_version=0,
         )

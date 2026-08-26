@@ -195,6 +195,8 @@ class EmbeddingConfigurationMetadataResponse(BaseModel):
 class HistoricalQuestionResponse(BaseModel):
     id: UUID
     curriculum_version_id: UUID
+    unit_id: UUID | None
+    lesson_id: UUID | None
     year: int
     paper_code: str
     question_number: str
@@ -230,6 +232,8 @@ class HistoricalQuestionResponse(BaseModel):
         return cls(
             id=question.id,
             curriculum_version_id=question.curriculum_version_id,
+            unit_id=question.unit_id,
+            lesson_id=question.lesson_id,
             year=question.year,
             paper_code=question.paper_code,
             question_number=question.question_number,
@@ -277,6 +281,8 @@ class HistoricalQuestionResponse(BaseModel):
 class KnowledgeChunkResponse(BaseModel):
     id: UUID
     curriculum_version_id: UUID
+    unit_id: UUID | None
+    lesson_id: UUID | None
     chunk_type: ChunkType
     text: str
     educational_boundary: str
@@ -301,6 +307,8 @@ class KnowledgeChunkResponse(BaseModel):
         return cls(
             id=chunk.id,
             curriculum_version_id=chunk.curriculum_version_id,
+            unit_id=chunk.unit_id,
+            lesson_id=chunk.lesson_id,
             chunk_type=chunk.chunk_type,
             text=chunk.text,
             educational_boundary=chunk.educational_boundary,

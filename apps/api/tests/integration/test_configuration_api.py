@@ -167,13 +167,160 @@ def test_authorized_configuration_management_and_transactional_audit(
 
 
 @pytest.mark.integration
+def test_grade_seven_subject_unit_lesson_configuration_and_deactivation_rules(
+    configuration_database_url: str,
+) -> None:
+    with configuration_client(configuration_database_url) as client:
+        forbidden = client.post(
+            "/api/v1/admin/subjects",
+            json={"code": "FORBIDDEN", "name": "Forbidden"},
+            headers=auth("reviewer"),
+        )
+        subject = client.post(
+            "/api/v1/admin/subjects",
+            json={"code": "MATHEMATICS", "name": "Mathematics"},
+            headers=auth("admin"),
+        )
+        exam = client.post(
+            "/api/v1/admin/exam-configurations",
+            json={"code": "Z-SCHOOL-G7", "name": "School Grade 7", "grade": 7},
+            headers=auth("admin"),
+        )
+        medium = client.post(
+            "/api/v1/admin/media",
+            json={"code": "zz-en", "name": "English"},
+            headers=auth("admin"),
+        )
+        curriculum = client.post(
+            "/api/v1/admin/curriculum-versions",
+            json={
+                "exam_configuration_id": exam.json()["id"],
+                "medium_id": medium.json()["id"],
+                "subject_id": subject.json()["id"],
+                "code": "Z-G7-MATH-V1",
+                "title": "Grade 7 Mathematics",
+            },
+            headers=auth("admin"),
+        )
+        unit = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}/units",
+            json={"code": "UNIT-01", "title": "Numbers", "ordinal": 1},
+            headers=auth("admin"),
+        )
+        lesson = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}/lessons",
+            json={
+                "unit_id": unit.json()["id"],
+                "code": "LESSON-01",
+                "title": "Whole numbers",
+                "ordinal": 1,
+                "taxonomy_node_ids": [],
+            },
+            headers=auth("admin"),
+        )
+        listed_subjects = client.get("/api/v1/admin/subjects", headers=auth("reviewer"))
+        listed_units = client.get(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}/units",
+            headers=auth("reviewer"),
+        )
+        updated_subject = client.patch(
+            f"/api/v1/admin/subjects/{subject.json()['id']}",
+            json={"name": "Mathematics updated"},
+            headers=auth("admin"),
+        )
+        updated_unit = client.patch(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/units/{unit.json()['id']}",
+            json={"title": "Numbers updated"},
+            headers=auth("admin"),
+        )
+        updated_lesson = client.patch(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/lessons/{lesson.json()['id']}",
+            json={"title": "Whole numbers updated"},
+            headers=auth("admin"),
+        )
+        mapped_lesson = client.put(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/lessons/{lesson.json()['id']}/taxonomy",
+            json={"taxonomy_node_ids": []},
+            headers=auth("admin"),
+        )
+        listed_lessons = client.get(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}/lessons",
+            headers=auth("reviewer"),
+        )
+        blocked_subject = client.post(
+            f"/api/v1/admin/subjects/{subject.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+        blocked_unit = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/units/{unit.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+        deactivated_lesson = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/lessons/{lesson.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+        deactivated_unit = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}"
+            f"/units/{unit.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+        deactivated_curriculum = client.post(
+            f"/api/v1/admin/curriculum-versions/{curriculum.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+        deactivated_subject = client.post(
+            f"/api/v1/admin/subjects/{subject.json()['id']}/deactivate",
+            headers=auth("admin"),
+        )
+
+    assert forbidden.status_code == 403
+    assert subject.status_code == 201
+    assert exam.status_code == 201
+    assert exam.json()["grade"] == 7
+    assert curriculum.status_code == 201
+    assert curriculum.json()["subject_id"] == subject.json()["id"]
+    assert unit.status_code == 201
+    assert lesson.status_code == 201
+    assert lesson.json()["unit_id"] == unit.json()["id"]
+    assert lesson.json()["taxonomy_node_ids"] == []
+    assert listed_subjects.status_code == 200
+    assert subject.json()["id"] in {item["id"] for item in listed_subjects.json()}
+    assert listed_units.status_code == 200
+    assert [item["id"] for item in listed_units.json()] == [unit.json()["id"]]
+    assert updated_subject.json()["name"] == "Mathematics updated"
+    assert updated_unit.json()["title"] == "Numbers updated"
+    assert updated_lesson.json()["title"] == "Whole numbers updated"
+    assert mapped_lesson.status_code == 200
+    assert mapped_lesson.json()["taxonomy_node_ids"] == []
+    assert listed_lessons.status_code == 200
+    assert [item["title"] for item in listed_lessons.json()] == ["Whole numbers updated"]
+    assert blocked_subject.status_code == 409
+    assert blocked_subject.json()["detail"]["code"] == "configuration_in_use"
+    assert blocked_unit.status_code == 409
+    assert blocked_unit.json()["detail"]["code"] == "configuration_in_use"
+    assert deactivated_lesson.status_code == 200
+    assert deactivated_lesson.json()["active"] is False
+    assert deactivated_unit.status_code == 200
+    assert deactivated_unit.json()["active"] is False
+    assert deactivated_curriculum.status_code == 200
+    assert deactivated_curriculum.json()["active"] is False
+    assert deactivated_subject.status_code == 200
+    assert deactivated_subject.json()["active"] is False
+
+
+@pytest.mark.integration
 def test_configuration_validation_conflicts_and_safe_deactivation(
     configuration_database_url: str,
 ) -> None:
     with configuration_client(configuration_database_url) as client:
         invalid_grade = client.post(
             "/api/v1/admin/exam-configurations",
-            json={"code": "G6", "name": "Invalid", "grade": 6},
+            json={"code": "G14", "name": "Invalid", "grade": 14},
             headers=auth("admin"),
         )
         duplicate_exam = client.post(

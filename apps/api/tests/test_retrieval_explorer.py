@@ -273,6 +273,37 @@ def test_scope_validation_accepts_a_complete_active_taxonomy_chain() -> None:
     assert len(session.statements) == 1
 
 
+def test_scope_validation_checks_every_selected_unit_and_lesson_before_taxonomy() -> None:
+    selected_scope = replace(
+        grade_five_scope(),
+        unit_ids=(UUID(int=701),),
+        lesson_ids=(UUID(int=702),),
+    )
+    valid = ScalarSession((1, 1, UUID(int=700)))
+    assert asyncio.run(
+        RetrievalExplorerService(cast(AsyncSession, valid), _registry())._scope_exists(
+            selected_scope
+        )
+    )
+    assert len(valid.statements) == 3
+
+    missing_unit = ScalarSession((0,))
+    assert not asyncio.run(
+        RetrievalExplorerService(cast(AsyncSession, missing_unit), _registry())._scope_exists(
+            selected_scope
+        )
+    )
+    assert len(missing_unit.statements) == 1
+
+    missing_lesson = ScalarSession((1, 0))
+    assert not asyncio.run(
+        RetrievalExplorerService(cast(AsyncSession, missing_lesson), _registry())._scope_exists(
+            selected_scope
+        )
+    )
+    assert len(missing_lesson.statements) == 2
+
+
 @pytest.mark.parametrize(
     ("values", "error", "failure_code"),
     [

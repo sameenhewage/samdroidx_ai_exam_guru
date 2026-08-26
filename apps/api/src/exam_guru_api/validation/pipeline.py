@@ -24,7 +24,7 @@ from exam_guru_api.validation.validators import (
     SchemaCompletenessValidator,
 )
 
-DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v2"
+DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v3"
 
 
 class QuestionValidator(Protocol):

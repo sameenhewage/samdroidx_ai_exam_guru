@@ -215,7 +215,12 @@ class GenerationRunService:
         scope = await self._repository.get_scope(curriculum_version_id)
         if scope is None:
             raise GenerationCurriculumNotFoundError(curriculum_version_id)
-        if not (scope.curriculum_active and scope.exam_active and scope.medium_active):
+        if not (
+            scope.curriculum_active
+            and scope.exam_active
+            and scope.medium_active
+            and scope.subject_active
+        ):
             raise GenerationCurriculumInactiveError(curriculum_version_id)
 
         predecessor: GenerationRunModel | None = None
@@ -240,6 +245,7 @@ class GenerationRunService:
             blueprint.curriculum_scope.curriculum_version_id != curriculum_version_id
             or blueprint.curriculum_scope.grade != scope.grade
             or blueprint.curriculum_scope.medium != scope.medium
+            or blueprint.curriculum_scope.subject_id != scope.subject_id
             or blueprint.version.blueprint_id != blueprint_model.blueprint_id
         ):
             raise GenerationBlueprintScopeMismatchError(paper_blueprint_id)
@@ -467,9 +473,15 @@ class GenerationRunService:
                 raise GenerationContextNotReviewedError(record.id)
             if (
                 record.source_status is not ExtractionStatus.TRUSTED
+                or not record.source_active_for_ai
                 or record.source_block_id is None
             ):
                 raise GenerationContextSourceUntrustedError(record.id)
+            selected_scope = slot.generation_constraints.curriculum_scope
+            if selected_scope.unit_ids and record.unit_id not in selected_scope.unit_ids:
+                raise GenerationContextCrossCurriculumError(record.id)
+            if selected_scope.lesson_ids and record.lesson_id not in selected_scope.lesson_ids:
+                raise GenerationContextCrossCurriculumError(record.id)
             if not _taxonomy_matches(record, slot.taxonomy_target):
                 raise GenerationContextTaxonomyMismatchError(record.id)
         return ordered
@@ -1159,6 +1171,10 @@ def _context_snapshot(
                     "page_number": provenance.page_number,
                     "chunk_id": provenance.chunk_id,
                     "source_block_id": str(record.source_block_id),
+                },
+                "learning_scope": {
+                    "unit_id": _optional_uuid(record.unit_id),
+                    "lesson_id": _optional_uuid(record.lesson_id),
                 },
                 "taxonomy": {
                     "competency_id": _optional_uuid(record.competency_id),

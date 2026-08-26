@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.curriculum.models import CurriculumVersionModel
+from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import (
     EmbeddingJobModel,
@@ -35,6 +36,7 @@ class EmbeddingSourceRecord:
     review_state: ReviewState
     text: str
     version: int
+    active_for_ai: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +71,14 @@ class SqlAlchemyEmbeddingJobRepository:
             questions = tuple(
                 await self._session.scalars(
                     select(HistoricalQuestionModel)
-                    .where(HistoricalQuestionModel.id.in_(historical_question_ids))
+                    .join(
+                        SourceDocumentModel,
+                        SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
+                    )
+                    .where(
+                        HistoricalQuestionModel.id.in_(historical_question_ids),
+                        SourceDocumentModel.active_for_ai.is_(True),
+                    )
                     .order_by(HistoricalQuestionModel.id)
                 )
             )
@@ -88,7 +97,14 @@ class SqlAlchemyEmbeddingJobRepository:
             chunks = tuple(
                 await self._session.scalars(
                     select(KnowledgeChunkModel)
-                    .where(KnowledgeChunkModel.id.in_(knowledge_chunk_ids))
+                    .join(
+                        SourceDocumentModel,
+                        SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
+                    )
+                    .where(
+                        KnowledgeChunkModel.id.in_(knowledge_chunk_ids),
+                        SourceDocumentModel.active_for_ai.is_(True),
+                    )
                     .order_by(KnowledgeChunkModel.id)
                 )
             )

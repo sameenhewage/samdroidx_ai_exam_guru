@@ -1063,6 +1063,18 @@
             "title": "File",
             "type": "string"
           },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
           "paper_code": {
             "anyOf": [
               {
@@ -1074,6 +1086,18 @@
               }
             ],
             "title": "Paper Code"
+          },
+          "unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Id"
           },
           "year": {
             "anyOf": [
@@ -1224,6 +1248,155 @@
         "title": "ContextTrust",
         "type": "string"
       },
+      "CurriculumLessonCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9]+(?:[._-][A-Z0-9]+)*$",
+            "title": "Code",
+            "type": "string"
+          },
+          "ordinal": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "taxonomy_node_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Taxonomy Node Ids",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit_id",
+          "code",
+          "title",
+          "ordinal"
+        ],
+        "title": "CurriculumLessonCreate",
+        "type": "object"
+      },
+      "CurriculumLessonResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "taxonomy_node_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Taxonomy Node Ids",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "unit_id",
+          "code",
+          "title",
+          "ordinal",
+          "active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CurriculumLessonResponse",
+        "type": "object"
+      },
+      "CurriculumLessonTaxonomyUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "taxonomy_node_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Taxonomy Node Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "taxonomy_node_ids"
+        ],
+        "title": "CurriculumLessonTaxonomyUpdate",
+        "type": "object"
+      },
+      "CurriculumLessonUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CurriculumLessonUpdate",
+        "type": "object"
+      },
       "CurriculumScopeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1238,12 +1411,38 @@
             "title": "Grade",
             "type": "integer"
           },
+          "lesson_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Lesson Ids",
+            "type": "array"
+          },
           "medium": {
             "maxLength": 16,
             "minLength": 2,
             "pattern": "^[a-z][a-z0-9-]+$",
             "title": "Medium",
             "type": "string"
+          },
+          "subject_id": {
+            "default": "00000000-0000-5000-8000-000000000023",
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "unit_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Unit Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -1266,9 +1465,31 @@
             "title": "Grade",
             "type": "integer"
           },
+          "lesson_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Lesson Ids",
+            "type": "array"
+          },
           "medium": {
             "title": "Medium",
             "type": "string"
+          },
+          "subject_id": {
+            "default": "00000000-0000-5000-8000-000000000023",
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "unit_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unit Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -1277,6 +1498,105 @@
           "medium"
         ],
         "title": "CurriculumScopeResponse",
+        "type": "object"
+      },
+      "CurriculumUnitCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9]+(?:[._-][A-Z0-9]+)*$",
+            "title": "Code",
+            "type": "string"
+          },
+          "ordinal": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "title",
+          "ordinal"
+        ],
+        "title": "CurriculumUnitCreate",
+        "type": "object"
+      },
+      "CurriculumUnitResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "curriculum_version_id",
+          "code",
+          "title",
+          "ordinal",
+          "active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CurriculumUnitResponse",
+        "type": "object"
+      },
+      "CurriculumUnitUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CurriculumUnitUpdate",
         "type": "object"
       },
       "CurriculumVersionCreate": {
@@ -1297,6 +1617,12 @@
           "medium_id": {
             "format": "uuid",
             "title": "Medium Id",
+            "type": "string"
+          },
+          "subject_id": {
+            "default": "00000000-0000-5000-8000-000000000023",
+            "format": "uuid",
+            "title": "Subject Id",
             "type": "string"
           },
           "title": {
@@ -1345,6 +1671,11 @@
             "title": "Medium Id",
             "type": "string"
           },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -1359,6 +1690,7 @@
           "id",
           "exam_configuration_id",
           "medium_id",
+          "subject_id",
           "code",
           "title",
           "active",
@@ -2015,7 +2347,8 @@
             "type": "string"
           },
           "grade": {
-            "const": 5,
+            "maximum": 13.0,
+            "minimum": 1.0,
             "title": "Grade",
             "type": "integer"
           },
@@ -3770,6 +4103,18 @@
             "title": "Id",
             "type": "string"
           },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
           "marking_data": {
             "anyOf": [
               {
@@ -3859,6 +4204,18 @@
             "title": "Text",
             "type": "string"
           },
+          "unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Id"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -3876,6 +4233,8 @@
         "required": [
           "id",
           "curriculum_version_id",
+          "unit_id",
+          "lesson_id",
           "year",
           "paper_code",
           "question_number",
@@ -4126,6 +4485,18 @@
             "title": "Id",
             "type": "string"
           },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
           "provenance": {
             "$ref": "#/components/schemas/KnowledgeProvenanceResponse"
           },
@@ -4140,6 +4511,18 @@
             "title": "Text",
             "type": "string"
           },
+          "unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Id"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -4153,6 +4536,8 @@
         "required": [
           "id",
           "curriculum_version_id",
+          "unit_id",
+          "lesson_id",
           "chunk_type",
           "text",
           "educational_boundary",
@@ -4421,6 +4806,311 @@
         ],
         "title": "LeakageAuditResponse",
         "type": "object"
+      },
+      "MaterialGradeSummaryResponse": {
+        "properties": {
+          "grade": {
+            "maximum": 13.0,
+            "minimum": 1.0,
+            "title": "Grade",
+            "type": "integer"
+          },
+          "material_count": {
+            "minimum": 0.0,
+            "title": "Material Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "minimum": 0.0,
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "processing_count": {
+            "minimum": 0.0,
+            "title": "Processing Count",
+            "type": "integer"
+          },
+          "ready_count": {
+            "minimum": 0.0,
+            "title": "Ready Count",
+            "type": "integer"
+          },
+          "removed_count": {
+            "minimum": 0.0,
+            "title": "Removed Count",
+            "type": "integer"
+          },
+          "subject_count": {
+            "minimum": 0.0,
+            "title": "Subject Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "grade",
+          "material_count",
+          "subject_count",
+          "ready_count",
+          "needs_review_count",
+          "processing_count",
+          "removed_count"
+        ],
+        "title": "MaterialGradeSummaryResponse",
+        "type": "object"
+      },
+      "MaterialListItemResponse": {
+        "properties": {
+          "curriculum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson"
+          },
+          "material_type": {
+            "$ref": "#/components/schemas/SourceDocumentType"
+          },
+          "medium": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Medium"
+          },
+          "metadata_scope_version": {
+            "title": "Metadata Scope Version",
+            "type": "integer"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MaterialStatus"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "title": "Uploaded At",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "grade",
+          "subject_id",
+          "subject",
+          "medium",
+          "curriculum",
+          "unit",
+          "lesson",
+          "material_type",
+          "status",
+          "year",
+          "page_count",
+          "uploaded_at",
+          "metadata_scope_version"
+        ],
+        "title": "MaterialListItemResponse",
+        "type": "object"
+      },
+      "MaterialRemoveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "expected_version"
+        ],
+        "title": "MaterialRemoveRequest",
+        "type": "object"
+      },
+      "MaterialRestoreRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "MaterialRestoreRequest",
+        "type": "object"
+      },
+      "MaterialScopeCorrectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Version Id"
+          },
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Id"
+          }
+        },
+        "required": [
+          "curriculum_version_id",
+          "expected_version"
+        ],
+        "title": "MaterialScopeCorrectionRequest",
+        "type": "object"
+      },
+      "MaterialStatus": {
+        "enum": [
+          "processing",
+          "needs_review",
+          "ready_for_ai",
+          "removed"
+        ],
+        "title": "MaterialStatus",
+        "type": "string"
+      },
+      "MaterialUseState": {
+        "enum": [
+          "active",
+          "removed"
+        ],
+        "title": "MaterialUseState",
+        "type": "string"
       },
       "MediumCreate": {
         "additionalProperties": false,
@@ -6995,17 +7685,44 @@
             "type": "string"
           },
           "grade": {
-            "const": 5,
+            "maximum": 13.0,
+            "minimum": 1.0,
             "title": "Grade",
             "type": "integer"
+          },
+          "lesson_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Lesson Ids",
+            "type": "array"
           },
           "medium_id": {
             "format": "uuid",
             "title": "Medium Id",
             "type": "string"
           },
+          "subject_id": {
+            "default": "00000000-0000-5000-8000-000000000023",
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
           "taxonomy": {
             "$ref": "#/components/schemas/RetrievalTaxonomyScopeRequest"
+          },
+          "unit_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Unit Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -7034,20 +7751,44 @@
             "title": "Grade",
             "type": "integer"
           },
+          "lesson_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Lesson Ids",
+            "type": "array"
+          },
           "medium_id": {
             "format": "uuid",
             "title": "Medium Id",
             "type": "string"
           },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
           "taxonomy": {
             "$ref": "#/components/schemas/RetrievalTaxonomyScopeResponse"
+          },
+          "unit_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unit Ids",
+            "type": "array"
           }
         },
         "required": [
           "grade",
           "exam_id",
           "medium_id",
+          "subject_id",
           "curriculum_version_id",
+          "unit_ids",
+          "lesson_ids",
           "taxonomy"
         ],
         "title": "RetrievalScopeResponse",
@@ -8024,6 +8765,10 @@
       },
       "SourceDocumentResponse": {
         "properties": {
+          "active_for_ai": {
+            "title": "Active For Ai",
+            "type": "boolean"
+          },
           "checksum_sha256": {
             "title": "Checksum Sha256",
             "type": "string"
@@ -8183,6 +8928,34 @@
             "title": "Id",
             "type": "string"
           },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "likely_metadata_duplicate_of_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Likely Metadata Duplicate Of Id"
+          },
+          "metadata_scope_version": {
+            "title": "Metadata Scope Version",
+            "type": "integer"
+          },
           "native_text_page_ratio": {
             "anyOf": [
               {
@@ -8231,9 +9004,71 @@
             ],
             "title": "Paper Code"
           },
+          "removal_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removal Reason"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
+          },
+          "removed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed By"
+          },
           "size_bytes": {
             "title": "Size Bytes",
             "type": "integer"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Id"
+          },
+          "use_state": {
+            "$ref": "#/components/schemas/MaterialUseState"
           },
           "year": {
             "anyOf": [
@@ -8256,6 +9091,14 @@
           "document_type",
           "extraction_status",
           "curriculum_version_id",
+          "unit_id",
+          "lesson_id",
+          "active_for_ai",
+          "use_state",
+          "removal_reason",
+          "removed_by",
+          "removed_at",
+          "metadata_scope_version",
           "year",
           "paper_code",
           "extraction_attempt_count",
@@ -8516,6 +9359,87 @@
           "failure_codes"
         ],
         "title": "StorageReconciliationOperationsResponse",
+        "type": "object"
+      },
+      "SubjectCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9]+(?:[._-][A-Z0-9]+)*$",
+            "title": "Code",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "SubjectCreate",
+        "type": "object"
+      },
+      "SubjectResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SubjectResponse",
+        "type": "object"
+      },
+      "SubjectUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SubjectUpdate",
         "type": "object"
       },
       "SyllabusSkillResponse": {
@@ -14465,6 +15389,542 @@
         ]
       }
     },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons": {
+      "get": {
+        "operationId": "list_curriculum_lessons",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CurriculumLessonResponse"
+                  },
+                  "title": "Response List Curriculum Lessons",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Curriculum Lessons",
+        "tags": [
+          "admin-configuration"
+        ]
+      },
+      "post": {
+        "operationId": "create_curriculum_lesson",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumLessonCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Curriculum Lesson",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}": {
+      "patch": {
+        "operationId": "update_curriculum_lesson",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumLessonUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Curriculum Lesson",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_curriculum_lesson",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate Curriculum Lesson",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons/{lesson_id}/taxonomy": {
+      "put": {
+        "operationId": "replace_curriculum_lesson_taxonomy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumLessonTaxonomyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Curriculum Lesson Taxonomy",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/units": {
+      "get": {
+        "operationId": "list_curriculum_units",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CurriculumUnitResponse"
+                  },
+                  "title": "Response List Curriculum Units",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Curriculum Units",
+        "tags": [
+          "admin-configuration"
+        ]
+      },
+      "post": {
+        "operationId": "create_curriculum_unit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumUnitCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumUnitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Curriculum Unit",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/units/{unit_id}": {
+      "patch": {
+        "operationId": "update_curriculum_unit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumUnitUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumUnitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Curriculum Unit",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/curriculum-versions/{curriculum_version_id}/units/{unit_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_curriculum_unit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumUnitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate Curriculum Unit",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
     "/api/v1/admin/curriculum-versions/{resource_id}": {
       "patch": {
         "operationId": "update_curriculum_version",
@@ -14748,6 +16208,311 @@
         "summary": "Deactivate Exam Configuration",
         "tags": [
           "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/materials": {
+      "get": {
+        "operationId": "list_materials",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 13,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MaterialListItemResponse"
+                  },
+                  "title": "Response List Materials",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Materials",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/grade-summary": {
+      "get": {
+        "operationId": "list_material_grade_summary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MaterialGradeSummaryResponse"
+                  },
+                  "title": "Response List Material Grade Summary",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Material Grade Summary",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/remove-from-use": {
+      "post": {
+        "operationId": "remove_material_from_use",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRemoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Material From Use",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/restore": {
+      "post": {
+        "operationId": "restore_material_to_use",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Material To Use",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/scope": {
+      "patch": {
+        "operationId": "correct_material_scope",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialScopeCorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct Material Scope",
+        "tags": [
+          "admin-documents"
         ]
       }
     },
@@ -15609,6 +17374,186 @@
         "summary": "Trust Source Document",
         "tags": [
           "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/subjects": {
+      "get": {
+        "operationId": "list_subjects",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubjectResponse"
+                  },
+                  "title": "Response List Subjects",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Subjects",
+        "tags": [
+          "admin-configuration"
+        ]
+      },
+      "post": {
+        "operationId": "create_subject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Subject",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/subjects/{resource_id}": {
+      "patch": {
+        "operationId": "update_subject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Subject",
+        "tags": [
+          "admin-configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/subjects/{resource_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_subject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Deactivate Subject",
+        "tags": [
+          "admin-configuration"
         ]
       }
     },

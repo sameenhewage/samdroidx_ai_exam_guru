@@ -163,6 +163,27 @@ def test_repository_reports_missing_and_both_absent_and_mismatched_collisions() 
     asyncio.run(exercise())
 
 
+def test_repository_validates_selected_unit_and_lesson_scope_counts() -> None:
+    async def exercise() -> None:
+        curriculum_id = UUID(int=9)
+        unit_ids = (UUID(int=10), UUID(int=11))
+        lesson_ids = (UUID(int=12),)
+        assert await SqlAlchemyBlueprintRepository(
+            cast(AsyncSession, ScriptedSession())
+        ).learning_scope_exists(curriculum_id, (), ())
+        assert not await SqlAlchemyBlueprintRepository(
+            cast(AsyncSession, ScriptedSession(scalar_results=(1,)))
+        ).learning_scope_exists(curriculum_id, unit_ids, ())
+        assert not await SqlAlchemyBlueprintRepository(
+            cast(AsyncSession, ScriptedSession(scalar_results=(2, 0)))
+        ).learning_scope_exists(curriculum_id, unit_ids, lesson_ids)
+        assert await SqlAlchemyBlueprintRepository(
+            cast(AsyncSession, ScriptedSession(scalar_results=(2, 1)))
+        ).learning_scope_exists(curriculum_id, unit_ids, lesson_ids)
+
+    asyncio.run(exercise())
+
+
 def test_repository_loads_curriculum_taxonomy_and_analytics_evidence() -> None:
     async def exercise() -> None:
         curriculum_id = UUID(int=10)

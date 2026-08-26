@@ -5,6 +5,8 @@ from enum import StrEnum
 from uuid import UUID
 
 _CODE_PATTERN = re.compile(r"[A-Z0-9]+(?:[._-][A-Z0-9]+)*")
+LEGACY_UNCLASSIFIED_SUBJECT_ID = UUID("00000000-0000-5000-8000-000000000023")
+LEGACY_UNCLASSIFIED_SUBJECT_CODE = "LEGACY_UNCLASSIFIED"
 
 
 class TaxonomyLevel(StrEnum):

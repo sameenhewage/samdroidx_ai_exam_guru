@@ -5,7 +5,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
+from exam_guru_api.curriculum.domain import (
+    LEGACY_UNCLASSIFIED_SUBJECT_ID,
+    TaxonomyLevel,
+    TaxonomyReviewState,
+)
 
 from .domain import (
     BlueprintSpecification,
@@ -37,6 +41,9 @@ class CurriculumScopeRequest(_StrictModel):
     curriculum_version_id: UUID
     grade: Annotated[int, Field(strict=True, ge=1, le=13)]
     medium: Annotated[str, Field(min_length=2, max_length=16, pattern=r"^[a-z][a-z0-9-]+$")]
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    unit_ids: tuple[UUID, ...] = Field(default=(), max_length=100)
+    lesson_ids: tuple[UUID, ...] = Field(default=(), max_length=500)
 
 
 class TaxonomyTargetRequest(_StrictModel):
@@ -193,6 +200,9 @@ class CurriculumScopeResponse(_FrozenStrictModel):
     curriculum_version_id: UUID
     grade: int
     medium: str
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    unit_ids: list[UUID] = Field(default_factory=list)
+    lesson_ids: list[UUID] = Field(default_factory=list)
 
 
 class TaxonomyTargetResponse(_FrozenStrictModel):

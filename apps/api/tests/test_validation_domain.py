@@ -143,6 +143,20 @@ def test_duplicate_reference_hashes_only_canonical_text_without_semantic_claims(
     assert digest != canonical_text_sha256("Find the sum of twenty-seven and fifteen.")
 
 
+def test_blueprint_requirements_support_grade_thirteen_age_bounds() -> None:
+    requirements = BlueprintRequirements(
+        "slot-1",
+        "question.v1",
+        "multiple_choice",
+        2,
+        "en-LK",
+        17,
+        19,
+    )
+
+    assert (requirements.minimum_age, requirements.maximum_age) == (17, 19)
+
+
 @pytest.mark.parametrize(
     "build",
     [

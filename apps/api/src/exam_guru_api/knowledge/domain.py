@@ -262,6 +262,8 @@ class HistoricalQuestion:
     question_type: QuestionType
     marks: int
     provenance: Provenance
+    unit_id: UUID | None = None
+    lesson_id: UUID | None = None
     media_references: tuple[str, ...] | None = None
     options: tuple[str, ...] | None = None
     answer: str | None = None
@@ -282,6 +284,8 @@ class HistoricalQuestion:
     embedding_configurations: tuple[EmbeddingConfigurationMetadata, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.lesson_id is not None and self.unit_id is None:
+            raise KnowledgeContractError("lesson_id requires unit_id")
         if not 1900 <= self.year <= 2100:
             raise KnowledgeContractError("year is outside the supported range")
         if not self.paper_code.strip() or not self.question_number.strip() or not self.text.strip():
@@ -371,6 +375,8 @@ class KnowledgeChunk:
     educational_boundary: str
     sequence: int
     provenance: Provenance
+    unit_id: UUID | None = None
+    lesson_id: UUID | None = None
     review_state: ReviewState = ReviewState.DRAFT
     competency_id: UUID | None = None
     skill_id: UUID | None = None
@@ -382,6 +388,8 @@ class KnowledgeChunk:
     embedding_configurations: tuple[EmbeddingConfigurationMetadata, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.lesson_id is not None and self.unit_id is None:
+            raise KnowledgeContractError("lesson_id requires unit_id")
         if not self.text.strip() or not self.educational_boundary.strip():
             raise KnowledgeContractError("chunk text and educational boundary must be non-blank")
         if self.sequence < 0:

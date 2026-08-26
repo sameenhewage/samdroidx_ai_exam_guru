@@ -4,6 +4,8 @@ from enum import StrEnum
 from typing import cast
 from uuid import UUID
 
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+
 
 class QuestionType(StrEnum):
     MULTIPLE_CHOICE = "multiple_choice"
@@ -83,11 +85,25 @@ class CurriculumScope:
     curriculum_version_id: UUID
     grade: int
     medium: str
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    unit_ids: tuple[UUID, ...] = ()
+    lesson_ids: tuple[UUID, ...] = ()
 
     def __post_init__(self) -> None:
         if not 1 <= self.grade <= 13:
             raise _invalid("curriculum_scope.grade", "must be between 1 and 13")
         _validate_text(self.medium, "curriculum_scope.medium")
+        if not isinstance(self.subject_id, UUID):
+            raise _invalid("curriculum_scope.subject_id", "must be a UUID")
+        for field_name, values in (("unit_ids", self.unit_ids), ("lesson_ids", self.lesson_ids)):
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, UUID) for value in values
+            ):
+                raise _invalid(f"curriculum_scope.{field_name}", "must contain UUID values")
+            if len(values) != len(set(values)):
+                raise _invalid(f"curriculum_scope.{field_name}", "must not contain duplicates")
+        if self.lesson_ids and not self.unit_ids:
+            raise _invalid("curriculum_scope.lesson_ids", "requires selected unit_ids")
 
 
 @dataclass(frozen=True, slots=True)

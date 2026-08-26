@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.api.routes import configuration as configuration_routes
 from exam_guru_api.api.routes.configuration import (
     _write,
     create_curriculum_version,
@@ -25,23 +26,34 @@ from exam_guru_api.api.routes.configuration import (
 )
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.curriculum.configuration_schemas import (
+    CurriculumLessonCreate,
+    CurriculumLessonTaxonomyUpdate,
+    CurriculumLessonUpdate,
+    CurriculumUnitCreate,
+    CurriculumUnitUpdate,
     CurriculumVersionCreate,
     CurriculumVersionUpdate,
     ExamConfigurationCreate,
     ExamConfigurationUpdate,
     MediumCreate,
     MediumUpdate,
+    SubjectCreate,
+    SubjectUpdate,
 )
 from exam_guru_api.curriculum.configuration_service import (
     ConfigurationInactiveError,
     ConfigurationInUseError,
     ConfigurationNotFoundError,
+    ConfigurationScopeMismatchError,
     ConfigurationService,
+    LessonConfigurationRecord,
 )
 from exam_guru_api.curriculum.models import (
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
 )
 
 ACTOR_ID = UUID(int=1)
@@ -183,12 +195,171 @@ def test_configuration_route_wrappers_return_typed_responses(
     assert len(responses) == 12
 
 
+def test_normalized_configuration_route_wrappers_return_typed_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    principal = Principal(subject_id=ACTOR_ID, roles=frozenset({AdminRole.ADMIN}))
+    session = cast(AsyncSession, RollbackSession())
+    curriculum_id = UUID(int=500)
+    subject = SubjectModel(
+        id=UUID(int=501),
+        code="MATHEMATICS",
+        name="Mathematics",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+        created_at=now,
+        updated_at=now,
+    )
+    unit = CurriculumUnitModel(
+        id=UUID(int=502),
+        curriculum_version_id=curriculum_id,
+        code="UNIT-1",
+        title="Numbers",
+        ordinal=1,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+        created_at=now,
+        updated_at=now,
+    )
+    lesson = LessonConfigurationRecord(
+        id=UUID(int=503),
+        curriculum_version_id=curriculum_id,
+        unit_id=unit.id,
+        code="LESSON-1",
+        title="Whole numbers",
+        ordinal=1,
+        active=True,
+        taxonomy_node_ids=(),
+        created_at=now,
+        updated_at=now,
+    )
+
+    async def subjects(_service: ConfigurationService) -> list[SubjectModel]:
+        return [subject]
+
+    async def units(
+        _service: ConfigurationService,
+        _curriculum_id: UUID,
+    ) -> list[CurriculumUnitModel]:
+        return [unit]
+
+    async def lessons(
+        _service: ConfigurationService,
+        _curriculum_id: UUID,
+    ) -> tuple[LessonConfigurationRecord, ...]:
+        return (lesson,)
+
+    async def return_subject(
+        _service: ConfigurationService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> SubjectModel:
+        return subject
+
+    async def return_unit(
+        _service: ConfigurationService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> CurriculumUnitModel:
+        return unit
+
+    async def return_lesson(
+        _service: ConfigurationService,
+        *_args: object,
+        **_kwargs: object,
+    ) -> LessonConfigurationRecord:
+        return lesson
+
+    monkeypatch.setattr(ConfigurationService, "list_subjects", subjects)
+    monkeypatch.setattr(ConfigurationService, "list_units", units)
+    monkeypatch.setattr(ConfigurationService, "list_lessons", lessons)
+    for method in ("create_subject", "update_subject", "deactivate_subject"):
+        monkeypatch.setattr(ConfigurationService, method, return_subject)
+    for method in ("create_unit", "update_unit", "deactivate_unit"):
+        monkeypatch.setattr(ConfigurationService, method, return_unit)
+    for method in (
+        "create_lesson",
+        "update_lesson",
+        "replace_lesson_taxonomy",
+        "deactivate_lesson",
+    ):
+        monkeypatch.setattr(ConfigurationService, method, return_lesson)
+
+    async def exercise() -> list[object]:
+        return [
+            await configuration_routes.list_subjects(principal, session),
+            await configuration_routes.create_subject(
+                SubjectCreate(code="MATHEMATICS", name="Mathematics"), principal, session
+            ),
+            await configuration_routes.update_subject(
+                subject.id, SubjectUpdate(name="Maths"), principal, session
+            ),
+            await configuration_routes.deactivate_subject(subject.id, principal, session),
+            await configuration_routes.list_curriculum_units(curriculum_id, principal, session),
+            await configuration_routes.create_curriculum_unit(
+                curriculum_id,
+                CurriculumUnitCreate(code="UNIT-1", title="Numbers", ordinal=1),
+                principal,
+                session,
+            ),
+            await configuration_routes.update_curriculum_unit(
+                curriculum_id,
+                unit.id,
+                CurriculumUnitUpdate(title="Updated"),
+                principal,
+                session,
+            ),
+            await configuration_routes.deactivate_curriculum_unit(
+                curriculum_id, unit.id, principal, session
+            ),
+            await configuration_routes.list_curriculum_lessons(curriculum_id, principal, session),
+            await configuration_routes.create_curriculum_lesson(
+                curriculum_id,
+                CurriculumLessonCreate(
+                    unit_id=unit.id,
+                    code="LESSON-1",
+                    title="Whole numbers",
+                    ordinal=1,
+                ),
+                principal,
+                session,
+            ),
+            await configuration_routes.update_curriculum_lesson(
+                curriculum_id,
+                lesson.id,
+                CurriculumLessonUpdate(title="Updated"),
+                principal,
+                session,
+            ),
+            await configuration_routes.replace_curriculum_lesson_taxonomy(
+                curriculum_id,
+                lesson.id,
+                CurriculumLessonTaxonomyUpdate(taxonomy_node_ids=()),
+                principal,
+                session,
+            ),
+            await configuration_routes.deactivate_curriculum_lesson(
+                curriculum_id, lesson.id, principal, session
+            ),
+        ]
+
+    assert len(asyncio.run(exercise())) == 13
+
+
 @pytest.mark.parametrize(
     ("error", "status_code", "code"),
     [
         (ConfigurationNotFoundError("exam", UUID(int=1)), 404, "configuration_not_found"),
         (ConfigurationInactiveError("exam", UUID(int=1)), 409, "configuration_inactive"),
         (ConfigurationInUseError("exam", UUID(int=1)), 409, "configuration_in_use"),
+        (
+            ConfigurationScopeMismatchError("curriculum_unit", UUID(int=1)),
+            422,
+            "configuration_scope_mismatch",
+        ),
     ],
 )
 def test_configuration_write_maps_domain_errors(

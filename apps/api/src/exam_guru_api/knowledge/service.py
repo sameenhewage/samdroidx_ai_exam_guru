@@ -65,6 +65,12 @@ class TrustedKnowledgeSourceRequiredError(ValueError):
         super().__init__(f"trusted source document required: {source_document_id}")
 
 
+class ActiveKnowledgeSourceRequiredError(ValueError):
+    def __init__(self, source_document_id: UUID) -> None:
+        self.source_document_id = source_document_id
+        super().__init__(f"active source document required: {source_document_id}")
+
+
 class KnowledgeSourceMetadataMismatchError(ValueError):
     def __init__(self, source_document_id: UUID) -> None:
         self.source_document_id = source_document_id
@@ -119,8 +125,13 @@ class KnowledgePersistenceService:
         actor_id: UUID,
     ) -> SourceImportResult[HistoricalQuestion]:
         await self._ensure_curriculum_exists(question.curriculum_version_id)
-        await self._validate_source(question)
-        result = await self._repository.import_question(question, actor_id=actor_id)
+        source = await self._validate_source(question)
+        scoped_question = replace(
+            question,
+            unit_id=source.unit_id,
+            lesson_id=source.lesson_id,
+        )
+        result = await self._repository.import_question(scoped_question, actor_id=actor_id)
         if result.created:
             self._audit(
                 action="knowledge.question.imported",
@@ -131,6 +142,8 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
+                    "unit_id": self._optional_uuid(result.record.unit_id),
+                    "lesson_id": self._optional_uuid(result.record.lesson_id),
                     "source_block_id": self._optional_uuid(
                         result.record.provenance.source_block_id
                     ),
@@ -149,8 +162,13 @@ class KnowledgePersistenceService:
         actor_id: UUID,
     ) -> SourceImportResult[KnowledgeChunk]:
         await self._ensure_curriculum_exists(chunk.curriculum_version_id)
-        await self._validate_source(chunk)
-        result = await self._repository.import_chunk(chunk, actor_id=actor_id)
+        source = await self._validate_source(chunk)
+        scoped_chunk = replace(
+            chunk,
+            unit_id=source.unit_id,
+            lesson_id=source.lesson_id,
+        )
+        result = await self._repository.import_chunk(scoped_chunk, actor_id=actor_id)
         if result.created:
             self._audit(
                 action="knowledge.chunk.imported",
@@ -161,6 +179,8 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
+                    "unit_id": self._optional_uuid(result.record.unit_id),
+                    "lesson_id": self._optional_uuid(result.record.lesson_id),
                     "source_block_id": self._optional_uuid(
                         result.record.provenance.source_block_id
                     ),
@@ -404,6 +424,7 @@ class KnowledgePersistenceService:
             )
         ).to_domain()
         self._require_reviewed(question)
+        await self._require_active_source(question)
         return await self._store_embedding(
             historical_question_id=question.id,
             knowledge_chunk_id=None,
@@ -464,6 +485,7 @@ class KnowledgePersistenceService:
             )
         ).to_domain()
         self._require_reviewed(chunk)
+        await self._require_active_source(chunk)
         return await self._store_embedding(
             historical_question_id=None,
             knowledge_chunk_id=chunk.id,
@@ -492,6 +514,7 @@ class KnowledgePersistenceService:
             )
         ).to_domain()
         self._require_reviewed(question)
+        await self._require_active_source(question)
         return await self._embedding_exists(
             historical_question_id=question.id,
             knowledge_chunk_id=None,
@@ -516,6 +539,7 @@ class KnowledgePersistenceService:
             )
         ).to_domain()
         self._require_reviewed(chunk)
+        await self._require_active_source(chunk)
         return await self._embedding_exists(
             historical_question_id=None,
             knowledge_chunk_id=chunk.id,
@@ -603,7 +627,10 @@ class KnowledgePersistenceService:
         if await self._session.get(CurriculumVersionModel, curriculum_version_id) is None:
             raise KnowledgeCurriculumNotFoundError(curriculum_version_id)
 
-    async def _validate_source(self, record: HistoricalQuestion | KnowledgeChunk) -> None:
+    async def _validate_source(
+        self,
+        record: HistoricalQuestion | KnowledgeChunk,
+    ) -> SourceDocumentModel:
         source_document_id = record.provenance.source_document_id
         document = await self._session.get(SourceDocumentModel, source_document_id)
         if document is None:
@@ -615,12 +642,29 @@ class KnowledgePersistenceService:
             )
         if document.extraction_status is not ExtractionStatus.TRUSTED:
             raise TrustedKnowledgeSourceRequiredError(source_document_id)
+        if document.active_for_ai is False:
+            raise ActiveKnowledgeSourceRequiredError(source_document_id)
         if isinstance(record, HistoricalQuestion) and (
             document.document_type is not SourceDocumentType.PAST_PAPER
             or document.year != record.year
             or document.paper_code != record.paper_code
         ):
             raise KnowledgeSourceMetadataMismatchError(source_document_id)
+        return document
+
+    async def _require_active_source(
+        self,
+        record: HistoricalQuestion | KnowledgeChunk,
+    ) -> None:
+        provenance = getattr(record, "provenance", None)
+        if provenance is None:
+            return
+        source_id = provenance.source_document_id
+        source = await self._session.get(SourceDocumentModel, source_id)
+        if source is None:
+            raise KnowledgeSourceDocumentNotFoundError(source_id)
+        if source.active_for_ai is False:
+            raise ActiveKnowledgeSourceRequiredError(source_id)
 
     @classmethod
     def _validate_embedding(cls, result: EmbeddingResult) -> None:

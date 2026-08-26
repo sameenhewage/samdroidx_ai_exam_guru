@@ -6,6 +6,8 @@ from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+
 from .domain import (
     BlueprintSection,
     BlueprintSlot,
@@ -330,11 +332,40 @@ def _enum[EnumT: Enum](enum_type: type[EnumT], value: object, path: str) -> Enum
 
 
 def _curriculum_scope(value: object, path: str) -> CurriculumScope:
-    root = _object(value, path, frozenset({"curriculum_version_id", "grade", "medium"}))
+    legacy_keys = frozenset({"curriculum_version_id", "grade", "medium"})
+    current_keys = legacy_keys | {"subject_id", "unit_ids", "lesson_ids"}
+    if not isinstance(value, Mapping):
+        raise BlueprintSnapshotError(path, "must be an object")
+    keys = frozenset(value)
+    if keys not in {legacy_keys, current_keys}:
+        raise BlueprintSnapshotError(path, "has unexpected or missing fields")
+    root = cast(Mapping[str, object], value)
+    legacy = keys == legacy_keys
     return CurriculumScope(
         curriculum_version_id=_uuid(root["curriculum_version_id"], f"{path}.curriculum_version_id"),
         grade=_integer(root["grade"], f"{path}.grade"),
         medium=_string(root["medium"], f"{path}.medium"),
+        subject_id=(
+            LEGACY_UNCLASSIFIED_SUBJECT_ID
+            if legacy
+            else _uuid(root["subject_id"], f"{path}.subject_id")
+        ),
+        unit_ids=(
+            ()
+            if legacy
+            else tuple(
+                _uuid(item, f"{path}.unit_ids[{index}]")
+                for index, item in enumerate(_array(root["unit_ids"], f"{path}.unit_ids"))
+            )
+        ),
+        lesson_ids=(
+            ()
+            if legacy
+            else tuple(
+                _uuid(item, f"{path}.lesson_ids[{index}]")
+                for index, item in enumerate(_array(root["lesson_ids"], f"{path}.lesson_ids"))
+            )
+        ),
     )
 
 

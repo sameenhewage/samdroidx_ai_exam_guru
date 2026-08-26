@@ -528,7 +528,12 @@ class OpenAIGenerationAdapter:
                 "curriculum_scope": {
                     "curriculum_version_id": str(scope.curriculum_version_id),
                     "grade": scope.grade,
+                    "minimum_age": scope.grade + 4,
+                    "maximum_age": scope.grade + 6,
                     "medium": scope.medium,
+                    "subject_id": str(scope.subject_id),
+                    "unit_ids": [str(value) for value in scope.unit_ids],
+                    "lesson_ids": [str(value) for value in scope.lesson_ids],
                 },
                 "difficulty": slot.difficulty.value,
                 "instructions": list(constraints.instructions),

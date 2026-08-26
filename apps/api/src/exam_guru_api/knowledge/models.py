@@ -86,6 +86,22 @@ class HistoricalQuestionModel(AuditColumns, Base):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
+            ["unit_id", "curriculum_version_id"],
+            ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
+            name="fk_historical_questions_unit_curriculum",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["lesson_id", "unit_id", "curriculum_version_id"],
+            [
+                "curriculum_lessons.id",
+                "curriculum_lessons.unit_id",
+                "curriculum_lessons.curriculum_version_id",
+            ],
+            name="fk_historical_questions_lesson_scope",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
             ["competency_id", "curriculum_version_id"],
             ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
             name="fk_historical_questions_competency_curriculum",
@@ -189,6 +205,10 @@ class HistoricalQuestionModel(AuditColumns, Base):
             name="ck_historical_questions_metadata_difficulty_confidence",
         ),
         CheckConstraint("page_number > 0", name="ck_historical_questions_page_number"),
+        CheckConstraint(
+            "lesson_id IS NULL OR unit_id IS NOT NULL",
+            name="ck_historical_questions_lesson_requires_unit",
+        ),
         CheckConstraint("version >= 0", name="ck_historical_questions_version"),
         CheckConstraint(
             "review_state <> 'reviewed' OR "
@@ -201,6 +221,12 @@ class HistoricalQuestionModel(AuditColumns, Base):
             "review_state",
         ),
         Index("ix_historical_questions_competency", "competency_id"),
+        Index(
+            "ix_historical_questions_learning_scope",
+            "curriculum_version_id",
+            "unit_id",
+            "lesson_id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -238,6 +264,8 @@ class HistoricalQuestionModel(AuditColumns, Base):
     difficulty_confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
     difficulty_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     source_block_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("extracted_blocks.id", ondelete="RESTRICT"),
@@ -278,6 +306,8 @@ class HistoricalQuestionModel(AuditColumns, Base):
             difficulty_confidence=question.difficulty_confidence,
             difficulty_source=question.difficulty_source,
             source_document_id=question.provenance.source_document_id,
+            unit_id=question.unit_id,
+            lesson_id=question.lesson_id,
             page_number=question.provenance.page_number,
             source_block_id=question.provenance.source_block_id,
             review_state=question.review_state,
@@ -316,6 +346,8 @@ class HistoricalQuestionModel(AuditColumns, Base):
                 page_number=self.page_number,
                 source_block_id=self.source_block_id,
             ),
+            unit_id=self.unit_id,
+            lesson_id=self.lesson_id,
             review_state=self.review_state,
             competency_id=self.competency_id,
             skill_id=self.skill_id,
@@ -334,6 +366,22 @@ class KnowledgeChunkModel(AuditColumns, Base):
             ["source_document_id", "page_number"],
             ["source_pages.source_document_id", "source_pages.page_number"],
             name="fk_knowledge_chunks_source_page",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["unit_id", "curriculum_version_id"],
+            ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
+            name="fk_knowledge_chunks_unit_curriculum",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["lesson_id", "unit_id", "curriculum_version_id"],
+            [
+                "curriculum_lessons.id",
+                "curriculum_lessons.unit_id",
+                "curriculum_lessons.curriculum_version_id",
+            ],
+            name="fk_knowledge_chunks_lesson_scope",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -381,6 +429,10 @@ class KnowledgeChunkModel(AuditColumns, Base):
         ),
         CheckConstraint("sequence >= 0", name="ck_knowledge_chunks_sequence"),
         CheckConstraint("page_number > 0", name="ck_knowledge_chunks_page_number"),
+        CheckConstraint(
+            "lesson_id IS NULL OR unit_id IS NOT NULL",
+            name="ck_knowledge_chunks_lesson_requires_unit",
+        ),
         CheckConstraint("version >= 0", name="ck_knowledge_chunks_version"),
         CheckConstraint(
             "review_state <> 'reviewed' OR "
@@ -393,6 +445,12 @@ class KnowledgeChunkModel(AuditColumns, Base):
             "review_state",
         ),
         Index("ix_knowledge_chunks_competency", "competency_id"),
+        Index(
+            "ix_knowledge_chunks_learning_scope",
+            "curriculum_version_id",
+            "unit_id",
+            "lesson_id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -408,6 +466,8 @@ class KnowledgeChunkModel(AuditColumns, Base):
     educational_boundary: Mapped[str] = mapped_column(String(512), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     source_document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     source_block_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("extracted_blocks.id", ondelete="RESTRICT"),
@@ -435,6 +495,8 @@ class KnowledgeChunkModel(AuditColumns, Base):
             educational_boundary=chunk.educational_boundary,
             sequence=chunk.sequence,
             source_document_id=chunk.provenance.source_document_id,
+            unit_id=chunk.unit_id,
+            lesson_id=chunk.lesson_id,
             page_number=chunk.provenance.page_number,
             source_block_id=chunk.provenance.source_block_id,
             review_state=chunk.review_state,
@@ -460,6 +522,8 @@ class KnowledgeChunkModel(AuditColumns, Base):
                 page_number=self.page_number,
                 source_block_id=self.source_block_id,
             ),
+            unit_id=self.unit_id,
+            lesson_id=self.lesson_id,
             review_state=self.review_state,
             competency_id=self.competency_id,
             skill_id=self.skill_id,

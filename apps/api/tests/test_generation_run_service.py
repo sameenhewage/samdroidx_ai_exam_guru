@@ -543,6 +543,44 @@ def test_service_rejects_request_scope_blueprint_and_idempotency_violations() ->
     asyncio.run(exercise())
 
 
+def test_context_validation_rejects_cross_unit_and_lesson_records_before_generation() -> None:
+    selected_unit = UUID(int=960_001)
+    selected_lesson = UUID(int=960_002)
+    slot = replace(
+        PAPER.slots[0],
+        generation_constraints=replace(
+            PAPER.slots[0].generation_constraints,
+            curriculum_scope=replace(
+                PAPER.curriculum_scope,
+                unit_ids=(selected_unit,),
+                lesson_ids=(selected_lesson,),
+            ),
+        ),
+    )
+    with pytest.raises(GenerationContextCrossCurriculumError):
+        GenerationRunService._validate_context_records(
+            CURRICULUM_VERSION_ID,
+            slot,
+            (CHUNK_ID,),
+            (),
+            (replace(context_record("knowledge_chunk", CHUNK_ID), unit_id=UUID(int=1)),),
+        )
+    with pytest.raises(GenerationContextCrossCurriculumError):
+        GenerationRunService._validate_context_records(
+            CURRICULUM_VERSION_ID,
+            slot,
+            (CHUNK_ID,),
+            (),
+            (
+                replace(
+                    context_record("knowledge_chunk", CHUNK_ID),
+                    unit_id=selected_unit,
+                    lesson_id=UUID(int=2),
+                ),
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     ("records", "error"),
     [

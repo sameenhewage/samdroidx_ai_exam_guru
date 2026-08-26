@@ -47,6 +47,7 @@ from exam_guru_api.knowledge.schemas import (
     KnowledgeReviewTransitionRequest,
 )
 from exam_guru_api.knowledge.service import (
+    ActiveKnowledgeSourceRequiredError,
     FinalKnowledgeRecordError,
     KnowledgeCurriculumNotFoundError,
     KnowledgePersistenceService,
@@ -478,6 +479,7 @@ def test_import_route_rejects_domain_invalid_whitespace(
             "source_curriculum_mismatch",
         ),
         (TrustedKnowledgeSourceRequiredError(SOURCE_ID), 422, "trusted_source_required"),
+        (ActiveKnowledgeSourceRequiredError(SOURCE_ID), 422, "active_source_required"),
         (KnowledgeSourceMetadataMismatchError(SOURCE_ID), 422, "source_metadata_mismatch"),
         (KnowledgeRecordNotReadyError(CHUNK_ID), 422, "knowledge_record_not_ready"),
     ],

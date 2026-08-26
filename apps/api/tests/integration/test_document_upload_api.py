@@ -26,6 +26,7 @@ from exam_guru_api.main import create_app
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 VALID_PDF = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
 RECOVERY_PDF = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Version /1.7 >>\nendobj\n%%EOF"
+WRONG_GRADE_PDF = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF"
 ADMIN_ID = UUID(int=9_000)
 
 
@@ -213,6 +214,138 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
         "source_document.uploaded",
         "source_document.extraction_queued",
         "source_document.extraction_dispatched",
+    ]
+
+
+@pytest.mark.integration
+def test_wrong_grade_material_remove_restore_is_readable_audited_and_cas_safe(
+    upload_database_url: str,
+) -> None:
+    storage = RecordingObjectStorage()
+    headers = {"Authorization": "Bearer admin-token"}
+    with upload_client(upload_database_url, storage) as client:
+        subject = client.post(
+            "/api/v1/admin/subjects",
+            json={"code": "WRONG-GRADE-MATH", "name": "Mathematics"},
+            headers=headers,
+        )
+        exam = client.post(
+            "/api/v1/admin/exam-configurations",
+            json={"code": "WRONG-GRADE-G5", "name": "Grade 5", "grade": 5},
+            headers=headers,
+        )
+        medium = client.post(
+            "/api/v1/admin/media",
+            json={"code": "wg-en", "name": "English"},
+            headers=headers,
+        )
+        curriculum = client.post(
+            "/api/v1/admin/curriculum-versions",
+            json={
+                "exam_configuration_id": exam.json()["id"],
+                "medium_id": medium.json()["id"],
+                "subject_id": subject.json()["id"],
+                "code": "WRONG-GRADE-V1",
+                "title": "Grade 5 Mathematics",
+            },
+            headers=headers,
+        )
+        uploaded = client.post(
+            "/api/v1/admin/source-documents",
+            data={
+                "document_type": "past_paper",
+                "curriculum_version_id": curriculum.json()["id"],
+                "year": "2025",
+                "paper_code": "WRONG-GRADE-PAPER",
+            },
+            files={
+                "file": (
+                    "grade-11-paper-uploaded-as-grade-5.pdf",
+                    WRONG_GRADE_PDF,
+                    "application/pdf",
+                )
+            },
+            headers=headers,
+        )
+        unchanged_scope = client.patch(
+            f"/api/v1/admin/materials/{uploaded.json()['id']}/scope",
+            json={
+                "curriculum_version_id": curriculum.json()["id"],
+                "unit_id": None,
+                "lesson_id": None,
+                "expected_version": 0,
+            },
+            headers=headers,
+        )
+        removed = client.post(
+            f"/api/v1/admin/materials/{uploaded.json()['id']}/remove-from-use",
+            json={"reason": "This is a Grade 11 paper", "expected_version": 0},
+            headers=headers,
+        )
+        stale_restore = client.post(
+            f"/api/v1/admin/materials/{uploaded.json()['id']}/restore",
+            json={"expected_version": 0},
+            headers=headers,
+        )
+        materials = client.get(
+            "/api/v1/admin/materials",
+            params={"grade": 5, "subject_id": subject.json()["id"]},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        summary = client.get(
+            "/api/v1/admin/materials/grade-summary",
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        restored = client.post(
+            f"/api/v1/admin/materials/{uploaded.json()['id']}/restore",
+            json={"expected_version": 1},
+            headers=headers,
+        )
+
+    assert uploaded.status_code == 201
+    assert uploaded.json()["subject_id"] == subject.json()["id"]
+    assert unchanged_scope.status_code == 200
+    assert unchanged_scope.json()["metadata_scope_version"] == 0
+    assert removed.status_code == 200
+    assert removed.json()["use_state"] == "removed"
+    assert removed.json()["metadata_scope_version"] == 1
+    assert stale_restore.status_code == 409
+    assert stale_restore.json()["detail"] == {
+        "code": "concurrent_material_scope_modification",
+        "expected_version": 0,
+        "actual_version": 1,
+    }
+    assert materials.status_code == 200
+    material = next(item for item in materials.json() if item["id"] == uploaded.json()["id"])
+    assert material["title"] == "grade-11-paper-uploaded-as-grade-5.pdf"
+    assert material["grade"] == 5
+    assert material["subject"] == "Mathematics"
+    assert material["medium"] == "English"
+    assert material["status"] == "removed"
+    grade_five = next(item for item in summary.json() if item["grade"] == 5)
+    assert grade_five["removed_count"] == 1
+    assert restored.status_code == 200
+    assert restored.json()["use_state"] == "active"
+    assert restored.json()["metadata_scope_version"] == 2
+
+    async def lifecycle_audits() -> list[str]:
+        engine = create_async_engine(upload_database_url)
+        sessions = async_sessionmaker(engine)
+        async with sessions() as session:
+            actions = list(
+                await session.scalars(
+                    select(AdminAuditEventModel.action)
+                    .where(AdminAuditEventModel.resource_id == UUID(uploaded.json()["id"]))
+                    .order_by(AdminAuditEventModel.created_at, AdminAuditEventModel.id)
+                )
+            )
+        await engine.dispose()
+        return actions
+
+    assert asyncio.run(lifecycle_audits()) == [
+        "source_document.uploaded",
+        "source_document.removed_from_ai_use",
+        "source_document.restored_to_ai_use",
     ]
 
 

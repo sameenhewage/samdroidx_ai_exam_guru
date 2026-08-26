@@ -16,12 +16,13 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from exam_guru_api.curriculum.models import AuditColumns
-from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
+from exam_guru_api.documents.domain import ExtractionStatus, MaterialUseState, SourceDocumentType
 from exam_guru_api.infrastructure.database import Base
 
 _DOCUMENT_TYPES_SQL = ", ".join(f"'{value.value}'" for value in SourceDocumentType)
@@ -56,6 +57,43 @@ class SourceDocumentModel(AuditColumns, Base):
         CheckConstraint(
             "year IS NULL OR year BETWEEN 1900 AND 2100",
             name="ck_source_document_year",
+        ),
+        CheckConstraint(
+            "(unit_id IS NULL AND lesson_id IS NULL) OR "
+            "(curriculum_version_id IS NOT NULL AND unit_id IS NOT NULL)",
+            name="ck_source_documents_learning_scope_shape",
+        ),
+        CheckConstraint(
+            "lesson_id IS NULL OR unit_id IS NOT NULL",
+            name="ck_source_documents_lesson_requires_unit",
+        ),
+        CheckConstraint(
+            "(active_for_ai AND removal_reason IS NULL AND removed_by IS NULL "
+            "AND removed_at IS NULL) OR (NOT active_for_ai AND removal_reason IS NOT NULL "
+            "AND removed_by IS NOT NULL AND removed_at IS NOT NULL "
+            "AND removal_reason = btrim(removal_reason) "
+            "AND char_length(removal_reason) BETWEEN 1 AND 512)",
+            name="ck_source_documents_ai_use_state",
+        ),
+        CheckConstraint(
+            "metadata_scope_version >= 0",
+            name="ck_source_documents_metadata_scope_version",
+        ),
+        ForeignKeyConstraint(
+            ["unit_id", "curriculum_version_id"],
+            ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
+            name="fk_source_documents_unit_curriculum",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["lesson_id", "unit_id", "curriculum_version_id"],
+            [
+                "curriculum_lessons.id",
+                "curriculum_lessons.unit_id",
+                "curriculum_lessons.curriculum_version_id",
+            ],
+            name="fk_source_documents_lesson_scope",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "extraction_attempt_count >= 0",
@@ -132,6 +170,13 @@ class SourceDocumentModel(AuditColumns, Base):
             ),
         ),
         Index("ix_source_documents_curriculum", "curriculum_version_id"),
+        Index(
+            "ix_source_documents_ai_scope",
+            "active_for_ai",
+            "curriculum_version_id",
+            "unit_id",
+            "lesson_id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -168,6 +213,23 @@ class SourceDocumentModel(AuditColumns, Base):
         ForeignKey("curriculum_versions.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    active_for_ai: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=true(),
+    )
+    removal_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    removed_by: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_scope_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     paper_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extraction_attempt_count: Mapped[int] = mapped_column(
@@ -198,6 +260,10 @@ class SourceDocumentModel(AuditColumns, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    @property
+    def use_state(self) -> MaterialUseState:
+        return MaterialUseState.REMOVED if self.active_for_ai is False else MaterialUseState.ACTIVE
 
 
 class SourcePageModel(AuditColumns, Base):

@@ -1,5 +1,7 @@
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -33,6 +35,71 @@ COMPETENCY_C = UUID("20000000-0000-0000-0000-000000000003")
 SKILL_A = UUID("30000000-0000-0000-0000-000000000001")
 SKILL_B = UUID("30000000-0000-0000-0000-000000000002")
 SKILL_C = UUID("30000000-0000-0000-0000-000000000003")
+SUBJECT_ID = UUID("40000000-0000-0000-0000-000000000001")
+UNIT_1_ID = UUID("50000000-0000-0000-0000-000000000001")
+LESSON_1_ID = UUID("60000000-0000-0000-0000-000000000001")
+LESSON_2_ID = UUID("60000000-0000-0000-0000-000000000002")
+LESSON_3_ID = UUID("60000000-0000-0000-0000-000000000003")
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        lambda: CurriculumScope(
+            CURRICULUM_VERSION_ID,
+            7,
+            "en",
+            subject_id=cast(UUID, "subject"),
+        ),
+        lambda: CurriculumScope(
+            CURRICULUM_VERSION_ID,
+            7,
+            "en",
+            subject_id=SUBJECT_ID,
+            unit_ids=cast(tuple[UUID, ...], [UNIT_1_ID]),
+        ),
+        lambda: CurriculumScope(
+            CURRICULUM_VERSION_ID,
+            7,
+            "en",
+            subject_id=SUBJECT_ID,
+            unit_ids=(UNIT_1_ID, UNIT_1_ID),
+        ),
+        lambda: CurriculumScope(
+            CURRICULUM_VERSION_ID,
+            7,
+            "en",
+            subject_id=SUBJECT_ID,
+            lesson_ids=(LESSON_1_ID,),
+        ),
+    ],
+)
+def test_multigrade_curriculum_scope_rejects_malformed_normalized_selections(
+    scope: Callable[[], CurriculumScope],
+) -> None:
+    with pytest.raises(BlueprintValidationError):
+        scope()
+
+
+def test_grade_seven_lesson_and_full_subject_scope_are_normalized() -> None:
+    selected = CurriculumScope(
+        curriculum_version_id=CURRICULUM_VERSION_ID,
+        grade=7,
+        medium="en",
+        subject_id=SUBJECT_ID,
+        unit_ids=(UNIT_1_ID,),
+        lesson_ids=(LESSON_1_ID, LESSON_2_ID, LESSON_3_ID),
+    )
+    full_subject = CurriculumScope(
+        curriculum_version_id=CURRICULUM_VERSION_ID,
+        grade=7,
+        medium="en",
+        subject_id=SUBJECT_ID,
+    )
+
+    assert selected.lesson_ids == (LESSON_1_ID, LESSON_2_ID, LESSON_3_ID)
+    assert full_subject.unit_ids == ()
+    assert full_subject.lesson_ids == ()
 
 
 def target(competency_id: UUID, skill_id: UUID) -> TaxonomyTarget:

@@ -28,6 +28,7 @@ from exam_guru_api.validation.domain import (
     FindingStatus,
     ValidationInput,
     ValidationReport,
+    grade_age_bounds,
 )
 from exam_guru_api.validation.generation_adapter import adapt_generation_result
 from exam_guru_api.validation.generation_adapter import (
@@ -35,9 +36,6 @@ from exam_guru_api.validation.generation_adapter import (
 )
 
 generation_result_fingerprint = _generation_result_fingerprint
-
-_GRADE_5_MINIMUM_AGE = 9
-_GRADE_5_MAXIMUM_AGE = 11
 
 
 class GenerationValidationMismatch(StrEnum):
@@ -89,6 +87,7 @@ def build_generation_validation_input(
 
     result = _require_generation_result(generation_result)
     slot = result.request.blueprint_slot
+    minimum_age, maximum_age = grade_age_bounds(slot.generation_constraints.curriculum_scope.grade)
     return adapt_generation_result(
         result,
         requirements=BlueprintRequirements(
@@ -97,8 +96,8 @@ def build_generation_validation_input(
             question_type=slot.question_type.value,
             marks=slot.marks,
             language=slot.generation_constraints.response_language,
-            minimum_age=_GRADE_5_MINIMUM_AGE,
-            maximum_age=_GRADE_5_MAXIMUM_AGE,
+            minimum_age=minimum_age,
+            maximum_age=maximum_age,
         ),
         duplicate_references=duplicate_references,
     )

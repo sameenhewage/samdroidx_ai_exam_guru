@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.retrieval.context import ContextTrust
 from exam_guru_api.retrieval.domain import RetrievalScope, SourceProvenance, TaxonomyScope
@@ -74,18 +75,34 @@ class RetrievalTaxonomyScopeRequest(StrictRequestModel):
 
 
 class RetrievalScopeRequest(StrictRequestModel):
-    grade: Literal[5]
+    grade: int = Field(strict=True, ge=1, le=13)
     exam_id: UUID
     medium_id: UUID
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
     curriculum_version_id: UUID
+    unit_ids: tuple[UUID, ...] = Field(default=(), max_length=100)
+    lesson_ids: tuple[UUID, ...] = Field(default=(), max_length=500)
     taxonomy: RetrievalTaxonomyScopeRequest
+
+    @model_validator(mode="after")
+    def validate_learning_scope(self) -> Self:
+        if len(set(self.unit_ids)) != len(self.unit_ids):
+            raise ValueError("unit_ids must be unique")
+        if len(set(self.lesson_ids)) != len(self.lesson_ids):
+            raise ValueError("lesson_ids must be unique")
+        if self.lesson_ids and not self.unit_ids:
+            raise ValueError("lesson_ids require unit_ids")
+        return self
 
     def to_domain(self) -> RetrievalScope:
         return RetrievalScope(
             grade=self.grade,
             exam_id=self.exam_id,
             medium_id=self.medium_id,
+            subject_id=self.subject_id,
             curriculum_version_id=self.curriculum_version_id,
+            unit_ids=self.unit_ids,
+            lesson_ids=self.lesson_ids,
             taxonomy=self.taxonomy.to_domain(),
         )
 
@@ -165,7 +182,10 @@ class RetrievalScopeResponse(BaseModel):
     grade: int
     exam_id: UUID
     medium_id: UUID
+    subject_id: UUID
     curriculum_version_id: UUID
+    unit_ids: tuple[UUID, ...]
+    lesson_ids: tuple[UUID, ...]
     taxonomy: RetrievalTaxonomyScopeResponse
 
     @classmethod
@@ -174,7 +194,10 @@ class RetrievalScopeResponse(BaseModel):
             grade=scope.grade,
             exam_id=scope.exam_id,
             medium_id=scope.medium_id,
+            subject_id=scope.subject_id,
             curriculum_version_id=scope.curriculum_version_id,
+            unit_ids=scope.unit_ids,
+            lesson_ids=scope.lesson_ids,
             taxonomy=RetrievalTaxonomyScopeResponse.from_domain(scope.taxonomy),
         )
 

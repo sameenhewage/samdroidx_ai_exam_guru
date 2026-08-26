@@ -23,7 +23,10 @@ def _valid_request() -> dict[str, object]:
             "grade": 5,
             "exam_id": str(UUID(int=1)),
             "medium_id": str(UUID(int=2)),
+            "subject_id": str(UUID(int=5)),
             "curriculum_version_id": str(UUID(int=3)),
+            "unit_ids": [str(UUID(int=6))],
+            "lesson_ids": [str(UUID(int=7))],
             "taxonomy": {"competency_id": str(UUID(int=4))},
         },
         "embedding_config": {
@@ -98,7 +101,8 @@ def test_retrieval_request_scope_config_and_cost_bounds_are_explicit() -> None:
     limits = schema["RetrievalExploreLimitsRequest"]
 
     assert scope["additionalProperties"] is False
-    assert scope["properties"]["grade"]["const"] == 5
+    assert scope["properties"]["grade"]["minimum"] == 1
+    assert scope["properties"]["grade"]["maximum"] == 13
     assert set(scope["required"]) == {
         "grade",
         "exam_id",
@@ -106,6 +110,9 @@ def test_retrieval_request_scope_config_and_cost_bounds_are_explicit() -> None:
         "curriculum_version_id",
         "taxonomy",
     }
+    assert {"subject_id", "unit_ids", "lesson_ids"} <= set(scope["properties"])
+    assert scope["properties"]["unit_ids"]["default"] == []
+    assert scope["properties"]["lesson_ids"]["default"] == []
     assert taxonomy["additionalProperties"] is False
     assert "competency_id" in taxonomy["required"]
     assert embedding["additionalProperties"] is False
@@ -137,10 +144,14 @@ def test_retrieval_request_rejects_extra_fields_vectors_and_invalid_hierarchy() 
     with pytest.raises(ValidationError, match="query_vector"):
         RetrievalExploreRequest.model_validate(payload)
 
-    wrong_grade = _valid_request()
-    cast(dict[str, object], wrong_grade["scope"])["grade"] = 6
-    with pytest.raises(ValidationError, match="Input should be 5"):
-        RetrievalExploreRequest.model_validate(wrong_grade)
+    for invalid_grade in (0, 14):
+        wrong_grade = _valid_request()
+        cast(dict[str, object], wrong_grade["scope"])["grade"] = invalid_grade
+        with pytest.raises(
+            ValidationError,
+            match=r"greater than or equal to 1|less than or equal to 13",
+        ):
+            RetrievalExploreRequest.model_validate(wrong_grade)
 
     with pytest.raises(ValidationError, match="sub_skill_id requires skill_id"):
         RetrievalTaxonomyScopeRequest(
@@ -153,6 +164,14 @@ def test_retrieval_request_rejects_extra_fields_vectors_and_invalid_hierarchy() 
             skill_id=UUID(int=2),
             learning_concept_id=UUID(int=3),
         )
+    base_scope = cast(dict[str, object], _valid_request()["scope"])
+    for field_name in ("unit_ids", "lesson_ids"):
+        duplicate_scope = {**base_scope, field_name: [str(UUID(int=6)), str(UUID(int=6))]}
+        with pytest.raises(ValidationError, match=f"{field_name} must be unique"):
+            RetrievalScopeRequest.model_validate(duplicate_scope)
+    lesson_without_unit = {**base_scope, "unit_ids": []}
+    with pytest.raises(ValidationError, match="lesson_ids require unit_ids"):
+        RetrievalScopeRequest.model_validate(lesson_without_unit)
 
 
 def test_retrieval_limits_reject_amplification_relationships() -> None:
@@ -195,5 +214,8 @@ def test_scope_schema_builds_exact_domain_scope() -> None:
     assert domain.grade == 5
     assert domain.exam_id == UUID(int=1)
     assert domain.medium_id == UUID(int=2)
+    assert domain.subject_id == UUID(int=5)
     assert domain.curriculum_version_id == UUID(int=3)
+    assert domain.unit_ids == (UUID(int=6),)
+    assert domain.lesson_ids == (UUID(int=7),)
     assert domain.taxonomy.competency_id == UUID(int=4)

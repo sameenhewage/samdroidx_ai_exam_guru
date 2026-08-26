@@ -67,6 +67,7 @@ from exam_guru_api.validation.service import (
     _request_fingerprint_payload,
     _text,
     _validation_creation_failure_code,
+    grade_age_bounds,
     reconstruct_generation_result,
     reconstruct_validation_report,
 )
@@ -85,6 +86,14 @@ SOURCE_A_ID = UUID(int=980_007)
 SOURCE_B_ID = UUID(int=980_008)
 BLOCK_A_ID = UUID(int=980_009)
 BLOCK_B_ID = UUID(int=980_010)
+
+
+def test_validation_age_bounds_follow_the_selected_grade() -> None:
+    assert grade_age_bounds(5) == (9, 11)
+    assert grade_age_bounds(7) == (11, 13)
+    assert grade_age_bounds(13) == (17, 19)
+    with pytest.raises(ValidationGenerationIntegrityError):
+        grade_age_bounds(14)
 
 
 def _context_snapshot(result: GenerationResult) -> dict[str, object]:
@@ -362,6 +371,17 @@ def test_reconstruction_rejects_tampered_context_identity(
         ),
         lambda snapshot: cast(list[dict[str, object]], snapshot["items"])[0].update(
             {"taxonomy": "bad"}
+        ),
+        lambda snapshot: cast(list[dict[str, object]], snapshot["items"])[0].update(
+            {"learning_scope": "bad"}
+        ),
+        lambda snapshot: cast(list[dict[str, object]], snapshot["items"])[0].update(
+            {
+                "learning_scope": {
+                    "unit_id": None,
+                    "lesson_id": str(UUID(int=999_001)),
+                }
+            }
         ),
         lambda snapshot: cast(list[dict[str, object]], snapshot["items"])[0].update(
             {"record_kind": 1}

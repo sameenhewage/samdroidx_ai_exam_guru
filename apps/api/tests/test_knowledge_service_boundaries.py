@@ -17,6 +17,7 @@ from exam_guru_api.knowledge.domain import (
 )
 from exam_guru_api.knowledge.repository import SqlAlchemyKnowledgeRepository
 from exam_guru_api.knowledge.service import (
+    ActiveKnowledgeSourceRequiredError,
     KnowledgeCurriculumNotFoundError,
     KnowledgePersistenceService,
     KnowledgeRecordNotReadyError,
@@ -70,12 +71,14 @@ def source_document(
     document_type: SourceDocumentType = SourceDocumentType.PAST_PAPER,
     year: int | None = 2021,
     paper_code: str | None = "P1",
+    active_for_ai: bool = True,
 ) -> SourceDocumentModel:
     return SourceDocumentModel(
         id=SOURCE_ID,
         curriculum_version_id=curriculum_version_id,
         document_type=document_type,
         extraction_status=ExtractionStatus.TRUSTED,
+        active_for_ai=active_for_ai,
         year=year,
         paper_code=paper_code,
     )
@@ -125,6 +128,29 @@ def test_service_rejects_cross_curriculum_and_mismatched_past_paper_metadata() -
         )
         with pytest.raises(KnowledgeSourceMetadataMismatchError):
             await wrong_document_type._validate_source(historical_question())
+
+    asyncio.run(exercise())
+
+
+def test_removed_sources_are_rejected_for_import_and_embedding() -> None:
+    async def exercise() -> None:
+        removed = KnowledgePersistenceService(
+            cast(AsyncSession, LookupSession(source_document(active_for_ai=False)))
+        )
+        with pytest.raises(ActiveKnowledgeSourceRequiredError):
+            await removed._validate_source(historical_question())
+
+        missing_embedding_source = KnowledgePersistenceService(
+            cast(AsyncSession, LookupSession(None))
+        )
+        with pytest.raises(KnowledgeSourceDocumentNotFoundError):
+            await missing_embedding_source._require_active_source(historical_question())
+
+        removed_embedding_source = KnowledgePersistenceService(
+            cast(AsyncSession, LookupSession(source_document(active_for_ai=False)))
+        )
+        with pytest.raises(ActiveKnowledgeSourceRequiredError):
+            await removed_embedding_source._require_active_source(historical_question())
 
     asyncio.run(exercise())
 

@@ -2,17 +2,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.analytics.models import AnalyticsRunModel
 from exam_guru_api.analytics.repository import AnalyticsRunRecord
-from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
+from exam_guru_api.curriculum.domain import (
+    LEGACY_UNCLASSIFIED_SUBJECT_ID,
+    TaxonomyLevel,
+    TaxonomyReviewState,
+)
 from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 
@@ -39,6 +46,8 @@ class CurriculumScopeRecord:
     curriculum_active: bool
     exam_active: bool
     medium_active: bool
+    subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
+    subject_active: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,28 +141,71 @@ class SqlAlchemyBlueprintRepository:
                     CurriculumVersionModel.id,
                     ExamConfigurationModel.grade,
                     MediumModel.code,
+                    SubjectModel.id,
                     CurriculumVersionModel.active,
                     ExamConfigurationModel.active,
                     MediumModel.active,
+                    SubjectModel.active,
                 )
                 .join(
                     ExamConfigurationModel,
                     ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
                 )
                 .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+                .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
                 .where(CurriculumVersionModel.id == curriculum_version_id)
             )
         ).one_or_none()
         if row is None:
             return None
+        if len(row) == 6:  # Compatibility for legacy repository test adapters.
+            return CurriculumScopeRecord(
+                curriculum_version_id=row[0],
+                grade=row[1],
+                medium=row[2],
+                curriculum_active=row[3],
+                exam_active=row[4],
+                medium_active=row[5],
+            )
         return CurriculumScopeRecord(
             curriculum_version_id=row[0],
             grade=row[1],
             medium=row[2],
-            curriculum_active=row[3],
-            exam_active=row[4],
-            medium_active=row[5],
+            subject_id=row[3],
+            curriculum_active=row[4],
+            exam_active=row[5],
+            medium_active=row[6],
+            subject_active=row[7],
         )
+
+    async def learning_scope_exists(
+        self,
+        curriculum_version_id: UUID,
+        unit_ids: tuple[UUID, ...],
+        lesson_ids: tuple[UUID, ...],
+    ) -> bool:
+        if unit_ids:
+            unit_count = await self._session.scalar(
+                select(func.count(CurriculumUnitModel.id)).where(
+                    CurriculumUnitModel.id.in_(unit_ids),
+                    CurriculumUnitModel.curriculum_version_id == curriculum_version_id,
+                    CurriculumUnitModel.active.is_(True),
+                )
+            )
+            if unit_count != len(unit_ids):
+                return False
+        if lesson_ids:
+            lesson_count = await self._session.scalar(
+                select(func.count(CurriculumLessonModel.id)).where(
+                    CurriculumLessonModel.id.in_(lesson_ids),
+                    CurriculumLessonModel.curriculum_version_id == curriculum_version_id,
+                    CurriculumLessonModel.unit_id.in_(unit_ids),
+                    CurriculumLessonModel.active.is_(True),
+                )
+            )
+            if lesson_count != len(lesson_ids):
+                return False
+        return True
 
     async def list_taxonomy_nodes(
         self,

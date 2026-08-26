@@ -26,8 +26,8 @@ from .domain import (
 from .serialization import JsonValue, fingerprint_snapshot
 from .serialization import _canonicalize as _serialize_canonicalize
 
-SCHEMA_VERSION = "1"
-ALGORITHM_VERSION = "deterministic-paper-blueprint-v1"
+SCHEMA_VERSION = "2"
+ALGORITHM_VERSION = "deterministic-paper-blueprint-v2"
 
 
 @dataclass(frozen=True, slots=True)

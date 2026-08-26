@@ -55,6 +55,10 @@ class EmbeddingSourceNotReviewedError(ValueError):
     pass
 
 
+class EmbeddingSourceRemovedError(ValueError):
+    pass
+
+
 class EmbeddingSourceIdentityError(RuntimeError):
     pass
 
@@ -125,6 +129,7 @@ def _source_fingerprint(records: tuple[EmbeddingSourceRecord, ...]) -> str:
                 "kind": record.kind,
                 "source_text_sha256": hashlib.sha256(record.text.encode()).hexdigest(),
                 "version": record.version,
+                "active_for_ai": record.active_for_ai,
             }
             for record in records
         ]
@@ -314,6 +319,8 @@ class EmbeddingJobService:
             raise EmbeddingSourceNotFoundError
         if any(record.review_state is not ReviewState.REVIEWED for record in records):
             raise EmbeddingSourceNotReviewedError
+        if any(not record.active_for_ai for record in records):
+            raise EmbeddingSourceRemovedError
 
     @staticmethod
     def _same_request(
@@ -467,6 +474,7 @@ class EmbeddingWorkerService:
         except (
             EmbeddingSourceNotFoundError,
             EmbeddingSourceNotReviewedError,
+            EmbeddingSourceRemovedError,
             EmbeddingRequiresReviewedRecordError,
             KnowledgeRecordNotFoundError,
         ):

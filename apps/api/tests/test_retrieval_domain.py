@@ -30,6 +30,28 @@ from tests.test_retrieval_fixtures import (
     retrieval_record,
 )
 
+SUBJECT_ID = UUID(int=51)
+UNIT_ID = UUID(int=52)
+LESSON_ID = UUID(int=53)
+
+
+def test_grade_seven_subject_unit_and_lesson_are_hard_scope_boundaries() -> None:
+    selected = RetrievalScope(
+        grade=7,
+        exam_id=EXAM_ID,
+        medium_id=MEDIUM_ID,
+        subject_id=SUBJECT_ID,
+        curriculum_version_id=CURRICULUM_ID,
+        unit_ids=(UNIT_ID,),
+        lesson_ids=(LESSON_ID,),
+        taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
+    )
+
+    assert selected.allows(selected)
+    assert not selected.allows(replace(selected, subject_id=UUID(int=54)))
+    assert not selected.allows(replace(selected, unit_ids=(UUID(int=55),)))
+    assert not selected.allows(replace(selected, lesson_ids=(UUID(int=56),)))
+
 
 def test_hard_scope_requires_every_grade_exam_medium_curriculum_and_taxonomy_match() -> None:
     filters = grade_five_filter()
@@ -132,6 +154,38 @@ def test_candidate_contracts_preserve_opaque_text_scope_provenance_and_fingerpri
             medium_id=MEDIUM_ID,
             curriculum_version_id=CURRICULUM_ID,
             taxonomy=cast(TaxonomyScope, "taxonomy"),
+        ),
+        lambda: RetrievalScope(
+            grade=5,
+            exam_id=EXAM_ID,
+            medium_id=MEDIUM_ID,
+            curriculum_version_id=CURRICULUM_ID,
+            taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
+            subject_id=cast(UUID, "subject"),
+        ),
+        lambda: RetrievalScope(
+            grade=5,
+            exam_id=EXAM_ID,
+            medium_id=MEDIUM_ID,
+            curriculum_version_id=CURRICULUM_ID,
+            taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
+            unit_ids=cast(tuple[UUID, ...], [UNIT_ID]),
+        ),
+        lambda: RetrievalScope(
+            grade=5,
+            exam_id=EXAM_ID,
+            medium_id=MEDIUM_ID,
+            curriculum_version_id=CURRICULUM_ID,
+            taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
+            unit_ids=(UNIT_ID, UNIT_ID),
+        ),
+        lambda: RetrievalScope(
+            grade=5,
+            exam_id=EXAM_ID,
+            medium_id=MEDIUM_ID,
+            curriculum_version_id=CURRICULUM_ID,
+            taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
+            lesson_ids=(LESSON_ID,),
         ),
         lambda: SourceProvenance(source_document_id=cast(UUID, "document"), page_number=1),
         lambda: SourceProvenance(source_document_id=UUID(int=1), page_number=0),
