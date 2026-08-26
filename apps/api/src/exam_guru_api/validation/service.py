@@ -41,9 +41,11 @@ from exam_guru_api.validation.domain import (
     MAX_DUPLICATE_TEXT_CHARACTERS,
     REPORT_SCHEMA_VERSION,
     BlueprintRequirements,
+    ContextScopeBinding,
     DuplicateReference,
     FindingEvidence,
     FindingStatus,
+    TrustedSubjectScope,
     ValidationContractError,
     ValidationFinding,
     ValidationInput,
@@ -75,7 +77,7 @@ from exam_guru_api.validation.repository import (
     ValidationGenerationRecord,
 )
 
-VALIDATION_INPUT_SCHEMA_VERSION = "question-validation-input.v2"
+VALIDATION_INPUT_SCHEMA_VERSION = "question-validation-input.v3"
 _VALIDATION_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/validation-runs")
 
 
@@ -322,6 +324,46 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     if observed_records != expected_records or len(observed_records) != len(raw_items):
         raise ValidationGenerationIntegrityError("generation context references are inconsistent")
     return ProvenanceContext(items=tuple(items))
+
+
+def _optional_uuid(value: object, *, label: str) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(_text(value, label=label))
+    except ValueError as error:
+        raise ValidationGenerationIntegrityError(f"{label} must be a UUID or null") from error
+
+
+def _context_learning_scopes(
+    run: GenerationRunModel,
+) -> dict[str, tuple[UUID | None, UUID | None]]:
+    root = _object(
+        run.context_snapshot,
+        keys=frozenset({"items", "trust"}),
+        label="generation context",
+    )
+    scopes: dict[str, tuple[UUID | None, UUID | None]] = {}
+    for index, raw_item in enumerate(_array(root["items"], label="generation context items")):
+        if not isinstance(raw_item, Mapping):
+            raise ValidationGenerationIntegrityError(
+                f"generation context item {index} must be an object"
+            )
+        context_id = _text(raw_item.get("context_id"), label="context_id")
+        raw_scope = raw_item.get("learning_scope")
+        if raw_scope is None:
+            scopes[context_id] = (None, None)
+            continue
+        learning_scope = _object(
+            raw_scope,
+            keys=frozenset({"unit_id", "lesson_id"}),
+            label=f"generation context learning scope {index}",
+        )
+        scopes[context_id] = (
+            _optional_uuid(learning_scope["unit_id"], label="unit_id"),
+            _optional_uuid(learning_scope["lesson_id"], label="lesson_id"),
+        )
+    return scopes
 
 
 def _question_from_snapshot(candidate: object) -> GeneratedQuestion:
@@ -672,6 +714,9 @@ def _input_snapshot(
     duplicate_provenance: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
     request_metadata = cast(Mapping[str, object], validation_input.candidate["generation_metadata"])
+    generated_scope = validation_input.generated_scope
+    if generated_scope is None:
+        raise ValidationGenerationIntegrityError("canonical generated scope is absent")
     snapshot: dict[str, object] = {
         "schema_version": VALIDATION_INPUT_SCHEMA_VERSION,
         "trust": "server_reconstructed",
@@ -694,6 +739,42 @@ def _input_snapshot(
             "attempt_number": request_metadata["attempt_number"],
             "retry_of_attempt_id": request_metadata["retry_of_attempt_id"],
         },
+        "subject_scope": {
+            "trust": "server_owned",
+            "grade": validation_input.trusted_scope.grade,
+            "medium": validation_input.trusted_scope.medium,
+            "subject_id": str(validation_input.trusted_scope.subject_id),
+            "subject_code": validation_input.trusted_scope.subject_code,
+            "curriculum_version_id": str(validation_input.trusted_scope.curriculum_version_id),
+            "unit_ids": [str(value) for value in validation_input.trusted_scope.unit_ids],
+            "lesson_ids": [str(value) for value in validation_input.trusted_scope.lesson_ids],
+        },
+        "generated_scope": {
+            "grade": generated_scope.grade,
+            "medium": generated_scope.medium,
+            "subject_id": str(generated_scope.subject_id),
+            "curriculum_version_id": str(generated_scope.curriculum_version_id),
+            "unit_ids": [str(value) for value in generated_scope.unit_ids],
+            "lesson_ids": [str(value) for value in generated_scope.lesson_ids],
+        },
+        "context_scope_bindings": [
+            {
+                "context_id": binding.context_id,
+                "curriculum_version_id": str(binding.curriculum_version_id),
+                "subject_id": str(binding.subject_id),
+                "unit_id": str(binding.unit_id) if binding.unit_id is not None else None,
+                "lesson_id": str(binding.lesson_id) if binding.lesson_id is not None else None,
+                "snapshot_unit_id": (
+                    str(binding.snapshot_unit_id) if binding.snapshot_unit_id is not None else None
+                ),
+                "snapshot_lesson_id": (
+                    str(binding.snapshot_lesson_id)
+                    if binding.snapshot_lesson_id is not None
+                    else None
+                ),
+            }
+            for binding in validation_input.context_scope_bindings
+        ],
         "candidate": _plain_json(validation_input.candidate),
         "candidate_fingerprint": validation_input.candidate_fingerprint,
         "input_fingerprint": validation_input.input_fingerprint,
@@ -732,14 +813,87 @@ def _input_snapshot(
     return snapshot
 
 
-def _validator_lineage(pipeline: ValidationPipeline) -> list[dict[str, str]]:
+def _validator_lineage(report: ValidationReport) -> list[dict[str, str]]:
+    identities = sorted(
+        {(finding.validator_id, finding.validator_version) for finding in report.findings}
+    )
     return [
-        {
-            "validator_id": validator.validator_id,
-            "validator_version": validator.validator_version,
-        }
-        for validator in pipeline.validators
+        {"validator_id": validator_id, "validator_version": validator_version}
+        for validator_id, validator_version in identities
     ]
+
+
+async def _trusted_scope_and_bindings(
+    repository: SqlAlchemyValidationRepository,
+    record: ValidationGenerationRecord,
+) -> tuple[TrustedSubjectScope | None, tuple[ContextScopeBinding, ...]]:
+    trusted_record = record.trusted_scope
+    if trusted_record is None:
+        return None, ()
+    run = record.run
+    try:
+        persisted_blueprint = deserialize_blueprint(trusted_record.blueprint.blueprint)
+    except (BlueprintSnapshotError, TypeError, ValueError) as error:
+        raise ValidationGenerationIntegrityError(
+            "persisted trusted blueprint cannot be reconstructed"
+        ) from error
+    scope = persisted_blueprint.curriculum_scope
+    if (
+        trusted_record.blueprint.id != run.paper_blueprint_id
+        or trusted_record.blueprint.curriculum_version_id != run.curriculum_version_id
+        or persisted_blueprint.version.blueprint_id != run.blueprint_version
+        or scope.curriculum_version_id != run.curriculum_version_id
+        or scope.grade != trusted_record.grade
+        or scope.medium != trusted_record.medium
+        or scope.subject_id != trusted_record.subject_id
+    ):
+        raise ValidationGenerationIntegrityError(
+            "persisted blueprint and curriculum subject scope are inconsistent"
+        )
+    if not await repository.selected_scope_is_valid(
+        run.curriculum_version_id,
+        unit_ids=scope.unit_ids,
+        lesson_ids=scope.lesson_ids,
+    ):
+        raise ValidationGenerationIntegrityError(
+            "persisted blueprint selected unit or lesson scope is invalid"
+        )
+    trusted_scope = TrustedSubjectScope(
+        grade=trusted_record.grade,
+        medium=trusted_record.medium,
+        subject_id=trusted_record.subject_id,
+        subject_code=trusted_record.subject_code,
+        curriculum_version_id=run.curriculum_version_id,
+        unit_ids=scope.unit_ids,
+        lesson_ids=scope.lesson_ids,
+    )
+    snapshot_scopes = _context_learning_scopes(run)
+    bindings: list[ContextScopeBinding] = []
+    for scoped_context in trusted_record.context_records:
+        context = scoped_context.context
+        context_id = f"{context.record_kind}:{context.id}"
+        if context_id not in snapshot_scopes:
+            raise ValidationGenerationIntegrityError(
+                "persisted context record is missing from generation scope snapshot"
+            )
+        snapshot_unit_id, snapshot_lesson_id = snapshot_scopes[context_id]
+        context_curriculum_id = context.curriculum_version_id
+        if context.source_curriculum_version_id != context.curriculum_version_id:
+            context_curriculum_id = context.source_curriculum_version_id or UUID(int=0)
+        bindings.append(
+            ContextScopeBinding(
+                context_id=context_id,
+                curriculum_version_id=context_curriculum_id,
+                subject_id=scoped_context.subject_id,
+                unit_id=context.unit_id,
+                lesson_id=context.lesson_id,
+                snapshot_unit_id=snapshot_unit_id,
+                snapshot_lesson_id=snapshot_lesson_id,
+            )
+        )
+    if set(snapshot_scopes) != {binding.context_id for binding in bindings}:
+        raise ValidationGenerationIntegrityError("generation context scope bindings are incomplete")
+    return trusted_scope, tuple(bindings)
 
 
 def _finding_models(run_id: UUID, report: ValidationReport) -> tuple[ValidationFindingModel, ...]:
@@ -863,6 +1017,10 @@ class ValidationRunService:
         minimum_age, maximum_age = grade_age_bounds(
             slot.generation_constraints.curriculum_scope.grade
         )
+        trusted_scope, context_scope_bindings = await _trusted_scope_and_bindings(
+            self._repository,
+            generation_record,
+        )
         try:
             validation_input = adapt_generation_result(
                 result,
@@ -876,6 +1034,8 @@ class ValidationRunService:
                     maximum_age=maximum_age,
                 ),
                 duplicate_references=duplicate_references,
+                trusted_scope=trusted_scope,
+                context_scope_bindings=context_scope_bindings,
             )
         except (GenerationAdapterError, ValidationContractError) as error:
             raise ValidationGenerationIntegrityError(
@@ -902,7 +1062,7 @@ class ValidationRunService:
             validation_input,
             duplicate_provenance,
         )
-        lineage = _validator_lineage(self._pipeline)
+        lineage = _validator_lineage(report)
         run_values: dict[str, object] = {
             "id": run_id,
             "curriculum_version_id": curriculum_version_id,

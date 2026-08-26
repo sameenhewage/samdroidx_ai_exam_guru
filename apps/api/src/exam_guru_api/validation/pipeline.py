@@ -13,6 +13,14 @@ from exam_guru_api.validation.domain import (
     ValidationInput,
     ValidationReport,
 )
+from exam_guru_api.validation.maths import MathematicsSubjectValidator
+from exam_guru_api.validation.subject import (
+    GroundedFactualSubjectValidator,
+    GroundedSemanticVerifier,
+    SubjectValidationContext,
+    SubjectValidationRouter,
+    TrustedSubjectScopeValidator,
+)
 from exam_guru_api.validation.validators import (
     AgeLanguageHeuristicsValidator,
     BlueprintComplianceValidator,
@@ -24,7 +32,7 @@ from exam_guru_api.validation.validators import (
     SchemaCompletenessValidator,
 )
 
-DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v3"
+DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v4"
 
 
 class QuestionValidator(Protocol):
@@ -55,6 +63,7 @@ class ValidationPipeline:
 
     validators: tuple[QuestionValidator, ...]
     version: str = DEFAULT_PIPELINE_VERSION
+    subject_router: SubjectValidationRouter | None = None
     pipeline_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -88,6 +97,10 @@ class ValidationPipeline:
         if len(set(validator_ids)) != len(validator_ids):
             raise ValidationContractError("pipeline validator identifiers must be unique")
         object.__setattr__(self, "validators", canonical)
+        if self.subject_router is not None and not isinstance(
+            self.subject_router, SubjectValidationRouter
+        ):
+            raise ValidationContractError("pipeline subject_router must be SubjectValidationRouter")
         fingerprint_payload = json.dumps(
             {
                 "pipeline_version": self.version,
@@ -98,6 +111,22 @@ class ValidationPipeline:
                     }
                     for validator in canonical
                 ],
+                "subject_router": (
+                    None
+                    if self.subject_router is None
+                    else {
+                        "validator_id": self.subject_router.validator_id,
+                        "validator_version": self.subject_router.validator_version,
+                        "registrations": [
+                            {
+                                "validator_id": validator.validator_id,
+                                "validator_version": validator.validator_version,
+                                "subject_codes": sorted(validator.subject_codes),
+                            }
+                            for validator in self.subject_router.validators
+                        ],
+                    }
+                ),
             },
             ensure_ascii=False,
             allow_nan=False,
@@ -135,6 +164,16 @@ class ValidationPipeline:
                 )
             findings.extend(component_findings)
 
+        if self.subject_router is not None:
+            subject_findings = self.subject_router.validate(
+                SubjectValidationContext.from_input(validation_input)
+            )
+            if not isinstance(subject_findings, tuple) or not subject_findings:
+                raise ValidationContractError("subject router must return at least one finding")
+            if any(not isinstance(item, ValidationFinding) for item in subject_findings):
+                raise ValidationContractError("subject router returned a malformed finding")
+            findings.extend(subject_findings)
+
         return ValidationReport(
             candidate_id=validation_input.candidate_id,
             pipeline_version=self.version,
@@ -145,9 +184,11 @@ class ValidationPipeline:
 def build_default_pipeline(
     *,
     heuristic_policy: HeuristicPolicy | None = None,
+    semantic_verifier: GroundedSemanticVerifier | None = None,
 ) -> ValidationPipeline:
-    """Build the canonical versioned ruleset; no model, persistence, or network is involved."""
+    """Build canonical universal rules plus bounded trusted-subject routing."""
 
+    factual = GroundedFactualSubjectValidator(verifier=semantic_verifier)
     return ValidationPipeline(
         validators=(
             SchemaCompletenessValidator(),
@@ -157,7 +198,12 @@ def build_default_pipeline(
             AgeLanguageHeuristicsValidator(policy=heuristic_policy),
             ExactHashDuplicateValidator(),
             LexicalSimilarityIndicatorValidator(),
-        )
+            TrustedSubjectScopeValidator(),
+        ),
+        subject_router=SubjectValidationRouter(
+            validators=(MathematicsSubjectValidator(), factual),
+            fallback_validator=factual,
+        ),
     )
 
 

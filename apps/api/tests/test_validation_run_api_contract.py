@@ -54,6 +54,13 @@ def test_create_contract_accepts_only_a_generation_run_identifier() -> None:
         "passed": True,
         "pipeline_version": "client-pipeline",
         "validators": ["skip-grounding"],
+        "validator_id": "client-selected-validator",
+        "subject_id": str(UUID(int=999)),
+        "subject_code": "MATHEMATICS",
+        "grade": 5,
+        "medium": "en",
+        "unit_ids": [],
+        "lesson_ids": [],
         "duplicate_references": [],
         "minimum_age": 1,
     }
@@ -67,7 +74,7 @@ def test_create_contract_accepts_only_a_generation_run_identifier() -> None:
 def test_validation_pipeline_fingerprint_binds_versioned_validator_composition() -> None:
     pipeline = build_default_pipeline()
     same = build_default_pipeline()
-    changed = replace(pipeline, version="deterministic-question-validation.v4")
+    changed = replace(pipeline, version="deterministic-question-validation.v5")
 
     assert pipeline.pipeline_fingerprint == same.pipeline_fingerprint
     assert len(pipeline.pipeline_fingerprint) == 64

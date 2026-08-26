@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -63,7 +63,7 @@ def test_local_identity_mode_defaults_to_deterministic_for_existing_development_
 @pytest.mark.parametrize("identity_provider", ["OIDC", "oidc ", "auto", ""])
 def test_identity_provider_mode_is_an_exact_closed_value(identity_provider: str) -> None:
     with pytest.raises(ValidationError):
-        Settings(identity_provider=identity_provider)
+        Settings(identity_provider=cast(Any, identity_provider))
 
 
 def test_oidc_mode_requires_every_explicit_provider_control() -> None:

@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -163,7 +163,7 @@ class QuestionContentResponse(_FrozenStrictModel):
     @classmethod
     def from_domain(cls, value: QuestionContent) -> Self:
         return cls(
-            question_type=value.question_type,
+            question_type=cast(QuestionTypeValue, value.question_type),
             stem=value.stem,
             options=tuple(
                 QuestionOptionResponse(option_id=option.option_id, text=option.text)
@@ -260,10 +260,10 @@ class ReviewCandidateSummaryResponse(_FrozenStrictModel):
             blueprint_id=value.blueprint_id,
             blueprint_version=value.blueprint_version,
             blueprint_slot_id=value.blueprint_slot_id,
-            state=value.state,
+            state=cast(CandidateStateValue, value.state.value),
             version=value.version,
             current_revision=value.current_revision,
-            question_type=value.question_type,
+            question_type=cast(QuestionTypeValue, value.question_type),
             stem_preview=value.stem_preview,
             marks=value.marks,
             created_by=value.created_by,
@@ -314,7 +314,7 @@ class ReviewCandidateResponse(_FrozenStrictModel):
             blueprint_id=candidate.blueprint_id,
             blueprint_version=candidate.blueprint_version,
             blueprint_slot_id=candidate.blueprint_slot_id,
-            state=candidate.state,
+            state=cast(CandidateStateValue, candidate.state),
             version=candidate.version,
             current_revision=candidate.current_revision,
             lineage=GenerationLineageResponse.model_validate(lineage),
@@ -337,7 +337,7 @@ class ReviewCandidateResponse(_FrozenStrictModel):
             ),
             events=tuple(
                 CandidateReviewEventResponse(
-                    action=event_model.action,
+                    action=cast(ReviewActionValue, event_model.action),
                     reviewer_id=event_model.reviewer_id,
                     candidate_version=event_model.candidate_version,
                     revision=event_model.revision,

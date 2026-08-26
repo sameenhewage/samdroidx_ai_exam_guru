@@ -177,7 +177,7 @@ def patch_valid_creation(monkeypatch: pytest.MonkeyPatch, candidate: QuestionCan
         review_service_module,
         "reconstruct_validation_report",
         lambda _run, _findings: SimpleNamespace(
-            report=SimpleNamespace(passed=True),
+            report=SimpleNamespace(passed=True, blocked=False),
             finding_ids=(),
         ),
     )
@@ -204,7 +204,7 @@ def test_review_candidate_create_idempotency_nonpass_and_success_paths(
         assert session.commits == 0
 
         service, _session, repository = service_with(candidate)
-        repository.source.validation.overall_status = "warn"
+        repository.source.validation.overall_status = "fail"
         with pytest.raises(ReviewValidationNotPassedError):
             await service.create(
                 CURRICULUM_ID,
@@ -213,6 +213,16 @@ def test_review_candidate_create_idempotency_nonpass_and_success_paths(
             )
 
         patch_valid_creation(monkeypatch, candidate)
+        service, warning_session, repository = service_with(candidate)
+        repository.source.validation.overall_status = "warn"
+        warning_created = await service.create(
+            CURRICULUM_ID,
+            validation_run_id=repository.record.candidate.validation_run_id,
+            principal=PRINCIPAL,
+        )
+        assert not warning_created.deduplicated
+        assert warning_session.commits == 1
+
         service, session, repository = service_with(candidate)
         created = await service.create(
             CURRICULUM_ID,
@@ -262,7 +272,7 @@ def test_review_candidate_create_rejects_report_and_adapter_integrity_failures(
             review_service_module,
             "reconstruct_validation_report",
             lambda _run, _findings: SimpleNamespace(
-                report=SimpleNamespace(passed=False),
+                report=SimpleNamespace(passed=False, blocked=True),
                 finding_ids=(),
             ),
         )

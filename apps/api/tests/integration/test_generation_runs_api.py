@@ -79,6 +79,7 @@ from exam_guru_api.validation import (
     build_default_pipeline,
 )
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
+from exam_guru_api.validation.service import _fingerprint, _request_fingerprint_payload
 from tests.test_blueprint_domain import (
     COMPETENCY_A,
     CURRICULUM_VERSION_ID,
@@ -2025,13 +2026,28 @@ def test_validation_report_is_transactional_idempotent_audited_readable_and_immu
     response = fetched.json()
     assert response["generation_run_id"] == str(run_id)
     assert response["curriculum_version_id"] == str(CURRICULUM_VERSION_ID)
-    assert response["overall_status"] == "pass"
-    assert response["finding_count"] == len(findings.json()) == 13
+    assert response["overall_status"] == "warn"
+    assert response["finding_count"] == len(findings.json()) == 15
     assert response["duplicate_reference_count"] >= 1
     assert response["grounding_source_count"] == 2
     assert response["input_snapshot"]["trust"] == "server_reconstructed"
     assert response["input_snapshot"]["generation"]["generation_run_id"] == str(run_id)
-    assert response["validator_lineage"]
+    assert len(response["input_snapshot"]["context_scope_bindings"]) == 2
+    assert response["input_snapshot"]["subject_scope"] == {
+        "trust": "server_owned",
+        "grade": 5,
+        "medium": "en",
+        "subject_id": "00000000-0000-5000-8000-000000000023",
+        "subject_code": "LEGACY_UNCLASSIFIED",
+        "curriculum_version_id": str(CURRICULUM_VERSION_ID),
+        "unit_ids": [],
+        "lesson_ids": [],
+    }
+    lineage = {
+        (item["validator_id"], item["validator_version"]) for item in response["validator_lineage"]
+    }
+    assert ("trusted-subject-scope", "1.0.0") in lineage
+    assert ("subject-validation-router", "1.0.0") in lineage
     assert response["limitations"]
     for field_name in (
         "pipeline_fingerprint",
@@ -2041,7 +2057,11 @@ def test_validation_report_is_transactional_idempotent_audited_readable_and_immu
         "report_fingerprint",
     ):
         _assert_sha256(response[field_name])
-    assert {finding["status"] for finding in findings.json()} == {"pass"}
+    assert {finding["status"] for finding in findings.json()} == {"pass", "warn"}
+    unsupported = next(
+        finding for finding in findings.json() if finding["code"] == "subject.unregistered"
+    )
+    assert unsupported["status"] == "warn"
     assert all(1 <= len(finding["evidence"]) <= 64 for finding in findings.json())
 
     async def verify_database_guards() -> None:
@@ -2140,22 +2160,22 @@ def test_validation_concurrent_create_converges_and_new_pipeline_version_reruns(
     assert sorted(result["deduplicated"] for _, result in results) == [False, True]
     first_id = results[0][1]["id"]
 
-    pipeline_v4 = replace(
+    pipeline_v5 = replace(
         build_default_pipeline(),
-        version="deterministic-question-validation.v4",
+        version="deterministic-question-validation.v5",
     )
     with api_client(
         generation_seed,
         dispatcher,
         runtime=runtime,
-        validation_pipeline=pipeline_v4,
+        validation_pipeline=pipeline_v5,
     ) as client:
         rerun = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
         duplicate = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
 
     assert rerun.status_code == duplicate.status_code == 201
     assert rerun.json()["id"] != first_id
-    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v4"
+    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v5"
     assert rerun.json()["deduplicated"] is False
     assert duplicate.json()["id"] == rerun.json()["id"]
     assert duplicate.json()["deduplicated"] is True
@@ -2169,7 +2189,7 @@ def test_validation_reports_fail_warn_pass_and_bound_non_leaking_evidence(
         (
             "validation-cross-curriculum-sentinel",
             "Cross curriculum duplicate sentinel?",
-            FindingStatus.PASS,
+            FindingStatus.WARN,
         ),
         ("validation-historical-duplicate", "Which number is even?", FindingStatus.FAIL),
         (
@@ -2263,6 +2283,90 @@ def test_validation_reports_fail_warn_pass_and_bound_non_leaking_evidence(
         f"generated:{first_pass['generation_run_id']}" in generated_exact["evidence"][0]["observed"]
     )
     assert f"historical:{CROSS_CURRICULUM_QUESTION_ID}" not in str(generated_findings)
+
+
+@pytest.mark.integration
+def test_validation_persists_a_stable_failure_for_generation_subject_spoof(
+    generation_seed: GenerationSeed,
+) -> None:
+    generation_run_id, dispatcher, runtime = create_succeeded_generation(
+        generation_seed,
+        key="validation-subject-spoof",
+        stem="Which subject scope is trusted?",
+    )
+    spoofed_subject_id = UUID(int=999_771)
+
+    async def tamper_scope() -> None:
+        engine = create_async_engine(generation_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                run = await session.get(GenerationRunModel, generation_run_id)
+                assert run is not None
+                blueprint = deepcopy(run.blueprint_snapshot)
+                root_scope = cast(dict[str, object], blueprint["curriculum_scope"])
+                root_scope["subject_id"] = str(spoofed_subject_id)
+                for raw_slot in cast(list[dict[str, object]], blueprint["slots"]):
+                    constraints = cast(dict[str, object], raw_slot["generation_constraints"])
+                    slot_scope = cast(dict[str, object], constraints["curriculum_scope"])
+                    slot_scope["subject_id"] = str(spoofed_subject_id)
+                slot_snapshot = next(
+                    deepcopy(raw_slot)
+                    for raw_slot in cast(list[dict[str, object]], blueprint["slots"])
+                    if raw_slot["slot_id"] == run.slot_id
+                )
+                run.blueprint_snapshot = blueprint
+                run.blueprint_slot_snapshot = slot_snapshot
+                run.request_fingerprint = _fingerprint(_request_fingerprint_payload(run))
+                await session.execute(
+                    text(
+                        "ALTER TABLE generation_runs DISABLE TRIGGER "
+                        "enforce_generation_run_update_trigger"
+                    )
+                )
+                try:
+                    await session.execute(
+                        update(GenerationRunModel)
+                        .where(GenerationRunModel.id == generation_run_id)
+                        .values(
+                            blueprint_snapshot=blueprint,
+                            blueprint_slot_snapshot=slot_snapshot,
+                            request_fingerprint=run.request_fingerprint,
+                        )
+                    )
+                    await session.commit()
+                finally:
+                    await session.execute(
+                        text(
+                            "ALTER TABLE generation_runs ENABLE TRIGGER "
+                            "enforce_generation_run_update_trigger"
+                        )
+                    )
+                    await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(tamper_scope())
+    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+        response = client.post(
+            validation_path(generation_seed),
+            json={"generation_run_id": str(generation_run_id)},
+            headers=ADMIN_HEADERS,
+        )
+        assert response.status_code == 201, response.text
+        body = response.json()
+        findings = client.get(
+            f"{validation_path(generation_seed)}/{body['id']}/findings",
+            headers=REVIEWER_HEADERS,
+        ).json()
+
+    assert body["overall_status"] == "fail"
+    subject_scope = body["input_snapshot"]["subject_scope"]
+    generated_scope = body["input_snapshot"]["generated_scope"]
+    assert subject_scope["subject_id"] != generated_scope["subject_id"]
+    finding = next(item for item in findings if item["code"] == "subject.scope.subject_mismatch")
+    assert finding["status"] == "fail"
+    assert finding["validator_id"] == "trusted-subject-scope"
 
 
 @pytest.mark.integration

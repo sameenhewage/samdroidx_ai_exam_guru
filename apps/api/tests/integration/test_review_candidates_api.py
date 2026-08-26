@@ -62,7 +62,7 @@ def create_passing_validation(
             headers=ADMIN_HEADERS,
         )
     assert validation.status_code == 201
-    assert validation.json()["overall_status"] == "pass"
+    assert validation.json()["overall_status"] == "warn"
     return UUID(validation.json()["id"]), generation_run_id, dispatcher, runtime
 
 
@@ -122,7 +122,10 @@ def test_review_candidate_api_is_server_derived_scoped_audited_and_terminal(
 
         created = client.post(path, json=body, headers=REVIEWER_HEADERS)
         duplicate = client.post(path, json=body, headers=ADMIN_HEADERS)
-        assert created.status_code == duplicate.status_code == 201
+        assert created.status_code == duplicate.status_code == 201, (
+            created.text,
+            duplicate.text,
+        )
         assert created.json()["deduplicated"] is False
         assert duplicate.json()["deduplicated"] is True
         candidate = created.json()
@@ -138,7 +141,7 @@ def test_review_candidate_api_is_server_derived_scoped_audited_and_terminal(
         assert candidate["validation"]["validation_run_id"] == str(validation_run_id)
         assert candidate["validation"]["validated_revision"] == 1
         assert candidate["validation"]["passed"] is True
-        assert len(candidate["validation"]["finding_refs"]) == 13
+        assert len(candidate["validation"]["finding_refs"]) == 15
         assert all(UUID(value) for value in candidate["validation"]["finding_refs"])
         assert candidate["lineage"]["generation_id"] == str(generation_run_id)
         assert candidate["lineage"]["paper_blueprint_id"] == str(seed.paper_blueprint_id)

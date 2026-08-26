@@ -130,7 +130,7 @@ def _assert_report_binding(
             actual=report.candidate_id,
         )
 
-    if report.passed:
+    if not report.blocked:
         expected_marker = f"candidate_sha256={expected_input.candidate_fingerprint}"
         observed_markers = tuple(
             evidence.observed
@@ -230,7 +230,7 @@ def _validation_evidence(
         validation_run_id=validation_run_id,
         validator_version=f"{report.pipeline_version}/{report.report_schema_version}",
         finding_refs=tuple(str(finding_id) for finding_id in finding_ids),
-        passed=report.passed,
+        passed=not report.blocked,
         validated_revision=1,
     )
 

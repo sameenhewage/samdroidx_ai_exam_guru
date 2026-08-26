@@ -18,8 +18,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
+from uuid import UUID
 
-REPORT_SCHEMA_VERSION = "question-validation-report.v1"
+from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+
+REPORT_SCHEMA_VERSION = "question-validation-report.v2"
 QUESTION_SCHEMA_VERSION = "question.v1"
 MAX_CANDIDATE_CHARACTERS = 262_144
 MAX_JSON_DEPTH = 24
@@ -31,14 +34,17 @@ MAX_SOURCE_TEXT_CHARACTERS = 32_000
 MAX_DUPLICATE_TEXT_CHARACTERS = 16_000
 
 REPORT_LIMITATIONS = (
-    "Deterministic checks cover declared structure, encoded blueprint rules, identifier-level "
-    "provenance, bounded text indicators, prohibited residue, exact normalized hashes, and a "
-    "bounded lexical-overlap indicator.",
+    "Deterministic checks cover declared structure, encoded blueprint rules, trusted subject/scope "
+    "bindings, identifier-level provenance, bounded text indicators, prohibited residue, exact "
+    "normalized hashes, and a bounded lexical-overlap indicator.",
+    "The first Maths slice supports bounded grade-school arithmetic, exact fractions, decimals, "
+    "percentages, MCQ option equivalence, and explicit marking-answer statements; unsupported "
+    "word problems, symbolic algebra, and unit conversion require grounded or human review.",
     "The Unicode character n-gram lexical indicator is not semantic paraphrase detection; it can "
     "produce false positives for lexically similar questions and false negatives for "
     "meaning-similar wording with low lexical overlap.",
-    "A passing report does not establish factual or semantic correctness, curriculum alignment, "
-    "age appropriateness, language fluency, or paraphrase uniqueness.",
+    "Grounded semantic status is only as strong as the reviewed, correctly scoped evidence and "
+    "configured verifier; absent or insufficient verification is a warning, never a pass.",
     "Generated content still requires the configured human review gate before any separate "
     "publication workflow may use it.",
 )
@@ -206,6 +212,123 @@ class BlueprintRequirements:
             raise ValidationContractError("minimum_options cannot exceed maximum_options")
 
 
+MAX_SELECTED_SCOPE_IDS = 256
+_SUBJECT_CODE = re.compile(r"^[A-Z0-9]+(?:[._-][A-Z0-9]+)*$")
+
+
+def _canonical_uuid_tuple(value: object, field_name: str) -> tuple[UUID, ...]:
+    if (
+        not isinstance(value, tuple)
+        or len(value) > MAX_SELECTED_SCOPE_IDS
+        or any(not isinstance(item, UUID) for item in value)
+    ):
+        raise ValidationContractError(f"{field_name} must be a bounded tuple of UUID values")
+    canonical = tuple(sorted(value, key=lambda item: item.int))
+    if len(set(canonical)) != len(canonical):
+        raise ValidationContractError(f"{field_name} cannot contain duplicate UUID values")
+    return canonical
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedSubjectScope:
+    """Server-owned curriculum identity and selected learning scope for validation."""
+
+    grade: int
+    medium: str
+    subject_id: UUID
+    subject_code: str
+    curriculum_version_id: UUID
+    unit_ids: tuple[UUID, ...] = ()
+    lesson_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_integer(self.grade, "subject scope grade", minimum=1, maximum=13)
+        _require_machine_value(self.medium, "subject scope medium", maximum=32)
+        if not isinstance(self.subject_id, UUID):
+            raise ValidationContractError("subject scope subject_id must be a UUID")
+        if (
+            not isinstance(self.subject_code, str)
+            or len(self.subject_code) > 64
+            or not _SUBJECT_CODE.fullmatch(self.subject_code)
+        ):
+            raise ValidationContractError("subject scope subject_code must be a bounded code")
+        if not isinstance(self.curriculum_version_id, UUID):
+            raise ValidationContractError("subject scope curriculum_version_id must be a UUID")
+        units = _canonical_uuid_tuple(self.unit_ids, "subject scope unit_ids")
+        lessons = _canonical_uuid_tuple(self.lesson_ids, "subject scope lesson_ids")
+        if lessons and not units:
+            raise ValidationContractError("selected lessons require selected units")
+        object.__setattr__(self, "unit_ids", units)
+        object.__setattr__(self, "lesson_ids", lessons)
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedSubjectScope:
+    """Scope declared by the immutable generation blueprint snapshot."""
+
+    grade: int
+    medium: str
+    subject_id: UUID
+    curriculum_version_id: UUID
+    unit_ids: tuple[UUID, ...] = ()
+    lesson_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_integer(self.grade, "generated scope grade", minimum=1, maximum=13)
+        _require_machine_value(self.medium, "generated scope medium", maximum=32)
+        if not isinstance(self.subject_id, UUID):
+            raise ValidationContractError("generated scope subject_id must be a UUID")
+        if not isinstance(self.curriculum_version_id, UUID):
+            raise ValidationContractError("generated scope curriculum_version_id must be a UUID")
+        units = _canonical_uuid_tuple(self.unit_ids, "generated scope unit_ids")
+        lessons = _canonical_uuid_tuple(self.lesson_ids, "generated scope lesson_ids")
+        if lessons and not units:
+            raise ValidationContractError("generated selected lessons require selected units")
+        object.__setattr__(self, "unit_ids", units)
+        object.__setattr__(self, "lesson_ids", lessons)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextScopeBinding:
+    """Database scope plus generation-snapshot scope for one grounding context item."""
+
+    context_id: str
+    curriculum_version_id: UUID
+    subject_id: UUID
+    unit_id: UUID | None
+    lesson_id: UUID | None
+    snapshot_unit_id: UUID | None
+    snapshot_lesson_id: UUID | None
+
+    def __post_init__(self) -> None:
+        _require_machine_value(self.context_id, "context scope context_id", maximum=256)
+        for field_name in (
+            "curriculum_version_id",
+            "subject_id",
+            "unit_id",
+            "lesson_id",
+            "snapshot_unit_id",
+            "snapshot_lesson_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, UUID):
+                raise ValidationContractError(f"context scope {field_name} must be a UUID or null")
+        if self.lesson_id is not None and self.unit_id is None:
+            raise ValidationContractError("context lesson_id requires unit_id")
+        if self.snapshot_lesson_id is not None and self.snapshot_unit_id is None:
+            raise ValidationContractError("snapshot lesson_id requires snapshot_unit_id")
+
+
+def legacy_unclassified_scope() -> TrustedSubjectScope:
+    return TrustedSubjectScope(
+        grade=5,
+        medium="si-LK",
+        subject_id=LEGACY_UNCLASSIFIED_SUBJECT_ID,
+        subject_code="LEGACY_UNCLASSIFIED",
+        curriculum_version_id=UUID(int=0),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GroundingSource:
     """Retrieved source data and its expected immutable provenance fields.
@@ -354,6 +477,9 @@ class ValidationInput:
     blueprint: BlueprintRequirements
     grounding_sources: tuple[GroundingSource, ...]
     duplicate_references: tuple[DuplicateReference, ...] = ()
+    trusted_scope: TrustedSubjectScope = field(default_factory=legacy_unclassified_scope)
+    generated_scope: GeneratedSubjectScope | None = None
+    context_scope_bindings: tuple[ContextScopeBinding, ...] = ()
     candidate_fingerprint: str = field(init=False)
     input_fingerprint: str = field(init=False)
     _candidate_json: str = field(init=False, repr=False, compare=False)
@@ -398,6 +524,36 @@ class ValidationInput:
             or any(not isinstance(item, DuplicateReference) for item in self.duplicate_references)
         ):
             raise ValidationContractError("duplicate_references must be a bounded tuple")
+        if not isinstance(self.trusted_scope, TrustedSubjectScope):
+            raise ValidationContractError("trusted_scope must be TrustedSubjectScope")
+        generated_scope = self.generated_scope
+        if generated_scope is None:
+            generated_scope = GeneratedSubjectScope(
+                grade=self.trusted_scope.grade,
+                medium=self.trusted_scope.medium,
+                subject_id=self.trusted_scope.subject_id,
+                curriculum_version_id=self.trusted_scope.curriculum_version_id,
+                unit_ids=self.trusted_scope.unit_ids,
+                lesson_ids=self.trusted_scope.lesson_ids,
+            )
+        if not isinstance(generated_scope, GeneratedSubjectScope):
+            raise ValidationContractError("generated_scope must be GeneratedSubjectScope")
+        if (
+            not isinstance(self.context_scope_bindings, tuple)
+            or len(self.context_scope_bindings) > MAX_GROUNDING_SOURCES
+            or any(
+                not isinstance(item, ContextScopeBinding) for item in self.context_scope_bindings
+            )
+        ):
+            raise ValidationContractError("context_scope_bindings must be a bounded tuple")
+        canonical_bindings = tuple(
+            sorted(self.context_scope_bindings, key=lambda item: item.context_id)
+        )
+        binding_ids = tuple(item.context_id for item in canonical_bindings)
+        if len(set(binding_ids)) != len(binding_ids):
+            raise ValidationContractError("context scope binding identifiers must be unique")
+        object.__setattr__(self, "generated_scope", generated_scope)
+        object.__setattr__(self, "context_scope_bindings", canonical_bindings)
 
         canonical_sources = tuple(sorted(self.grounding_sources, key=_grounding_sort_key))
         canonical_duplicates = tuple(
@@ -426,6 +582,41 @@ class ValidationInput:
             },
             "candidate_fingerprint": candidate_fingerprint,
             "candidate_id": self.candidate_id,
+            "subject_scope": {
+                "grade": self.trusted_scope.grade,
+                "medium": self.trusted_scope.medium,
+                "subject_id": str(self.trusted_scope.subject_id),
+                "subject_code": self.trusted_scope.subject_code,
+                "curriculum_version_id": str(self.trusted_scope.curriculum_version_id),
+                "unit_ids": [str(value) for value in self.trusted_scope.unit_ids],
+                "lesson_ids": [str(value) for value in self.trusted_scope.lesson_ids],
+            },
+            "generated_scope": {
+                "grade": generated_scope.grade,
+                "medium": generated_scope.medium,
+                "subject_id": str(generated_scope.subject_id),
+                "curriculum_version_id": str(generated_scope.curriculum_version_id),
+                "unit_ids": [str(value) for value in generated_scope.unit_ids],
+                "lesson_ids": [str(value) for value in generated_scope.lesson_ids],
+            },
+            "context_scope_bindings": [
+                {
+                    "context_id": item.context_id,
+                    "curriculum_version_id": str(item.curriculum_version_id),
+                    "subject_id": str(item.subject_id),
+                    "unit_id": str(item.unit_id) if item.unit_id is not None else None,
+                    "lesson_id": str(item.lesson_id) if item.lesson_id is not None else None,
+                    "snapshot_unit_id": (
+                        str(item.snapshot_unit_id) if item.snapshot_unit_id is not None else None
+                    ),
+                    "snapshot_lesson_id": (
+                        str(item.snapshot_lesson_id)
+                        if item.snapshot_lesson_id is not None
+                        else None
+                    ),
+                }
+                for item in canonical_bindings
+            ],
             "duplicate_references": [
                 {
                     "content_sha256": item.effective_sha256,

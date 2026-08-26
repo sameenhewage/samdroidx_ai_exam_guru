@@ -25,6 +25,7 @@ from exam_guru_api.papers.review_service import (
     ReviewValidationNotPassedError,
 )
 from exam_guru_api.papers.schemas import (
+    QuestionContentRequest,
     ReviewCandidateApproveRequest,
     ReviewCandidateCreateRequest,
     ReviewCandidateEditRequest,
@@ -205,7 +206,7 @@ def test_review_route_handlers_delegate_typed_commands(
                 CURRICULUM_ID,
                 CANDIDATE_ID,
                 ReviewCandidateEditRequest(
-                    content=content_payload(),
+                    content=QuestionContentRequest.model_validate(content_payload()),
                     reason="Edit reason.",
                     expected_version=3,
                 ),

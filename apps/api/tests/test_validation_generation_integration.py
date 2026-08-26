@@ -25,10 +25,12 @@ from exam_guru_api.generation import (
 )
 from exam_guru_api.validation import (
     BlueprintRequirements,
+    ContextScopeBinding,
     DuplicateReference,
     FindingCode,
     FindingStatus,
     GenerationAdapterError,
+    TrustedSubjectScope,
     ValidationInput,
     adapt_generation_result,
     generation_result_fingerprint,
@@ -416,7 +418,9 @@ def test_adapter_preserves_constructed_answer_modes_without_inventing_options(
         "accepted_responses": ("42", "forty-two"),
         "explanation": "Six groups of seven total forty-two.",
     }
-    assert validate_question(validation_input).overall_status is FindingStatus.PASS
+    report = validate_question(validation_input)
+    assert report.overall_status is FindingStatus.WARN
+    assert not report.blocked
 
 
 def test_untrusted_source_text_is_data_only_and_never_raw_finding_evidence() -> None:
@@ -551,6 +555,18 @@ def test_adapter_rejects_foreign_or_missing_boundary_contracts() -> None:
             result,
             requirements=_requirements(result),
             duplicate_references=cast(tuple[DuplicateReference, ...], []),
+        )
+    with pytest.raises(GenerationAdapterError, match="trusted_scope"):
+        adapt_generation_result(
+            result,
+            requirements=_requirements(result),
+            trusted_scope=cast(TrustedSubjectScope, object()),
+        )
+    with pytest.raises(GenerationAdapterError, match="context_scope_bindings"):
+        adapt_generation_result(
+            result,
+            requirements=_requirements(result),
+            context_scope_bindings=cast(tuple[ContextScopeBinding, ...], [object()]),
         )
 
     duplicate = DuplicateReference(question_id="same-question", text="Trusted bank text")

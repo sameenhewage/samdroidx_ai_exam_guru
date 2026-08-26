@@ -10,6 +10,7 @@ from exam_guru_api.validation import (
     FindingStatus,
     LexicalSimilarityIndicatorValidator,
     QuestionValidator,
+    SubjectValidationRouter,
     ValidationContractError,
     ValidationFinding,
     ValidationInput,
@@ -59,12 +60,12 @@ def test_default_pipeline_is_composable_versioned_and_fully_deterministic() -> N
 
     assert first == second
     assert first.pipeline_version == DEFAULT_PIPELINE_VERSION
-    assert first.pipeline_version == "deterministic-question-validation.v3"
-    assert first.overall_status is FindingStatus.PASS
-    assert first.passed is True
+    assert first.pipeline_version == "deterministic-question-validation.v4"
+    assert first.overall_status is FindingStatus.WARN
+    assert first.passed is False
     assert first.blocked is False
-    assert len(first.findings) == 13
-    assert len({(finding.validator_id, finding.code) for finding in first.findings}) == 13
+    assert len(first.findings) == 15
+    assert len({(finding.validator_id, finding.code) for finding in first.findings}) == 15
     assert any(
         validator.validator_id == LexicalSimilarityIndicatorValidator.validator_id
         for validator in pipeline.validators
@@ -150,6 +151,11 @@ class ForeignFindingValidator:
             validators=(FixtureValidator("one", "1.0.0", "custom.one"),),
             version=" ",
         ),
+        lambda: ValidationPipeline(
+            validators=(FixtureValidator("one", "1.0.0", "custom.one"),),
+            version="pipeline.v1",
+            subject_router=cast(SubjectValidationRouter, object()),
+        ),
     ],
 )
 def test_pipeline_contract_rejects_invalid_composition(build: Callable[[], object]) -> None:
@@ -170,3 +176,17 @@ def test_pipeline_rejects_empty_or_foreign_validator_output() -> None:
 def test_pipeline_requires_a_validation_input() -> None:
     with pytest.raises(ValidationContractError, match="ValidationInput"):
         build_default_pipeline().validate(cast(ValidationInput, "candidate"))
+
+
+def test_pipeline_rejects_malformed_subject_router_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = build_default_pipeline()
+
+    monkeypatch.setattr(SubjectValidationRouter, "validate", lambda *_args: ())
+    with pytest.raises(ValidationContractError, match="at least one"):
+        pipeline.validate(validation_input())
+
+    monkeypatch.setattr(SubjectValidationRouter, "validate", lambda *_args: (object(),))
+    with pytest.raises(ValidationContractError, match="malformed"):
+        pipeline.validate(validation_input())

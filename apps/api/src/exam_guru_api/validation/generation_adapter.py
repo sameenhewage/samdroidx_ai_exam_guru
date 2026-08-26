@@ -34,10 +34,14 @@ from exam_guru_api.generation.domain import (
 from exam_guru_api.validation.domain import (
     QUESTION_SCHEMA_VERSION,
     BlueprintRequirements,
+    ContextScopeBinding,
     DuplicateReference,
+    GeneratedSubjectScope,
     GroundingSource,
+    TrustedSubjectScope,
     ValidationContractError,
     ValidationInput,
+    legacy_unclassified_scope,
 )
 
 
@@ -298,11 +302,27 @@ def _candidate(result: GenerationResult) -> dict[str, object]:
     }
 
 
+def _legacy_scope_for_result(result: GenerationResult) -> TrustedSubjectScope:
+    fallback = legacy_unclassified_scope()
+    scope = result.request.blueprint_slot.generation_constraints.curriculum_scope
+    return TrustedSubjectScope(
+        grade=scope.grade,
+        medium=scope.medium,
+        subject_id=fallback.subject_id,
+        subject_code=fallback.subject_code,
+        curriculum_version_id=scope.curriculum_version_id,
+        unit_ids=scope.unit_ids,
+        lesson_ids=scope.lesson_ids,
+    )
+
+
 def adapt_generation_result(
     result: GenerationResult,
     *,
     requirements: BlueprintRequirements,
     duplicate_references: tuple[DuplicateReference, ...] = (),
+    trusted_scope: TrustedSubjectScope | None = None,
+    context_scope_bindings: tuple[ContextScopeBinding, ...] = (),
 ) -> ValidationInput:
     """Map one canonical unvalidated generation attempt into an immutable input.
 
@@ -321,6 +341,14 @@ def adapt_generation_result(
         not isinstance(reference, DuplicateReference) for reference in duplicate_references
     ):
         raise GenerationAdapterError("duplicate_references must be a tuple of DuplicateReference")
+    active_scope = _legacy_scope_for_result(canonical) if trusted_scope is None else trusted_scope
+    if not isinstance(active_scope, TrustedSubjectScope):
+        raise GenerationAdapterError("trusted_scope must be TrustedSubjectScope")
+    if not isinstance(context_scope_bindings, tuple) or any(
+        not isinstance(binding, ContextScopeBinding) for binding in context_scope_bindings
+    ):
+        raise GenerationAdapterError("context_scope_bindings must contain ContextScopeBinding")
+    observed_scope = canonical.request.blueprint_slot.generation_constraints.curriculum_scope
 
     grounding_sources = tuple(
         GroundingSource(
@@ -340,6 +368,16 @@ def adapt_generation_result(
             blueprint=canonical_requirements,
             grounding_sources=grounding_sources,
             duplicate_references=duplicate_references,
+            trusted_scope=active_scope,
+            generated_scope=GeneratedSubjectScope(
+                grade=observed_scope.grade,
+                medium=observed_scope.medium,
+                subject_id=observed_scope.subject_id,
+                curriculum_version_id=observed_scope.curriculum_version_id,
+                unit_ids=observed_scope.unit_ids,
+                lesson_ids=observed_scope.lesson_ids,
+            ),
+            context_scope_bindings=context_scope_bindings,
         )
     except ValidationContractError as error:
         raise GenerationAdapterError(

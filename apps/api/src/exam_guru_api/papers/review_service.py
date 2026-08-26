@@ -91,12 +91,12 @@ class ReviewCandidateService:
             curriculum_version_id,
             validation_run_id,
         )
-        if source.validation.overall_status != "pass":
+        if source.validation.overall_status == "fail":
             raise ReviewValidationNotPassedError(validation_run_id)
         try:
             generation_result = reconstruct_generation_result(source.generation)
             reconstructed = reconstruct_validation_report(source.validation, source.findings)
-            if not reconstructed.report.passed:
+            if reconstructed.report.blocked:
                 raise ReviewValidationNotPassedError(validation_run_id)
             candidate = adapt_generation_validation(
                 generation_result,

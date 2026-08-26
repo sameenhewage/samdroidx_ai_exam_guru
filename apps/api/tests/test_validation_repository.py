@@ -1,12 +1,18 @@
 import asyncio
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import cast
 from uuid import UUID
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRunModel
+from exam_guru_api.generation.repository import (
+    GenerationContextRecord,
+    SqlAlchemyGenerationRepository,
+)
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.repository import (
     SqlAlchemyValidationRepository,
@@ -22,6 +28,9 @@ OTHER_GENERATION_ID = UUID(int=970_005)
 HISTORICAL_ID = UUID(int=970_006)
 SOURCE_ID = UUID(int=970_007)
 FINDING_ID = UUID(int=970_008)
+SUBJECT_ID = UUID(int=970_009)
+UNIT_ID = UUID(int=970_010)
+LESSON_ID = UUID(int=970_011)
 
 
 class Rows:
@@ -143,6 +152,116 @@ def test_validation_repository_lookup_and_missing_boundaries() -> None:
             await SqlAlchemyValidationRepository(
                 cast(AsyncSession, ScriptedSession(scalar_results=(None,)))
             ).get_run(CURRICULUM_ID, VALIDATION_ID)
+
+    asyncio.run(exercise())
+
+
+def test_validation_repository_reconstructs_database_owned_subject_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        run = generation()
+        run.knowledge_chunk_ids = [str(UUID(int=1))]
+        run.historical_question_ids = [str(UUID(int=2))]
+        contexts = (
+            cast(
+                GenerationContextRecord,
+                SimpleNamespace(curriculum_version_id=CURRICULUM_ID),
+            ),
+            cast(
+                GenerationContextRecord,
+                SimpleNamespace(curriculum_version_id=UUID(int=999)),
+            ),
+        )
+
+        async def list_context_records(
+            _self: object,
+            knowledge_ids: tuple[UUID, ...],
+            question_ids: tuple[UUID, ...],
+        ) -> tuple[GenerationContextRecord, ...]:
+            assert knowledge_ids == (UUID(int=1),)
+            assert question_ids == (UUID(int=2),)
+            return contexts
+
+        monkeypatch.setattr(
+            SqlAlchemyGenerationRepository,
+            "list_context_records",
+            list_context_records,
+        )
+        blueprint = PaperBlueprintModel(id=UUID(int=3))
+        repository = SqlAlchemyValidationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(
+                    execute_results=(
+                        ExecuteResult(
+                            row=(
+                                run,
+                                attempt(),
+                                blueprint,
+                                5,
+                                "en",
+                                SUBJECT_ID,
+                                "MATHEMATICS",
+                            )
+                        ),
+                        ExecuteResult(rows=((CURRICULUM_ID, SUBJECT_ID),)),
+                    )
+                ),
+            )
+        )
+
+        record = await repository.get_generation(CURRICULUM_ID, GENERATION_ID)
+
+        assert record.trusted_scope is not None
+        assert record.trusted_scope.blueprint is blueprint
+        assert record.trusted_scope.subject_code == "MATHEMATICS"
+        assert record.trusted_scope.context_records[0].subject_id == SUBJECT_ID
+        assert record.trusted_scope.context_records[1].subject_id == UUID(int=0)
+
+    asyncio.run(exercise())
+
+
+def test_validation_repository_checks_selected_units_and_lesson_parentage() -> None:
+    async def exercise() -> None:
+        valid = SqlAlchemyValidationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(
+                    scalar_rows=(UNIT_ID,),
+                    execute_results=(ExecuteResult(rows=((LESSON_ID, UNIT_ID),)),),
+                ),
+            )
+        )
+        assert await valid.selected_scope_is_valid(
+            CURRICULUM_ID,
+            unit_ids=(UNIT_ID,),
+            lesson_ids=(LESSON_ID,),
+        )
+
+        missing_unit = SqlAlchemyValidationRepository(
+            cast(AsyncSession, ScriptedSession(scalar_rows=()))
+        )
+        assert not await missing_unit.selected_scope_is_valid(
+            CURRICULUM_ID,
+            unit_ids=(UNIT_ID,),
+            lesson_ids=(),
+        )
+
+        wrong_parent = SqlAlchemyValidationRepository(
+            cast(
+                AsyncSession,
+                ScriptedSession(
+                    scalar_rows=(UNIT_ID,),
+                    execute_results=(ExecuteResult(rows=((LESSON_ID, UUID(int=999)),)),),
+                ),
+            )
+        )
+        assert not await wrong_parent.selected_scope_is_valid(
+            CURRICULUM_ID,
+            unit_ids=(UNIT_ID,),
+            lesson_ids=(LESSON_ID,),
+        )
 
     asyncio.run(exercise())
 

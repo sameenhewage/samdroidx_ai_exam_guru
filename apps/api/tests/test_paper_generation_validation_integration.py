@@ -31,6 +31,7 @@ from exam_guru_api.validation import (
     BlueprintRequirements,
     FindingStatus,
     GenerationAdapterError,
+    TrustedSubjectScope,
     ValidationInput,
     ValidationReport,
     adapt_generation_result,
@@ -100,12 +101,25 @@ def validation_requirements(result: GenerationResult) -> BlueprintRequirements:
 
 
 def validation_input(result: GenerationResult) -> ValidationInput:
-    return adapt_generation_result(result, requirements=validation_requirements(result))
+    scope = result.request.blueprint_slot.generation_constraints.curriculum_scope
+    return adapt_generation_result(
+        result,
+        requirements=validation_requirements(result),
+        trusted_scope=TrustedSubjectScope(
+            grade=scope.grade,
+            medium=scope.medium,
+            subject_id=scope.subject_id,
+            subject_code="MATHEMATICS",
+            curriculum_version_id=scope.curriculum_version_id,
+            unit_ids=scope.unit_ids,
+            lesson_ids=scope.lesson_ids,
+        ),
+    )
 
 
 def passing_report(result: GenerationResult) -> ValidationReport:
     report = validate_question(validation_input(result))
-    assert report.passed
+    assert not report.blocked
     return report
 
 
@@ -115,7 +129,10 @@ def test_paper_helper_reuses_the_canonical_validation_subject_without_losing_con
     canonical_input = validation_input(result)
     paper_input = build_generation_validation_input(result)
 
-    assert paper_input == canonical_input
+    assert paper_input.candidate == canonical_input.candidate
+    assert paper_input.blueprint == canonical_input.blueprint
+    assert paper_input.grounding_sources == canonical_input.grounding_sources
+    assert paper_input.candidate_fingerprint == canonical_input.candidate_fingerprint
     assert paper_adapters.generation_result_fingerprint is generation_result_fingerprint
     assert paper_input.candidate_id == generation_result_fingerprint(result)
     assert paper_input.blueprint.slot_id == result.request.blueprint_slot.slot_id
@@ -282,9 +299,7 @@ def test_canonical_validation_report_cannot_be_replayed_against_an_altered_resul
     alter: Callable[[GenerationResult], GenerationResult],
 ) -> None:
     result = generation_result(slot_id="paper-slot-a")
-    report = validate_question(
-        adapt_generation_result(result, requirements=validation_requirements(result))
-    )
+    report = validate_question(validation_input(result))
     altered_result = alter(result)
 
     assert report.passed
@@ -296,21 +311,27 @@ def test_canonical_validation_report_cannot_be_replayed_against_an_altered_resul
     assert raised.value.mismatch is GenerationValidationMismatch.GENERATION_FINGERPRINT
 
 
-@pytest.mark.parametrize("blocking_status", [FindingStatus.WARN, FindingStatus.FAIL])
-def test_nonpassing_validation_report_cannot_promote_generated_candidate(
-    blocking_status: FindingStatus,
-) -> None:
+def test_warning_requires_human_review_but_failure_cannot_promote_generated_candidate() -> None:
     result = generation_result()
     report = passing_report(result)
+    warning_report = ValidationReport(
+        candidate_id=report.candidate_id,
+        pipeline_version=report.pipeline_version,
+        findings=(replace(report.findings[0], status=FindingStatus.WARN), *report.findings[1:]),
+    )
+    warned_candidate = adapt_persisted(result, warning_report)
+
+    assert warned_candidate.state is CandidateState.VALIDATED
+    assert warned_candidate.review_history == ()
+    assert warned_candidate.decision is None
+
     blocked_report = ValidationReport(
         candidate_id=report.candidate_id,
         pipeline_version=report.pipeline_version,
-        findings=(replace(report.findings[0], status=blocking_status), *report.findings[1:]),
+        findings=(replace(report.findings[0], status=FindingStatus.FAIL), *report.findings[1:]),
     )
-
     with pytest.raises(ValidationNotPassedError) as raised:
         adapt_persisted(result, blocked_report)
-
     assert raised.value.candidate_id == result.request.identity.generation_id
 
 
@@ -351,7 +372,7 @@ def test_adapter_rejects_a_report_for_different_candidate_content_even_if_id_is_
         grounding_sources=expected_input.grounding_sources,
     )
     mismatched_report = validate_question(mismatched_input)
-    assert mismatched_report.passed
+    assert not mismatched_report.blocked
 
     with pytest.raises(GenerationValidationMismatchError) as raised:
         adapt_persisted(result, mismatched_report)

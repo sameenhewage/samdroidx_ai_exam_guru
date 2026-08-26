@@ -9,7 +9,9 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.blueprints.serialization import serialize_blueprint
+from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.generation.domain import (
     ContextProvenance,
     GenerationIdentity,
@@ -18,7 +20,9 @@ from exam_guru_api.generation.domain import (
     RetrievedContextItem,
 )
 from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRunModel
+from exam_guru_api.generation.repository import GenerationContextRecord
 from exam_guru_api.generation.run_service import _candidate_snapshot
+from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.validation import (
     BlueprintRequirements,
     FindingEvidence,
@@ -43,7 +47,9 @@ from exam_guru_api.validation.models import (
 from exam_guru_api.validation.repository import (
     DuplicateReferenceRecord,
     StoredValidationReport,
+    ValidationContextScopeRecord,
     ValidationGenerationRecord,
+    ValidationTrustedScopeRecord,
 )
 from exam_guru_api.validation.service import (
     ValidationCurriculumNotFoundError,
@@ -55,6 +61,7 @@ from exam_guru_api.validation.service import (
     ValidationResourceLimitError,
     ValidationRunService,
     _array,
+    _context_learning_scopes,
     _duplicate_references,
     _finding_models,
     _fingerprint,
@@ -62,10 +69,12 @@ from exam_guru_api.validation.service import (
     _integer,
     _object,
     _optional_text,
+    _optional_uuid,
     _plain_json,
     _question_from_snapshot,
     _request_fingerprint_payload,
     _text,
+    _trusted_scope_and_bindings,
     _validation_creation_failure_code,
     grade_age_bounds,
     reconstruct_generation_result,
@@ -398,6 +407,229 @@ def test_reconstruction_rejects_malformed_context_shape(
 ) -> None:
     with pytest.raises(ValidationGenerationIntegrityError):
         reconstruct_generation_result(_mutate_context(mutation))
+
+
+def _trusted_context_record(
+    *,
+    record_kind: str,
+    record_id: UUID,
+    source_document_id: UUID,
+    source_block_id: UUID,
+) -> GenerationContextRecord:
+    return GenerationContextRecord(
+        record_kind=record_kind,
+        id=record_id,
+        curriculum_version_id=CURRICULUM_ID,
+        text="Reviewed context",
+        version=1,
+        review_state=ReviewState.REVIEWED,
+        competency_id=_PAPER.slots[0].taxonomy_target.competency_id,
+        skill_id=None,
+        sub_skill_id=None,
+        learning_concept_id=None,
+        source_document_id=source_document_id,
+        source_curriculum_version_id=CURRICULUM_ID,
+        source_checksum_sha256="a" * 64,
+        source_status=ExtractionStatus.TRUSTED,
+        page_number=1,
+        source_block_id=source_block_id,
+        source_active_for_ai=True,
+    )
+
+
+def trusted_generation_record() -> ValidationGenerationRecord:
+    record, _ = generation_record()
+    scope = _PAPER.curriculum_scope
+    contexts = (
+        ValidationContextScopeRecord(
+            _trusted_context_record(
+                record_kind="knowledge_chunk",
+                record_id=CHUNK_ID,
+                source_document_id=SOURCE_A_ID,
+                source_block_id=BLOCK_A_ID,
+            ),
+            scope.subject_id,
+        ),
+        ValidationContextScopeRecord(
+            _trusted_context_record(
+                record_kind="historical_question",
+                record_id=QUESTION_ID,
+                source_document_id=SOURCE_B_ID,
+                source_block_id=BLOCK_B_ID,
+            ),
+            scope.subject_id,
+        ),
+    )
+    return replace(
+        record,
+        trusted_scope=ValidationTrustedScopeRecord(
+            blueprint=PaperBlueprintModel(
+                id=BLUEPRINT_DB_ID,
+                curriculum_version_id=CURRICULUM_ID,
+                blueprint=deepcopy(record.run.blueprint_snapshot),
+            ),
+            grade=scope.grade,
+            medium=scope.medium,
+            subject_id=scope.subject_id,
+            subject_code="LEGACY_UNCLASSIFIED",
+            context_records=contexts,
+        ),
+    )
+
+
+class TrustedScopeRepository:
+    def __init__(self, *, valid: bool = True) -> None:
+        self.valid = valid
+
+    async def selected_scope_is_valid(self, *args: object, **kwargs: object) -> bool:
+        del args, kwargs
+        return self.valid
+
+
+def test_trusted_scope_reconstruction_binds_database_subject_blueprint_and_context() -> None:
+    async def exercise() -> None:
+        record = trusted_generation_record()
+        trusted, bindings = await _trusted_scope_and_bindings(
+            cast(Any, TrustedScopeRepository()),
+            record,
+        )
+
+        assert trusted is not None
+        assert trusted.subject_code == "LEGACY_UNCLASSIFIED"
+        assert trusted.subject_id == _PAPER.curriculum_scope.subject_id
+        assert len(bindings) == 2
+        assert {binding.context_id for binding in bindings} == {
+            f"knowledge_chunk:{CHUNK_ID}",
+            f"historical_question:{QUESTION_ID}",
+        }
+        assert all(binding.curriculum_version_id == CURRICULUM_ID for binding in bindings)
+
+    asyncio.run(exercise())
+
+
+def test_trusted_scope_reconstruction_rejects_corrupt_server_owned_state() -> None:
+    async def exercise() -> None:
+        record = trusted_generation_record()
+        assert record.trusted_scope is not None
+        record.trusted_scope.blueprint.blueprint = {"bad": True}
+        with pytest.raises(ValidationGenerationIntegrityError, match="trusted blueprint"):
+            await _trusted_scope_and_bindings(cast(Any, TrustedScopeRepository()), record)
+
+        record = trusted_generation_record()
+        assert record.trusted_scope is not None
+        mismatched = replace(record.trusted_scope, grade=6)
+        with pytest.raises(ValidationGenerationIntegrityError, match="subject scope"):
+            await _trusted_scope_and_bindings(
+                cast(Any, TrustedScopeRepository()),
+                replace(record, trusted_scope=mismatched),
+            )
+
+        record = trusted_generation_record()
+        with pytest.raises(ValidationGenerationIntegrityError, match="selected unit"):
+            await _trusted_scope_and_bindings(
+                cast(Any, TrustedScopeRepository(valid=False)),
+                record,
+            )
+
+        record = trusted_generation_record()
+        assert record.trusted_scope is not None
+        missing = replace(
+            record.trusted_scope.context_records[0],
+            context=replace(record.trusted_scope.context_records[0].context, id=UUID(int=999)),
+        )
+        with pytest.raises(ValidationGenerationIntegrityError, match="missing"):
+            await _trusted_scope_and_bindings(
+                cast(Any, TrustedScopeRepository()),
+                replace(
+                    record,
+                    trusted_scope=replace(record.trusted_scope, context_records=(missing,)),
+                ),
+            )
+
+        record = trusted_generation_record()
+        assert record.trusted_scope is not None
+        with pytest.raises(ValidationGenerationIntegrityError, match="incomplete"):
+            await _trusted_scope_and_bindings(
+                cast(Any, TrustedScopeRepository()),
+                replace(
+                    record,
+                    trusted_scope=replace(
+                        record.trusted_scope,
+                        context_records=record.trusted_scope.context_records[:1],
+                    ),
+                ),
+            )
+
+    asyncio.run(exercise())
+
+
+def test_context_learning_scope_snapshot_helpers_are_strict_and_version_tolerant() -> None:
+    record, result = generation_record()
+    assert _context_learning_scopes(record.run) == {
+        f"knowledge_chunk:{CHUNK_ID}": (None, None),
+        f"historical_question:{QUESTION_ID}": (None, None),
+    }
+    snapshot = deepcopy(record.run.context_snapshot)
+    first = cast(list[dict[str, object]], snapshot["items"])[0]
+    first["learning_scope"] = {"unit_id": str(UUID(int=1)), "lesson_id": str(UUID(int=2))}
+    record.run.context_snapshot = snapshot
+    assert _context_learning_scopes(record.run)[f"knowledge_chunk:{CHUNK_ID}"] == (
+        UUID(int=1),
+        UUID(int=2),
+    )
+    assert _optional_uuid(None, label="scope") is None
+    with pytest.raises(ValidationGenerationIntegrityError, match="UUID"):
+        _optional_uuid("bad", label="scope")
+
+    malformed = deepcopy(record.run.context_snapshot)
+    cast(list[object], malformed["items"])[0] = "bad"
+    record.run.context_snapshot = malformed
+    with pytest.raises(ValidationGenerationIntegrityError, match="object"):
+        _context_learning_scopes(record.run)
+
+    validation_input = adapt_generation_result(
+        cast(Any, result),
+        requirements=BlueprintRequirements(
+            slot_id=result.request.blueprint_slot.slot_id,
+            schema_version=result.request.versions.schema_version,
+            question_type=result.request.blueprint_slot.question_type.value,
+            marks=result.request.blueprint_slot.marks,
+            language=result.request.blueprint_slot.generation_constraints.response_language,
+            minimum_age=9,
+            maximum_age=11,
+        ),
+    )
+    object.__setattr__(validation_input, "generated_scope", None)
+    with pytest.raises(ValidationGenerationIntegrityError, match="generated scope"):
+        _input_snapshot(record.run, validation_input, {})
+
+
+def test_trusted_context_source_scope_mismatch_survives_as_a_binding_failure() -> None:
+    async def exercise() -> None:
+        record = trusted_generation_record()
+        assert record.trusted_scope is not None
+        first = record.trusted_scope.context_records[0]
+        cross_source = replace(
+            first,
+            context=replace(
+                first.context,
+                source_curriculum_version_id=UUID(int=777),
+            ),
+        )
+        trusted, bindings = await _trusted_scope_and_bindings(
+            cast(Any, TrustedScopeRepository()),
+            replace(
+                record,
+                trusted_scope=replace(
+                    record.trusted_scope,
+                    context_records=(cross_source, *record.trusted_scope.context_records[1:]),
+                ),
+            ),
+        )
+        assert trusted is not None
+        assert bindings[0].curriculum_version_id == UUID(int=777)
+
+    asyncio.run(exercise())
 
 
 def test_low_level_reconstruction_guards_reject_wrong_scalar_container_types() -> None:
@@ -870,8 +1102,8 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
         )
 
         assert created.deduplicated is False
-        assert created.run.overall_status == "pass"
-        assert len(repository.stored_findings) == 13
+        assert created.run.overall_status == "warn"
+        assert len(repository.stored_findings) == 15
         assert repository.run_values is not None
         assert repository.run_values["generation_result_fingerprint"]
         assert len(session.added) == 1
@@ -883,8 +1115,8 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
                     "event_name": "validation.creation",
                     "outcome": "succeeded",
                     "failure_code": None,
-                    "overall_status": "pass",
-                    "finding_count": 13,
+                    "overall_status": "warn",
+                    "finding_count": 15,
                     "deduplicated": False,
                 },
             )
