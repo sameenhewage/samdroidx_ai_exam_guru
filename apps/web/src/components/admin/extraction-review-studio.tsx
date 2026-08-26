@@ -8,6 +8,7 @@ type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
 type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
 type Role = "admin" | "reviewer";
+type ReviewExperience = "advanced" | "materials";
 type ExtractionMode = "native" | "ocr" | "hybrid";
 
 type BoundedExtractorIdentity = {
@@ -305,7 +306,23 @@ function errorCode(error: unknown): string {
   return "request_failed";
 }
 
-export function ExtractionReviewStudio({ documentId, role }: { documentId: string; role: Role }) {
+function materialReviewStatus(document: SourceDocument): string {
+  if (document.use_state === "removed") return "Removed";
+  if (document.extraction_status === "trusted") return "Ready for AI";
+  if (["extracted", "in_review"].includes(document.extraction_status)) return "Needs review";
+  if (document.extraction_status === "failed") return "Reading failed";
+  return "Processing";
+}
+
+export function ExtractionReviewStudio({
+  documentId,
+  experience = "advanced",
+  role,
+}: {
+  documentId: string;
+  experience?: ReviewExperience;
+  role: Role;
+}) {
   const api = useMemo(
     () => createApiClient(globalThis.location?.origin ?? "http://localhost"),
     [],
@@ -316,62 +333,72 @@ export function ExtractionReviewStudio({ documentId, role }: { documentId: strin
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [documentsResult, pagesResult] = await Promise.all([
-      api.GET("/api/v1/admin/source-documents"),
-      api.GET("/api/v1/admin/source-documents/{document_id}/pages", {
-        params: { path: { document_id: documentId } },
-      }),
-    ]);
-    const current = documentsResult.data?.find((item) => item.id === documentId) ?? null;
-    if (documentsResult.error || pagesResult.error || !current) {
-      setError(errorCode(documentsResult.error ?? pagesResult.error ?? { detail: { code: "source_document_not_found" } }));
-      setLoading(false);
-      return;
-    }
-    const nextPages = pagesResult.data ?? [];
-    const blockResults = await Promise.all(
-      nextPages.map((page) =>
-        api.GET(
-          "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks",
-          { params: { path: { document_id: documentId, page_number: page.page_number } } },
-        ),
-      ),
-    );
-    const blockError = blockResults.find((result) => result.error)?.error;
-    const hasInvalidBoundingBox = blockResults.some((result) =>
-      result.data?.some(
-        (block) =>
-          block.bbox !== null &&
-          (block.bbox.length !== 4 ||
-            block.bbox.some(
-              (coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate),
-            )),
-      ),
-    );
-    if (blockError || hasInvalidBoundingBox) {
-      setError(blockError ? errorCode(blockError) : "invalid_extracted_block_response");
-    } else {
-      const nextBlocks: Record<number, ExtractedBlock[]> = {};
-      nextPages.forEach((page, index) => {
-        nextBlocks[page.page_number] = (blockResults[index]?.data ?? []).map(
-          (block): ExtractedBlock => ({
-            ...block,
-            bbox:
-              block.bbox === null
-                ? null
-                : [block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]],
-          }),
+    setError("");
+    try {
+      const [documentsResult, pagesResult] = await Promise.all([
+        api.GET("/api/v1/admin/source-documents"),
+        api.GET("/api/v1/admin/source-documents/{document_id}/pages", {
+          params: { path: { document_id: documentId } },
+        }),
+      ]);
+      const current = documentsResult.data?.find((item) => item.id === documentId) ?? null;
+      if (documentsResult.error || pagesResult.error || !current) {
+        setError(
+          errorCode(
+            documentsResult.error ??
+              pagesResult.error ?? { detail: { code: "source_document_not_found" } },
+          ),
         );
-      });
-      setDocument(current);
-      setPages(nextPages);
-      setBlocks(nextBlocks);
-      setError("");
+        return;
+      }
+      const nextPages = pagesResult.data ?? [];
+      const blockResults = await Promise.all(
+        nextPages.map((page) =>
+          api.GET(
+            "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks",
+            { params: { path: { document_id: documentId, page_number: page.page_number } } },
+          ),
+        ),
+      );
+      const blockError = blockResults.find((result) => result.error)?.error;
+      const hasInvalidBoundingBox = blockResults.some((result) =>
+        result.data?.some(
+          (block) =>
+            block.bbox !== null &&
+            (block.bbox.length !== 4 ||
+              block.bbox.some(
+                (coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate),
+              )),
+        ),
+      );
+      if (blockError || hasInvalidBoundingBox) {
+        setError(blockError ? errorCode(blockError) : "invalid_extracted_block_response");
+      } else {
+        const nextBlocks: Record<number, ExtractedBlock[]> = {};
+        nextPages.forEach((page, index) => {
+          nextBlocks[page.page_number] = (blockResults[index]?.data ?? []).map(
+            (block): ExtractedBlock => ({
+              ...block,
+              bbox:
+                block.bbox === null
+                  ? null
+                  : [block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]],
+            }),
+          );
+        });
+        setDocument(current);
+        setPages(nextPages);
+        setBlocks(nextBlocks);
+      }
+    } catch {
+      setError("network_error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [api, documentId]);
 
   useEffect(() => {
@@ -413,7 +440,7 @@ export function ExtractionReviewStudio({ documentId, role }: { documentId: strin
     });
     if (result.error) setError(errorCode(result.error));
     else {
-      setNotice("Trusted source");
+      setNotice(experience === "materials" ? "Ready for AI" : "Trusted source");
       await load();
     }
   }
@@ -426,6 +453,32 @@ export function ExtractionReviewStudio({ documentId, role }: { documentId: strin
     );
   }
   if (error) {
+    if (experience === "materials") {
+      return (
+        <section className="mx-auto max-w-4xl px-5 py-10 sm:px-8" role="alert">
+          <div className="rounded-xl border border-red-300 bg-red-50 p-5 text-red-950">
+            <h1 className="text-2xl font-semibold">Text review could not be loaded</h1>
+            <p className="mt-2 text-sm leading-6">
+              {error === "network_error"
+                ? "The connection to the document service failed. Try again when it is available."
+                : error === "permission_denied"
+                  ? "Your account does not have permission to review this material."
+                  : error === "source_document_not_found"
+                    ? "This material or its extracted pages could not be found."
+                    : "The extracted pages could not be opened safely."}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button className={secondaryButton} onClick={() => void load()} type="button">
+                Try again
+              </button>
+              <Link className={secondaryButton} href={`/admin/materials/${documentId}`}>
+                Back to material
+              </Link>
+            </div>
+          </div>
+        </section>
+      );
+    }
     return (
       <p className="mx-auto max-w-7xl p-8 text-red-800" role="alert">
         {error}
@@ -441,6 +494,189 @@ export function ExtractionReviewStudio({ documentId, role }: { documentId: strin
     manifest.ocrIdentity.engine !== null ||
     manifest.ocrPageNumbers.values.length > 0 ||
     (typeof document.ocr_page_count === "number" && document.ocr_page_count > 0);
+
+  if (experience === "materials") {
+    const selectedPage = pages[selectedPageIndex] ?? pages[0] ?? null;
+    const selectedBlocks = selectedPage ? blocks[selectedPage.page_number] ?? [] : [];
+    const canEdit = role === "admin" && document.extraction_status === "in_review";
+
+    return (
+      <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:py-12">
+        <Link
+          className="text-sm font-semibold underline decoration-amber-500 underline-offset-4"
+          href={`/admin/materials/${documentId}`}
+        >
+          Back to material
+        </Link>
+        <header className="mt-5 border-b border-slate-300 pb-6">
+          <p className="text-xs font-semibold tracking-wider text-amber-800 uppercase">
+            Human review
+          </p>
+          <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-semibold sm:text-4xl">Review text</h1>
+              <p className="mt-2 break-words text-slate-600">{document.original_filename}</p>
+            </div>
+            <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm font-semibold">
+              {materialReviewStatus(document)}
+            </span>
+          </div>
+          <p className="mt-4 max-w-3xl leading-7 text-slate-600">
+            Compare the immutable text captured from each source page with the editable review copy.
+            Uploaded content is untrusted until a person checks it and marks it ready.
+          </p>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {document.extraction_status === "extracted" && role === "admin" && (
+              <button className={buttonClass} onClick={() => void beginReview()} type="button">
+                Begin text review
+              </button>
+            )}
+            {document.extraction_status === "in_review" && role === "admin" && (
+              <button className={buttonClass} onClick={() => void trustSource()} type="button">
+                Mark reviewed / Ready for AI
+              </button>
+            )}
+            {role === "reviewer" && (
+              <p className="text-sm font-semibold text-slate-600">Reviewer access is read-only.</p>
+            )}
+          </div>
+
+          {hasOcrDerivedText && (
+            <aside className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
+              <p className="font-semibold">Some text came from OCR and needs careful human review.</p>
+              <p className="mt-1 text-sm">
+                Confidence information is diagnostic only; it does not make the source trusted.
+              </p>
+            </aside>
+          )}
+
+          {notice && (
+            <p className="mt-4 rounded-md bg-emerald-50 p-3 font-semibold text-emerald-900" role="status">
+              {notice}
+            </p>
+          )}
+        </header>
+
+        {selectedPage ? (
+          <article className="mt-8 rounded-xl border border-slate-300 bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+              <p className="font-semibold">
+                Page {selectedPageIndex + 1} of {pages.length}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className={secondaryButton}
+                  disabled={selectedPageIndex === 0}
+                  onClick={() => setSelectedPageIndex((index) => Math.max(0, index - 1))}
+                  type="button"
+                >
+                  Previous page
+                </button>
+                <button
+                  className={secondaryButton}
+                  disabled={selectedPageIndex >= pages.length - 1}
+                  onClick={() =>
+                    setSelectedPageIndex((index) => Math.min(pages.length - 1, index + 1))
+                  }
+                  type="button"
+                >
+                  Next page
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-5 lg:grid-cols-2">
+              <section
+                aria-label="Original extracted page"
+                className="rounded-lg border border-slate-300 bg-slate-50 p-4"
+              >
+                <h2 className="text-lg font-semibold">Original extracted page</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Immutable text recorded when the PDF was read.
+                </p>
+                <pre className="mt-4 min-h-56 whitespace-pre-wrap rounded-md bg-slate-950 p-4 text-sm text-white">
+                  {selectedPage.raw_text}
+                </pre>
+              </section>
+
+              <section
+                aria-label="Extracted text"
+                className="rounded-lg border border-slate-300 bg-white p-4"
+              >
+                <h2 className="text-lg font-semibold">Reviewed text</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Correct reading mistakes without changing the immutable source copy.
+                </p>
+                {canEdit ? (
+                  <form
+                    className="mt-4 grid gap-3"
+                    onSubmit={(event) => void savePage(event, selectedPage)}
+                  >
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Corrected text for page {selectedPage.page_number}
+                      <textarea
+                        className="min-h-56 rounded-md border border-slate-300 p-3 font-normal outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-200"
+                        defaultValue={selectedPage.reviewed_text ?? selectedPage.raw_text}
+                        name="reviewed_text"
+                      />
+                    </label>
+                    <button className={secondaryButton} type="submit">
+                      Save correction
+                    </button>
+                  </form>
+                ) : (
+                  <pre className="mt-4 min-h-56 whitespace-pre-wrap rounded-md border border-slate-300 p-4 text-sm">
+                    {selectedPage.reviewed_text ?? selectedPage.raw_text}
+                  </pre>
+                )}
+              </section>
+            </div>
+
+            <details className="mt-5 rounded-lg border border-slate-300 bg-slate-50 p-4">
+              <summary className="w-fit cursor-pointer rounded text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-600">
+                Technical details
+              </summary>
+              <section
+                aria-label={`Page ${selectedPage.page_number} extraction provenance`}
+                className="mt-4"
+              >
+                <dl className="grid gap-3 sm:grid-cols-3">
+                  <ProvenanceDefinition
+                    label="Extractor"
+                    value={
+                      boundedIdentity(selectedPage.extractor, MAX_ENGINE_CHARACTERS) ??
+                      "Not recorded"
+                    }
+                  />
+                  <ProvenanceDefinition
+                    label="Extractor version"
+                    value={
+                      boundedIdentity(
+                        selectedPage.extractor_version,
+                        MAX_ENGINE_VERSION_CHARACTERS,
+                      ) ?? "Not recorded"
+                    }
+                  />
+                  <ProvenanceDefinition
+                    label="Confidence"
+                    value={displayConfidence(selectedPage.confidence)}
+                  />
+                </dl>
+                <p className="mt-3 text-sm text-slate-600">
+                  {selectedBlocks.length} extraction {selectedBlocks.length === 1 ? "block" : "blocks"} recorded for this page.
+                </p>
+              </section>
+            </details>
+          </article>
+        ) : (
+          <p className="mt-8 rounded-xl border border-dashed border-slate-400 bg-white p-8 text-center text-slate-600">
+            No extracted pages are available yet.
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">

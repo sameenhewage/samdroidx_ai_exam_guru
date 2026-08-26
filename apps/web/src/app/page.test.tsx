@@ -46,6 +46,10 @@ describe("admin foundation shell", () => {
       screen.getByRole("heading", { level: 1, name: "Admin Content Studio" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Priority 1 foundation")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Admin Content Studio" })).toHaveAttribute(
+      "href",
+      "/admin/home",
+    );
 
     const navigation = screen.getByRole("navigation", {
       name: "Content workflow",

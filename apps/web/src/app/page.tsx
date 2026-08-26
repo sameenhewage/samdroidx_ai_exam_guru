@@ -75,7 +75,7 @@ export default async function Home() {
           </div>
           <Link
             className="mt-6 inline-flex bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
-            href="/admin/login"
+            href="/admin/home"
           >
             Open Admin Content Studio
           </Link>

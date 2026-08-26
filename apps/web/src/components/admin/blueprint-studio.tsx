@@ -17,7 +17,10 @@ import { Badge } from "@/components/ui/badge";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
+type CurriculumUnit = components["schemas"]["CurriculumUnitResponse"];
+type CurriculumLesson = components["schemas"]["CurriculumLessonResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type TaxonomyTarget = components["schemas"]["TaxonomyTargetRequest"];
 type AnalyticsSummary = components["schemas"]["AnalyticsRunSummaryResponse"];
@@ -36,7 +39,7 @@ type UiError = {
   message: string;
   title: string;
 };
-type CurriculumChoice = { curriculum: Curriculum; exam: Exam; medium: Medium };
+type CurriculumChoice = { curriculum: Curriculum; exam: Exam; medium: Medium; subject: Subject };
 type TargetOption = { id: string; label: string; target: TaxonomyTarget };
 
 type SectionDraft = {
@@ -650,7 +653,12 @@ export function BlueprintStudio({ role }: { role: Role }) {
   const api = useMemo(() => createApiClient(globalThis.location?.origin ?? "http://localhost"), []);
   const [exams, setExams] = useState<Exam[]>([]);
   const [media, setMedia] = useState<Medium[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
+  const [units, setUnits] = useState<CurriculumUnit[]>([]);
+  const [lessons, setLessons] = useState<CurriculumLesson[]>([]);
+  const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
+  const [selectedLessonIds, setSelectedLessonIds] = useState<string[]>([]);
   const [taxonomy, setTaxonomy] = useState<TaxonomyNode[]>([]);
   const [analyticsRuns, setAnalyticsRuns] = useState<AnalyticsSummary[]>([]);
   const [summaries, setSummaries] = useState<BlueprintSummary[]>([]);
@@ -706,14 +714,16 @@ export function BlueprintStudio({ role }: { role: Role }) {
   const choices = useMemo(() => {
     const examById = new Map(exams.map((item) => [item.id, item]));
     const mediumById = new Map(media.map((item) => [item.id, item]));
+    const subjectById = new Map(subjects.map((item) => [item.id, item]));
     return curricula.flatMap((item): CurriculumChoice[] => {
       const exam = examById.get(item.exam_configuration_id);
       const medium = mediumById.get(item.medium_id);
-      return item.active && exam?.active && exam.grade === 5 && medium?.active
-        ? [{ curriculum: item, exam, medium }]
+      const subject = subjectById.get(item.subject_id);
+      return item.active && exam?.active && exam.grade === 5 && medium?.active && subject?.active
+        ? [{ curriculum: item, exam, medium, subject }]
         : [];
     });
-  }, [curricula, exams, media]);
+  }, [curricula, exams, media, subjects]);
   const selectedChoice = choices.find((item) => item.curriculum.id === selectedCurriculumId);
   const reviewedTargets = useMemo(() => targetOptions(taxonomy), [taxonomy]);
   const canGenerate = role === "admin";
@@ -726,6 +736,7 @@ export function BlueprintStudio({ role }: { role: Role }) {
       const results = await Promise.all([
         api.GET("/api/v1/admin/exam-configurations"),
         api.GET("/api/v1/admin/media"),
+        api.GET("/api/v1/admin/subjects"),
         api.GET("/api/v1/admin/curriculum-versions"),
       ]);
       if (requestId !== workspaceRequestId.current) return;
@@ -736,16 +747,20 @@ export function BlueprintStudio({ role }: { role: Role }) {
       }
       const nextExams = results[0].data ?? [];
       const nextMedia = results[1].data ?? [];
-      const nextCurricula = results[2].data ?? [];
+      const nextSubjects = results[2].data ?? [];
+      const nextCurricula = results[3].data ?? [];
       const examById = new Map(nextExams.map((item) => [item.id, item]));
       const mediumById = new Map(nextMedia.map((item) => [item.id, item]));
+      const subjectById = new Map(nextSubjects.map((item) => [item.id, item]));
       const available = nextCurricula.filter((item) => {
         const exam = examById.get(item.exam_configuration_id);
         const medium = mediumById.get(item.medium_id);
-        return item.active && exam?.active && exam.grade === 5 && medium?.active;
+        const subject = subjectById.get(item.subject_id);
+        return item.active && exam?.active && exam.grade === 5 && medium?.active && subject?.active;
       });
       setExams(nextExams);
       setMedia(nextMedia);
+      setSubjects(nextSubjects);
       setCurricula(nextCurricula);
       setSelectedCurriculumId((current) => available.some((item) => item.id === current) ? current : (available[0]?.id ?? ""));
     } catch {
@@ -767,6 +782,8 @@ export function BlueprintStudio({ role }: { role: Role }) {
         api.GET("/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes", { params: { path } }),
         api.GET("/api/v1/admin/curricula/{curriculum_version_id}/analytics/runs", { params: { path, query: { limit: LIST_LIMIT, offset: 0 } } }),
         api.GET("/api/v1/admin/curricula/{curriculum_version_id}/blueprints", { params: { path, query: { limit: LIST_LIMIT, offset: 0 } } }),
+        api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/units", { params: { path } }),
+        api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons", { params: { path } }),
       ]);
       if (requestId !== listRequestId.current) return;
       const failed = firstFailure(results);
@@ -776,8 +793,18 @@ export function BlueprintStudio({ role }: { role: Role }) {
       }
       const nextSummaries = results[2].data ?? [];
       const nextTaxonomy = results[0].data ?? [];
+      const nextUnits = (results[3].data ?? []).filter(
+        (item) => item.active && item.curriculum_version_id === curriculumId,
+      );
+      const nextLessons = (results[4].data ?? []).filter(
+        (item) => item.active && item.curriculum_version_id === curriculumId,
+      );
       const nextTargets = targetOptions(nextTaxonomy);
       setTaxonomy(nextTaxonomy);
+      setUnits(nextUnits);
+      setLessons(nextLessons);
+      setSelectedUnitIds([]);
+      setSelectedLessonIds([]);
       setRequirements((current) =>
         current.map((item, index) =>
           item.targetId
@@ -848,6 +875,10 @@ export function BlueprintStudio({ role }: { role: Role }) {
     detailRequestId.current += 1;
     generateRequestId.current += 1;
     setTaxonomy([]);
+    setUnits([]);
+    setLessons([]);
+    setSelectedUnitIds([]);
+    setSelectedLessonIds([]);
     setAnalyticsRuns([]);
     setSummaries([]);
     setSelectedAnalyticsRunId("");
@@ -864,6 +895,33 @@ export function BlueprintStudio({ role }: { role: Role }) {
     const choice = choices.find((item) => item.curriculum.id === curriculumId);
     if (choice) setResponseLanguage(choice.medium.code);
     setSelectedCurriculumId(curriculumId);
+  }
+
+  function toggleUnit(unitId: string, checked: boolean) {
+    setSelectedUnitIds((current) =>
+      checked
+        ? units.filter((unit) => current.includes(unit.id) || unit.id === unitId).map((unit) => unit.id)
+        : current.filter((id) => id !== unitId),
+    );
+    if (!checked) {
+      setSelectedLessonIds((current) =>
+        current.filter((id) => lessons.find((lesson) => lesson.id === id)?.unit_id !== unitId),
+      );
+    }
+  }
+
+  function toggleLesson(lessonId: string, checked: boolean) {
+    setSelectedLessonIds((current) =>
+      checked
+        ? lessons
+            .filter(
+              (lesson) =>
+                selectedUnitIds.includes(lesson.unit_id) &&
+                (current.includes(lesson.id) || lesson.id === lessonId),
+            )
+            .map((lesson) => lesson.id)
+        : current.filter((id) => id !== lessonId),
+    );
   }
 
   function updateSection(key: string, update: Partial<SectionDraft>) {
@@ -1048,8 +1106,11 @@ export function BlueprintStudio({ role }: { role: Role }) {
           config_version: configVersion.trim(),
           curriculum_scope: {
             curriculum_version_id: selectedChoice.curriculum.id,
-            grade: 5,
+            grade: selectedChoice.exam.grade,
+            lesson_ids: selectedLessonIds,
             medium: selectedChoice.medium.code,
+            subject_id: selectedChoice.curriculum.subject_id,
+            unit_ids: selectedUnitIds,
           },
           difficulty_allocations: parsedDifficultyAllocations,
           generation_policy: {
@@ -1140,8 +1201,14 @@ export function BlueprintStudio({ role }: { role: Role }) {
         <>
           <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.55fr)]">
             <Panel title="Blueprint scope" description="Only active Grade 5 curricula and their active reviewed taxonomy paths are eligible.">
-              <label className={fieldClass}>Active Grade 5 curriculum<select className={inputClass} onChange={(event) => selectCurriculum(event.target.value)} value={selectedCurriculumId}>{choices.map((choice) => <option key={choice.curriculum.id} value={choice.curriculum.id}>{choice.curriculum.title}</option>)}</select></label>
-              {selectedChoice ? <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-3"><div><dt className="text-xs font-semibold text-slate-500">Grade</dt><dd>5</dd></div><div><dt className="text-xs font-semibold text-slate-500">Medium</dt><dd>{selectedChoice.medium.name} ({selectedChoice.medium.code})</dd></div><div><dt className="text-xs font-semibold text-slate-500">Curriculum code</dt><dd>{selectedChoice.curriculum.code}</dd></div></dl> : null}
+              <label className={fieldClass}>Active Grade 5 curriculum<select className={inputClass} onChange={(event) => selectCurriculum(event.target.value)} value={selectedCurriculumId}>{choices.map((choice) => <option key={choice.curriculum.id} value={choice.curriculum.id}>{choice.curriculum.title} · {choice.subject.name}</option>)}</select></label>
+              {selectedChoice ? <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-xs font-semibold text-slate-500">Grade</dt><dd>{selectedChoice.exam.grade}</dd></div><div><dt className="text-xs font-semibold text-slate-500">Medium</dt><dd>{selectedChoice.medium.name} ({selectedChoice.medium.code})</dd></div><div><dt className="text-xs font-semibold text-slate-500">Subject</dt><dd>{selectedChoice.subject.name} ({selectedChoice.subject.code})</dd></div><div><dt className="text-xs font-semibold text-slate-500">Curriculum code</dt><dd>{selectedChoice.curriculum.code}</dd></div></dl> : null}
+              <fieldset className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <legend className="px-1 text-sm font-semibold text-slate-800">Unit and lesson scope</legend>
+                <p className="text-sm leading-6 text-slate-600">{selectedUnitIds.length ? `${selectedUnitIds.length} unit${selectedUnitIds.length === 1 ? "" : "s"} selected${selectedLessonIds.length ? ` · ${selectedLessonIds.length} lesson${selectedLessonIds.length === 1 ? "" : "s"} selected` : " · all lessons in those units"}` : "Full subject — all units and lessons"}</p>
+                {units.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{units.map((unit) => <label className="flex items-start gap-2 text-sm" key={unit.id}><input aria-label={`Include unit ${unit.code} — ${unit.title}`} checked={selectedUnitIds.includes(unit.id)} className={`${checkboxClass} mt-0.5`} onChange={(event) => toggleUnit(unit.id, event.target.checked)} type="checkbox" /><span><span className="font-semibold">{unit.code}</span> — {unit.title}</span></label>)}</div> : <p className="mt-2 text-sm text-slate-500">No units are configured, so this blueprint uses the full subject scope.</p>}
+                {selectedUnitIds.length ? <div className="mt-4 border-t border-slate-200 pt-3"><p className="text-sm font-semibold text-slate-700">Optional lessons</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{lessons.filter((lesson) => selectedUnitIds.includes(lesson.unit_id)).map((lesson) => <label className="flex items-start gap-2 text-sm" key={lesson.id}><input aria-label={`Include lesson ${lesson.code} — ${lesson.title}`} checked={selectedLessonIds.includes(lesson.id)} className={`${checkboxClass} mt-0.5`} onChange={(event) => toggleLesson(lesson.id, event.target.checked)} type="checkbox" /><span><span className="font-semibold">{lesson.code}</span> — {lesson.title}</span></label>)}</div>{!lessons.some((lesson) => selectedUnitIds.includes(lesson.unit_id)) ? <p className="mt-2 text-sm text-slate-500">No active lessons are configured for the selected units.</p> : null}</div> : null}
+              </fieldset>
             </Panel>
             <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><h2 className="font-semibold text-amber-950">Deterministic and idempotent</h2><p className="mt-2 text-sm leading-6 text-amber-900">The same inputs, reviewed taxonomy snapshot, analytics linkage, config and seed produce the same deterministic identity. Safe retries return the existing identical immutable blueprint instead of creating a duplicate. The backend remains authoritative.</p></section>
           </div>

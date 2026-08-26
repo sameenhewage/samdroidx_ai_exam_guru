@@ -9,7 +9,7 @@ export const OIDC_VERIFIER_COOKIE = "exam_guru_oidc_verifier";
 export const OIDC_CALLBACK_PATH = "/api/auth/oidc/callback";
 export const OIDC_FAILURE_PATH = "/admin/login?error=oidc_login_failed";
 export const LOGIN_PATH = "/admin/login";
-export const AUTHENTICATED_PATH = "/admin/curriculum";
+export const AUTHENTICATED_PATH = "/admin/home";
 export const TRANSIENT_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 
 const MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;

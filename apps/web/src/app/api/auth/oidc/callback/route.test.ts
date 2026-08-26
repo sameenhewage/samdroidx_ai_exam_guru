@@ -184,7 +184,7 @@ describe("OIDC callback", () => {
 
     expect(response.status).toBe(303);
     expect(response.headers.get("Location")).toBe(
-      "https://admin.exam-guru.example/admin/curriculum",
+      "https://admin.exam-guru.example/admin/home",
     );
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
 
@@ -282,7 +282,7 @@ describe("OIDC callback", () => {
       const response = await GET(callbackRequest());
 
       expect(response.headers.get("Location")).toBe(
-        "https://admin.exam-guru.example/admin/curriculum",
+        "https://admin.exam-guru.example/admin/home",
       );
       expect(cookieStore.set).toHaveBeenCalledWith(
         "exam_guru_admin_token",
@@ -303,7 +303,7 @@ describe("OIDC callback", () => {
     const response = await GET(callbackRequest(query));
 
     expect(response.headers.get("Location")).toBe(
-      "https://admin.exam-guru.example/admin/curriculum",
+      "https://admin.exam-guru.example/admin/home",
     );
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
   });
@@ -320,7 +320,7 @@ describe("OIDC callback", () => {
     const response = await GET(callbackRequest());
 
     expect(response.headers.get("Location")).toBe(
-      "https://admin.exam-guru.example/admin/curriculum",
+      "https://admin.exam-guru.example/admin/home",
     );
   });
 

@@ -22,12 +22,15 @@ const ids = {
   candidateA: "00000000-0000-0000-0000-000000000701",
   candidateB: "00000000-0000-0000-0000-000000000702",
   candidateOther: "00000000-0000-0000-0000-000000000703",
+  competency: "00000000-0000-0000-0000-000000000802",
   curriculum: "00000000-0000-0000-0000-000000000101",
   exam: "00000000-0000-0000-0000-000000000201",
   generationA: "00000000-0000-0000-0000-000000000601",
   generationB: "00000000-0000-0000-0000-000000000602",
   medium: "00000000-0000-0000-0000-000000000301",
   paper: "00000000-0000-0000-0000-000000000401",
+  skill: "00000000-0000-0000-0000-000000000803",
+  subject: "00000000-0000-0000-0000-000000000302",
   validation: "00000000-0000-0000-0000-000000000301",
 } as const;
 
@@ -37,26 +40,83 @@ const blueprintVersion = "bp_paper_studio_fixture_v1";
 const contentHash = "a".repeat(64);
 const secondContentHash = "b".repeat(64);
 
+const curriculumScope = {
+  curriculum_version_id: ids.curriculum,
+  grade: 5,
+  lesson_ids: [],
+  medium: "en",
+  subject_id: ids.subject,
+  unit_ids: [],
+} satisfies components["schemas"]["CurriculumScopeResponse"];
+
+const taxonomyTarget = {
+  competency_id: ids.competency,
+  learning_concept_id: null,
+  skill_id: ids.skill,
+  sub_skill_id: null,
+};
+
+const uniqueness = {
+  forbid_duplicate_stems: true,
+  forbid_verbatim_sources: true,
+  max_similarity_basis_points: 8500,
+  minimum_distinct_contexts: 1,
+};
+
 const slotA = {
   archetype: "single_best_answer",
   difficulty: "medium",
-  evidence: {},
-  generation_constraints: {},
+  evidence: {
+    baseline_backtest_score: null,
+    baseline_score: 100,
+    baseline_version: "syllabus-balanced-v1",
+    config_version: "paper-studio-v1",
+    evidence_refs: ["curriculum:reviewed-taxonomy"],
+    forecast_backtest_score: null,
+    forecast_score: null,
+    forecast_version: null,
+    minimum_backtest_improvement: 1,
+  },
+  generation_constraints: {
+    answer_requirements: ["Provide one unambiguous answer."],
+    curriculum_scope: curriculumScope,
+    diversity_key: "A:1:selection",
+    exact_marks: 2,
+    instructions: ["Use age-appropriate language."],
+    required_archetype: "single_best_answer",
+    required_difficulty: "medium",
+    required_question_type: "multiple_choice",
+    response_language: "en",
+    retrieval_query_hints: ["reviewed curriculum"],
+    taxonomy_target: taxonomyTarget,
+    uniqueness,
+  },
   marks: 2,
   ordinal: 1,
   paper_code: "PAPER-STUDIO-01",
   question_type: "multiple_choice",
-  rationale: {},
+  rationale: {
+    effective_priority_score: 100,
+    priority_mode: "baseline_only",
+    summary: "Syllabus-balanced baseline selected.",
+  },
   section_id: "A",
   section_ordinal: 1,
   section_title: "Selection",
   slot_id: "PAPER-STUDIO-A-001",
-  taxonomy_target: {},
-} as Blueprint["blueprint"]["slots"][number];
+  taxonomy_target: taxonomyTarget,
+} satisfies components["schemas"]["BlueprintSlotResponse"];
 
 const slotB = {
   ...slotA,
   archetype: "short_response",
+  generation_constraints: {
+    ...slotA.generation_constraints,
+    diversity_key: "B:1:reasoning",
+    exact_marks: 3,
+    required_archetype: "short_response",
+    required_question_type: "short_answer",
+  },
   marks: 3,
   ordinal: 2,
   question_type: "short_answer",
@@ -64,13 +124,13 @@ const slotB = {
   section_ordinal: 1,
   section_title: "Reasoning",
   slot_id: "PAPER-STUDIO-B-001",
-} as Blueprint["blueprint"]["slots"][number];
+} satisfies components["schemas"]["BlueprintSlotResponse"];
 
 const blueprint = {
   algorithm_version: "deterministic-blueprint-v1",
   analytics_run_id: null,
   blueprint: {
-    curriculum_scope: { curriculum_version_id: ids.curriculum, grade: 5, medium: "en" },
+    curriculum_scope: curriculumScope,
     difficulty_allocations: [],
     paper_code: "PAPER-STUDIO-01",
     question_type_allocations: [],

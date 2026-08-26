@@ -7,7 +7,10 @@ import { BlueprintStudio } from "./blueprint-studio";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
+type CurriculumUnit = components["schemas"]["CurriculumUnitResponse"];
+type CurriculumLesson = components["schemas"]["CurriculumLessonResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type AnalyticsSummary = components["schemas"]["AnalyticsRunSummaryResponse"];
 type Blueprint = components["schemas"]["PaperBlueprintResponse"];
@@ -25,8 +28,11 @@ const ids = {
   gradeSixCurriculum: "00000000-0000-0000-0000-000000000102",
   gradeSixExam: "00000000-0000-0000-0000-000000000202",
   medium: "00000000-0000-0000-0000-000000000301",
+  lesson: "00000000-0000-0000-0000-000000000502",
   otherCurriculum: "00000000-0000-0000-0000-000000000103",
   skill: "00000000-0000-0000-0000-000000000402",
+  subject: "00000000-0000-0000-0000-000000000601",
+  unit: "00000000-0000-0000-0000-000000000501",
 } as const;
 
 const now = "2026-08-24T09:30:00Z";
@@ -64,6 +70,45 @@ const media = [
   },
 ] satisfies Medium[];
 
+const subjects = [
+  {
+    active: true,
+    code: "MATHS",
+    created_at: now,
+    id: ids.subject,
+    name: "Mathematics",
+    updated_at: now,
+  },
+] satisfies Subject[];
+
+const units = [
+  {
+    active: true,
+    code: "U1",
+    created_at: now,
+    curriculum_version_id: ids.curriculum,
+    id: ids.unit,
+    ordinal: 1,
+    title: "Geometry",
+    updated_at: now,
+  },
+] satisfies CurriculumUnit[];
+
+const lessons = [
+  {
+    active: true,
+    code: "L1",
+    created_at: now,
+    curriculum_version_id: ids.curriculum,
+    id: ids.lesson,
+    ordinal: 1,
+    taxonomy_node_ids: [ids.skill],
+    title: "Polygons",
+    unit_id: ids.unit,
+    updated_at: now,
+  },
+] satisfies CurriculumLesson[];
+
 const curriculum = {
   active: true,
   code: "G5-SI-2026",
@@ -71,6 +116,7 @@ const curriculum = {
   exam_configuration_id: ids.exam,
   id: ids.curriculum,
   medium_id: ids.medium,
+  subject_id: ids.subject,
   title: "Grade 5 Sinhala 2026",
   updated_at: now,
 } satisfies Curriculum;
@@ -165,7 +211,10 @@ const target = {
 const scope = {
   curriculum_version_id: ids.curriculum,
   grade: 5,
+  lesson_ids: [],
   medium: "si",
+  subject_id: ids.subject,
+  unit_ids: [],
 };
 const uniqueness = {
   forbid_duplicate_stems: true,
@@ -408,6 +457,15 @@ function fixtureApi(options: FixtureOptions = {}) {
     if (request.method === "GET" && url.pathname.endsWith("/media")) {
       return Response.json(media);
     }
+    if (request.method === "GET" && url.pathname.endsWith("/subjects")) {
+      return Response.json(subjects);
+    }
+    if (request.method === "GET" && url.pathname.endsWith("/units")) {
+      return Response.json(units);
+    }
+    if (request.method === "GET" && url.pathname.endsWith("/lessons")) {
+      return Response.json(lessons);
+    }
     if (request.method === "GET" && url.pathname.endsWith("/curriculum-versions")) {
       const status = workspaceStatuses.shift() ?? 200;
       return status === 200
@@ -529,7 +587,7 @@ describe("BlueprintStudio", () => {
     const { requests } = await renderLoaded();
 
     const curriculumSelect = screen.getByLabelText("Active Grade 5 curriculum");
-    expect(within(curriculumSelect).getByRole("option", { name: curriculum.title })).toBeVisible();
+    expect(within(curriculumSelect).getByRole("option", { name: `${curriculum.title} · Mathematics` })).toBeVisible();
     expect(within(curriculumSelect).queryByRole("option", { name: gradeSixCurriculum.title })).toBeNull();
 
     const taxonomySelect = await screen.findByLabelText("Taxonomy target 1");
@@ -544,8 +602,11 @@ describe("BlueprintStudio", () => {
     expect(screen.getByRole("heading", { name: "Taxonomy coverage" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Generation policy" })).toBeVisible();
     expect(screen.getByText(/same inputs, reviewed taxonomy snapshot, analytics linkage, config and seed/i)).toBeVisible();
+    expect(screen.getByText("Mathematics (MATHS)")).toBeVisible();
     expect(screen.queryByLabelText(/forecast/i)).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include unit U1 — Geometry" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include lesson L1 — Polygons" }));
     fireEvent.click(screen.getByRole("button", { name: "Add section" }));
     expect(screen.getByLabelText("Section 2 identifier")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Remove section 2" }));
@@ -563,7 +624,14 @@ describe("BlueprintStudio", () => {
       analytics_run_id: null,
       seed: 0,
       specification: {
-        curriculum_scope: { curriculum_version_id: ids.curriculum, grade: 5, medium: "si" },
+        curriculum_scope: {
+          curriculum_version_id: ids.curriculum,
+          grade: 5,
+          lesson_ids: [ids.lesson],
+          medium: "si",
+          subject_id: ids.subject,
+          unit_ids: [ids.unit],
+        },
         difficulty_allocations: [{ difficulty: "medium", exact_marks: 2, exact_slots: 1 }],
         question_type_allocations: [
           {
@@ -631,6 +699,11 @@ describe("BlueprintStudio", () => {
     const post = requests.find((request) => request.method === "POST");
     const body = (await post?.json()) as BlueprintRequest;
     expect(body.analytics_run_id).toBe(ids.analytics);
+    expect(body.specification.curriculum_scope).toMatchObject({
+      lesson_ids: [],
+      subject_id: ids.subject,
+      unit_ids: [],
+    });
     expect(JSON.stringify(body)).not.toContain("forecast_");
   });
 

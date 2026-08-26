@@ -14,6 +14,7 @@ import { Button, Form, Input, Label, TextField } from "react-aria-components";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type AuditEvent = components["schemas"]["AdminAuditEventResponse"];
@@ -44,34 +45,44 @@ export function CurriculumStudio({ role }: { role: Role }) {
   );
   const [exams, setExams] = useState<Exam[]>([]);
   const [media, setMedia] = useState<Medium[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
   const [nodes, setNodes] = useState<TaxonomyNode[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [selectedCurriculumId, setSelectedCurriculumId] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [operationError, setOperationError] = useState("");
+  const error = operationError || loadError;
   const canWrite = role === "admin";
 
   const loadConfiguration = useCallback(async () => {
     setLoading(true);
-    const [examResult, mediumResult, curriculumResult, auditResult] = await Promise.all([
-      api.GET("/api/v1/admin/exam-configurations"),
-      api.GET("/api/v1/admin/media"),
-      api.GET("/api/v1/admin/curriculum-versions"),
-      api.GET("/api/v1/admin/audit-events", { params: { query: { limit: 30 } } }),
-    ]);
+    const [examResult, mediumResult, subjectResult, curriculumResult, auditResult] =
+      await Promise.all([
+        api.GET("/api/v1/admin/exam-configurations"),
+        api.GET("/api/v1/admin/media"),
+        api.GET("/api/v1/admin/subjects"),
+        api.GET("/api/v1/admin/curriculum-versions"),
+        api.GET("/api/v1/admin/audit-events", { params: { query: { limit: 30 } } }),
+      ]);
     const firstError =
-      examResult.error ?? mediumResult.error ?? curriculumResult.error ?? auditResult.error;
+      examResult.error ??
+      mediumResult.error ??
+      subjectResult.error ??
+      curriculumResult.error ??
+      auditResult.error;
     if (firstError) {
-      setError(errorCode(firstError));
+      setLoadError(errorCode(firstError));
     } else {
       setExams(examResult.data ?? []);
       setMedia(mediumResult.data ?? []);
+      setSubjects(subjectResult.data ?? []);
       const nextCurricula = curriculumResult.data ?? [];
       setCurricula(nextCurricula);
       setAuditEvents(auditResult.data ?? []);
       setSelectedCurriculumId((current) => current || nextCurricula.find((item) => item.active)?.id || "");
-      setError("");
+      setLoadError("");
     }
     setLoading(false);
   }, [api]);
@@ -87,10 +98,10 @@ export function CurriculumStudio({ role }: { role: Role }) {
         { params: { path: { curriculum_version_id: curriculumVersionId } } },
       );
       if (result.error) {
-        setError(errorCode(result.error));
+        setLoadError(errorCode(result.error));
       } else {
         setNodes(result.data ?? []);
-        setError("");
+        setLoadError("");
       }
     },
     [api],
@@ -115,16 +126,17 @@ export function CurriculumStudio({ role }: { role: Role }) {
 
   async function createExam(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setOperationError("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const result = await api.POST("/api/v1/admin/exam-configurations", {
       body: {
         code: String(form.get("code")),
-        grade: 5,
+        grade: Number(form.get("grade")),
         name: String(form.get("name")),
       },
     });
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
     else {
       formElement.reset();
       await refresh();
@@ -133,12 +145,28 @@ export function CurriculumStudio({ role }: { role: Role }) {
 
   async function createMedium(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setOperationError("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const result = await api.POST("/api/v1/admin/media", {
       body: { code: String(form.get("code")), name: String(form.get("name")) },
     });
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
+    else {
+      formElement.reset();
+      await refresh();
+    }
+  }
+
+  async function createSubject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setOperationError("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const result = await api.POST("/api/v1/admin/subjects", {
+      body: { code: String(form.get("code")), name: String(form.get("name")) },
+    });
+    if (result.error) setOperationError(errorCode(result.error));
     else {
       formElement.reset();
       await refresh();
@@ -147,6 +175,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
 
   async function createCurriculum(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setOperationError("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const result = await api.POST("/api/v1/admin/curriculum-versions", {
@@ -154,10 +183,11 @@ export function CurriculumStudio({ role }: { role: Role }) {
         code: String(form.get("code")),
         exam_configuration_id: String(form.get("exam_configuration_id")),
         medium_id: String(form.get("medium_id")),
+        subject_id: String(form.get("subject_id")),
         title: String(form.get("title")),
       },
     });
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
     else {
       formElement.reset();
       await refresh();
@@ -166,6 +196,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
 
   async function createNode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setOperationError("");
     if (!selectedCurriculumId) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -183,7 +214,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
         params: { path: { curriculum_version_id: selectedCurriculumId } },
       },
     );
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
     else {
       formElement.reset();
       await refresh();
@@ -191,10 +222,11 @@ export function CurriculumStudio({ role }: { role: Role }) {
   }
 
   async function updateConfiguration(
-    resource: "exam" | "medium" | "curriculum",
+    resource: "exam" | "medium" | "subject" | "curriculum",
     id: string,
     value: string,
   ) {
+    setOperationError("");
     const result =
       resource === "exam"
         ? await api.PATCH("/api/v1/admin/exam-configurations/{resource_id}", {
@@ -206,18 +238,24 @@ export function CurriculumStudio({ role }: { role: Role }) {
               body: { name: value },
               params: { path: { resource_id: id } },
             })
-          : await api.PATCH("/api/v1/admin/curriculum-versions/{resource_id}", {
-              body: { title: value },
-              params: { path: { resource_id: id } },
-            });
-    if (result.error) setError(errorCode(result.error));
+          : resource === "subject"
+            ? await api.PATCH("/api/v1/admin/subjects/{resource_id}", {
+                body: { name: value },
+                params: { path: { resource_id: id } },
+              })
+            : await api.PATCH("/api/v1/admin/curriculum-versions/{resource_id}", {
+                body: { title: value },
+                params: { path: { resource_id: id } },
+              });
+    if (result.error) setOperationError(errorCode(result.error));
     else await refresh();
   }
 
   async function deactivateConfiguration(
-    resource: "exam" | "medium" | "curriculum",
+    resource: "exam" | "medium" | "subject" | "curriculum",
     id: string,
   ) {
+    setOperationError("");
     const result =
       resource === "exam"
         ? await api.POST("/api/v1/admin/exam-configurations/{resource_id}/deactivate", {
@@ -227,15 +265,20 @@ export function CurriculumStudio({ role }: { role: Role }) {
           ? await api.POST("/api/v1/admin/media/{resource_id}/deactivate", {
               params: { path: { resource_id: id } },
             })
-          : await api.POST("/api/v1/admin/curriculum-versions/{resource_id}/deactivate", {
-              params: { path: { resource_id: id } },
-            });
-    if (result.error) setError(errorCode(result.error));
+          : resource === "subject"
+            ? await api.POST("/api/v1/admin/subjects/{resource_id}/deactivate", {
+                params: { path: { resource_id: id } },
+              })
+            : await api.POST("/api/v1/admin/curriculum-versions/{resource_id}/deactivate", {
+                params: { path: { resource_id: id } },
+              });
+    if (result.error) setOperationError(errorCode(result.error));
     else await refresh();
   }
 
   async function updateNode(event: FormEvent<HTMLFormElement>, nodeId: string) {
     event.preventDefault();
+    setOperationError("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const result = await api.PATCH(
@@ -245,11 +288,12 @@ export function CurriculumStudio({ role }: { role: Role }) {
         params: { path: { curriculum_version_id: selectedCurriculumId, node_id: nodeId } },
       },
     );
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
     else await refresh();
   }
 
   async function transitionNode(nodeId: string, action: "review" | "deactivate") {
+    setOperationError("");
     const result =
       action === "review"
         ? await api.POST(
@@ -260,7 +304,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
             "/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes/{node_id}/deactivate",
             { params: { path: { curriculum_version_id: selectedCurriculumId, node_id: nodeId } } },
           );
-    if (result.error) setError(errorCode(result.error));
+    if (result.error) setOperationError(errorCode(result.error));
     else await refresh();
   }
 
@@ -270,7 +314,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
         <p className="font-mono text-xs tracking-[0.18em] text-slate-500 uppercase">P1 admin workflow</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Configuration &amp; taxonomy</h1>
         <p className="mt-2 max-w-3xl text-slate-600">
-          Manage Grade 5 exam scope, media, curriculum versions and reviewed taxonomy with
+          Manage grades, media, subjects, curriculum versions and reviewed taxonomy with
           transactional audit evidence.
         </p>
         {role === "reviewer" && <p className="mt-3 text-sm font-semibold text-amber-800">Reviewer access is read-only.</p>}
@@ -278,15 +322,16 @@ export function CurriculumStudio({ role }: { role: Role }) {
       </header>
 
       {loading ? <p className="py-8">Loading configuration…</p> : (
-        <div className="mt-8 grid gap-8 xl:grid-cols-3">
+        <div className="mt-8 grid gap-8 md:grid-cols-2 xl:grid-cols-4">
           <ConfigSection title="Exam configurations">
             {canWrite && <Form className="grid gap-3" onSubmit={createExam}>
               <TextField className={fieldClass} name="code" isRequired><Label>Exam code</Label><Input className={inputClass} /></TextField>
               <TextField className={fieldClass} name="name" isRequired><Label>Exam name</Label><Input className={inputClass} /></TextField>
+              <label className={fieldClass}>Grade<input className={inputClass} defaultValue="5" max={13} min={1} name="grade" required type="number" /></label>
               <Button className={primaryButton} type="submit">Create exam</Button>
             </Form>}
             <ConfigList empty="No exam configurations yet.">
-              {exams.map((exam) => <ConfigCard active={exam.active} id={exam.id} key={exam.id} label={exam.name} value={exam.name} canWrite={canWrite} onSave={(value) => updateConfiguration("exam", exam.id, value)} onDeactivate={() => deactivateConfiguration("exam", exam.id)} />)}
+              {exams.map((exam) => <ConfigCard active={exam.active} id={exam.id} key={exam.id} label={exam.name} subtitle={`Grade ${exam.grade}`} value={exam.name} canWrite={canWrite} onSave={(value) => updateConfiguration("exam", exam.id, value)} onDeactivate={() => deactivateConfiguration("exam", exam.id)} />)}
             </ConfigList>
           </ConfigSection>
 
@@ -301,16 +346,33 @@ export function CurriculumStudio({ role }: { role: Role }) {
             </ConfigList>
           </ConfigSection>
 
+          <ConfigSection title="Subjects">
+            {canWrite && <Form className="grid gap-3" onSubmit={createSubject}>
+              <TextField className={fieldClass} name="code" isRequired><Label>Subject code</Label><Input className={inputClass} /></TextField>
+              <TextField className={fieldClass} name="name" isRequired><Label>Subject name</Label><Input className={inputClass} /></TextField>
+              <Button className={primaryButton} type="submit">Create subject</Button>
+            </Form>}
+            <ConfigList empty="No subjects yet.">
+              {subjects.map((item) => <ConfigCard active={item.active} id={item.id} key={item.id} label={item.name} subtitle={item.code} value={item.name} canWrite={canWrite} onSave={(value) => updateConfiguration("subject", item.id, value)} onDeactivate={() => deactivateConfiguration("subject", item.id)} />)}
+            </ConfigList>
+          </ConfigSection>
+
           <ConfigSection title="Curriculum versions">
             {canWrite && <Form className="grid gap-3" onSubmit={createCurriculum}>
-              <label className={fieldClass}>Exam<select className={inputClass} name="exam_configuration_id" required>{exams.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label className={fieldClass}>Exam<select className={inputClass} name="exam_configuration_id" required>{exams.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name} · Grade {item.grade}</option>)}</select></label>
               <label className={fieldClass}>Medium<select className={inputClass} name="medium_id" required>{media.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label className={fieldClass}>Curriculum subject<select className={inputClass} name="subject_id" required>{subjects.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.code})</option>)}</select></label>
               <TextField className={fieldClass} name="code" isRequired><Label>Curriculum code</Label><Input className={inputClass} /></TextField>
               <TextField className={fieldClass} name="title" isRequired><Label>Curriculum title</Label><Input className={inputClass} /></TextField>
-              <Button className={primaryButton} isDisabled={!exams.length || !media.length} type="submit">Create curriculum</Button>
+              <Button className={primaryButton} isDisabled={!exams.some((item) => item.active) || !media.some((item) => item.active) || !subjects.some((item) => item.active)} type="submit">Create curriculum</Button>
             </Form>}
             <ConfigList empty="No curriculum versions yet.">
-              {curricula.map((item) => <ConfigCard active={item.active} id={item.id} key={item.id} label={item.title} value={item.title} canWrite={canWrite} onSelect={() => setSelectedCurriculumId(item.id)} onSave={(value) => updateConfiguration("curriculum", item.id, value)} onDeactivate={() => deactivateConfiguration("curriculum", item.id)} />)}
+              {curricula.map((item) => {
+                const exam = exams.find((value) => value.id === item.exam_configuration_id);
+                const medium = media.find((value) => value.id === item.medium_id);
+                const subject = subjects.find((value) => value.id === item.subject_id);
+                return <ConfigCard active={item.active} id={item.id} key={item.id} label={item.title} subtitle={`${subject?.name ?? "Unknown subject"} · Grade ${exam?.grade ?? "?"} · ${medium?.name ?? "Unknown medium"}`} value={item.title} canWrite={canWrite} onSelect={() => setSelectedCurriculumId(item.id)} onSave={(value) => updateConfiguration("curriculum", item.id, value)} onDeactivate={() => deactivateConfiguration("curriculum", item.id)} />;
+              })}
             </ConfigList>
           </ConfigSection>
         </div>
@@ -319,7 +381,7 @@ export function CurriculumStudio({ role }: { role: Role }) {
       <section className="mt-10 border-t border-slate-300 pt-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><p className="font-mono text-xs text-slate-500 uppercase">Selected curriculum</p><h2 className="mt-1 text-2xl font-semibold">Taxonomy lifecycle</h2></div>
-          <select aria-label="Selected curriculum" className={inputClass} onChange={(event) => setSelectedCurriculumId(event.target.value)} value={selectedCurriculumId}><option value="">Choose curriculum</option>{curricula.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
+          <select aria-label="Selected curriculum" className={inputClass} onChange={(event) => setSelectedCurriculumId(event.target.value)} value={selectedCurriculumId}><option value="">Choose curriculum</option>{curricula.map((item) => <option key={item.id} value={item.id}>{item.title} — {subjects.find((subject) => subject.id === item.subject_id)?.name ?? "Unknown subject"}</option>)}</select>
         </div>
         {canWrite && selectedCurriculumId && <Form className="mt-6 grid gap-3 rounded-lg border border-slate-300 bg-white p-4 md:grid-cols-5" onSubmit={createNode}>
           <label className={fieldClass}>Level<select className={inputClass} name="level"><option value="competency">Competency</option><option value="skill">Skill</option><option value="sub_skill">Sub-skill</option><option value="learning_concept">Learning concept</option></select></label>
@@ -364,6 +426,6 @@ function ConfigList({ children, empty }: { children: ReactNode; empty: string })
   );
 }
 
-function ConfigCard({ active, canWrite, id, label, onDeactivate, onSave, onSelect, value }: { active: boolean; canWrite: boolean; id: string; label: string; onDeactivate: () => void; onSave: (value: string) => void; onSelect?: () => void; value: string }) {
-  return <article className="rounded-md border border-slate-200 bg-slate-50 p-3"><button className="text-left font-semibold" onClick={onSelect} type="button">{label}</button><p className="text-xs text-slate-500">{active ? "active" : "deprecated"} · {id.slice(0, 8)}</p>{canWrite && active && <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); onSave(String(new FormData(event.currentTarget).get("value"))); }}><label className="sr-only" htmlFor={`value-${id}`}>Update {label}</label><input className={inputClass} defaultValue={value} id={`value-${id}`} name="value" /><button className={secondaryButton} type="submit">Save</button><button className={secondaryButton} onClick={onDeactivate} type="button">Deactivate</button></form>}</article>;
+function ConfigCard({ active, canWrite, id, label, onDeactivate, onSave, onSelect, subtitle, value }: { active: boolean; canWrite: boolean; id: string; label: string; onDeactivate: () => void; onSave: (value: string) => void; onSelect?: () => void; subtitle?: string; value: string }) {
+  return <article className="rounded-md border border-slate-200 bg-slate-50 p-3"><button className="text-left font-semibold" onClick={onSelect} type="button">{label}</button>{subtitle ? <p className="mt-1 text-xs font-medium text-slate-600">{subtitle}</p> : null}<p className="text-xs text-slate-500">{active ? "active" : "deprecated"} · {id.slice(0, 8)}</p>{canWrite && active && <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); onSave(String(new FormData(event.currentTarget).get("value"))); }}><label className="sr-only" htmlFor={`value-${id}`}>Update {label}</label><input className={inputClass} defaultValue={value} id={`value-${id}`} name="value" /><button className={secondaryButton} type="submit">Save</button><button className={secondaryButton} onClick={onDeactivate} type="button">Deactivate</button></form>}</article>;
 }

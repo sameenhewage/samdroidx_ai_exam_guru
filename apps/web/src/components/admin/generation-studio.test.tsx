@@ -7,6 +7,7 @@ import { GenerationStudio } from "./generation-studio";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type Blueprint = components["schemas"]["PaperBlueprintResponse"];
 type BlueprintSummary = components["schemas"]["PaperBlueprintSummaryResponse"];
@@ -28,13 +29,17 @@ const ids = {
   exam: "00000000-0000-0000-0000-000000000201",
   failedRun: "00000000-0000-0000-0000-000000000802",
   job: "00000000-0000-0000-0000-000000000801",
+  lesson: "00000000-0000-0000-0000-000000000302",
   medium: "00000000-0000-0000-0000-000000000301",
   mismatchChunk: "00000000-0000-0000-0000-000000000502",
   otherCompetency: "00000000-0000-0000-0000-000000000404",
   otherCurriculum: "00000000-0000-0000-0000-000000000102",
+  otherLesson: "00000000-0000-0000-0000-000000000305",
   question: "00000000-0000-0000-0000-000000000601",
   run: "00000000-0000-0000-0000-000000000803",
   skill: "00000000-0000-0000-0000-000000000402",
+  subject: "00000000-0000-0000-0000-000000000303",
+  unit: "00000000-0000-0000-0000-000000000304",
 } as const;
 
 const now = "2026-08-24T09:30:00Z";
@@ -60,6 +65,15 @@ const medium = {
   updated_at: now,
 } satisfies Medium;
 
+const subject = {
+  active: true,
+  code: "MATHS",
+  created_at: now,
+  id: ids.subject,
+  name: "Mathematics",
+  updated_at: now,
+} satisfies Subject;
+
 const curriculum = {
   active: true,
   code: "G5-EN-2026",
@@ -67,6 +81,7 @@ const curriculum = {
   exam_configuration_id: ids.exam,
   id: ids.curriculum,
   medium_id: ids.medium,
+  subject_id: ids.subject,
   title: "Grade 5 English 2026",
   updated_at: now,
 } satisfies Curriculum;
@@ -104,7 +119,10 @@ const slot = {
     curriculum_scope: {
       curriculum_version_id: ids.curriculum,
       grade: 5,
+      lesson_ids: [ids.lesson],
       medium: "en",
+      subject_id: ids.subject,
+      unit_ids: [ids.unit],
     },
     diversity_key: "A:1:number-skill",
     exact_marks: 2,
@@ -165,7 +183,10 @@ const blueprint = {
     curriculum_scope: {
       curriculum_version_id: ids.curriculum,
       grade: 5,
+      lesson_ids: [ids.lesson],
       medium: "en",
+      subject_id: ids.subject,
+      unit_ids: [ids.unit],
     },
     difficulty_allocations: [{ difficulty: "medium" as const, exact_marks: 2, exact_slots: 1 }],
     paper_code: "GEN-01",
@@ -208,7 +229,10 @@ const blueprint = {
     curriculum_scope: {
       curriculum_version_id: ids.curriculum,
       grade: 5,
+      lesson_ids: [ids.lesson],
       medium: "en",
+      subject_id: ids.subject,
+      unit_ids: [ids.unit],
     },
     difficulty_allocations: [{ difficulty: "medium" as const, exact_marks: 2, exact_slots: 1 }],
     generation_policy: {
@@ -320,6 +344,7 @@ function chunkFixture(
     embedding_configurations: [],
     embedding_status: "not_embedded",
     id,
+    lesson_id: ids.lesson,
     provenance: {
       page_number: 1,
       source_block_id: "00000000-0000-0000-0000-000000000991",
@@ -328,6 +353,7 @@ function chunkFixture(
     review_state: "reviewed",
     sequence: 1,
     text: `Reviewed chunk text ${id.slice(-3)}`,
+    unit_id: ids.unit,
     updated_at: now,
     version: 3,
     ...overrides,
@@ -353,6 +379,10 @@ const crossCurriculumChunk = chunkFixture("00000000-0000-0000-0000-000000000504"
   curriculum_version_id: ids.otherCurriculum,
   educational_boundary: "Cross-curriculum context must not load",
 });
+const crossLearningScopeChunk = chunkFixture("00000000-0000-0000-0000-000000000505", {
+  educational_boundary: "Other lesson context must not load",
+  lesson_id: ids.otherLesson,
+});
 
 const matchingQuestion = {
   answer: "B",
@@ -371,6 +401,7 @@ const matchingQuestion = {
   embedding_configurations: [],
   embedding_status: "not_embedded" as const,
   id: ids.question,
+  lesson_id: ids.lesson,
   marking_data: null,
   marking_guidance: "Award two marks for B.",
   marks: 2,
@@ -387,6 +418,7 @@ const matchingQuestion = {
   question_type: "multiple_choice" as const,
   review_state: "reviewed" as const,
   text: "Which number is even?",
+  unit_id: ids.unit,
   updated_at: now,
   version: 4,
   year: 2025,
@@ -432,6 +464,10 @@ const succeededRun = {
   context: [
     {
       context_id: `knowledge_chunk:${ids.chunk}`,
+      learning_scope: {
+        lesson_id: ids.lesson,
+        unit_id: ids.unit,
+      },
       provenance: {
         chunk_id: ids.chunk,
         page_number: 1,
@@ -467,11 +503,11 @@ const succeededRun = {
   paper_blueprint_id: ids.blueprint,
   pricing_version: "deterministic-pricing-v1",
   prompt_id: "question-generation",
-  prompt_version: "1.0.0",
+  prompt_version: "2.0.0",
   provider: "deterministic-fake",
   provider_version: "1.0.0",
   request_fingerprint: hash("r"),
-  retrieval_version: "reviewed-selected-context-v1",
+  retrieval_version: "active-reviewed-multigrade-scope-v2",
   retry_depth: 1,
   retry_of_run_id: ids.failedRun,
   schema_version: "question.v1",
@@ -659,6 +695,9 @@ function fixtureApi(options: FixtureOptions = {}) {
     if (request.method === "GET" && path.endsWith("/media")) {
       return Response.json([medium]);
     }
+    if (request.method === "GET" && path.endsWith("/subjects")) {
+      return Response.json([subject]);
+    }
     if (request.method === "GET" && path.endsWith("/curriculum-versions")) {
       const reply = workspaceReplies.shift();
       return reply
@@ -753,10 +792,17 @@ afterEach(() => {
 describe("GenerationStudio", () => {
   it("selects an active immutable blueprint and exact slot, then submits IDs only with a bounded generated idempotency key", async () => {
     const { requests } = await renderLoaded("admin", {
-      chunks: [matchingChunk, mismatchChunk, draftChunk, crossCurriculumChunk],
+      chunks: [
+        matchingChunk,
+        mismatchChunk,
+        draftChunk,
+        crossCurriculumChunk,
+        crossLearningScopeChunk,
+      ],
     });
 
     expect(screen.getByLabelText("Active Grade 5 curriculum")).toHaveValue(ids.curriculum);
+    expect(screen.getAllByText("Mathematics (MATHS)").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Immutable blueprint")).toHaveValue(ids.blueprint);
     expect(screen.getByLabelText("Exact blueprint slot")).toHaveValue(slot.slot_id);
     expect(screen.getByText("Immutable blueprint snapshot")).toBeVisible();
@@ -777,6 +823,10 @@ describe("GenerationStudio", () => {
     expect(screen.getByText("Taxonomy does not match the exact slot")).toBeVisible();
     expect(screen.queryByText(draftChunk.educational_boundary)).not.toBeInTheDocument();
     expect(screen.queryByText(crossCurriculumChunk.educational_boundary)).not.toBeInTheDocument();
+    expect(screen.queryByText(crossLearningScopeChunk.educational_boundary)).not.toBeInTheDocument();
+    expect(screen.getByText(ids.subject)).toBeVisible();
+    expect(screen.getByText(ids.unit)).toBeVisible();
+    expect(screen.getByText(ids.lesson)).toBeVisible();
 
     const contextGets = requests.filter((request) =>
       new URL(request.url).pathname.includes("/knowledge/"),
@@ -891,11 +941,11 @@ describe("GenerationStudio", () => {
     const versions = screen.getByRole("region", { name: "Generation configuration versions" });
     for (const value of [
       "question-generation",
-      "1.0.0",
+      "2.0.0",
       "deterministic-fake",
       "fixture-model",
       "2026-01",
-      "reviewed-selected-context-v1",
+      "active-reviewed-multigrade-scope-v2",
       "question.v1",
       "deterministic-pricing-v1",
     ]) {
@@ -918,6 +968,8 @@ describe("GenerationStudio", () => {
     expect(context).toHaveTextContent("source_version");
     expect(context).toHaveTextContent(ids.competency);
     expect(context).toHaveTextContent(ids.skill);
+    expect(context).toHaveTextContent(ids.unit);
+    expect(context).toHaveTextContent(ids.lesson);
 
     const attemptList = screen.getByRole("region", { name: "Provider attempts" });
     expect(attemptList).toHaveTextContent("Attempt 1");

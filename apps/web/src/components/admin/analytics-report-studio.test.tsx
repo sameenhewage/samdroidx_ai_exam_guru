@@ -26,6 +26,7 @@ const ids = {
   questionExcluded: "00000000-0000-0000-0000-000000000603",
   run: "00000000-0000-0000-0000-000000000801",
   skill: "00000000-0000-0000-0000-000000000402",
+  subject: "00000000-0000-0000-0000-000000000302",
 } as const;
 
 function fraction(numerator: number, denominator: number): Fraction {
@@ -39,6 +40,7 @@ const curriculum = {
   exam_configuration_id: ids.exam,
   id: ids.curriculum,
   medium_id: ids.medium,
+  subject_id: ids.subject,
   title: "Grade 5 Sinhala 2026",
   updated_at: "2026-08-24T00:00:00Z",
 } satisfies Curriculum;

@@ -6,7 +6,7 @@ const pdfBase64 =
 async function login(page: Page, role: "admin" | "reviewer") {
   await page.goto("/admin/login");
   await page.getByRole("button", { name: `Continue as ${role}` }).click();
-  await expect(page).toHaveURL(/\/admin\/curriculum$/);
+  await expect(page).toHaveURL(/\/admin\/home$/);
   await page.goto("/admin/documents");
   await expect(page.getByRole("heading", { name: "Source documents" })).toBeVisible();
 }

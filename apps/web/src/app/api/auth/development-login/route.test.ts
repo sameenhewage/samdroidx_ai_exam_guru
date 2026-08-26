@@ -22,7 +22,11 @@ function configureDeterministic() {
 
 function loginRequest(headers: HeadersInit = {}, role = "admin") {
   return new NextRequest("http://localhost:3000/api/auth/development-login", {
-    body: new URLSearchParams({ role, token: "attacker-supplied-token" }),
+    body: new URLSearchParams({
+      redirect: "https://attacker.example/steal",
+      role,
+      token: "attacker-supplied-token",
+    }),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Origin: "http://localhost:3000",
@@ -129,7 +133,7 @@ describe("development login request boundary", () => {
     const response = await POST(loginRequest({}, "admin"));
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("Location")).toBe("http://localhost:3000/admin/curriculum");
+    expect(response.headers.get("Location")).toBe("http://localhost:3000/admin/home");
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     const [url, options] = upstreamFetch.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("http://api.test:8000/api/v1/auth/session");

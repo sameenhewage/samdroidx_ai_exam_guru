@@ -20,8 +20,11 @@ import { Button, Form } from "react-aria-components";
 import { Badge } from "@/components/ui/badge";
 
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
+type CurriculumUnit = components["schemas"]["CurriculumUnitResponse"];
+type CurriculumLesson = components["schemas"]["CurriculumLessonResponse"];
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type HistoricalQuestion = components["schemas"]["HistoricalQuestionResponse"];
 type KnowledgeChunk = components["schemas"]["KnowledgeChunkResponse"];
@@ -44,6 +47,7 @@ type EligibleCurriculum = {
   curriculum: Curriculum;
   exam: Exam;
   medium: Medium;
+  subject: Subject;
 };
 
 type ApiOutcome = {
@@ -71,6 +75,8 @@ const limits = {
 const fieldClass = "grid gap-1.5 text-sm font-semibold text-slate-700";
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
+const checkboxClass =
+  "h-4 w-4 rounded border-slate-400 text-slate-950 outline-none focus-visible:ring-2 focus-visible:ring-amber-500";
 const primaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton =
@@ -153,14 +159,17 @@ function eligibleCurricula(
   curricula: Curriculum[],
   exams: Exam[],
   media: Medium[],
+  subjects: Subject[],
 ): EligibleCurriculum[] {
   const examById = new Map(exams.map((exam) => [exam.id, exam]));
   const mediumById = new Map(media.map((item) => [item.id, item]));
+  const subjectById = new Map(subjects.map((item) => [item.id, item]));
   return curricula.flatMap((curriculum) => {
     const exam = examById.get(curriculum.exam_configuration_id);
     const medium = mediumById.get(curriculum.medium_id);
-    return curriculum.active && exam?.active && exam.grade === 5 && medium?.active
-      ? [{ curriculum, exam, medium }]
+    const subject = subjectById.get(curriculum.subject_id);
+    return curriculum.active && exam?.active && exam.grade === 5 && medium?.active && subject?.active
+      ? [{ curriculum, exam, medium, subject }]
       : [];
   });
 }
@@ -330,6 +339,9 @@ function ScopeIds({ scope }: { scope: RetrievalScope }) {
         <IdTerm label="Curriculum" value={scope.curriculum_version_id} />
         <IdTerm label="Exam" value={scope.exam_id} />
         <IdTerm label="Medium" value={scope.medium_id} />
+        <IdTerm label="Subject" value={scope.subject_id} />
+        <IdTerm label="Units" value={scope.unit_ids.join(", ") || "Full subject"} />
+        <IdTerm label="Lessons" value={scope.lesson_ids.join(", ") || "All lessons"} />
         <IdTerm label="Competency" value={taxonomy.competency_id} />
         {taxonomy.skill_id ? <IdTerm label="Skill" value={taxonomy.skill_id} /> : null}
         {taxonomy.sub_skill_id ? <IdTerm label="Sub-skill" value={taxonomy.sub_skill_id} /> : null}
@@ -644,8 +656,13 @@ export function RetrievalExplorer({ role }: { role: Role }) {
   );
   const [exams, setExams] = useState<Exam[]>([]);
   const [media, setMedia] = useState<Medium[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
   const [selectedCurriculumId, setSelectedCurriculumId] = useState("");
+  const [units, setUnits] = useState<CurriculumUnit[]>([]);
+  const [lessons, setLessons] = useState<CurriculumLesson[]>([]);
+  const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
+  const [selectedLessonIds, setSelectedLessonIds] = useState<string[]>([]);
   const [taxonomy, setTaxonomy] = useState<TaxonomyNode[]>([]);
   const [embeddingConfigurations, setEmbeddingConfigurations] = useState<
     EmbeddingConfiguration[]
@@ -677,8 +694,8 @@ export function RetrievalExplorer({ role }: { role: Role }) {
   const retrievalRequestId = useRef(0);
 
   const eligible = useMemo(
-    () => eligibleCurricula(curricula, exams, media),
-    [curricula, exams, media],
+    () => eligibleCurricula(curricula, exams, media, subjects),
+    [curricula, exams, media, subjects],
   );
   const selectedScope = useMemo(
     () => eligible.find((item) => item.curriculum.id === selectedCurriculumId) ?? null,
@@ -730,25 +747,32 @@ export function RetrievalExplorer({ role }: { role: Role }) {
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     try {
-      const [examResult, mediumResult, curriculumResult] = await Promise.all([
+      const [examResult, mediumResult, subjectResult, curriculumResult] = await Promise.all([
         api.GET("/api/v1/admin/exam-configurations"),
         api.GET("/api/v1/admin/media"),
+        api.GET("/api/v1/admin/subjects"),
         api.GET("/api/v1/admin/curriculum-versions"),
       ]);
       if (requestId !== workspaceRequestId.current) return;
-      const failed = firstApiFailure([examResult, mediumResult, curriculumResult]);
+      const failed = firstApiFailure([examResult, mediumResult, subjectResult, curriculumResult]);
       if (failed?.error) {
         setWorkspaceError(uiError(failed.error, failed.response.status));
         return;
       }
       const nextExams = examResult.data ?? [];
       const nextMedia = mediumResult.data ?? [];
+      const nextSubjects = subjectResult.data ?? [];
       const nextCurricula = curriculumResult.data ?? [];
-      const nextEligible = eligibleCurricula(nextCurricula, nextExams, nextMedia);
+      const nextEligible = eligibleCurricula(nextCurricula, nextExams, nextMedia, nextSubjects);
       setExams(nextExams);
       setMedia(nextMedia);
+      setSubjects(nextSubjects);
       setCurricula(nextCurricula);
       setTaxonomy([]);
+      setUnits([]);
+      setLessons([]);
+      setSelectedUnitIds([]);
+      setSelectedLessonIds([]);
       setEmbeddingConfigurations([]);
       setEmbeddingDiscoveryCapped(false);
       setScopeLoading(nextEligible.length > 0);
@@ -773,16 +797,23 @@ export function RetrievalExplorer({ role }: { role: Role }) {
       setRetrievalError(null);
       try {
         const path = { curriculum_version_id: curriculumVersionId };
-        const [taxonomyResult, questionDiscovery, chunkDiscovery] = await Promise.all([
-          api.GET("/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes", {
-            params: { path },
-          }),
-          discoverReviewedQuestions(api, curriculumVersionId),
-          discoverReviewedChunks(api, curriculumVersionId),
-        ]);
+        const [taxonomyResult, unitResult, lessonResult, questionDiscovery, chunkDiscovery] =
+          await Promise.all([
+            api.GET("/api/v1/admin/curricula/{curriculum_version_id}/taxonomy/nodes", {
+              params: { path },
+            }),
+            api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/units", {
+              params: { path },
+            }),
+            api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons", {
+              params: { path },
+            }),
+            discoverReviewedQuestions(api, curriculumVersionId),
+            discoverReviewedChunks(api, curriculumVersionId),
+          ]);
         if (requestId !== scopeRequestId.current) return;
         const failed =
-          firstApiFailure([taxonomyResult]) ??
+          firstApiFailure([taxonomyResult, unitResult, lessonResult]) ??
           questionDiscovery.failure ??
           chunkDiscovery.failure;
         if (failed?.error) {
@@ -790,6 +821,12 @@ export function RetrievalExplorer({ role }: { role: Role }) {
           return;
         }
         const nextTaxonomy = taxonomyResult.data ?? [];
+        const nextUnits = (unitResult.data ?? []).filter(
+          (unit) => unit.active && unit.curriculum_version_id === curriculumVersionId,
+        );
+        const nextLessons = (lessonResult.data ?? []).filter(
+          (lesson) => lesson.active && lesson.curriculum_version_id === curriculumVersionId,
+        );
         const nextQuestions = questionDiscovery.records;
         const nextChunks = chunkDiscovery.records;
         const nextConfigurations = collectEmbeddingConfigurations(nextQuestions, nextChunks);
@@ -801,6 +838,10 @@ export function RetrievalExplorer({ role }: { role: Role }) {
             node.parent_id === null,
         );
         setTaxonomy(nextTaxonomy);
+        setUnits(nextUnits);
+        setLessons(nextLessons);
+        setSelectedUnitIds([]);
+        setSelectedLessonIds([]);
         setEmbeddingConfigurations(nextConfigurations);
         setSelectedEmbeddingFingerprint(
           (current) =>
@@ -833,6 +874,33 @@ export function RetrievalExplorer({ role }: { role: Role }) {
     const timeout = window.setTimeout(() => void loadScope(selectedCurriculumId), 0);
     return () => window.clearTimeout(timeout);
   }, [loadScope, selectedCurriculumId]);
+
+  function toggleUnit(unitId: string, checked: boolean) {
+    setSelectedUnitIds((current) =>
+      checked
+        ? units.filter((unit) => current.includes(unit.id) || unit.id === unitId).map((unit) => unit.id)
+        : current.filter((id) => id !== unitId),
+    );
+    if (!checked) {
+      setSelectedLessonIds((current) =>
+        current.filter((id) => lessons.find((lesson) => lesson.id === id)?.unit_id !== unitId),
+      );
+    }
+  }
+
+  function toggleLesson(lessonId: string, checked: boolean) {
+    setSelectedLessonIds((current) =>
+      checked
+        ? lessons
+            .filter(
+              (lesson) =>
+                selectedUnitIds.includes(lesson.unit_id) &&
+                (current.includes(lesson.id) || lesson.id === lessonId),
+            )
+            .map((lesson) => lesson.id)
+        : current.filter((id) => id !== lessonId),
+    );
+  }
 
   const executeRetrieval = useCallback(
     async (request: RetrievalRequest) => {
@@ -944,14 +1012,17 @@ export function RetrievalExplorer({ role }: { role: Role }) {
       scope: {
         curriculum_version_id: selectedScope.curriculum.id,
         exam_id: selectedScope.exam.id,
-        grade: 5,
+        grade: selectedScope.exam.grade,
+        lesson_ids: selectedLessonIds,
         medium_id: selectedScope.medium.id,
+        subject_id: selectedScope.curriculum.subject_id,
         taxonomy: {
           competency_id: competencyId,
           learning_concept_id: learningConceptId || null,
           skill_id: skillId || null,
           sub_skill_id: subSkillId || null,
         },
+        unit_ids: selectedUnitIds,
       },
     });
   }
@@ -1027,6 +1098,10 @@ export function RetrievalExplorer({ role }: { role: Role }) {
                   className={inputClass}
                   onChange={(event) => {
                     setTaxonomy([]);
+                    setUnits([]);
+                    setLessons([]);
+                    setSelectedUnitIds([]);
+                    setSelectedLessonIds([]);
                     setEmbeddingConfigurations([]);
                     setEmbeddingDiscoveryCapped(false);
                     setResult(null);
@@ -1037,7 +1112,7 @@ export function RetrievalExplorer({ role }: { role: Role }) {
                 >
                   {eligible.map((item) => (
                     <option key={item.curriculum.id} value={item.curriculum.id}>
-                      {item.curriculum.title}
+                      {item.curriculum.title} · {item.subject.name}
                     </option>
                   ))}
                 </select>
@@ -1058,6 +1133,15 @@ export function RetrievalExplorer({ role }: { role: Role }) {
                       {selectedScope.medium.code}
                     </dd>
                   </div>
+                  <div>
+                    <dt className="text-xs font-semibold text-slate-500">Subject</dt>
+                    <dd className="mt-1 text-sm font-medium">
+                      {selectedScope.subject.name} ({selectedScope.subject.code})
+                    </dd>
+                    <dd className="mt-0.5 break-all font-mono text-xs text-slate-500">
+                      {selectedScope.curriculum.subject_id}
+                    </dd>
+                  </div>
                 </dl>
               ) : null}
 
@@ -1074,6 +1158,43 @@ export function RetrievalExplorer({ role }: { role: Role }) {
                     retryLabel="Retry scope data"
                   />
                 </div>
+              ) : null}
+
+              {!scopeLoading && !scopeError ? (
+                <fieldset className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <legend className="px-1 text-sm font-semibold text-slate-800">Unit and lesson filters</legend>
+                  <p className="text-sm leading-6 text-slate-600">
+                    {selectedUnitIds.length
+                      ? `${selectedUnitIds.length} unit${selectedUnitIds.length === 1 ? "" : "s"} selected${selectedLessonIds.length ? ` · ${selectedLessonIds.length} lesson${selectedLessonIds.length === 1 ? "" : "s"} selected` : " · all lessons in those units"}`
+                      : "Full subject — all units and lessons"}
+                  </p>
+                  {units.length ? (
+                    <div className="mt-3 grid gap-2">
+                      {units.map((unit) => (
+                        <label className="flex items-start gap-2 text-sm" key={unit.id}>
+                          <input aria-label={`Include unit ${unit.code} — ${unit.title}`} checked={selectedUnitIds.includes(unit.id)} className={`${checkboxClass} mt-0.5`} onChange={(event) => toggleUnit(unit.id, event.target.checked)} type="checkbox" />
+                          <span><span className="font-semibold">{unit.code}</span> — {unit.title}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-500">No units are configured; empty unit and lesson filters explicitly mean full-subject retrieval.</p>
+                  )}
+                  {selectedUnitIds.length ? (
+                    <div className="mt-4 border-t border-slate-200 pt-3">
+                      <p className="text-sm font-semibold text-slate-700">Optional lessons</p>
+                      <div className="mt-2 grid gap-2">
+                        {lessons.filter((lesson) => selectedUnitIds.includes(lesson.unit_id)).map((lesson) => (
+                          <label className="flex items-start gap-2 text-sm" key={lesson.id}>
+                            <input aria-label={`Include lesson ${lesson.code} — ${lesson.title}`} checked={selectedLessonIds.includes(lesson.id)} className={`${checkboxClass} mt-0.5`} onChange={(event) => toggleLesson(lesson.id, event.target.checked)} type="checkbox" />
+                            <span><span className="font-semibold">{lesson.code}</span> — {lesson.title}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {!lessons.some((lesson) => selectedUnitIds.includes(lesson.unit_id)) ? <p className="mt-2 text-sm text-slate-500">No active lessons are configured for the selected units.</p> : null}
+                    </div>
+                  ) : null}
+                </fieldset>
               ) : null}
 
               {!scopeLoading && !scopeError && !competencies.length ? (

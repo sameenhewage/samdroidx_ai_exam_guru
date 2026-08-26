@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
+type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type Blueprint = components["schemas"]["PaperBlueprintResponse"];
 type BlueprintSummary = components["schemas"]["PaperBlueprintSummaryResponse"];
@@ -39,7 +40,7 @@ type ContextKind = "knowledge_chunk" | "historical_question";
 
 type ApiOutcome = { error?: unknown; response: Response };
 type UiError = { code: string; message: string; title: string };
-type CurriculumChoice = { curriculum: Curriculum; exam: Exam; medium: Medium };
+type CurriculumChoice = { curriculum: Curriculum; exam: Exam; medium: Medium; subject: Subject };
 type PollTarget = {
   curriculumId: string;
   jobId: string | null;
@@ -380,6 +381,18 @@ function taxonomyMatches(classification: Classification, target: TaxonomyTarget)
   );
 }
 
+function learningScopeMatches(
+  record: KnowledgeChunk | HistoricalQuestion,
+  scope: components["schemas"]["CurriculumScopeResponse"],
+): boolean {
+  const unitIds = scope.unit_ids ?? [];
+  const lessonIds = scope.lesson_ids ?? [];
+  return (
+    (!unitIds.length || (record.unit_id !== null && unitIds.includes(record.unit_id))) &&
+    (!lessonIds.length || (record.lesson_id !== null && lessonIds.includes(record.lesson_id)))
+  );
+}
+
 async function discoverReviewedChunks(
   api: ApiClient,
   curriculumId: string,
@@ -516,7 +529,8 @@ function TaxonomyValues({ value }: { value: JsonObject | TaxonomyTarget | Classi
   );
 }
 
-function BlueprintSelection({ blueprint, slot: selectedSlot }: { blueprint: Blueprint; slot: BlueprintSlot }) {
+function BlueprintSelection({ blueprint, slot: selectedSlot, subject }: { blueprint: Blueprint; slot: BlueprintSlot; subject: Subject }) {
+  const scope = selectedSlot.generation_constraints.curriculum_scope;
   return (
     <section className="mt-5 rounded-xl border border-slate-300 bg-slate-50 p-4">
       <h3 className="font-semibold">Immutable blueprint snapshot</h3>
@@ -528,6 +542,12 @@ function BlueprintSelection({ blueprint, slot: selectedSlot }: { blueprint: Blue
         <Definition label="Blueprint record ID" mono value={blueprint.id} />
         <Definition label="Blueprint version" mono value={blueprint.blueprint_id} />
         <Definition label="Schema version" mono value={blueprint.schema_version} />
+        <Definition label="Grade" value={scope.grade} />
+        <Definition label="Medium" value={scope.medium} />
+        <Definition label="Subject" value={`${subject.name} (${subject.code})`} />
+        <Definition label="Subject ID" mono value={scope.subject_id} />
+        <Definition label="Unit scope" mono value={(scope.unit_ids ?? []).join(", ") || "Full subject"} />
+        <Definition label="Lesson scope" mono value={(scope.lesson_ids ?? []).join(", ") || "All lessons"} />
         <Definition label="Exact slot" mono value={selectedSlot.slot_id} />
         <Definition label="Section" value={`${selectedSlot.section_id} — ${selectedSlot.section_title}`} />
         <Definition label="Question type" value={displayEnum(selectedSlot.question_type)} />
@@ -731,6 +751,7 @@ function ContextSnapshot({ context }: { context: JsonObject[] }) {
     <ol className="grid gap-4">
       {context.map((item, index) => {
         const provenance = asObject(item.provenance) ?? {};
+        const learningScope = asObject(item.learning_scope) ?? {};
         const taxonomy = asObject(item.taxonomy) ?? {};
         return (
           <li className="rounded-xl border border-amber-300 bg-amber-50 p-4" key={`${stringValue(item.context_id, String(index))}-${index}`}>
@@ -753,6 +774,8 @@ function ContextSnapshot({ context }: { context: JsonObject[] }) {
               <Definition label="Page" value={numberValue(provenance.page_number) ?? "Not recorded"} />
               <Definition label="Chunk" mono value={stringValue(provenance.chunk_id)} />
               <Definition label="Source block" mono value={stringValue(provenance.source_block_id)} />
+              <Definition label="Unit" mono value={stringValue(learningScope.unit_id, "Full subject")} />
+              <Definition label="Lesson" mono value={stringValue(learningScope.lesson_id, "All lessons")} />
               <Definition label="Trust label" mono value={stringValue(item.trust)} />
             </dl>
             <div className="mt-4">
@@ -976,6 +999,7 @@ export function GenerationStudio({ role }: { role: Role }) {
   );
   const [exams, setExams] = useState<Exam[]>([]);
   const [media, setMedia] = useState<Medium[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
   const [selectedCurriculumId, setSelectedCurriculumId] = useState("");
   const [blueprints, setBlueprints] = useState<BlueprintSummary[]>([]);
@@ -1022,27 +1046,47 @@ export function GenerationStudio({ role }: { role: Role }) {
   const choices = useMemo(() => {
     const examsById = new Map(exams.map((value) => [value.id, value]));
     const mediaById = new Map(media.map((value) => [value.id, value]));
+    const subjectsById = new Map(subjects.map((value) => [value.id, value]));
     return curricula.flatMap((value): CurriculumChoice[] => {
       const selectedExam = examsById.get(value.exam_configuration_id);
       const selectedMedium = mediaById.get(value.medium_id);
-      return value.active && selectedExam?.active && selectedExam.grade === 5 && selectedMedium?.active
-        ? [{ curriculum: value, exam: selectedExam, medium: selectedMedium }]
+      const selectedSubject = subjectsById.get(value.subject_id);
+      return value.active && selectedExam?.active && selectedExam.grade === 5 && selectedMedium?.active && selectedSubject?.active
+        ? [{ curriculum: value, exam: selectedExam, medium: selectedMedium, subject: selectedSubject }]
         : [];
     });
-  }, [curricula, exams, media]);
+  }, [curricula, exams, media, subjects]);
 
+  const selectedChoice = useMemo(
+    () => choices.find((value) => value.curriculum.id === selectedCurriculumId) ?? null,
+    [choices, selectedCurriculumId],
+  );
   const selectedSlot = useMemo(
     () => blueprintDetail?.blueprint.slots.find((value) => value.slot_id === selectedSlotId) ?? null,
     [blueprintDetail, selectedSlotId],
   );
   const selectedCount = selectedChunkIds.size + selectedQuestionIds.size;
   const scopedChunks = useMemo(
-    () => chunks.filter((value) => value.curriculum_version_id === selectedCurriculumId && value.review_state === "reviewed"),
-    [chunks, selectedCurriculumId],
+    () =>
+      chunks.filter(
+        (value) =>
+          value.curriculum_version_id === selectedCurriculumId &&
+          value.review_state === "reviewed" &&
+          (!selectedSlot ||
+            learningScopeMatches(value, selectedSlot.generation_constraints.curriculum_scope)),
+      ),
+    [chunks, selectedCurriculumId, selectedSlot],
   );
   const scopedQuestions = useMemo(
-    () => questions.filter((value) => value.curriculum_version_id === selectedCurriculumId && value.review_state === "reviewed"),
-    [questions, selectedCurriculumId],
+    () =>
+      questions.filter(
+        (value) =>
+          value.curriculum_version_id === selectedCurriculumId &&
+          value.review_state === "reviewed" &&
+          (!selectedSlot ||
+            learningScopeMatches(value, selectedSlot.generation_constraints.curriculum_scope)),
+      ),
+    [questions, selectedCurriculumId, selectedSlot],
   );
 
   const acceptRunDetail = useCallback(
@@ -1069,6 +1113,7 @@ export function GenerationStudio({ role }: { role: Role }) {
       const responses = await Promise.all([
         api.GET("/api/v1/admin/exam-configurations"),
         api.GET("/api/v1/admin/media"),
+        api.GET("/api/v1/admin/subjects"),
         api.GET("/api/v1/admin/curriculum-versions"),
       ]);
       if (requestId !== workspaceRequestId.current) return;
@@ -1079,16 +1124,20 @@ export function GenerationStudio({ role }: { role: Role }) {
       }
       const nextExams = responses[0].data ?? [];
       const nextMedia = responses[1].data ?? [];
-      const nextCurricula = responses[2].data ?? [];
+      const nextSubjects = responses[2].data ?? [];
+      const nextCurricula = responses[3].data ?? [];
       const examsById = new Map(nextExams.map((value) => [value.id, value]));
       const mediaById = new Map(nextMedia.map((value) => [value.id, value]));
+      const subjectsById = new Map(nextSubjects.map((value) => [value.id, value]));
       const available = nextCurricula.filter((value) => {
         const nextExam = examsById.get(value.exam_configuration_id);
         const nextMedium = mediaById.get(value.medium_id);
-        return value.active && nextExam?.active && nextExam.grade === 5 && nextMedium?.active;
+        const nextSubject = subjectsById.get(value.subject_id);
+        return value.active && nextExam?.active && nextExam.grade === 5 && nextMedium?.active && nextSubject?.active;
       });
       setExams(nextExams);
       setMedia(nextMedia);
+      setSubjects(nextSubjects);
       setCurricula(nextCurricula);
       setSelectedCurriculumId((current) =>
         available.some((value) => value.id === current) ? current : (available[0]?.id ?? ""),
@@ -1197,10 +1246,21 @@ export function GenerationStudio({ role }: { role: Role }) {
         return;
       }
       const detail = response.data as Blueprint | undefined;
-      if (!detail || detail.curriculum_version_id !== curriculumId) {
+      const choice = choices.find((value) => value.curriculum.id === curriculumId);
+      const scope = detail?.specification.curriculum_scope;
+      if (
+        !detail ||
+        !choice ||
+        detail.curriculum_version_id !== curriculumId ||
+        !scope ||
+        scope.curriculum_version_id !== curriculumId ||
+        scope.grade !== choice.exam.grade ||
+        scope.medium !== choice.medium.code ||
+        scope.subject_id !== choice.curriculum.subject_id
+      ) {
         setBlueprintError({
           code: "generation_blueprint_scope_mismatch",
-          message: "The returned immutable blueprint does not belong to the selected curriculum.",
+          message: "The returned immutable blueprint does not match the selected curriculum's grade, medium, and subject.",
           title: "Immutable blueprint scope mismatch",
         });
         setBlueprintDetail(null);
@@ -1217,7 +1277,7 @@ export function GenerationStudio({ role }: { role: Role }) {
     } finally {
       if (requestId === blueprintRequestId.current) setBlueprintLoading(false);
     }
-  }, [api]);
+  }, [api, choices]);
 
   const loadRunDetail = useCallback(async (curriculumId: string, runId: string) => {
     const requestId = ++detailRequestId.current;
@@ -1715,20 +1775,23 @@ export function GenerationStudio({ role }: { role: Role }) {
         ) : workspaceError ? (
           <ErrorPanel error={workspaceError} onRetry={() => void loadWorkspace()} retryLabel="Retry generation workspace" />
         ) : choices.length ? (
-          <label className={`${fieldClass} max-w-2xl`}>
-            Active Grade 5 curriculum
-            <select
-              className={inputClass}
-              onChange={(event) => selectCurriculum(event.target.value)}
-              value={selectedCurriculumId}
-            >
-              {choices.map((choice) => (
-                <option key={choice.curriculum.id} value={choice.curriculum.id}>
-                  {choice.curriculum.title} · {choice.exam.name} · {choice.medium.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="max-w-3xl rounded-xl border border-slate-300 bg-white p-5">
+            <label className={fieldClass}>
+              Active Grade 5 curriculum
+              <select
+                className={inputClass}
+                onChange={(event) => selectCurriculum(event.target.value)}
+                value={selectedCurriculumId}
+              >
+                {choices.map((choice) => (
+                  <option key={choice.curriculum.id} value={choice.curriculum.id}>
+                    {choice.curriculum.title} · {choice.subject.name} · {choice.exam.name} · {choice.medium.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedChoice ? <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3"><Definition label="Grade" value={selectedChoice.exam.grade} /><Definition label="Medium" value={`${selectedChoice.medium.name} (${selectedChoice.medium.code})`} /><Definition label="Subject" value={`${selectedChoice.subject.name} (${selectedChoice.subject.code})`} /></dl> : null}
+          </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-400 p-5">
             <h2 className="font-semibold">No active Grade 5 curriculum</h2>
@@ -1786,14 +1849,14 @@ export function GenerationStudio({ role }: { role: Role }) {
                 )}
                 {blueprintLoading ? <p className="mt-4 text-sm text-slate-600" role="status">Loading immutable blueprint…</p> : null}
                 {blueprintError ? <div className="mt-4"><ErrorPanel error={blueprintError} onRetry={() => selectedBlueprintId && void loadBlueprint(selectedCurriculumId, selectedBlueprintId)} retryLabel="Retry blueprint" /></div> : null}
-                {blueprintDetail && selectedSlot ? <BlueprintSelection blueprint={blueprintDetail} slot={selectedSlot} /> : null}
+                {blueprintDetail && selectedSlot && selectedChoice ? <BlueprintSelection blueprint={blueprintDetail} slot={selectedSlot} subject={selectedChoice.subject} /> : null}
 
                 <section className="mt-6 border-t border-slate-200 pt-5" aria-labelledby="context-selection-heading">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h3 className="font-semibold" id="context-selection-heading">Reviewed context references</h3>
                       <p className="mt-1 text-sm leading-6 text-slate-600">
-                        Only reviewed records returned by this curriculum are loaded. Taxonomy-mismatched records remain visible but disabled.
+                        Only reviewed records in this curriculum, subject, and blueprint unit/lesson scope are loaded. Taxonomy-mismatched records remain visible but disabled.
                       </p>
                     </div>
                     <Badge className={selectedCount === MAX_CONTEXT_REFERENCES ? "border-amber-300 bg-amber-50 text-amber-950" : "border-slate-300 bg-slate-50 text-slate-800"}>

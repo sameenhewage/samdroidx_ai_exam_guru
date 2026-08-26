@@ -22,6 +22,7 @@ function sourceDocument(
   overrides: Partial<SourceDocument> = {},
 ): SourceDocument {
   return {
+    active_for_ai: true,
     checksum_sha256: "a".repeat(64),
     content_type: "application/pdf",
     created_at: "2026-08-23T12:30:00Z",
@@ -35,17 +36,27 @@ function sourceDocument(
     extraction_completed_at: "2026-08-23T12:31:00Z",
     extraction_config: null,
     extraction_failure_code: null,
+    extraction_queue_message_id: null,
     extraction_started_at: "2026-08-23T12:30:30Z",
     extraction_status: status,
     extractor: "pymupdf",
     extractor_version: "1.28.2",
     id: documentId,
+    lesson_id: null,
+    likely_metadata_duplicate_of_id: null,
+    metadata_scope_version: 0,
     native_text_page_ratio: 1,
     needs_ocr: false,
     ocr_page_count: 0,
     original_filename: "grade-5-source.pdf",
     paper_code: null,
+    removal_reason: null,
+    removed_at: null,
+    removed_by: null,
     size_bytes: 100,
+    subject_id: null,
+    unit_id: null,
+    use_state: "active",
     year: null,
     ...overrides,
   };
@@ -143,6 +154,89 @@ it("supports compare, correction, and trusted promotion", async () => {
   expect(await screen.findByText("Page 1 correction saved.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Mark source trusted" }));
   expect((await screen.findAllByText("Trusted source"))[0]).toBeInTheDocument();
+});
+
+it("reframes extraction review as an accessible teacher text-check flow", async () => {
+  let status: "extracted" | "in_review" | "trusted" = "extracted";
+  let page = sourcePage();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = requestOf(input, init);
+      if (request.method === "GET" && request.url.endsWith("/source-documents")) {
+        return Response.json([sourceDocument(status)]);
+      }
+      if (request.method === "GET" && request.url.endsWith("/pages")) {
+        return Response.json([page]);
+      }
+      if (request.method === "GET" && request.url.endsWith("/blocks")) {
+        return Response.json([sourceBlock()]);
+      }
+      if (request.method === "POST" && request.url.endsWith("/review")) {
+        status = "in_review";
+        return Response.json(sourceDocument(status));
+      }
+      if (request.method === "PATCH" && request.url.endsWith("/pages/1")) {
+        page = { ...page, reviewed_text: "Corrected teacher text", version: 1 };
+        return Response.json(page);
+      }
+      if (request.method === "POST" && request.url.endsWith("/trust")) {
+        status = "trusted";
+        return Response.json(sourceDocument(status));
+      }
+      return Response.json({ detail: { code: "unexpected_request" } }, { status: 500 });
+    }),
+  );
+
+  const view = render(
+    <ExtractionReviewStudio documentId={documentId} experience="materials" role="admin" />,
+  );
+
+  expect(await screen.findByRole("heading", { level: 1, name: "Review text" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Original extracted page" })).toHaveTextContent(
+    "Original text",
+  );
+  expect(screen.getByRole("region", { name: "Extracted text" })).toHaveTextContent(
+    "Original text",
+  );
+  expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Back to material" })).toHaveAttribute(
+    "href",
+    `/admin/materials/${documentId}`,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Begin text review" }));
+  const corrected = await screen.findByLabelText("Corrected text for page 1");
+  fireEvent.change(corrected, { target: { value: "Corrected teacher text" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+  expect(await screen.findByText("Page 1 correction saved.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Mark reviewed / Ready for AI" }));
+  expect((await screen.findAllByText("Ready for AI")).length).toBeGreaterThan(0);
+
+  let results: AxeResults | undefined;
+  await act(async () => {
+    results = await axe.run(view.container, {
+      rules: { "color-contrast": { enabled: false } },
+    });
+  });
+  if (!results) throw new Error("Accessibility scan did not return a result");
+  expect(results.violations).toEqual([]);
+});
+
+it("shows a recoverable teacher-facing error when text review cannot load", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new TypeError("network unavailable");
+    }),
+  );
+
+  render(<ExtractionReviewStudio documentId={documentId} experience="materials" role="admin" />);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Text review could not be loaded");
+  expect(alert).toHaveTextContent("connection");
+  expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
 });
 
 it("renders bounded mixed native and OCR provenance as accessible untrusted plain text", async () => {
