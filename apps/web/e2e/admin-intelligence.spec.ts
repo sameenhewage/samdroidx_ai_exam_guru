@@ -1,6 +1,8 @@
 import type { components } from "@exam-guru/api-client";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import { openAdvancedArea } from "./helpers/advanced-navigation";
+
 function syntheticPdf(marker: string): Buffer {
   const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
   const objects = [
@@ -303,7 +305,7 @@ test("admin runs a real held-out report; reviewer reads it and sees actionable R
   await expect(page.getByRole("button", { name: "Run analysis" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Analysis report" })).toBeVisible();
 
-  await page.getByRole("link", { name: "RAG Explorer" }).click();
+  await openAdvancedArea(page, "Knowledge / RAG");
   await expect(page).toHaveURL(/\/admin\/retrieval$/);
   await page.getByLabel("Active retrieval curriculum").selectOption(curriculum.id);
   await expect(

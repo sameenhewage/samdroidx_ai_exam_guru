@@ -185,8 +185,8 @@ function apiError(
       },
       review_validation_not_passed: {
         code,
-        message: "Only a persisted PASS validation report can create a review candidate.",
-        title: "Passing validation required",
+        message: "A failed validation report cannot create a review candidate.",
+        title: "Non-failing validation required",
       },
       review_upstream_integrity_invalid: {
         code,
@@ -207,7 +207,7 @@ function apiError(
       code,
       message:
         surface === "create"
-          ? "The server rejected this validation selection. Select one persisted PASS report from the active curriculum."
+          ? "The server rejected this validation selection. Select persisted PASS or WARN evidence from the active curriculum."
           : "The server rejected the bounded review content or command. Check required fields without changing locked type or marks.",
       title: surface === "create" ? "Candidate creation rejected" : "Candidate update rejected",
     };
@@ -394,7 +394,7 @@ function CandidateQueue({
       <div className="rounded-xl border border-dashed border-slate-400 p-4">
         <h3 className="font-semibold">No review candidates match</h3>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Change the state, blueprint, or slot filter, or create a candidate from a persisted PASS report.
+          Change the state, blueprint, or slot filter, or create a candidate from persisted non-failing evidence.
         </p>
       </div>
     );
@@ -1094,11 +1094,11 @@ export function ReviewerStudio({ role }: { role: Role }) {
     });
   }, [curricula, exams, media]);
 
-  const passingValidations = useMemo(
+  const eligibleValidations = useMemo(
     () =>
       validationSummaries.filter(
         (item) =>
-          item.curriculum_version_id === selectedCurriculumId && item.overall_status === "pass",
+          item.curriculum_version_id === selectedCurriculumId && item.overall_status !== "fail",
       ),
     [selectedCurriculumId, validationSummaries],
   );
@@ -1204,9 +1204,9 @@ export function ReviewerStudio({ role }: { role: Role }) {
           (item) => item.curriculum_version_id === curriculumId,
         );
         setValidationSummaries(next);
-        const passing = next.filter((item) => item.overall_status === "pass");
+        const eligible = next.filter((item) => item.overall_status !== "fail");
         setSelectedValidationId((current) =>
-          passing.some((item) => item.id === current) ? current : passing[0]?.id ?? "",
+          eligible.some((item) => item.id === current) ? current : eligible[0]?.id ?? "",
         );
       } catch {
         if (requestId === validationRequestId.current) {
@@ -1507,12 +1507,12 @@ export function ReviewerStudio({ role }: { role: Role }) {
 
   function createCandidate() {
     if (!selectedCurriculumId || !selectedValidationId) return;
-    const selected = passingValidations.find((item) => item.id === selectedValidationId);
-    if (!selected || selected.overall_status !== "pass") {
+    const selected = eligibleValidations.find((item) => item.id === selectedValidationId);
+    if (!selected || selected.overall_status === "fail") {
       setOperationError({
-        code: "passing_validation_required",
-        message: "Select a persisted PASS validation report from this curriculum.",
-        title: "Passing validation required",
+        code: "non_failing_validation_required",
+        message: "Select a persisted PASS or WARN validation report from this curriculum.",
+        title: "Non-failing validation required",
       });
       return;
     }
@@ -1524,7 +1524,10 @@ export function ReviewerStudio({ role }: { role: Role }) {
           body: { validation_run_id: selected.id },
         }),
       (next) => {
-        acceptCandidate(next, "Review candidate created from persisted PASS validation evidence.");
+        acceptCandidate(
+          next,
+          "Review candidate created from persisted non-failing validation evidence.",
+        );
         void loadEvidence(next);
       },
       "create",
@@ -1698,8 +1701,8 @@ export function ReviewerStudio({ role }: { role: Role }) {
             </Panel>
 
             <Panel
-              title="Create from passing validation"
-              description="Reviewer and admin accounts may select one persisted PASS report. The POST body contains exactly validation_run_id; generation, content, lineage, state, and version are server-derived."
+              title="Create from non-failing validation"
+              description="Reviewer and admin accounts may select persisted PASS or WARN evidence. WARN requires explicit human judgement; FAIL remains blocked. The POST body contains exactly validation_run_id; generation, content, lineage, state, and version are server-derived."
             >
               {validationsLoading ? (
                 <p role="status">Loading persisted validation reports…</p>
@@ -1709,25 +1712,25 @@ export function ReviewerStudio({ role }: { role: Role }) {
                   onRetry={() => void loadValidationSummaries(selectedCurriculumId)}
                   retryLabel="Retry validation reports"
                 />
-              ) : passingValidations.length ? (
+              ) : eligibleValidations.length ? (
                 <div>
                   <label className={fieldClass}>
-                    Passing validation run
+                    Eligible validation run
                     <select
                       className={inputClass}
                       disabled={busy}
                       onChange={(event) => setSelectedValidationId(event.target.value)}
                       value={selectedValidationId}
                     >
-                      {passingValidations.map((item) => (
+                      {eligibleValidations.map((item) => (
                         <option key={item.id} value={item.id}>
-                          PASS · {item.id} · generation {item.generation_run_id}
+                          {item.overall_status.toUpperCase()} · {item.id} · generation {item.generation_run_id}
                         </option>
                       ))}
                     </select>
                   </label>
                   <p className="mt-3 text-xs leading-5 text-slate-600">
-                    {validationSummaries.length - passingValidations.length} non-PASS report(s) excluded. A PASS report still requires human review.
+                    {validationSummaries.length - eligibleValidations.length} failed report(s) excluded. PASS and WARN evidence both require human review.
                   </p>
                   <Button
                     className={`${primaryButton} mt-4`}
@@ -1739,9 +1742,9 @@ export function ReviewerStudio({ role }: { role: Role }) {
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-400 p-4">
-                  <h3 className="font-semibold">No persisted PASS validation reports</h3>
+                  <h3 className="font-semibold">No persisted non-failing validation reports</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Run P8 validation and resolve WARN or FAIL results before candidate creation.
+                    Run validation and resolve failed checks before candidate creation.
                   </p>
                   <Link className={`${secondaryButton} mt-3`} href="/admin/validation">Open Validation Studio</Link>
                 </div>

@@ -1,6 +1,8 @@
 import type { components } from "@exam-guru/api-client";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import { openAdvancedArea } from "./helpers/advanced-navigation";
+
 function syntheticPdf(marker: string): Buffer {
   const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
   const objects = [
@@ -401,7 +403,7 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
     ).toBeVisible();
   }
 
-  await page.getByRole("link", { name: "RAG Explorer" }).click();
+  await openAdvancedArea(page, "Knowledge / RAG");
   await expect(page.getByRole("heading", { name: "RAG Explorer" })).toBeVisible();
   await page.getByLabel("Active retrieval curriculum").selectOption(curriculum.id);
   const competencySelect = page.locator(`select:has(option[value="${competency.id}"])`);

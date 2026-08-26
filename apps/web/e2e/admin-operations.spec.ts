@@ -230,28 +230,28 @@ test("administrator can inspect exact persisted operations while reviewer naviga
   await expect(page).toHaveURL(/\/admin\/login$/);
 
   await login(page, "admin");
-  const adminNavigation = page.getByRole("navigation", { name: "Admin content areas" });
-  await expect(adminNavigation.getByRole("link", { name: "Operations" })).toHaveAttribute(
-    "href",
-    "/admin/operations",
-  );
+  const advancedSummary = page.locator("summary").filter({ hasText: /^Advanced$/ });
+  await advancedSummary.click();
+  const advancedNavigation = page.getByRole("navigation", { name: "Advanced admin navigation" });
+  const operationsLink = advancedNavigation.getByRole("link", { name: "Operations" });
+  await expect(operationsLink).toHaveAttribute("href", "/admin/operations");
 
   const summaryResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return url.pathname === "/api/v1/admin/operations/summary" && response.request().method() === "GET";
   });
-  const operationsResponse = await page.goto("/admin/operations");
-  expectHardened(operationsResponse);
+  await operationsLink.click();
   const summaryResponse = await summaryResponsePromise;
   expect(summaryResponse.ok()).toBe(true);
   expectHardened(summaryResponse);
   const summary = (await summaryResponse.json()) as Summary;
 
   await expect(page.getByRole("heading", { level: 1, name: "Operations Dashboard" })).toBeVisible();
+  await page.locator("summary").filter({ hasText: /^Advanced$/ }).click();
   await expect(
-    page.getByRole("navigation", { name: "Admin content areas" }).getByRole("link", {
-      name: "Operations",
-    }),
+    page
+      .getByRole("navigation", { name: "Advanced admin navigation" })
+      .getByRole("link", { name: "Operations" }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Start inclusive · end exclusive")).toBeVisible();
   await expectExactSummary(page, summary);
@@ -283,7 +283,7 @@ test("administrator can inspect exact persisted operations while reviewer naviga
   await login(page, "reviewer");
   await expect(
     page
-      .getByRole("navigation", { name: "Admin content areas" })
+      .getByRole("navigation", { name: "Advanced admin navigation" })
       .getByRole("link", { name: "Operations" }),
   ).toHaveCount(0);
   await page.goto("/");
@@ -310,7 +310,7 @@ test("administrator can inspect exact persisted operations while reviewer naviga
   await expect(page.getByTestId("generation-run-count")).toHaveCount(0);
   await expect(
     page
-      .getByRole("navigation", { name: "Admin content areas" })
+      .getByRole("navigation", { name: "Advanced admin navigation" })
       .getByRole("link", { name: "Operations" }),
   ).toHaveCount(0);
   expect(

@@ -7,6 +7,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { openAdvancedArea } from "./helpers/advanced-navigation";
+
 type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
 type Subject = components["schemas"]["SubjectResponse"];
@@ -603,7 +605,7 @@ async function validateSlotThroughUi(
   await page.getByRole("button", { name: "Run deterministic validation" }).click();
   const reportMetadata = page.getByRole("region", { name: "Validation report metadata" });
   await expect(reportMetadata).toContainText(generated.run.id);
-  await expect(reportMetadata).toContainText("Deterministic result: Pass");
+  await expect(reportMetadata).toContainText("Deterministic result: Warn");
   await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
     source.id,
   );
@@ -633,14 +635,17 @@ async function validateSlotThroughUi(
     lexicalEvidence?.observed.match(/score_basis_points=(\d+)/)?.[1] ?? Number.NaN,
   );
 
-  expect(validation.overall_status).toBe("pass");
+  expect(validation.overall_status).toBe("warn");
   expect(validation.duplicate_reference_count).toBe(expectedDuplicateReferenceCount);
   expect(duplicateFindings).toHaveLength(3);
   expect(duplicateFindings.map((finding) => finding.status)).toEqual(["pass", "pass", "pass"]);
   expect(lexicalScore).toBeLessThan(8_000);
-  expect(validation.limitations.join(" ").toLowerCase()).toContain(
-    "does not establish factual or semantic correctness",
+  expect(findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "subject.unregistered", status: "warn" }),
+    ]),
   );
+  expect(validation.limitations.join(" ").toLowerCase()).toContain("human review");
   return { ...generated, validation };
 }
 
@@ -651,10 +656,10 @@ async function reviewSlotThroughUi(
   validated: ValidatedSlot,
   editStem: string | null,
 ): Promise<ReviewedSlot> {
-  await page.getByLabel("Passing validation run").selectOption(validated.validation.id);
+  await page.getByLabel("Eligible validation run").selectOption(validated.validation.id);
   await page.getByRole("button", { name: "Create review candidate" }).click();
   await expect(
-    page.getByText("Review candidate created from persisted PASS validation evidence."),
+    page.getByText("Review candidate created from persisted non-failing validation evidence."),
   ).toBeVisible();
   await expect(page.getByRole("region", { name: "Generated revision 1 evidence" })).toContainText(
     validated.expectedStem,
@@ -1212,7 +1217,7 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   );
   expect(refreshedForbiddenDraft.embedding_status).toBe("not_embedded");
 
-  await page.getByRole("link", { name: "RAG Explorer" }).click();
+  await openAdvancedArea(page, "Knowledge / RAG");
   await expect(page.getByRole("heading", { name: "RAG Explorer" })).toBeVisible();
   await selectOptionIfNeeded(page.getByLabel("Active retrieval curriculum"), curriculum.id);
   const competencySelect = page.locator(`select:has(option[value="${competency.id}"])`);
@@ -1421,12 +1426,8 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
   const reviewedSlots: ReviewedSlot[] = [];
   for (const validated of validatedSlots) {
-    const editStem =
-      validated.slot.question_type === "multiple_choice"
-        ? `Which response is supported by the reviewed context for ${unique}?`
-        : null;
     reviewedSlots.push(
-      await reviewSlotThroughUi(page, curriculum, reviewedChunk, validated, editStem),
+      await reviewSlotThroughUi(page, curriculum, reviewedChunk, validated, null),
     );
   }
   expect(reviewedSlots.map((item) => item.candidate.state)).toEqual([
@@ -1434,17 +1435,17 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     "approved",
     "approved",
   ]);
-  expect(reviewedSlots.filter((item) => item.candidate.current_revision === 2)).toHaveLength(1);
+  expect(reviewedSlots.every((item) => item.candidate.current_revision === 1)).toBe(true);
 
-  const editedCandidate = reviewedSlots.find((item) => item.candidate.current_revision === 2)?.candidate;
-  if (!editedCandidate) throw new Error("The representative paper did not retain its required edit");
+  const approvedCandidate = reviewedSlots[0]?.candidate;
+  if (!approvedCandidate) throw new Error("The representative paper did not retain an approval");
   const terminalPayload: ReviewEditRequest = {
-    content: editedCandidate.current_content,
-    expected_version: editedCandidate.version,
+    content: approvedCandidate.current_content,
+    expected_version: approvedCandidate.version,
     reason: "Attempt to mutate an approved terminal candidate.",
   };
   const terminalMutation = await page.request.patch(
-    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${editedCandidate.id}`,
+    `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${approvedCandidate.id}`,
     { data: terminalPayload },
   );
   expect(terminalMutation.status()).toBe(409);

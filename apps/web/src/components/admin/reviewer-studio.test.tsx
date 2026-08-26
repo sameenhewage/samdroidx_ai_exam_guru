@@ -533,16 +533,17 @@ describe("ReviewerStudio", () => {
     expect(screen.getByText("<script>findingAttack()</script> Grounding reference retained.")).toBeVisible();
   });
 
-  it("allows a reviewer to create only from a persisted PASS report, POSTs exactly its ID, and blocks duplicate commands", async () => {
+  it("allows a reviewer to create from persisted non-failing evidence, including WARN, and blocks duplicate commands", async () => {
     let releaseCreate: (() => void) | undefined;
     const createGate = new Promise<void>((resolve) => {
       releaseCreate = resolve;
     });
     const { requests } = await renderLoaded("reviewer", { candidates: [], createGate });
 
-    const selector = screen.getByLabelText("Passing validation run");
+    const selector = screen.getByLabelText("Eligible validation run");
     expect(selector).toHaveValue(ids.validation);
-    expect(within(selector).queryByRole("option", { name: new RegExp(ids.warnedValidation) })).toBeNull();
+    expect(within(selector).getByRole("option", { name: new RegExp(ids.warnedValidation) })).toBeVisible();
+    fireEvent.change(selector, { target: { value: ids.warnedValidation } });
     const submit = screen.getByRole("button", { name: "Create review candidate" });
     fireEvent.click(submit);
     fireEvent.click(submit);
@@ -556,10 +557,12 @@ describe("ReviewerStudio", () => {
     expect(submit).toBeDisabled();
 
     await act(async () => releaseCreate?.());
-    expect(await screen.findByText("Review candidate created from persisted PASS validation evidence.")).toBeVisible();
+    expect(
+      await screen.findByText("Review candidate created from persisted non-failing validation evidence."),
+    ).toBeVisible();
     const create = requestBySuffix(requests, "POST", "/review-candidates");
     const payload = (await create.json()) as Record<string, unknown>;
-    expect(payload).toEqual({ validation_run_id: ids.validation });
+    expect(payload).toEqual({ validation_run_id: ids.warnedValidation });
     expect(Object.keys(payload)).toEqual(["validation_run_id"]);
   });
 
@@ -667,7 +670,7 @@ describe("ReviewerStudio", () => {
   it("surfaces empty, network, permission, and 422 states without losing the selected candidate", async () => {
     const empty = await renderLoaded("reviewer", { candidates: [], validationSummaries: [] });
     expect(screen.getByRole("heading", { name: "No review candidates match" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "No persisted PASS validation reports" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "No persisted non-failing validation reports" })).toBeVisible();
     empty.unmount();
 
     vi.restoreAllMocks();
