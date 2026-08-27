@@ -552,6 +552,21 @@ def test_review_transition_cas_conflicts_rollback_and_boundary_helpers() -> None
         assert session.rollbacks == 1
         assert get.await_count == 0
 
+        service, session, _repository = service_with(reviewing)
+        stored = await service._persist_transition(
+            curriculum_version_id=CURRICULUM_ID,
+            record=record_for(reviewing),
+            transitioned=transitioned,
+            expected_version=3,
+            actor_id=ACTOR_ID,
+            action=ReviewAction.APPROVED,
+            reason=None,
+            commit=False,
+        )
+        assert stored.domain == reviewing
+        assert session.commits == 0
+        assert session.flushes == 1
+
         service, _session, _repository = service_with(reviewing)
         with pytest.raises(TypeError, match="QuestionCandidate"):
             await service._persist_transition(

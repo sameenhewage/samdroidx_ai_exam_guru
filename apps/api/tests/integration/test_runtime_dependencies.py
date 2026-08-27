@@ -147,7 +147,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0025_durable_teacher_papers"
+    assert migration_revision == "0026_subject_quality_feedback"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -912,7 +912,7 @@ def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
     }
     assert indexes == {"ix_source_documents_extraction_outbox"}
     assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
-    assert revision == "0025_durable_teacher_papers"
+    assert revision == "0026_subject_quality_feedback"
 
     command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
 

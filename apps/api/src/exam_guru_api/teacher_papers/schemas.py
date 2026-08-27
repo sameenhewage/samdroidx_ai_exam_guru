@@ -20,6 +20,7 @@ from exam_guru_api.papers.schemas import (
     ReviewCandidateRejectRequest,
     ReviewCandidateStartRequest,
 )
+from exam_guru_api.subject_quality.domain import MAX_REVIEW_NOTE_CHARACTERS, CorrectionReasonCode
 from exam_guru_api.teacher_papers.domain import (
     MAX_TEACHER_DURATION_MINUTES,
     MAX_TEACHER_QUESTIONS,
@@ -35,7 +36,7 @@ MediumCode = Annotated[
     StringConstraints(strip_whitespace=True, to_lower=True, min_length=2, max_length=16),
 ]
 ExpectedAggregateVersion = Annotated[int, Field(strict=True, ge=0, le=100_000)]
-BoundedReason = Annotated[str, Field(min_length=1, max_length=1_024)]
+BoundedReviewNote = Annotated[str, Field(min_length=1, max_length=MAX_REVIEW_NOTE_CHARACTERS)]
 FriendlyValidationStatus = Literal["ready", "needs_attention", "failed_check"]
 TeacherPaperStatus = Literal[
     "preparing",
@@ -310,6 +311,7 @@ class ReviewQuestionResponse(_FrozenStrictModel):
     sources: tuple[ReviewSourceResponse, ...]
     validation: ReviewValidationResponse
     technical_details: ReviewQuestionTechnicalDetailsResponse
+    quality_feedback_id: UUID | None = None
 
 
 class ReviewPaperTechnicalDetailsResponse(_FrozenStrictModel):
@@ -341,28 +343,40 @@ class ReviewPaperDetailResponse(_FrozenStrictModel):
     technical_details: ReviewPaperTechnicalDetailsResponse
 
 
-class ReviewQuestionEditRequest(_StrictModel):
-    content: QuestionContentRequest
-    reason: BoundedReason
-    expected_version: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+class _ReviewReasonRequest(_StrictModel):
+    reason_code: CorrectionReasonCode
+    note: BoundedReviewNote | None = None
 
-    @field_validator("reason")
+    @field_validator("note")
     @classmethod
-    def validate_reason(cls, value: str) -> str:
-        if value != value.strip():
-            raise ValueError("reason must not contain surrounding whitespace")
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is not None and value != value.strip():
+            raise ValueError("note must not contain surrounding whitespace")
         return value
 
 
-class ReviewQuestionRegenerateRequest(_StrictModel):
-    expected_version: ExpectedAggregateVersion
-    reason: BoundedReason
+class ReviewQuestionEditRequest(_ReviewReasonRequest):
+    content: QuestionContentRequest
+    expected_version: Annotated[int, Field(strict=True, ge=1, le=100_000)]
 
-    @field_validator("reason")
+
+class ReviewQuestionRejectRequest(_ReviewReasonRequest):
+    expected_version: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+
+
+class ReviewQuestionRegenerateRequest(_ReviewReasonRequest):
+    expected_version: ExpectedAggregateVersion
+
+
+class ReviewQuestionApproveRequest(_StrictModel):
+    expected_version: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+    note: BoundedReviewNote | None = None
+
+    @field_validator("note")
     @classmethod
-    def validate_reason(cls, value: str) -> str:
-        if value != value.strip():
-            raise ValueError("reason must not contain surrounding whitespace")
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is not None and value != value.strip():
+            raise ValueError("note must not contain surrounding whitespace")
         return value
 
 
@@ -372,6 +386,7 @@ class ReviewQuestionRegenerationResponse(_FrozenStrictModel):
     question_id: UUID
     status: Literal["generating"]
     version: int
+    quality_feedback_id: UUID
 
 
 class ReviewPaperCreateDraftRequest(_StrictModel):

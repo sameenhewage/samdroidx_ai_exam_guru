@@ -249,6 +249,21 @@ def test_extraction_actor_closes_resources_when_the_service_fails(
     assert resources.closed is True
 
 
+def test_extraction_actor_closes_resources_when_storage_setup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resources = StubResources(object())
+    monkeypatch.setattr(jobs, "create_resources", lambda _settings: resources)
+
+    def fail_storage(_settings: Settings) -> object:
+        raise RuntimeError("storage setup failed")
+
+    monkeypatch.setattr(jobs, "create_object_storage", fail_storage)
+    with pytest.raises(RuntimeError, match="storage setup failed"):
+        jobs.extract_document(str(DOCUMENT_ID), str(ACTOR_ID))
+    assert resources.closed is True
+
+
 def test_extraction_recovery_actor_uses_internal_bounded_settings_and_closes_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

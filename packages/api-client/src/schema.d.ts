@@ -1537,6 +1537,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/subject-quality/eval-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List latest immutable versions of private Studio golden eval cases */
+        get: operations["list_subject_quality_eval_cases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/eval-cases/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export a bounded stable JSON contract for the offline eval runner */
+        get: operations["export_subject_quality_eval_cases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/eval-cases/{eval_case_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append second-reviewer approval with compare-and-swap */
+        post: operations["approve_subject_quality_eval_case"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/eval-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replay approved cases through the current configured validation pipeline */
+        post: operations["run_subject_quality_evals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/eval-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one immutable deterministic subject-quality eval run */
+        get: operations["get_subject_quality_eval_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List append-only reviewer evidence inside the private Studio */
+        get: operations["list_subject_quality_feedback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/subject-quality/feedback/{feedback_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explicitly promote one feedback item to an immutable draft golden eval case */
+        post: operations["promote_subject_quality_feedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/subjects": {
         parameters: {
             query?: never;
@@ -2113,6 +2232,11 @@ export interface components {
          * @enum {string}
          */
         ContextTrust: "untrusted_source_data";
+        /**
+         * CorrectionReasonCode
+         * @enum {string}
+         */
+        CorrectionReasonCode: "answer_incorrect" | "ambiguous_wording" | "outside_scope" | "source_not_supported" | "marking_inconsistent" | "language_quality" | "distractor_quality" | "duplicate_content" | "unsafe_content" | "other_quality_issue";
         /** CurriculumLabelResponse */
         CurriculumLabelResponse: {
             /** Assessment Label */
@@ -2361,6 +2485,11 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * DefectCategory
+         * @enum {string}
+         */
+        DefectCategory: "no_defect" | "answer_correctness" | "multiple_correct_answers" | "marking_consistency" | "scope_alignment" | "source_grounding" | "language_clarity" | "distractor_quality" | "duplicate_content" | "security_residue" | "other";
         /** DependencyChecks */
         DependencyChecks: {
             /**
@@ -2586,6 +2715,16 @@ export interface components {
             /** Succeeded */
             succeeded: number;
         };
+        /**
+         * EvalCaseState
+         * @enum {string}
+         */
+        EvalCaseState: "draft" | "approved";
+        /**
+         * EvalComparisonOutcome
+         * @enum {string}
+         */
+        EvalComparisonOutcome: "pass" | "regression" | "unavailable";
         /** ExactFraction */
         ExactFraction: {
             /** Denominator */
@@ -2738,6 +2877,16 @@ export interface components {
             /** Count */
             count: number;
         };
+        /**
+         * FeedbackAction
+         * @enum {string}
+         */
+        FeedbackAction: "edit" | "reject" | "regenerate" | "approve";
+        /**
+         * FindingStatus
+         * @enum {string}
+         */
+        FindingStatus: "pass" | "warn" | "fail";
         /** FullSubjectScopeRequest */
         FullSubjectScopeRequest: {
             /**
@@ -5049,13 +5198,21 @@ export interface components {
             /** Total Tokens */
             total_tokens: number;
         };
+        /** ReviewQuestionApproveRequest */
+        ReviewQuestionApproveRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Note */
+            note?: string | null;
+        };
         /** ReviewQuestionEditRequest */
         ReviewQuestionEditRequest: {
             content: components["schemas"]["QuestionContentRequest"];
             /** Expected Version */
             expected_version: number;
-            /** Reason */
-            reason: string;
+            /** Note */
+            note?: string | null;
+            reason_code: components["schemas"]["CorrectionReasonCode"];
         };
         /** ReviewQuestionOptionResponse */
         ReviewQuestionOptionResponse: {
@@ -5068,8 +5225,9 @@ export interface components {
         ReviewQuestionRegenerateRequest: {
             /** Expected Version */
             expected_version: number;
-            /** Reason */
-            reason: string;
+            /** Note */
+            note?: string | null;
+            reason_code: components["schemas"]["CorrectionReasonCode"];
         };
         /** ReviewQuestionRegenerationResponse */
         ReviewQuestionRegenerationResponse: {
@@ -5084,6 +5242,11 @@ export interface components {
              */
             paper_id: string;
             /**
+             * Quality Feedback Id
+             * Format: uuid
+             */
+            quality_feedback_id: string;
+            /**
              * Question Id
              * Format: uuid
              */
@@ -5095,6 +5258,14 @@ export interface components {
             status: "generating";
             /** Version */
             version: number;
+        };
+        /** ReviewQuestionRejectRequest */
+        ReviewQuestionRejectRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Note */
+            note?: string | null;
+            reason_code: components["schemas"]["CorrectionReasonCode"];
         };
         /** ReviewQuestionResponse */
         ReviewQuestionResponse: {
@@ -5118,6 +5289,8 @@ export interface components {
             number: number;
             /** Options */
             options: components["schemas"]["ReviewQuestionOptionResponse"][];
+            /** Quality Feedback Id */
+            quality_feedback_id?: string | null;
             /**
              * Requires Revalidation
              * @default false
@@ -5571,6 +5744,368 @@ export interface components {
             medium: string;
             /** Units */
             units: components["schemas"]["UnitOption"][];
+        };
+        /** SubjectQualityEvalApprovalRequest */
+        SubjectQualityEvalApprovalRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** SubjectQualityEvalCaseListResponse */
+        SubjectQualityEvalCaseListResponse: {
+            /** Items */
+            items: components["schemas"]["SubjectQualityEvalCaseResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** SubjectQualityEvalCaseResponse */
+        SubjectQualityEvalCaseResponse: {
+            /** Approved At */
+            approved_at: string | null;
+            /** Approved By */
+            approved_by: string | null;
+            /** Can Approve */
+            can_approve: boolean;
+            /** Case Fingerprint */
+            case_fingerprint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            defect_category: components["schemas"]["DefectCategory"];
+            /**
+             * Eval Case Id
+             * Format: uuid
+             */
+            eval_case_id: string;
+            /** Expected Finding Codes */
+            expected_finding_codes: string[];
+            expected_status: components["schemas"]["FindingStatus"];
+            /**
+             * Promoted By
+             * Format: uuid
+             */
+            promoted_by: string;
+            /**
+             * Source Feedback Id
+             * Format: uuid
+             */
+            source_feedback_id: string;
+            state: components["schemas"]["EvalCaseState"];
+            /** Version */
+            version: number;
+        };
+        /** SubjectQualityEvalExportCaseResponse */
+        SubjectQualityEvalExportCaseResponse: {
+            /** Blueprint */
+            blueprint: {
+                [key: string]: unknown;
+            };
+            /** Candidate */
+            candidate: {
+                [key: string]: unknown;
+            };
+            /** Case Fingerprint */
+            case_fingerprint: string;
+            /** Duplicate References */
+            duplicate_references: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Eval Case Id
+             * Format: uuid
+             */
+            eval_case_id: string;
+            expected: components["schemas"]["SubjectQualityEvalExportExpectedResponse"];
+            /** Generation Versions */
+            generation_versions: {
+                [key: string]: unknown;
+            };
+            /** Grounding Sources */
+            grounding_sources: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Source Feedback Id
+             * Format: uuid
+             */
+            source_feedback_id: string;
+            /** Subject Scope */
+            subject_scope: {
+                [key: string]: unknown;
+            };
+            /** Version */
+            version: number;
+        };
+        /** SubjectQualityEvalExportExpectedResponse */
+        SubjectQualityEvalExportExpectedResponse: {
+            defect_category: components["schemas"]["DefectCategory"];
+            /** Finding Codes */
+            finding_codes: string[];
+            status: components["schemas"]["FindingStatus"];
+        };
+        /** SubjectQualityEvalExportResponse */
+        SubjectQualityEvalExportResponse: {
+            /** Cases */
+            cases: components["schemas"]["SubjectQualityEvalExportCaseResponse"][];
+            /** Limit */
+            limit: number;
+            /** Next Offset */
+            next_offset: number | null;
+            /** Offset */
+            offset: number;
+            /**
+             * Runner Version
+             * @constant
+             */
+            runner_version: "subject-quality-eval-runner.v1";
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "subject-quality-eval-export.v1";
+        };
+        /** SubjectQualityEvalResultResponse */
+        SubjectQualityEvalResultResponse: {
+            /** Actual Finding Codes */
+            actual_finding_codes: string[];
+            actual_status: components["schemas"]["FindingStatus"];
+            /**
+             * Eval Case Id
+             * Format: uuid
+             */
+            eval_case_id: string;
+            /** Eval Case Version */
+            eval_case_version: number;
+            /** Expected Finding Codes */
+            expected_finding_codes: string[];
+            expected_status: components["schemas"]["FindingStatus"];
+            /** Fingerprint */
+            fingerprint: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            outcome: components["schemas"]["EvalComparisonOutcome"];
+            /** Passed */
+            passed: boolean;
+            /** Pipeline Fingerprint */
+            pipeline_fingerprint: string;
+            /** Pipeline Version */
+            pipeline_version: string;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Validator Versions */
+            validator_versions: {
+                [key: string]: string;
+            }[];
+        };
+        /** SubjectQualityEvalRunRequest */
+        SubjectQualityEvalRunRequest: {
+            /** Case Ids */
+            case_ids: string[];
+        };
+        /** SubjectQualityEvalRunResponse */
+        SubjectQualityEvalRunResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Deduplicated
+             * @default false
+             */
+            deduplicated: boolean;
+            /** Passed Count */
+            passed_count: number;
+            /** Pipeline Fingerprint */
+            pipeline_fingerprint: string;
+            /** Pipeline Version */
+            pipeline_version: string;
+            /** Regression Count */
+            regression_count: number;
+            /** Request Fingerprint */
+            request_fingerprint: string;
+            /** Results */
+            results: components["schemas"]["SubjectQualityEvalResultResponse"][];
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Runner Version
+             * @constant
+             */
+            runner_version: "subject-quality-eval-runner.v1";
+            /** Unavailable Count */
+            unavailable_count: number;
+        };
+        /** SubjectQualityFeedbackListResponse */
+        SubjectQualityFeedbackListResponse: {
+            /** Items */
+            items: components["schemas"]["SubjectQualityFeedbackResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** SubjectQualityFeedbackResponse */
+        SubjectQualityFeedbackResponse: {
+            action: components["schemas"]["FeedbackAction"];
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Content */
+            current_content: {
+                [key: string]: unknown;
+            };
+            /** Findings At Action */
+            findings_at_action: {
+                [key: string]: unknown;
+            };
+            fingerprints: components["schemas"]["SubjectQualityFingerprintResponse"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            lineage: components["schemas"]["SubjectQualityLineageResponse"];
+            /** Note */
+            note: string | null;
+            /** Original Content */
+            original_content: {
+                [key: string]: unknown;
+            };
+            /** Promoted Eval Case Id */
+            promoted_eval_case_id?: string | null;
+            /** Reason Code */
+            reason_code: string;
+            /** Schema Version */
+            schema_version: string;
+            scope: components["schemas"]["SubjectQualityScopeResponse"];
+        };
+        /** SubjectQualityFingerprintResponse */
+        SubjectQualityFingerprintResponse: {
+            /** Current Content */
+            current_content: string;
+            /** Feedback */
+            feedback: string;
+            /** Findings */
+            findings: string;
+            /** Original Content */
+            original_content: string;
+            /** Provenance */
+            provenance: string;
+            /** Scope */
+            scope: string;
+        };
+        /** SubjectQualityLineageResponse */
+        SubjectQualityLineageResponse: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Candidate Revision */
+            candidate_revision: number;
+            /** Candidate Version */
+            candidate_version: number;
+            /**
+             * Generation Attempt Id
+             * Format: uuid
+             */
+            generation_attempt_id: string;
+            /**
+             * Generation Run Id
+             * Format: uuid
+             */
+            generation_run_id: string;
+            /** Model */
+            model: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provenance */
+            provenance: {
+                [key: string]: unknown;
+            }[];
+            /** Provider */
+            provider: string;
+            /** Provider Version */
+            provider_version: string;
+            /** Replacement Generation Run Id */
+            replacement_generation_run_id: string | null;
+            /** Retrieval Version */
+            retrieval_version: string;
+            /**
+             * Validation Run Id
+             * Format: uuid
+             */
+            validation_run_id: string;
+            /** Validator Versions */
+            validator_versions: {
+                [key: string]: string;
+            }[];
+        };
+        /** SubjectQualityPromotionRequest */
+        SubjectQualityPromotionRequest: {
+            defect_category: components["schemas"]["DefectCategory"];
+            /** Expected Finding Codes */
+            expected_finding_codes: string[];
+            expected_status: components["schemas"]["FindingStatus"];
+        };
+        /** SubjectQualityScopeResponse */
+        SubjectQualityScopeResponse: {
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /** Grade */
+            grade: number;
+            /**
+             * Lesson Id
+             * Format: uuid
+             */
+            lesson_id: string;
+            /** Lesson Number */
+            lesson_number: number;
+            /** Medium */
+            medium: string;
+            /** Subject Code */
+            subject_code: string;
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
         };
         /** SubjectResponse */
         SubjectResponse: {
@@ -10546,7 +11081,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReviewCandidateApproveRequest"];
+                "application/json": components["schemas"]["ReviewQuestionApproveRequest"];
             };
         };
         responses: {
@@ -10676,7 +11211,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReviewCandidateRejectRequest"];
+                "application/json": components["schemas"]["ReviewQuestionRejectRequest"];
             };
         };
         responses: {
@@ -11162,6 +11697,387 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_subject_quality_eval_cases: {
+        parameters: {
+            query?: {
+                state?: components["schemas"]["EvalCaseState"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalCaseListResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    export_subject_quality_eval_cases: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalExportResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    approve_subject_quality_eval_case: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubjectQualityEvalApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalCaseResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    run_subject_quality_evals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubjectQualityEvalRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalRunResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Authenticated cost limiter unavailable; the costly operation fails closed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimiterUnavailableResponse"];
+                };
+            };
+        };
+    };
+    get_subject_quality_eval_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalRunResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_subject_quality_feedback: {
+        parameters: {
+            query?: {
+                candidate_id?: string | null;
+                curriculum_version_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityFeedbackListResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    promote_subject_quality_feedback: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                feedback_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubjectQualityPromotionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectQualityEvalCaseResponse"];
+                };
+            };
+            /** @description Private Studio quality evidence was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Immutable lineage, idempotency, version, or second-review conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The bounded quality-evidence request is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

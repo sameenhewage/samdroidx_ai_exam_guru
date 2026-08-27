@@ -37,6 +37,12 @@ from exam_guru_api.retrieval.embeddings import (
 from exam_guru_api.retrieval.fusion import FusionConfig
 from exam_guru_api.retrieval.repository import PostgresHybridRetrievalRepository
 from exam_guru_api.retrieval.service import HybridRetrievalService
+from exam_guru_api.subject_quality.domain import (
+    FeedbackAction,
+    ReviewReasonCode,
+    compose_review_reason,
+)
+from exam_guru_api.subject_quality.service import SubjectQualityFeedbackService
 from exam_guru_api.teacher_papers.domain import (
     MAX_SLOT_REGENERATIONS,
     PaperDifficulty,
@@ -84,6 +90,7 @@ from exam_guru_api.teacher_papers.schemas import (
     ReviewQuestionOptionResponse,
     ReviewQuestionRegenerateRequest,
     ReviewQuestionRegenerationResponse,
+    ReviewQuestionRejectRequest,
     ReviewQuestionResponse,
     ReviewQuestionScopeResponse,
     ReviewQuestionTechnicalDetailsResponse,
@@ -1136,6 +1143,7 @@ async def _replace_generation_run(
     idempotency_key: str,
     actor_id: UUID,
     reason: str,
+    commit: bool = True,
 ) -> TeacherPaperSlotModel:
     if slot.regeneration_count >= MAX_SLOT_REGENERATIONS:
         raise TeacherPaperRetryLimitError(slot.id)
@@ -1191,7 +1199,10 @@ async def _replace_generation_run(
             f"{slot.id}:run:{creation.run.id}",
         ),
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return slot
 
 
@@ -1608,6 +1619,7 @@ class TeacherPaperReviewService:
                 candidate_id,
                 expected_version=expected_version,
                 principal=principal,
+                commit=False,
             )
         except ReviewCandidateVersionConflictError as error:
             raise TeacherPaperVersionConflictError(question_id) from error
@@ -1631,21 +1643,34 @@ class TeacherPaperReviewService:
                 slot.curriculum_version_id,
                 candidate_id,
                 content=request.content.to_domain(),
-                reason=request.reason,
+                reason=compose_review_reason(request.reason_code, request.note),
                 expected_version=request.expected_version,
                 principal=principal,
+                commit=False,
             )
         except ReviewCandidateVersionConflictError as error:
             raise TeacherPaperVersionConflictError(question_id) from error
         except ReviewCandidateStateConflictError as error:
             raise TeacherPaperStateConflictError(question_id) from error
+        source = await self._review_source(job_id, slot.id)
+        job = (await self._repository.get(job_id)).job
+        feedback = await SubjectQualityFeedbackService(self._session).record_action(
+            job=job,
+            source=source,
+            slot_version=slot.version,
+            action=FeedbackAction.EDIT,
+            reason_code=ReviewReasonCode(request.reason_code.value),
+            note=request.note,
+            principal=principal,
+        )
         await self._sync_slot(
             job_id,
             question_id,
             PaperSlotStatus.REVALIDATION_REQUIRED,
             requires_revalidation=True,
         )
-        return await self._get_question(job_id, question_id, principal)
+        question = await self._get_question(job_id, question_id, principal)
+        return question.model_copy(update={"quality_feedback_id": feedback.id})
 
     async def approve(
         self,
@@ -1666,6 +1691,7 @@ class TeacherPaperReviewService:
                 expected_version=expected_version,
                 note=note,
                 principal=principal,
+                commit=False,
             )
         except (
             ReviewCandidateRevalidationRequiredError,
@@ -1676,16 +1702,30 @@ class TeacherPaperReviewService:
             raise TeacherPaperVersionConflictError(question_id) from error
         except ReviewCandidateStateConflictError as error:
             raise TeacherPaperStateConflictError(question_id) from error
+        feedback_id: UUID | None = None
+        if note is not None:
+            source = await self._review_source(job_id, slot.id)
+            job = (await self._repository.get(job_id)).job
+            feedback = await SubjectQualityFeedbackService(self._session).record_action(
+                job=job,
+                source=source,
+                slot_version=slot.version,
+                action=FeedbackAction.APPROVE,
+                reason_code=ReviewReasonCode.CONFIRMED_QUALITY,
+                note=note,
+                principal=principal,
+            )
+            feedback_id = feedback.id
         await self._sync_slot(job_id, question_id, PaperSlotStatus.APPROVED)
-        return await self._get_question(job_id, question_id, principal)
+        question = await self._get_question(job_id, question_id, principal)
+        return question.model_copy(update={"quality_feedback_id": feedback_id})
 
     async def reject(
         self,
         job_id: UUID,
         question_id: UUID,
+        request: ReviewQuestionRejectRequest,
         *,
-        expected_version: int,
-        reason: str,
         principal: Principal,
     ) -> ReviewQuestionResponse:
         slot = await self._require_candidate_slot(job_id, question_id, principal)
@@ -1693,16 +1733,29 @@ class TeacherPaperReviewService:
             await ReviewCandidateService(self._session).reject(
                 slot.curriculum_version_id,
                 cast(UUID, slot.current_candidate_id),
-                expected_version=expected_version,
-                reason=reason,
+                expected_version=request.expected_version,
+                reason=compose_review_reason(request.reason_code, request.note),
                 principal=principal,
+                commit=False,
             )
         except ReviewCandidateVersionConflictError as error:
             raise TeacherPaperVersionConflictError(question_id) from error
         except ReviewCandidateStateConflictError as error:
             raise TeacherPaperStateConflictError(question_id) from error
+        source = await self._review_source(job_id, slot.id)
+        job = (await self._repository.get(job_id)).job
+        feedback = await SubjectQualityFeedbackService(self._session).record_action(
+            job=job,
+            source=source,
+            slot_version=slot.version,
+            action=FeedbackAction.REJECT,
+            reason_code=ReviewReasonCode(request.reason_code.value),
+            note=request.note,
+            principal=principal,
+        )
         await self._sync_slot(job_id, question_id, PaperSlotStatus.REJECTED)
-        return await self._get_question(job_id, question_id, principal)
+        question = await self._get_question(job_id, question_id, principal)
+        return question.model_copy(update={"quality_feedback_id": feedback.id})
 
     async def regenerate(
         self,
@@ -1719,6 +1772,7 @@ class TeacherPaperReviewService:
         slot = await self._repository.find_slot(job_id, question_id)
         if slot.version != request.expected_version:
             raise TeacherPaperVersionConflictError(question_id)
+        source = await self._review_source(job_id, slot.id)
         replacement = await _replace_generation_run(
             self._session,
             self._repository,
@@ -1728,7 +1782,19 @@ class TeacherPaperReviewService:
             generation_dispatcher=self._generation_dispatcher,
             idempotency_key=idempotency_key,
             actor_id=principal.subject_id,
-            reason=request.reason,
+            reason=compose_review_reason(request.reason_code, request.note),
+            commit=False,
+        )
+        feedback = await SubjectQualityFeedbackService(self._session).record_action(
+            job=record.job,
+            source=source,
+            slot_version=replacement.version,
+            action=FeedbackAction.REGENERATE,
+            reason_code=ReviewReasonCode(request.reason_code.value),
+            note=request.note,
+            principal=principal,
+            replacement_generation_run_id=cast(UUID, replacement.current_generation_run_id),
+            idempotency_key=idempotency_key,
         )
         current = (await self._repository.get(job_id)).job
         await self._repository.cas_job(
@@ -1768,6 +1834,7 @@ class TeacherPaperReviewService:
             question_id=cast(UUID, replacement.current_generation_run_id),
             status="generating",
             version=replacement.version,
+            quality_feedback_id=feedback.id,
         )
 
     async def create_draft(
@@ -1850,7 +1917,6 @@ class TeacherPaperReviewService:
                 "failure_code": None,
             },
         )
-        await self._session.commit()
         job = (await self._repository.get(job_id)).job
         await self._repository.cas_job(
             job_id,
@@ -1859,6 +1925,13 @@ class TeacherPaperReviewService:
             values=await _aggregate_counts(self._repository, job_id),
         )
         await self._session.commit()
+
+    async def _review_source(self, job_id: UUID, slot_id: UUID) -> ReviewSlotSource:
+        sources = await self._repository.review_sources(job_id)
+        source = next((item for item in sources if item.slot.id == slot_id), None)
+        if source is None or source.candidate is None or source.validation is None:
+            raise TeacherPaperStateConflictError(slot_id)
+        return source
 
     async def _get_question(
         self,

@@ -21,6 +21,10 @@ type ReviewQuestion = components["schemas"]["ReviewQuestionResponse"];
 type QuestionContent = components["schemas"]["QuestionContentRequest"];
 type TechnicalFinding = components["schemas"]["TechnicalValidationFindingResponse"];
 type DraftCreated = components["schemas"]["ReviewPaperDraftCreatedResponse"];
+type ReviewReasonCode = components["schemas"]["CorrectionReasonCode"];
+type DefectCategory = components["schemas"]["DefectCategory"];
+type FindingStatus = components["schemas"]["FindingStatus"];
+type EvalCase = components["schemas"]["SubjectQualityEvalCaseResponse"];
 type UiError = {
   code: string;
   message: string;
@@ -28,28 +32,87 @@ type UiError = {
   retryable: boolean;
   title: string;
 };
-type EditDraft = {
+type ReviewReasonDraft = {
+  note: string;
+  reasonCode: ReviewReasonCode | "";
+};
+type EditDraft = ReviewReasonDraft & {
   answer: string;
   explanation: string;
   markingGuide: string;
   marks: string;
   options: Array<{ option_id: string; text: string }>;
   questionType: QuestionContent["question_type"];
-  reason: string;
   stem: string;
 };
 type RegenerationAttempt = {
   idempotencyKey: string;
+  note: string | null;
   questionId: string;
-  reason: string;
+  reasonCode: ReviewReasonCode;
   version: number;
+};
+type QualityEvidence = {
+  expectedFindingCodes: string[];
+  feedbackId: string;
+  reasonCode: ReviewReasonCode;
+  suggestedStatus: FindingStatus;
+};
+type PromotionDraft = QualityEvidence & {
+  defectCategory: DefectCategory;
+  expectedStatus: FindingStatus;
+  idempotencyKey: string;
 };
 type JsonObject = Record<string, unknown>;
 
 const LIST_LIMIT = 100;
 const MAX_TEXT_LENGTH = 4_096;
-const MAX_REASON_LENGTH = 1_024;
+const MAX_REVIEW_NOTE_LENGTH = 768;
 const REGENERATION_POLL_DELAYS_MS = [0, 200, 400, 800, 1_500, 2_500] as const;
+const REVIEW_REASON_CHOICES: ReadonlyArray<{ label: string; value: ReviewReasonCode }> = [
+  { label: "The answer is incorrect", value: "answer_incorrect" },
+  { label: "The wording is unclear or ambiguous", value: "ambiguous_wording" },
+  { label: "It is outside the selected lessons", value: "outside_scope" },
+  { label: "The reviewed sources do not support it", value: "source_not_supported" },
+  { label: "The answer and marking do not agree", value: "marking_inconsistent" },
+  { label: "The language is not suitable for these learners", value: "language_quality" },
+  { label: "The answer choices are not suitable", value: "distractor_quality" },
+  { label: "It is too similar to another question", value: "duplicate_content" },
+  { label: "The content is unsafe or inappropriate", value: "unsafe_content" },
+  { label: "Another educational quality issue", value: "other_quality_issue" },
+];
+const REVIEW_REASON_FINDING_CODES: Readonly<Record<ReviewReasonCode, string>> = {
+  ambiguous_wording: "subject.language.ambiguous_wording",
+  answer_incorrect: "subject.answer.incorrect",
+  distractor_quality: "subject.assessment.distractor_quality",
+  duplicate_content: "duplicate.lexical_similarity_indicator",
+  language_quality: "subject.language.quality_issue",
+  marking_inconsistent: "subject.marking.answer_inconsistent",
+  other_quality_issue: "subject.review.other_quality_issue",
+  outside_scope: "subject.scope.outside_selected_lesson",
+  source_not_supported: "subject.factual.unsupported_claim",
+  unsafe_content: "security.unsafe_content",
+};
+const FAILURE_REASONS: ReadonlySet<ReviewReasonCode> = new Set([
+  "answer_incorrect",
+  "marking_inconsistent",
+  "outside_scope",
+  "source_not_supported",
+  "unsafe_content",
+]);
+const DEFECT_CHOICES: ReadonlyArray<{ label: string; value: DefectCategory }> = [
+  { label: "No known defect (confirmed good example)", value: "no_defect" },
+  { label: "Answer correctness", value: "answer_correctness" },
+  { label: "More than one correct answer", value: "multiple_correct_answers" },
+  { label: "Marking consistency", value: "marking_consistency" },
+  { label: "Curriculum scope", value: "scope_alignment" },
+  { label: "Source support", value: "source_grounding" },
+  { label: "Language clarity", value: "language_clarity" },
+  { label: "Answer-choice quality", value: "distractor_quality" },
+  { label: "Duplicate content", value: "duplicate_content" },
+  { label: "Unsafe instruction residue", value: "security_residue" },
+  { label: "Other", value: "other" },
+];
 
 const primaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
@@ -85,6 +148,31 @@ function safeText(value: unknown, fallback = "Not recorded"): string {
 function titleCase(value: string): string {
   const words = value.replaceAll("_", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function suggestedDefect(reasonCode: ReviewReasonCode): DefectCategory {
+  const mapped: Partial<Record<ReviewReasonCode, DefectCategory>> = {
+    ambiguous_wording: "language_clarity",
+    answer_incorrect: "answer_correctness",
+    distractor_quality: "distractor_quality",
+    duplicate_content: "duplicate_content",
+    language_quality: "language_clarity",
+    marking_inconsistent: "marking_consistency",
+    outside_scope: "scope_alignment",
+    source_not_supported: "source_grounding",
+    unsafe_content: "security_residue",
+  };
+  return mapped[reasonCode] ?? "other";
+}
+
+function suggestedFindingStatus(
+  question: ReviewQuestion,
+  reasonCode: ReviewReasonCode,
+): FindingStatus {
+  if (question.validation.status === "failed_check" || FAILURE_REASONS.has(reasonCode)) {
+    return "fail";
+  }
+  return "warn";
 }
 
 function reviewError(error: unknown, response: Response, surface: "queue" | "paper" | "command" | "regenerate" | "draft"): UiError {
@@ -239,6 +327,24 @@ function secureRegenerationKey(): string {
   return key;
 }
 
+function securePromotionKey(): string {
+  const cryptoObject = globalThis.crypto;
+  const random =
+    typeof cryptoObject?.randomUUID === "function"
+      ? cryptoObject.randomUUID()
+      : (() => {
+          if (typeof cryptoObject?.getRandomValues !== "function") {
+            throw new Error("Secure browser randomness is unavailable");
+          }
+          const bytes = new Uint8Array(16);
+          cryptoObject.getRandomValues(bytes);
+          return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+        })();
+  const key = `quality-promotion-${random}`;
+  if (key.length > 128 || /\s/.test(key)) throw new Error("Unsafe promotion key");
+  return key;
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
@@ -381,8 +487,9 @@ function editDraftFromQuestion(question: ReviewQuestion): EditDraft {
     markingGuide: content.marking_guide.join("\n"),
     marks: String(content.marks),
     options: content.options.map((option) => ({ ...option })),
+    note: "",
     questionType: content.question_type,
-    reason: "",
+    reasonCode: "",
     stem: content.stem,
   };
 }
@@ -529,13 +636,19 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
   const [queueError, setQueueError] = useState<UiError | null>(null);
   const [paperError, setPaperError] = useState<UiError | null>(null);
   const [commandError, setCommandError] = useState<UiError | null>(null);
-  const [busy, setBusy] = useState<"start" | "approve" | "edit" | "reject" | "regenerate" | "draft" | "">("");
+  const [busy, setBusy] = useState<
+    "start" | "approve" | "edit" | "reject" | "regenerate" | "draft" | "promote" | "approve-example" | ""
+  >("");
   const [notice, setNotice] = useState("");
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [editError, setEditError] = useState<UiError | null>(null);
-  const [rejectReason, setRejectReason] = useState<string | null>(null);
-  const [regenerateReason, setRegenerateReason] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState<ReviewReasonDraft | null>(null);
+  const [regenerateReason, setRegenerateReason] = useState<ReviewReasonDraft | null>(null);
   const [draftCreated, setDraftCreated] = useState<DraftCreated | null>(null);
+  const [qualityEvidence, setQualityEvidence] = useState<QualityEvidence | null>(null);
+  const [promotionDraft, setPromotionDraft] = useState<PromotionDraft | null>(null);
+  const [evalCase, setEvalCase] = useState<EvalCase | null>(null);
+  const [qualityNotice, setQualityNotice] = useState("");
 
   const queueRequest = useRef(0);
   const paperRequest = useRef(0);
@@ -642,6 +755,10 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       setNotice("");
       setCommandError(null);
       setDraftCreated(null);
+      setQualityEvidence(null);
+      setPromotionDraft(null);
+      setEvalCase(null);
+      setQualityNotice("");
       void fetchPaper(selectedPaperId);
     }, 0);
     return () => window.clearTimeout(timeout);
@@ -658,6 +775,28 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
           }
         : current,
     );
+  }
+
+  function rememberQualityEvidence(
+    feedbackId: string | null | undefined,
+    question: ReviewQuestion,
+    reasonCode: ReviewReasonCode,
+  ) {
+    if (!feedbackId) return;
+    const expectedFindingCodes = new Set(
+      question.technical_details.validator_findings
+        .filter((finding) => finding.status !== "pass")
+        .map((finding) => finding.code),
+    );
+    expectedFindingCodes.add(REVIEW_REASON_FINDING_CODES[reasonCode]);
+    setQualityEvidence({
+      expectedFindingCodes: [...expectedFindingCodes].sort(),
+      feedbackId,
+      reasonCode,
+      suggestedStatus: suggestedFindingStatus(question, reasonCode),
+    });
+    setEvalCase(null);
+    setQualityNotice("");
   }
 
   async function runQuestionCommand(
@@ -703,7 +842,8 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
     event.preventDefault();
     if (!paper || !currentQuestion || !editDraft || busy) return;
     const marks = Number(editDraft.marks);
-    const reason = editDraft.reason.trim();
+    const reasonCode = editDraft.reasonCode;
+    const note = editDraft.note.trim() || null;
     const markingGuide = editDraft.markingGuide
       .split("\n")
       .map((item) => item.trim())
@@ -728,10 +868,10 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       });
       return;
     }
-    if (!reason || reason.length > MAX_REASON_LENGTH) {
+    if (!reasonCode || (note?.length ?? 0) > MAX_REVIEW_NOTE_LENGTH) {
       setEditError({
         code: "review_reason_invalid",
-        message: `Add a short reason of no more than ${MAX_REASON_LENGTH} characters.`,
+        message: "Choose the educational reason. Keep the optional note concise.",
         preserveDraft: true,
         retryable: false,
         title: "Reason required",
@@ -757,7 +897,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       const outcome = await api.PATCH(
         "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}",
         {
-          body: { content, expected_version: currentQuestion.version, reason },
+          body: {
+            content,
+            expected_version: currentQuestion.version,
+            note,
+            reason_code: reasonCode,
+          },
           params: {
             path: { paper_job_id: paper.id, question_id: currentQuestion.id },
           },
@@ -769,6 +914,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       }
       if (!outcome.data) return;
       updateQuestion(outcome.data);
+      rememberQualityEvidence(outcome.data.quality_feedback_id, outcome.data, reasonCode);
       setEditDraft(null);
       setNotice("Question changes saved. A fresh check is required.");
       await fetchPaper(paper.id, { loading: false, preferredQuestionId: outcome.data.id });
@@ -783,11 +929,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
   async function rejectQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!paper || !currentQuestion || rejectReason === null || busy) return;
-    const reason = rejectReason.trim();
-    if (!reason || reason.length > MAX_REASON_LENGTH) {
+    const reasonCode = rejectReason.reasonCode;
+    const note = rejectReason.note.trim() || null;
+    if (!reasonCode || (note?.length ?? 0) > MAX_REVIEW_NOTE_LENGTH) {
       setCommandError({
         code: "review_reason_invalid",
-        message: `Add a rejection reason of no more than ${MAX_REASON_LENGTH} characters.`,
+        message: "Choose why this question should be rejected. The note is optional.",
         retryable: false,
         title: "Rejection reason required",
       });
@@ -800,7 +947,11 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       const outcome = await api.POST(
         "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/reject",
         {
-          body: { expected_version: currentQuestion.version, reason },
+          body: {
+            expected_version: currentQuestion.version,
+            note,
+            reason_code: reasonCode,
+          },
           params: {
             path: { paper_job_id: paper.id, question_id: currentQuestion.id },
           },
@@ -812,6 +963,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       }
       if (!outcome.data) return;
       updateQuestion(outcome.data);
+      rememberQualityEvidence(outcome.data.quality_feedback_id, outcome.data, reasonCode);
       setRejectReason(null);
       setNotice("Question rejected.");
       await fetchPaper(paper.id, { loading: false, preferredQuestionId: outcome.data.id });
@@ -851,11 +1003,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
   async function regenerateQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!paper || !currentQuestion || regenerateReason === null || busy) return;
-    const reason = regenerateReason.trim();
-    if (!reason || reason.length > MAX_REASON_LENGTH) {
+    const reasonCode = regenerateReason.reasonCode;
+    const note = regenerateReason.note.trim() || null;
+    if (!reasonCode || (note?.length ?? 0) > MAX_REVIEW_NOTE_LENGTH) {
       setCommandError({
         code: "review_reason_invalid",
-        message: `Add a regeneration reason of no more than ${MAX_REASON_LENGTH} characters.`,
+        message: "Choose why a replacement is needed. The note is optional.",
         retryable: false,
         title: "Regeneration reason required",
       });
@@ -866,13 +1019,15 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       !stored ||
       stored.questionId !== currentQuestion.id ||
       stored.version !== currentQuestion.aggregate_slot_version ||
-      stored.reason !== reason
+      stored.reasonCode !== reasonCode ||
+      stored.note !== note
     ) {
       try {
         stored = {
           idempotencyKey: secureRegenerationKey(),
+          note,
           questionId: currentQuestion.id,
-          reason,
+          reasonCode,
           version: currentQuestion.aggregate_slot_version,
         };
       } catch {
@@ -893,7 +1048,11 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       const outcome = await api.POST(
         "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/regenerate",
         {
-          body: { expected_version: stored.version, reason: stored.reason },
+          body: {
+            expected_version: stored.version,
+            note: stored.note,
+            reason_code: stored.reasonCode,
+          },
           params: {
             header: { "Idempotency-Key": stored.idempotencyKey },
             path: { paper_job_id: paper.id, question_id: stored.questionId },
@@ -905,6 +1064,11 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
         return;
       }
       if (!outcome.data) return;
+      rememberQualityEvidence(
+        outcome.data.quality_feedback_id,
+        currentQuestion,
+        stored.reasonCode,
+      );
       setRegenerateReason(null);
       setNotice("A replacement question is being prepared and checked.");
       setBusy("");
@@ -913,6 +1077,96 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       setCommandError(networkError("regenerate"));
     } finally {
       setBusy((current) => (current === "regenerate" ? "" : current));
+    }
+  }
+
+  function openPromotion() {
+    if (!qualityEvidence || busy) return;
+    try {
+      setPromotionDraft({
+        ...qualityEvidence,
+        defectCategory:
+          qualityEvidence.suggestedStatus === "pass"
+            ? "no_defect"
+            : suggestedDefect(qualityEvidence.reasonCode),
+        expectedStatus: qualityEvidence.suggestedStatus,
+        idempotencyKey: securePromotionKey(),
+      });
+      setCommandError(null);
+    } catch {
+      setCommandError({
+        code: "secure_randomness_unavailable",
+        message: "This browser cannot create a safe quality-example request.",
+        retryable: false,
+        title: "Quality example unavailable",
+      });
+    }
+  }
+
+  async function promoteQualityEvidence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!promotionDraft || busy) return;
+    setBusy("promote");
+    setCommandError(null);
+    try {
+      const expectedFindingCodes =
+        promotionDraft.expectedStatus === "pass"
+          ? []
+          : promotionDraft.expectedFindingCodes;
+      const outcome = await api.POST(
+        "/api/v1/admin/subject-quality/feedback/{feedback_id}/promote",
+        {
+          body: {
+            defect_category: promotionDraft.defectCategory,
+            expected_finding_codes: expectedFindingCodes,
+            expected_status: promotionDraft.expectedStatus,
+          },
+          params: {
+            header: { "Idempotency-Key": promotionDraft.idempotencyKey },
+            path: { feedback_id: promotionDraft.feedbackId },
+          },
+        },
+      );
+      if (outcome.error !== undefined) {
+        setCommandError(reviewError(outcome.error, outcome.response, "command"));
+        return;
+      }
+      if (!outcome.data) return;
+      setEvalCase(outcome.data);
+      setPromotionDraft(null);
+      setQualityNotice(
+        "Draft quality example created. A second reviewer or administrator must approve it.",
+      );
+    } catch {
+      setCommandError(networkError("command"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function approveQualityExample() {
+    if (!evalCase?.can_approve || busy) return;
+    setBusy("approve-example");
+    setCommandError(null);
+    try {
+      const outcome = await api.POST(
+        "/api/v1/admin/subject-quality/eval-cases/{eval_case_id}/approve",
+        {
+          body: { expected_version: evalCase.version },
+          params: { path: { eval_case_id: evalCase.eval_case_id } },
+        },
+      );
+      if (outcome.error !== undefined) {
+        setCommandError(reviewError(outcome.error, outcome.response, "command"));
+        return;
+      }
+      if (!outcome.data) return;
+      setEvalCase(outcome.data);
+      setQualityNotice("Quality example approved for offline evaluation.");
+    } catch {
+      setCommandError(networkError("command"));
+    } finally {
+      setBusy("");
     }
   }
 
@@ -1086,6 +1340,51 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                 ) : undefined
               }
             />
+          ) : null}
+
+          {qualityEvidence ? (
+            <section className="rounded-xl border border-blue-300 bg-blue-50 p-4 text-blue-950">
+              <h3 className="font-semibold">Optional quality evidence</h3>
+              <p className="mt-1 text-sm leading-6">
+                Save this reviewed action as a candidate for the private offline quality checks.
+                This is review evidence; it does not train or automatically change the model.
+              </p>
+              {qualityNotice ? (
+                <p className="mt-3 rounded-lg border border-blue-300 bg-white p-3 text-sm font-semibold" role="status">
+                  {qualityNotice}
+                </p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap gap-3">
+                {!evalCase ? (
+                  <button className={secondaryButton} disabled={Boolean(busy)} onClick={openPromotion} type="button">
+                    Add to quality examples
+                  </button>
+                ) : null}
+                {evalCase?.can_approve ? (
+                  <button
+                    className={primaryButton}
+                    disabled={Boolean(busy)}
+                    onClick={() => void approveQualityExample()}
+                    type="button"
+                  >
+                    {busy === "approve-example" ? "Approving…" : "Approve quality example"}
+                  </button>
+                ) : null}
+              </div>
+              <details className="mt-3 rounded-lg border border-blue-200 bg-white p-3 text-xs">
+                <summary className="cursor-pointer font-semibold">Quality evidence technical details</summary>
+                <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt>Feedback ID</dt>
+                    <dd className="break-all font-mono">{qualityEvidence.feedbackId}</dd>
+                  </div>
+                  <div>
+                    <dt>Eval case</dt>
+                    <dd className="break-all font-mono">{evalCase?.eval_case_id ?? "Not promoted"}</dd>
+                  </div>
+                </dl>
+              </details>
+            </section>
           ) : null}
 
           {currentQuestion ? (
@@ -1272,7 +1571,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                     disabled={Boolean(busy) || startRequired || questionLocked}
                     onClick={() => {
                       setCommandError(null);
-                      setRejectReason("");
+                      setRejectReason({ note: "", reasonCode: "" });
                     }}
                     type="button"
                   >
@@ -1283,7 +1582,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                     disabled={Boolean(busy) || questionLocked}
                     onClick={() => {
                       setCommandError(null);
-                      setRegenerateReason("");
+                      setRegenerateReason({ note: "", reasonCode: "" });
                     }}
                     type="button"
                   >
@@ -1298,6 +1597,9 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                       setQuestionIndex((index) => Math.max(0, index - 1));
                       setNotice("");
                       setCommandError(null);
+                      setQualityEvidence(null);
+                      setEvalCase(null);
+                      setQualityNotice("");
                     }}
                     type="button"
                   >
@@ -1310,6 +1612,9 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                       setQuestionIndex((index) => Math.min(paper.questions.length - 1, index + 1));
                       setNotice("");
                       setCommandError(null);
+                      setQualityEvidence(null);
+                      setEvalCase(null);
+                      setQualityNotice("");
                     }}
                     type="button"
                   >
@@ -1475,16 +1780,38 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                 />
               </label>
             </div>
-            <label className={fieldClass}>
-              Reason for change
-              <textarea
-                className={`${inputClass} min-h-20`}
-                maxLength={MAX_REASON_LENGTH}
-                onChange={(event) => setEditDraft({ ...editDraft, reason: event.target.value })}
-                required
-                value={editDraft.reason}
-              />
-            </label>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className={fieldClass}>
+                Why are you changing this question?
+                <select
+                  className={inputClass}
+                  onChange={(event) =>
+                    setEditDraft({
+                      ...editDraft,
+                      reasonCode: event.target.value as ReviewReasonCode | "",
+                    })
+                  }
+                  required
+                  value={editDraft.reasonCode}
+                >
+                  <option value="">Choose a reason</option>
+                  {REVIEW_REASON_CHOICES.map((choice) => (
+                    <option key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldClass}>
+                Optional note
+                <textarea
+                  className={`${inputClass} min-h-20`}
+                  maxLength={MAX_REVIEW_NOTE_LENGTH}
+                  onChange={(event) => setEditDraft({ ...editDraft, note: event.target.value })}
+                  value={editDraft.note}
+                />
+              </label>
+            </div>
             <div className="flex flex-wrap justify-end gap-3">
               <button
                 className={secondaryButton}
@@ -1515,13 +1842,35 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
               Record a clear educational reason. Rejection is audited and never counts as approval.
             </p>
             <label className={fieldClass}>
-              Reason for rejection
-              <textarea
-                className={`${inputClass} min-h-28`}
-                maxLength={MAX_REASON_LENGTH}
-                onChange={(event) => setRejectReason(event.target.value)}
+              Why are you rejecting this question?
+              <select
+                className={inputClass}
+                onChange={(event) =>
+                  setRejectReason({
+                    ...rejectReason,
+                    reasonCode: event.target.value as ReviewReasonCode | "",
+                  })
+                }
                 required
-                value={rejectReason}
+                value={rejectReason.reasonCode}
+              >
+                <option value="">Choose a reason</option>
+                {REVIEW_REASON_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={fieldClass}>
+              Optional note
+              <textarea
+                className={`${inputClass} min-h-24`}
+                maxLength={MAX_REVIEW_NOTE_LENGTH}
+                onChange={(event) =>
+                  setRejectReason({ ...rejectReason, note: event.target.value })
+                }
+                value={rejectReason.note}
               />
             </label>
             <div className="flex flex-wrap justify-end gap-3">
@@ -1552,16 +1901,37 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
             </p>
             {commandError ? <ErrorPanel error={commandError} /> : null}
             <label className={fieldClass}>
-              Reason for regeneration
-              <textarea
-                className={`${inputClass} min-h-28`}
-                maxLength={MAX_REASON_LENGTH}
+              Why should this question be replaced?
+              <select
+                className={inputClass}
                 onChange={(event) => {
-                  setRegenerateReason(event.target.value);
+                  setRegenerateReason({
+                    ...regenerateReason,
+                    reasonCode: event.target.value as ReviewReasonCode | "",
+                  });
                   regenerationAttempt.current = null;
                 }}
                 required
-                value={regenerateReason}
+                value={regenerateReason.reasonCode}
+              >
+                <option value="">Choose a reason</option>
+                {REVIEW_REASON_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={fieldClass}>
+              Optional note
+              <textarea
+                className={`${inputClass} min-h-24`}
+                maxLength={MAX_REVIEW_NOTE_LENGTH}
+                onChange={(event) => {
+                  setRegenerateReason({ ...regenerateReason, note: event.target.value });
+                  regenerationAttempt.current = null;
+                }}
+                value={regenerateReason.note}
               />
             </label>
             <div className="flex flex-wrap justify-end gap-3">
@@ -1575,6 +1945,90 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
               </button>
               <button className={primaryButton} disabled={busy === "regenerate"} type="submit">
                 {busy === "regenerate" ? "Starting…" : "Regenerate"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {promotionDraft ? (
+        <Modal labelledBy="promote-quality-heading">
+          <form className="space-y-4" onSubmit={(event) => void promoteQualityEvidence(event)}>
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-blue-800 uppercase">
+                Private quality evidence
+              </p>
+              <h2 className="mt-1 text-2xl font-semibold" id="promote-quality-heading">
+                Add review evidence to quality examples
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                This creates a draft example for repeatable offline validation checks. It does not
+                train or automatically change the model, prompts, or checking thresholds.
+              </p>
+            </div>
+            {commandError ? <ErrorPanel error={commandError} /> : null}
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className={fieldClass}>
+                Expected check result
+                <select
+                  className={inputClass}
+                  onChange={(event) => {
+                    const expectedStatus = event.target.value as FindingStatus;
+                    setPromotionDraft({
+                      ...promotionDraft,
+                      defectCategory:
+                        expectedStatus === "pass"
+                          ? "no_defect"
+                          : promotionDraft.defectCategory,
+                      expectedStatus,
+                    });
+                  }}
+                  value={promotionDraft.expectedStatus}
+                >
+                  <option value="pass">Passes all expected checks</option>
+                  <option value="warn">Needs human attention</option>
+                  <option value="fail">Fails a required check</option>
+                </select>
+              </label>
+              <label className={fieldClass}>
+                Defect category
+                <select
+                  className={inputClass}
+                  disabled={promotionDraft.expectedStatus === "pass"}
+                  onChange={(event) =>
+                    setPromotionDraft({
+                      ...promotionDraft,
+                      defectCategory: event.target.value as DefectCategory,
+                    })
+                  }
+                  value={promotionDraft.defectCategory}
+                >
+                  {DEFECT_CHOICES.map((choice) => (
+                    <option key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <details className="rounded-lg border border-slate-300 bg-white p-3 text-xs">
+              <summary className="cursor-pointer font-semibold">Technical eval details</summary>
+              <p className="mt-2 break-all font-mono">Feedback {promotionDraft.feedbackId}</p>
+              <p className="mt-2">
+                Expected finding codes: {promotionDraft.expectedFindingCodes.join(", ") || "None"}
+              </p>
+            </details>
+            <div className="flex flex-wrap justify-end gap-3">
+              <button
+                className={secondaryButton}
+                disabled={busy === "promote"}
+                onClick={() => setPromotionDraft(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button className={primaryButton} disabled={busy === "promote"} type="submit">
+                {busy === "promote" ? "Creating…" : "Create draft quality example"}
               </button>
             </div>
           </form>

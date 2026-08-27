@@ -63,6 +63,16 @@ from exam_guru_api.retrieval.embeddings import (
     DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG,
     create_embedding_provider_registry,
 )
+from exam_guru_api.subject_quality.models import (
+    SubjectQualityEvalCaseVersionModel,
+    SubjectQualityEvalResultModel,
+    SubjectQualityEvalRunModel,
+    SubjectQualityFeedbackModel,
+)
+from exam_guru_api.subject_quality.service import (
+    SubjectQualityFeedbackPersistenceError,
+    SubjectQualityFeedbackService,
+)
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
 from exam_guru_api.teacher_papers.models import (
     TeacherPaperJobModel,
@@ -1004,7 +1014,8 @@ def test_full_subject_is_idempotent_under_racing_requests_and_does_not_leak_scop
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/reject",
             json={
                 "expected_version": started.json()["version"],
-                "reason": "Exercise the explicit aggregate rejection path.",
+                "reason_code": "other_quality_issue",
+                "note": "Exercise the explicit aggregate rejection path.",
             },
             headers=REVIEWER_HEADERS,
         )
@@ -1234,17 +1245,41 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         current = started.json()
         content = current["content"]
         content["stem"] = "A teacher edit that requires a fresh canonical validation."
+        edit_payload = {
+            "expected_version": current["version"],
+            "reason_code": "ambiguous_wording",
+            "note": "Clarify wording and revalidate before approval.",
+            "content": content,
+        }
         edited = client.patch(
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}",
-            json={
-                "expected_version": current["version"],
-                "reason": "Clarify wording and revalidate before approval.",
-                "content": content,
-            },
+            json=edit_payload,
             headers=REVIEWER_HEADERS,
         )
         assert edited.status_code == 200
         assert edited.json()["requires_revalidation"] is True
+        feedback_id = edited.json()["quality_feedback_id"]
+        duplicate_edit = client.patch(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}",
+            json=edit_payload,
+            headers=REVIEWER_HEADERS,
+        )
+        assert duplicate_edit.status_code == 409
+        feedback_list = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={"candidate_id": question["technical_details"]["candidate_id"], "limit": 10},
+            headers=REVIEWER_HEADERS,
+        )
+        assert feedback_list.status_code == 200
+        assert feedback_list.json()["total"] == 1
+        edit_feedback = feedback_list.json()["items"][0]
+        assert edit_feedback["id"] == feedback_id
+        assert edit_feedback["action"] == "edit"
+        assert edit_feedback["reason_code"] == "ambiguous_wording"
+        assert edit_feedback["original_content"]["stem"] == question["content"]["stem"]
+        assert edit_feedback["current_content"] == content
+        assert edit_feedback["findings_at_action"]["validation_run_id"] == old_validation_run_id
+        assert edit_feedback["scope"]["curriculum_version_id"] == str(CURRICULUM_ID)
         blocked = client.post(
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/approve",
             json={"expected_version": edited.json()["version"], "note": None},
@@ -1256,13 +1291,25 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/regenerate",
             json={
                 "expected_version": edited.json()["aggregate_slot_version"],
-                "reason": "Generate and validate a replacement after the edit.",
+                "reason_code": "answer_incorrect",
+                "note": "Generate and validate a replacement after the edit.",
             },
             headers={**REVIEWER_HEADERS, "Idempotency-Key": "regenerate-edited-question"},
         )
         assert regenerated.status_code == 202
         assert regenerated.json()["status"] == "generating"
+        assert regenerated.json()["quality_feedback_id"]
         replacement_run_id = UUID(regenerated.json()["question_id"])
+        feedback_after_regeneration = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={"candidate_id": question["technical_details"]["candidate_id"], "limit": 10},
+            headers=REVIEWER_HEADERS,
+        ).json()
+        assert feedback_after_regeneration["total"] == 2
+        assert {item["action"] for item in feedback_after_regeneration["items"]} == {
+            "edit",
+            "regenerate",
+        }
 
         async def complete_regeneration() -> TeacherPaperJobModel:
             engine = create_async_engine(aggregate_seed.database_url)
@@ -1311,6 +1358,476 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         assert replacement["id"] == str(replacement_run_id)
         assert replacement["requires_revalidation"] is False
         assert replacement["technical_details"]["validation_run_id"] != old_validation_run_id
+
+
+@pytest.mark.integration
+def test_feedback_failure_rolls_back_candidate_revision_event_and_slot_together(
+    aggregate_seed: Seed,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paper_dispatcher = DeterministicPaperGenerationDispatcher()
+    generation_dispatcher = DeterministicGenerationDispatcher()
+    with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
+        created = client.post(
+            "/api/v1/admin/paper-generation/jobs",
+            json=request_payload(
+                scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 1},
+                question_count=1,
+            ),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "quality-feedback-rollback-key"},
+        )
+        assert created.status_code == 202
+        job_id = UUID(created.json()["job_id"])
+        terminal = asyncio.run(
+            advance_and_run_slots(
+                aggregate_seed,
+                job_id,
+                paper_dispatcher,
+                generation_dispatcher,
+            )
+        )
+        assert terminal.status == "ready_for_review"
+        detail = client.get(
+            f"/api/v1/admin/review-papers/{job_id}", headers=REVIEWER_HEADERS
+        ).json()
+        question = detail["questions"][0]
+        started = client.post(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/start",
+            json={"expected_version": question["version"]},
+            headers=REVIEWER_HEADERS,
+        )
+        assert started.status_code == 200
+        before = started.json()
+        edited_content = dict(before["content"])
+        edited_content["stem"] = "This edit must roll back when feedback cannot be appended."
+
+        async def fail_feedback(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise SubjectQualityFeedbackPersistenceError("injected failure")
+
+        monkeypatch.setattr(SubjectQualityFeedbackService, "record_action", fail_feedback)
+        failed = client.patch(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}",
+            json={
+                "expected_version": before["version"],
+                "reason_code": "ambiguous_wording",
+                "note": "This note must not survive a rollback.",
+                "content": edited_content,
+            },
+            headers=REVIEWER_HEADERS,
+        )
+        assert failed.status_code == 409
+        assert failed.json()["detail"]["code"] == "quality_feedback_persistence_conflict"
+        refreshed = client.get(
+            f"/api/v1/admin/review-papers/{job_id}", headers=REVIEWER_HEADERS
+        ).json()["questions"][0]
+        assert refreshed["version"] == before["version"]
+        assert refreshed["aggregate_slot_version"] == before["aggregate_slot_version"]
+        assert refreshed["content"] == before["content"]
+        candidate_id = UUID(question["technical_details"]["candidate_id"])
+
+    async def feedback_count() -> int:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                return int(
+                    await session.scalar(
+                        select(func.count(SubjectQualityFeedbackModel.id)).where(
+                            SubjectQualityFeedbackModel.candidate_id == candidate_id
+                        )
+                    )
+                    or 0
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(feedback_count()) == 0
+
+
+@pytest.mark.integration
+def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_guards(
+    aggregate_seed: Seed,
+) -> None:
+    paper_dispatcher = DeterministicPaperGenerationDispatcher()
+    generation_dispatcher = DeterministicGenerationDispatcher()
+    with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
+        created = client.post(
+            "/api/v1/admin/paper-generation/jobs",
+            json=request_payload(
+                scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 2},
+                question_count=2,
+            ),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "quality-feedback-approval-key"},
+        )
+        assert created.status_code == 202
+        job_id = UUID(created.json()["job_id"])
+        terminal = asyncio.run(
+            advance_and_run_slots(
+                aggregate_seed,
+                job_id,
+                paper_dispatcher,
+                generation_dispatcher,
+            )
+        )
+        assert terminal.status == "ready_for_review"
+        detail = client.get(
+            f"/api/v1/admin/review-papers/{job_id}",
+            headers=REVIEWER_HEADERS,
+        ).json()
+        question = detail["questions"][0]
+        started = client.post(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/start",
+            json={"expected_version": question["version"]},
+            headers=REVIEWER_HEADERS,
+        )
+        assert started.status_code == 200
+        approved = client.post(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/approve",
+            json={
+                "expected_version": started.json()["version"],
+                "note": "Checked the answer, marking, wording, and reviewed source.",
+            },
+            headers=REVIEWER_HEADERS,
+        )
+        assert approved.status_code == 200, approved.json()
+        feedback_id = UUID(approved.json()["quality_feedback_id"])
+
+        listed = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={"candidate_id": question["technical_details"]["candidate_id"], "limit": 10},
+            headers=REVIEWER_HEADERS,
+        )
+        assert listed.status_code == 200
+        assert listed.json()["total"] == 1
+        feedback = listed.json()["items"][0]
+        assert feedback["id"] == str(feedback_id)
+        assert feedback["action"] == "approve"
+        assert feedback["reason_code"] == "confirmed_quality"
+        assert feedback["note"] == "Checked the answer, marking, wording, and reviewed source."
+        assert feedback["original_content"] == feedback["current_content"]
+        assert feedback["scope"] | {"lesson_id": None, "lesson_number": None} == {
+            "grade": 7,
+            "medium": "en",
+            "subject_code": "MATHEMATICS",
+            "curriculum_version_id": str(CURRICULUM_ID),
+            "unit_id": str(UNIT_ID),
+            "lesson_id": None,
+            "lesson_number": None,
+        }
+        assert feedback["scope"]["lesson_number"] in {1, 2}
+        assert feedback["scope"]["lesson_id"] == str(
+            LESSON_IDS[feedback["scope"]["lesson_number"] - 1]
+        )
+        assert feedback["lineage"]["candidate_id"] == question["technical_details"]["candidate_id"]
+        assert feedback["lineage"]["generation_run_id"] == question["id"]
+        assert (
+            feedback["lineage"]["validation_run_id"]
+            == question["technical_details"]["validation_run_id"]
+        )
+        assert feedback["lineage"]["prompt_version"]
+        assert feedback["lineage"]["model_version"]
+        assert feedback["lineage"]["retrieval_version"]
+        assert feedback["lineage"]["validator_versions"]
+        assert feedback["findings_at_action"]["findings"]
+        assert feedback["fingerprints"]["feedback"].startswith("sha256:")
+
+        expected_codes = sorted(
+            finding["code"]
+            for finding in feedback["findings_at_action"]["findings"]
+            if finding["status"] != "pass"
+        )
+        promotion_body = {
+            "expected_status": feedback["findings_at_action"]["overall_status"],
+            "expected_finding_codes": expected_codes,
+            "defect_category": "no_defect",
+        }
+        promote_headers = {
+            **REVIEWER_HEADERS,
+            "Idempotency-Key": "promote-confirmed-quality-1",
+        }
+        promoted = client.post(
+            f"/api/v1/admin/subject-quality/feedback/{feedback_id}/promote",
+            json=promotion_body,
+            headers=promote_headers,
+        )
+        assert promoted.status_code == 201
+        assert promoted.json()["state"] == "draft"
+        assert promoted.json()["version"] == 1
+        assert promoted.json()["deduplicated"] is False
+        eval_case_id = UUID(promoted.json()["eval_case_id"])
+
+        duplicate = client.post(
+            f"/api/v1/admin/subject-quality/feedback/{feedback_id}/promote",
+            json=promotion_body,
+            headers=promote_headers,
+        )
+        assert duplicate.status_code == 201
+        assert duplicate.json()["eval_case_id"] == str(eval_case_id)
+        assert duplicate.json()["deduplicated"] is True
+        listed_cases = client.get(
+            "/api/v1/admin/subject-quality/eval-cases",
+            params={"limit": 10, "offset": 0},
+            headers=REVIEWER_HEADERS,
+        )
+        assert listed_cases.status_code == 200
+        assert listed_cases.json()["total"] == 1
+        feedback_after_promotion = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={"candidate_id": question["technical_details"]["candidate_id"], "limit": 10},
+            headers=REVIEWER_HEADERS,
+        ).json()["items"][0]
+        assert feedback_after_promotion["promoted_eval_case_id"] == str(eval_case_id)
+
+        same_reviewer = client.post(
+            f"/api/v1/admin/subject-quality/eval-cases/{eval_case_id}/approve",
+            json={"expected_version": 1},
+            headers=REVIEWER_HEADERS,
+        )
+        assert same_reviewer.status_code == 409
+        assert same_reviewer.json()["detail"]["code"] == "eval_case_second_reviewer_required"
+
+        barrier = Barrier(2)
+
+        def approve_case() -> tuple[int, dict[str, object]]:
+            barrier.wait()
+            response = client.post(
+                f"/api/v1/admin/subject-quality/eval-cases/{eval_case_id}/approve",
+                json={"expected_version": 1},
+                headers={"Authorization": "Bearer admin-token"},
+            )
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            approvals = tuple(executor.map(lambda _: approve_case(), range(2)))
+        assert sorted(status_code for status_code, _ in approvals) == [200, 409]
+        approved_case = next(body for status_code, body in approvals if status_code == 200)
+        assert approved_case["state"] == "approved"
+        assert approved_case["version"] == 2
+
+        second_question = detail["questions"][1]
+        second_started = client.post(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{second_question['id']}/start",
+            json={"expected_version": second_question["version"]},
+            headers=REVIEWER_HEADERS,
+        )
+        assert second_started.status_code == 200
+        second_approved = client.post(
+            f"/api/v1/admin/review-papers/{job_id}/questions/{second_question['id']}/approve",
+            json={
+                "expected_version": second_started.json()["version"],
+                "note": "Confirmed as a second stable quality-evaluation example.",
+            },
+            headers=REVIEWER_HEADERS,
+        )
+        assert second_approved.status_code == 200
+        second_feedback_id = UUID(second_approved.json()["quality_feedback_id"])
+        second_feedback = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={
+                "candidate_id": second_question["technical_details"]["candidate_id"],
+                "limit": 10,
+            },
+            headers=REVIEWER_HEADERS,
+        ).json()["items"][0]
+        second_expected_codes = sorted(
+            finding["code"]
+            for finding in second_feedback["findings_at_action"]["findings"]
+            if finding["status"] != "pass"
+        )
+        second_promoted = client.post(
+            f"/api/v1/admin/subject-quality/feedback/{second_feedback_id}/promote",
+            json={
+                "expected_status": second_feedback["findings_at_action"]["overall_status"],
+                "expected_finding_codes": second_expected_codes,
+                "defect_category": "no_defect",
+            },
+            headers={
+                **REVIEWER_HEADERS,
+                "Idempotency-Key": "promote-confirmed-quality-2",
+            },
+        )
+        assert second_promoted.status_code == 201
+        second_eval_case_id = UUID(second_promoted.json()["eval_case_id"])
+        second_case_approved = client.post(
+            f"/api/v1/admin/subject-quality/eval-cases/{second_eval_case_id}/approve",
+            json={"expected_version": 1},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert second_case_approved.status_code == 200
+
+        exported = client.get(
+            "/api/v1/admin/subject-quality/eval-cases/export",
+            params={"limit": 10, "offset": 0},
+            headers=REVIEWER_HEADERS,
+        )
+        assert exported.status_code == 200
+        export_body = exported.json()
+        assert export_body["schema_version"] == "subject-quality-eval-export.v1"
+        exported_case = next(
+            item for item in export_body["cases"] if item["eval_case_id"] == str(eval_case_id)
+        )
+        assert exported_case["expected"]["status"] == promotion_body["expected_status"]
+        assert "note" not in str(exported_case).lower()
+        assert "pdf_bytes" not in str(exported_case).lower()
+        assert "secret" not in str(exported_case).lower()
+        assert (
+            client.get(
+                "/api/v1/admin/subject-quality/eval-cases/export",
+                params={"limit": 101},
+                headers=REVIEWER_HEADERS,
+            ).status_code
+            == 422
+        )
+        assert (
+            client.get(
+                "/api/v1/admin/subject-quality/eval-cases/export",
+                params={"offset": 100_001},
+                headers=REVIEWER_HEADERS,
+            ).status_code
+            == 422
+        )
+        assert client.get("/api/v1/admin/subject-quality/feedback", headers={}).status_code == 401
+        missing_id = UUID(int=26_999_999)
+        assert (
+            client.post(
+                f"/api/v1/admin/subject-quality/feedback/{missing_id}/promote",
+                json=promotion_body,
+                headers={**REVIEWER_HEADERS, "Idempotency-Key": "missing-feedback"},
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                f"/api/v1/admin/subject-quality/eval-cases/{missing_id}/approve",
+                json={"expected_version": 1},
+                headers=REVIEWER_HEADERS,
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                "/api/v1/admin/subject-quality/eval-runs",
+                json={"case_ids": [str(missing_id)]},
+                headers=REVIEWER_HEADERS,
+            ).status_code
+            == 404
+        )
+        assert (
+            client.get(
+                f"/api/v1/admin/subject-quality/eval-runs/{missing_id}",
+                headers=REVIEWER_HEADERS,
+            ).status_code
+            == 404
+        )
+
+        replayed = client.post(
+            "/api/v1/admin/subject-quality/eval-runs",
+            json={"case_ids": [str(eval_case_id)]},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert replayed.status_code == 201, replayed.json()
+        assert replayed.json()["runner_version"] == "subject-quality-eval-runner.v1"
+        assert replayed.json()["results"][0]["outcome"] == "unavailable"
+        assert replayed.json()["results"][0]["passed"] is False
+        assert replayed.json()["results"][0]["fingerprint"].startswith("sha256:")
+        assert replayed.json()["results"][0]["validator_versions"]
+        run_id = UUID(replayed.json()["run_id"])
+        fetched_run = client.get(
+            f"/api/v1/admin/subject-quality/eval-runs/{run_id}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert fetched_run.status_code == 200
+        assert fetched_run.json()["request_fingerprint"] == replayed.json()["request_fingerprint"]
+        duplicate_run = client.post(
+            "/api/v1/admin/subject-quality/eval-runs",
+            json={"case_ids": [str(eval_case_id)]},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert duplicate_run.status_code == 201
+        assert duplicate_run.json()["deduplicated"] is True
+        overlapping_run = client.post(
+            "/api/v1/admin/subject-quality/eval-runs",
+            json={"case_ids": [str(eval_case_id), str(second_eval_case_id)]},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert overlapping_run.status_code == 201, overlapping_run.json()
+        assert len(overlapping_run.json()["results"]) == 2
+        first_overlapping_result = next(
+            result
+            for result in overlapping_run.json()["results"]
+            if result["eval_case_id"] == str(eval_case_id)
+        )
+        assert (
+            first_overlapping_result["fingerprint"] != replayed.json()["results"][0]["fingerprint"]
+        )
+
+    async def inspect_and_attack_append_only_state() -> tuple[int, int, int, int]:
+        engine = create_async_engine(aggregate_seed.database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                counts = (
+                    int(
+                        await session.scalar(
+                            select(func.count(SubjectQualityFeedbackModel.id)).where(
+                                SubjectQualityFeedbackModel.id == feedback_id
+                            )
+                        )
+                        or 0
+                    ),
+                    int(
+                        await session.scalar(
+                            select(
+                                func.count(SubjectQualityEvalCaseVersionModel.eval_case_id)
+                            ).where(SubjectQualityEvalCaseVersionModel.eval_case_id == eval_case_id)
+                        )
+                        or 0
+                    ),
+                    int(
+                        await session.scalar(
+                            select(func.count(SubjectQualityEvalRunModel.id)).where(
+                                SubjectQualityEvalRunModel.id == run_id
+                            )
+                        )
+                        or 0
+                    ),
+                    int(
+                        await session.scalar(
+                            select(func.count(SubjectQualityEvalResultModel.id)).where(
+                                SubjectQualityEvalResultModel.eval_run_id == run_id
+                            )
+                        )
+                        or 0
+                    ),
+                )
+            attacks = (
+                (
+                    "UPDATE subject_quality_feedback SET note = 'rewritten' WHERE id = :id",
+                    feedback_id,
+                ),
+                ("DELETE FROM subject_quality_feedback WHERE id = :id", feedback_id),
+                (
+                    "UPDATE subject_quality_eval_case_versions SET state = 'draft' "
+                    "WHERE eval_case_id = :id AND version = 2",
+                    eval_case_id,
+                ),
+                (
+                    "DELETE FROM subject_quality_eval_case_versions WHERE eval_case_id = :id",
+                    eval_case_id,
+                ),
+                ("DELETE FROM subject_quality_eval_runs WHERE id = :id", run_id),
+                ("DELETE FROM subject_quality_eval_results WHERE eval_run_id = :id", run_id),
+            )
+            for statement, identifier in attacks:
+                async with sessions() as session:
+                    with pytest.raises(DBAPIError):
+                        await session.execute(text(statement), {"id": identifier})
+                    await session.rollback()
+            return counts
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(inspect_and_attack_append_only_state()) == (1, 2, 1, 1)
 
 
 @pytest.mark.integration
@@ -1408,10 +1925,10 @@ def test_exact_slot_without_active_reviewed_context_fails_safely_without_generic
 
 
 @pytest.mark.integration
-def test_guarded_downgrade_refuses_to_destroy_durable_teacher_paper_lineage(
+def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
     aggregate_seed: Seed,
 ) -> None:
-    with pytest.raises(RuntimeError, match="durable teacher paper lineage"):
+    with pytest.raises(RuntimeError, match="subject-quality evidence"):
         command.downgrade(
             _config_for_database(aggregate_seed.database_url),
             "0024_subject_quality_validation_scope",

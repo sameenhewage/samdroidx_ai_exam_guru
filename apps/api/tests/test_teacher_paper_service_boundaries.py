@@ -50,6 +50,7 @@ from exam_guru_api.teacher_papers.schemas import (
     ReviewPaperCreateDraftRequest,
     ReviewQuestionEditRequest,
     ReviewQuestionRegenerateRequest,
+    ReviewQuestionRejectRequest,
     ReviewQuestionResponse,
     TeacherPaperJobCreateRequest,
 )
@@ -94,6 +95,7 @@ class DummySession:
     def __init__(self) -> None:
         self.added: list[object] = []
         self.commits = 0
+        self.flushes = 0
         self.rollbacks = 0
 
     def add(self, value: object) -> None:
@@ -101,6 +103,9 @@ class DummySession:
 
     async def commit(self) -> None:
         self.commits += 1
+
+    async def flush(self) -> None:
+        self.flushes += 1
 
     async def rollback(self) -> None:
         self.rollbacks += 1
@@ -742,13 +747,15 @@ def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration
                 idempotency_key=f"replacement-{run_status}",
                 actor_id=ACTOR_ID,
                 reason="Auditable replacement.",
+                commit=run_status == GenerationRunStatus.SUCCEEDED.value,
             )
         )
         modes.extend(GenerationService.modes)
         GenerationService.modes.clear()
         assert replacement.current_generation_run_id == expected_run
         assert repository.links == [expected_run]
-        assert dummy.commits == 1
+        assert dummy.commits == int(run_status == GenerationRunStatus.SUCCEEDED.value)
+        assert dummy.flushes == int(run_status == GenerationRunStatus.FAILED.value)
     assert modes == ["retry", "create"]
 
 
@@ -1387,6 +1394,17 @@ class SuccessfulCandidateService:
         self.actions.append("reject")
 
 
+class SuccessfulFeedbackService:
+    calls: ClassVar[list[str]] = []
+
+    def __init__(self, _session: object) -> None:
+        pass
+
+    async def record_action(self, **kwargs: object) -> object:
+        self.calls.append(str(kwargs["action"]))
+        return type("FeedbackMarker", (), {"id": UUID(int=25_930_099)})()
+
+
 class RaisingCandidateService:
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -1434,7 +1452,8 @@ def edit_request() -> ReviewQuestionEditRequest:
                 "marks": 1,
                 "marking_guide": ["Selects B."],
             },
-            "reason": "Clarify wording.",
+            "reason_code": "ambiguous_wording",
+            "note": "Clarify wording.",
             "expected_version": 3,
         }
     )
@@ -1473,6 +1492,24 @@ def test_review_get_candidate_and_draft_preconditions_fail_closed() -> None:
     detail = asyncio.run(service.get(JOB_ID, principal=principal()))
     assert detail.draft is not None
     assert detail.draft.draft_id == UUID(int=802)
+
+
+def test_review_source_requires_exact_candidate_and_validation_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_slot = paper_slot()
+    repository = ReviewRepository(StoredTeacherPaper(job(), (active_slot,)), active_slot)
+    service = review_service(repository)
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(service._review_source(JOB_ID, active_slot.id))
+
+    valid_source = review_slot_source(validation_status="warn")
+
+    async def sources(_job_id: UUID) -> tuple[ReviewSlotSource, ...]:
+        return (valid_source,)
+
+    monkeypatch.setattr(repository, "review_sources", sources)
+    assert asyncio.run(service._review_source(JOB_ID, valid_source.slot.id)) is valid_source
 
 
 def test_review_actions_normalize_candidate_version_state_and_revalidation_errors(
@@ -1518,8 +1555,11 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
             lambda: service.reject(
                 JOB_ID,
                 RUN_ID,
-                expected_version=3,
-                reason="Reject.",
+                ReviewQuestionRejectRequest(
+                    expected_version=3,
+                    reason_code="other_quality_issue",
+                    note="Reject.",
+                ),
                 principal=principal(),
             ),
         ),
@@ -1594,6 +1634,18 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
     service._repository = repository  # type: ignore[assignment]
     candidate_service = SuccessfulCandidateService()
     monkeypatch.setattr(service_module, "ReviewCandidateService", lambda _: candidate_service)
+    SuccessfulFeedbackService.calls.clear()
+    monkeypatch.setattr(
+        service_module,
+        "SubjectQualityFeedbackService",
+        SuccessfulFeedbackService,
+    )
+    feedback_source = review_slot_source(validation_status="warn")
+
+    async def source_for_slot(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return feedback_source
+
+    monkeypatch.setattr(service, "_review_source", source_for_slot)
 
     async def aggregate_counts(_repository: object, _job_id: UUID) -> dict[str, int]:
         return {
@@ -1606,7 +1658,12 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
             "cost_microusd": 20,
         }
 
-    marker = cast(ReviewQuestionResponse, object())
+    class QuestionMarker:
+        def model_copy(self, *, update: dict[str, object]) -> object:
+            assert "quality_feedback_id" in update
+            return self
+
+    marker = cast(ReviewQuestionResponse, QuestionMarker())
 
     async def get_question(
         _job_id: UUID,
@@ -1639,7 +1696,7 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
                 JOB_ID,
                 RUN_ID,
                 expected_version=3,
-                note="Reviewed.",
+                note=None,
                 principal=principal(),
             )
         )
@@ -1650,8 +1707,11 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
             service.reject(
                 JOB_ID,
                 RUN_ID,
-                expected_version=4,
-                reason="Replace this question.",
+                ReviewQuestionRejectRequest(
+                    expected_version=4,
+                    reason_code="other_quality_issue",
+                    note="Replace this question.",
+                ),
                 principal=principal(),
             )
         )
@@ -1666,7 +1726,61 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
         PaperSlotStatus.REJECTED.value,
     ]
     assert repository.slot_updates[1]["requires_revalidation"] is True
-    assert dummy_session.commits == 8
+    assert SuccessfulFeedbackService.calls == ["edit", "reject"]
+    assert dummy_session.commits == 4
+
+
+def test_meaningful_approval_confirmation_appends_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.teacher_papers import service as service_module
+
+    active_job = job(status=PaperJobStatus.READY_FOR_REVIEW.value)
+    active_slot = paper_slot(status=PaperSlotStatus.IN_REVIEW.value)
+    active_slot.current_candidate_id = UUID(int=25_930_001)
+    repository = ReviewRepository(StoredTeacherPaper(active_job, (active_slot,)), active_slot)
+    service = review_service(repository)
+    candidate_service = SuccessfulCandidateService()
+    monkeypatch.setattr(service_module, "ReviewCandidateService", lambda _: candidate_service)
+    SuccessfulFeedbackService.calls.clear()
+    monkeypatch.setattr(
+        service_module,
+        "SubjectQualityFeedbackService",
+        SuccessfulFeedbackService,
+    )
+
+    async def source_for_slot(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return review_slot_source(validation_status="warn")
+
+    async def sync_slot(*_args: object, **_kwargs: object) -> None:
+        pass
+
+    class QuestionMarker:
+        def model_copy(self, *, update: dict[str, object]) -> object:
+            assert update["quality_feedback_id"] == UUID(int=25_930_099)
+            return self
+
+    async def get_question(
+        _job_id: UUID,
+        _question_id: UUID,
+        _principal: Principal,
+    ) -> ReviewQuestionResponse:
+        return cast(ReviewQuestionResponse, QuestionMarker())
+
+    monkeypatch.setattr(service, "_review_source", source_for_slot)
+    monkeypatch.setattr(service, "_sync_slot", sync_slot)
+    monkeypatch.setattr(service, "_get_question", get_question)
+    result = asyncio.run(
+        service.approve(
+            JOB_ID,
+            RUN_ID,
+            expected_version=3,
+            note="Answer, marking, wording, and source confirmed.",
+            principal=principal(),
+        )
+    )
+    assert isinstance(result, QuestionMarker)
+    assert SuccessfulFeedbackService.calls == ["approve"]
 
 
 def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
@@ -1676,6 +1790,21 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
 
     from exam_guru_api.teacher_papers import service as service_module
 
+    SuccessfulFeedbackService.calls.clear()
+    monkeypatch.setattr(
+        service_module,
+        "SubjectQualityFeedbackService",
+        SuccessfulFeedbackService,
+    )
+
+    async def source_for_slot(
+        _service: TeacherPaperReviewService,
+        _job_id: UUID,
+        _slot_id: UUID,
+    ) -> ReviewSlotSource:
+        return review_slot_source(validation_status="warn")
+
+    monkeypatch.setattr(TeacherPaperReviewService, "_review_source", source_for_slot)
     active_job = job(status=PaperJobStatus.READY_FOR_REVIEW.value, version=4)
     active_job.paper_blueprint_id = UUID(int=901)
     active_slot = paper_slot(status=PaperSlotStatus.APPROVED.value)
@@ -1721,7 +1850,8 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
                 RUN_ID,
                 ReviewQuestionRegenerateRequest(
                     expected_version=4,
-                    reason="Replace safely.",
+                    reason_code="answer_incorrect",
+                    note="Replace safely.",
                 ),
                 idempotency_key="replacement-key",
                 principal=principal(),
@@ -1750,7 +1880,8 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
             RUN_ID,
             ReviewQuestionRegenerateRequest(
                 expected_version=4,
-                reason="Replace safely.",
+                reason_code="answer_incorrect",
+                note="Replace safely.",
             ),
             idempotency_key="replacement-key-2",
             principal=principal(),
@@ -1811,7 +1942,8 @@ def test_regeneration_and_question_lookup_version_and_not_found_guards(
                 RUN_ID,
                 ReviewQuestionRegenerateRequest(
                     expected_version=3,
-                    reason="Replace.",
+                    reason_code="answer_incorrect",
+                    note="Replace.",
                 ),
                 idempotency_key="replacement-key",
                 principal=principal(),

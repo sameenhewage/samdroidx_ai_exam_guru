@@ -28,11 +28,8 @@ from exam_guru_api.papers.publication_service import (
     PaperIntegrityError,
 )
 from exam_guru_api.papers.repository import ReviewCandidateNotFoundError
-from exam_guru_api.papers.schemas import (
-    ReviewCandidateApproveRequest,
-    ReviewCandidateRejectRequest,
-    ReviewCandidateStartRequest,
-)
+from exam_guru_api.papers.schemas import ReviewCandidateStartRequest
+from exam_guru_api.subject_quality.service import SubjectQualityFeedbackPersistenceError
 from exam_guru_api.teacher_papers.jobs import PaperGenerationDispatcher
 from exam_guru_api.teacher_papers.repository import (
     TeacherPaperJobNotFoundError,
@@ -44,9 +41,11 @@ from exam_guru_api.teacher_papers.schemas import (
     ReviewPaperDetailResponse,
     ReviewPaperDraftCreatedResponse,
     ReviewPaperListResponse,
+    ReviewQuestionApproveRequest,
     ReviewQuestionEditRequest,
     ReviewQuestionRegenerateRequest,
     ReviewQuestionRegenerationResponse,
+    ReviewQuestionRejectRequest,
     ReviewQuestionResponse,
 )
 from exam_guru_api.teacher_papers.service import (
@@ -252,7 +251,7 @@ async def start_teacher_review_question(
 async def approve_teacher_review_question(
     paper_job_id: UUID,
     question_id: UUID,
-    request: ReviewCandidateApproveRequest,
+    request: ReviewQuestionApproveRequest,
     principal: ReviewPrincipal,
     session: DatabaseSession,
     paper_dispatcher: PaperDispatcher,
@@ -286,7 +285,7 @@ async def approve_teacher_review_question(
 async def reject_teacher_review_question(
     paper_job_id: UUID,
     question_id: UUID,
-    request: ReviewCandidateRejectRequest,
+    request: ReviewQuestionRejectRequest,
     principal: ReviewPrincipal,
     session: DatabaseSession,
     paper_dispatcher: PaperDispatcher,
@@ -303,8 +302,7 @@ async def reject_teacher_review_question(
         ).reject(
             paper_job_id,
             question_id,
-            expected_version=request.expected_version,
-            reason=request.reason,
+            request,
             principal=principal,
         ),
     )
@@ -395,6 +393,12 @@ async def _execute_review[ResultT](
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "review_question_not_found"},
+        ) from error
+    except SubjectQualityFeedbackPersistenceError as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "quality_feedback_persistence_conflict"},
         ) from error
     except TeacherPaperVersionConflictError as error:
         raise HTTPException(

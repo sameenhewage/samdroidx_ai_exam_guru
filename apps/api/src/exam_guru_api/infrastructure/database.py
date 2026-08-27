@@ -17,6 +17,7 @@ def get_metadata() -> MetaData:
     from exam_guru_api.papers import models as paper_models
     from exam_guru_api.papers import publication_models as paper_publication_models
     from exam_guru_api.storage_reconciliation import models as storage_reconciliation_models
+    from exam_guru_api.subject_quality import models as subject_quality_models
     from exam_guru_api.teacher_papers import models as teacher_paper_models
     from exam_guru_api.validation import models as validation_models
 
@@ -41,6 +42,10 @@ def get_metadata() -> MetaData:
         storage_reconciliation_models.StorageReconciliationStateModel,
         storage_reconciliation_models.StorageReconciliationRunModel,
         storage_reconciliation_models.StorageOrphanFindingModel,
+        subject_quality_models.SubjectQualityFeedbackModel,
+        subject_quality_models.SubjectQualityEvalCaseVersionModel,
+        subject_quality_models.SubjectQualityEvalRunModel,
+        subject_quality_models.SubjectQualityEvalResultModel,
         teacher_paper_models.TeacherPaperJobModel,
         teacher_paper_models.TeacherPaperSlotModel,
         teacher_paper_models.TeacherPaperSlotRunModel,

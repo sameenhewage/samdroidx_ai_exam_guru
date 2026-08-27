@@ -354,7 +354,66 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   ).toContainText("Grade 7 · Maths · English");
 });
 
-test("contract 9: technical diagnostics stay hidden until Advanced or Technical details opens", async ({
+test("contract 9: a correction can become approved review evidence without automatic learning", async ({
+  page,
+}) => {
+  const fixture = await authenticatedFixture(page, "reviewer");
+  await page.goto("/admin/review-approve");
+  const question = page.getByRole("region", { name: "Question 1 of 1" });
+  await question.getByRole("button", { name: "Start review" }).click();
+  await question.getByRole("button", { name: "Edit" }).click();
+
+  const editor = page.getByRole("dialog", { name: "Edit question 1" });
+  await editor
+    .getByRole("textbox", { name: "Question", exact: true })
+    .fill("What fraction is shaded when three of four equal parts are shaded?");
+  await editor
+    .getByLabel("Why are you changing this question?")
+    .selectOption("ambiguous_wording");
+  await editor.getByLabel("Optional note").fill("The original had two possible readings.");
+  await editor.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Question changes saved. A fresh check is required.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Add to quality examples" }).click();
+  const promotion = page.getByRole("dialog", {
+    name: "Add review evidence to quality examples",
+  });
+  await expect(promotion).toContainText("does not train or automatically change the model");
+  await expect(promotion.locator("details")).not.toHaveAttribute("open", "");
+  await promotion.getByLabel("Expected check result").selectOption("warn");
+  await promotion.getByLabel("Defect category").selectOption("language_clarity");
+  await promotion.getByRole("button", { name: "Create draft quality example" }).click();
+  await expect(
+    page.getByText("Draft quality example created. A second reviewer or administrator must approve it."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Approve quality example" }).click();
+  await expect(page.getByText("Quality example approved for offline evaluation.")).toBeVisible();
+
+  const edit = fixture.requests.find(
+    (request) =>
+      request.method === "PATCH" &&
+      request.path.endsWith(`/questions/${fixture.reviewQuestionId}`),
+  );
+  expect(edit?.body).toMatchObject({
+    note: "The original had two possible readings.",
+    reason_code: "ambiguous_wording",
+  });
+  const promote = fixture.requests.find(
+    (request) => request.method === "POST" && request.path.endsWith("/promote"),
+  );
+  expect(promote?.body).toEqual({
+    defect_category: "language_clarity",
+    expected_finding_codes: ["subject.language.ambiguous_wording"],
+    expected_status: "warn",
+  });
+  expect(
+    fixture.requests.some(
+      (request) => request.method === "POST" && request.path.endsWith("/approve"),
+    ),
+  ).toBe(true);
+});
+
+test("contract 10: technical diagnostics stay hidden until Advanced or Technical details opens", async ({
   page,
 }) => {
   await authenticatedFixture(page, "admin");

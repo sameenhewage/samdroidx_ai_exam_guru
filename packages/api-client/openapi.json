@@ -1272,6 +1272,22 @@
         "title": "ContextTrust",
         "type": "string"
       },
+      "CorrectionReasonCode": {
+        "enum": [
+          "answer_incorrect",
+          "ambiguous_wording",
+          "outside_scope",
+          "source_not_supported",
+          "marking_inconsistent",
+          "language_quality",
+          "distractor_quality",
+          "duplicate_content",
+          "unsafe_content",
+          "other_quality_issue"
+        ],
+        "title": "CorrectionReasonCode",
+        "type": "string"
+      },
       "CurriculumLabelResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1785,6 +1801,23 @@
         ],
         "title": "CurriculumVersionUpdate",
         "type": "object"
+      },
+      "DefectCategory": {
+        "enum": [
+          "no_defect",
+          "answer_correctness",
+          "multiple_correct_answers",
+          "marking_consistency",
+          "scope_alignment",
+          "source_grounding",
+          "language_clarity",
+          "distractor_quality",
+          "duplicate_content",
+          "security_residue",
+          "other"
+        ],
+        "title": "DefectCategory",
+        "type": "string"
       },
       "DependencyChecks": {
         "properties": {
@@ -2385,6 +2418,23 @@
         "title": "EmbeddingStatusCountsResponse",
         "type": "object"
       },
+      "EvalCaseState": {
+        "enum": [
+          "draft",
+          "approved"
+        ],
+        "title": "EvalCaseState",
+        "type": "string"
+      },
+      "EvalComparisonOutcome": {
+        "enum": [
+          "pass",
+          "regression",
+          "unavailable"
+        ],
+        "title": "EvalComparisonOutcome",
+        "type": "string"
+      },
       "ExactFraction": {
         "additionalProperties": false,
         "properties": {
@@ -2766,6 +2816,25 @@
         ],
         "title": "FailureCodeCountResponse",
         "type": "object"
+      },
+      "FeedbackAction": {
+        "enum": [
+          "edit",
+          "reject",
+          "regenerate",
+          "approve"
+        ],
+        "title": "FeedbackAction",
+        "type": "string"
+      },
+      "FindingStatus": {
+        "enum": [
+          "pass",
+          "warn",
+          "fail"
+        ],
+        "title": "FindingStatus",
+        "type": "string"
       },
       "FullSubjectScopeRequest": {
         "additionalProperties": false,
@@ -8763,6 +8832,35 @@
         "title": "ReviewPaperTechnicalDetailsResponse",
         "type": "object"
       },
+      "ReviewQuestionApproveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 768,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ReviewQuestionApproveRequest",
+        "type": "object"
+      },
       "ReviewQuestionEditRequest": {
         "additionalProperties": false,
         "properties": {
@@ -8775,16 +8873,26 @@
             "title": "Expected Version",
             "type": "integer"
           },
-          "reason": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Reason",
-            "type": "string"
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 768,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/CorrectionReasonCode"
           }
         },
         "required": [
+          "reason_code",
           "content",
-          "reason",
           "expected_version"
         ],
         "title": "ReviewQuestionEditRequest",
@@ -8818,16 +8926,26 @@
             "title": "Expected Version",
             "type": "integer"
           },
-          "reason": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Reason",
-            "type": "string"
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 768,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/CorrectionReasonCode"
           }
         },
         "required": [
-          "expected_version",
-          "reason"
+          "reason_code",
+          "expected_version"
         ],
         "title": "ReviewQuestionRegenerateRequest",
         "type": "object"
@@ -8843,6 +8961,11 @@
           "paper_id": {
             "format": "uuid",
             "title": "Paper Id",
+            "type": "string"
+          },
+          "quality_feedback_id": {
+            "format": "uuid",
+            "title": "Quality Feedback Id",
             "type": "string"
           },
           "question_id": {
@@ -8865,9 +8988,43 @@
           "paper_id",
           "question_id",
           "status",
-          "version"
+          "version",
+          "quality_feedback_id"
         ],
         "title": "ReviewQuestionRegenerationResponse",
+        "type": "object"
+      },
+      "ReviewQuestionRejectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 768,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/CorrectionReasonCode"
+          }
+        },
+        "required": [
+          "reason_code",
+          "expected_version"
+        ],
+        "title": "ReviewQuestionRejectRequest",
         "type": "object"
       },
       "ReviewQuestionResponse": {
@@ -8914,6 +9071,18 @@
             },
             "title": "Options",
             "type": "array"
+          },
+          "quality_feedback_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Feedback Id"
           },
           "requires_revalidation": {
             "default": false,
@@ -10311,6 +10480,839 @@
           "lessons"
         ],
         "title": "SubjectOption",
+        "type": "object"
+      },
+      "SubjectQualityEvalApprovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "SubjectQualityEvalApprovalRequest",
+        "type": "object"
+      },
+      "SubjectQualityEvalCaseListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectQualityEvalCaseResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "SubjectQualityEvalCaseListResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalCaseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "can_approve": {
+            "title": "Can Approve",
+            "type": "boolean"
+          },
+          "case_fingerprint": {
+            "title": "Case Fingerprint",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "defect_category": {
+            "$ref": "#/components/schemas/DefectCategory"
+          },
+          "eval_case_id": {
+            "format": "uuid",
+            "title": "Eval Case Id",
+            "type": "string"
+          },
+          "expected_finding_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Finding Codes",
+            "type": "array"
+          },
+          "expected_status": {
+            "$ref": "#/components/schemas/FindingStatus"
+          },
+          "promoted_by": {
+            "format": "uuid",
+            "title": "Promoted By",
+            "type": "string"
+          },
+          "source_feedback_id": {
+            "format": "uuid",
+            "title": "Source Feedback Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/EvalCaseState"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "eval_case_id",
+          "version",
+          "state",
+          "source_feedback_id",
+          "expected_status",
+          "expected_finding_codes",
+          "defect_category",
+          "case_fingerprint",
+          "promoted_by",
+          "approved_by",
+          "created_at",
+          "approved_at",
+          "can_approve"
+        ],
+        "title": "SubjectQualityEvalCaseResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalExportCaseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blueprint": {
+            "additionalProperties": true,
+            "title": "Blueprint",
+            "type": "object"
+          },
+          "candidate": {
+            "additionalProperties": true,
+            "title": "Candidate",
+            "type": "object"
+          },
+          "case_fingerprint": {
+            "title": "Case Fingerprint",
+            "type": "string"
+          },
+          "duplicate_references": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Duplicate References",
+            "type": "array"
+          },
+          "eval_case_id": {
+            "format": "uuid",
+            "title": "Eval Case Id",
+            "type": "string"
+          },
+          "expected": {
+            "$ref": "#/components/schemas/SubjectQualityEvalExportExpectedResponse"
+          },
+          "generation_versions": {
+            "additionalProperties": true,
+            "title": "Generation Versions",
+            "type": "object"
+          },
+          "grounding_sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Grounding Sources",
+            "type": "array"
+          },
+          "source_feedback_id": {
+            "format": "uuid",
+            "title": "Source Feedback Id",
+            "type": "string"
+          },
+          "subject_scope": {
+            "additionalProperties": true,
+            "title": "Subject Scope",
+            "type": "object"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "eval_case_id",
+          "version",
+          "source_feedback_id",
+          "case_fingerprint",
+          "subject_scope",
+          "candidate",
+          "blueprint",
+          "grounding_sources",
+          "duplicate_references",
+          "generation_versions",
+          "expected"
+        ],
+        "title": "SubjectQualityEvalExportCaseResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalExportExpectedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "defect_category": {
+            "$ref": "#/components/schemas/DefectCategory"
+          },
+          "finding_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Finding Codes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FindingStatus"
+          }
+        },
+        "required": [
+          "status",
+          "finding_codes",
+          "defect_category"
+        ],
+        "title": "SubjectQualityEvalExportExpectedResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalExportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectQualityEvalExportCaseResponse"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "runner_version": {
+            "const": "subject-quality-eval-runner.v1",
+            "title": "Runner Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "subject-quality-eval-export.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "runner_version",
+          "cases",
+          "limit",
+          "offset",
+          "next_offset"
+        ],
+        "title": "SubjectQualityEvalExportResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalResultResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_finding_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actual Finding Codes",
+            "type": "array"
+          },
+          "actual_status": {
+            "$ref": "#/components/schemas/FindingStatus"
+          },
+          "eval_case_id": {
+            "format": "uuid",
+            "title": "Eval Case Id",
+            "type": "string"
+          },
+          "eval_case_version": {
+            "title": "Eval Case Version",
+            "type": "integer"
+          },
+          "expected_finding_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Finding Codes",
+            "type": "array"
+          },
+          "expected_status": {
+            "$ref": "#/components/schemas/FindingStatus"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/EvalComparisonOutcome"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "pipeline_fingerprint": {
+            "title": "Pipeline Fingerprint",
+            "type": "string"
+          },
+          "pipeline_version": {
+            "title": "Pipeline Version",
+            "type": "string"
+          },
+          "report_fingerprint": {
+            "title": "Report Fingerprint",
+            "type": "string"
+          },
+          "validator_versions": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Validator Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "eval_case_id",
+          "eval_case_version",
+          "expected_status",
+          "expected_finding_codes",
+          "actual_status",
+          "actual_finding_codes",
+          "outcome",
+          "passed",
+          "pipeline_version",
+          "pipeline_fingerprint",
+          "validator_versions",
+          "report_fingerprint",
+          "fingerprint"
+        ],
+        "title": "SubjectQualityEvalResultResponse",
+        "type": "object"
+      },
+      "SubjectQualityEvalRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "case_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Case Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case_ids"
+        ],
+        "title": "SubjectQualityEvalRunRequest",
+        "type": "object"
+      },
+      "SubjectQualityEvalRunResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "deduplicated": {
+            "default": false,
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "passed_count": {
+            "title": "Passed Count",
+            "type": "integer"
+          },
+          "pipeline_fingerprint": {
+            "title": "Pipeline Fingerprint",
+            "type": "string"
+          },
+          "pipeline_version": {
+            "title": "Pipeline Version",
+            "type": "string"
+          },
+          "regression_count": {
+            "title": "Regression Count",
+            "type": "integer"
+          },
+          "request_fingerprint": {
+            "title": "Request Fingerprint",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectQualityEvalResultResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runner_version": {
+            "const": "subject-quality-eval-runner.v1",
+            "title": "Runner Version",
+            "type": "string"
+          },
+          "unavailable_count": {
+            "title": "Unavailable Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "runner_version",
+          "pipeline_version",
+          "pipeline_fingerprint",
+          "request_fingerprint",
+          "created_by",
+          "created_at",
+          "results",
+          "passed_count",
+          "regression_count",
+          "unavailable_count"
+        ],
+        "title": "SubjectQualityEvalRunResponse",
+        "type": "object"
+      },
+      "SubjectQualityFeedbackListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectQualityFeedbackResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "SubjectQualityFeedbackListResponse",
+        "type": "object"
+      },
+      "SubjectQualityFeedbackResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FeedbackAction"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_content": {
+            "additionalProperties": true,
+            "title": "Current Content",
+            "type": "object"
+          },
+          "findings_at_action": {
+            "additionalProperties": true,
+            "title": "Findings At Action",
+            "type": "object"
+          },
+          "fingerprints": {
+            "$ref": "#/components/schemas/SubjectQualityFingerprintResponse"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lineage": {
+            "$ref": "#/components/schemas/SubjectQualityLineageResponse"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "original_content": {
+            "additionalProperties": true,
+            "title": "Original Content",
+            "type": "object"
+          },
+          "promoted_eval_case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promoted Eval Case Id"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SubjectQualityScopeResponse"
+          }
+        },
+        "required": [
+          "id",
+          "schema_version",
+          "action",
+          "reason_code",
+          "note",
+          "actor_id",
+          "created_at",
+          "original_content",
+          "current_content",
+          "findings_at_action",
+          "scope",
+          "lineage",
+          "fingerprints"
+        ],
+        "title": "SubjectQualityFeedbackResponse",
+        "type": "object"
+      },
+      "SubjectQualityFingerprintResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current_content": {
+            "title": "Current Content",
+            "type": "string"
+          },
+          "feedback": {
+            "title": "Feedback",
+            "type": "string"
+          },
+          "findings": {
+            "title": "Findings",
+            "type": "string"
+          },
+          "original_content": {
+            "title": "Original Content",
+            "type": "string"
+          },
+          "provenance": {
+            "title": "Provenance",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "original_content",
+          "current_content",
+          "findings",
+          "scope",
+          "provenance",
+          "feedback"
+        ],
+        "title": "SubjectQualityFingerprintResponse",
+        "type": "object"
+      },
+      "SubjectQualityLineageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "candidate_revision": {
+            "title": "Candidate Revision",
+            "type": "integer"
+          },
+          "candidate_version": {
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "generation_attempt_id": {
+            "format": "uuid",
+            "title": "Generation Attempt Id",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "format": "uuid",
+            "title": "Generation Run Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provenance": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_version": {
+            "title": "Provider Version",
+            "type": "string"
+          },
+          "replacement_generation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Generation Run Id"
+          },
+          "retrieval_version": {
+            "title": "Retrieval Version",
+            "type": "string"
+          },
+          "validation_run_id": {
+            "format": "uuid",
+            "title": "Validation Run Id",
+            "type": "string"
+          },
+          "validator_versions": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Validator Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "candidate_revision",
+          "candidate_version",
+          "generation_run_id",
+          "generation_attempt_id",
+          "validation_run_id",
+          "replacement_generation_run_id",
+          "prompt_version",
+          "provider",
+          "provider_version",
+          "model",
+          "model_version",
+          "retrieval_version",
+          "validator_versions",
+          "provenance"
+        ],
+        "title": "SubjectQualityLineageResponse",
+        "type": "object"
+      },
+      "SubjectQualityPromotionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "defect_category": {
+            "$ref": "#/components/schemas/DefectCategory"
+          },
+          "expected_finding_codes": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Expected Finding Codes",
+            "type": "array"
+          },
+          "expected_status": {
+            "$ref": "#/components/schemas/FindingStatus"
+          }
+        },
+        "required": [
+          "expected_status",
+          "expected_finding_codes",
+          "defect_category"
+        ],
+        "title": "SubjectQualityPromotionRequest",
+        "type": "object"
+      },
+      "SubjectQualityScopeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "lesson_id": {
+            "format": "uuid",
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "lesson_number": {
+            "title": "Lesson Number",
+            "type": "integer"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "subject_code": {
+            "title": "Subject Code",
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade",
+          "medium",
+          "subject_code",
+          "curriculum_version_id",
+          "unit_id",
+          "lesson_id",
+          "lesson_number"
+        ],
+        "title": "SubjectQualityScopeResponse",
         "type": "object"
       },
       "SubjectResponse": {
@@ -19411,7 +20413,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReviewCandidateApproveRequest"
+                "$ref": "#/components/schemas/ReviewQuestionApproveRequest"
               }
             }
           },
@@ -19628,7 +20630,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReviewCandidateRejectRequest"
+                "$ref": "#/components/schemas/ReviewQuestionRejectRequest"
               }
             }
           },
@@ -20389,6 +21391,633 @@
         "summary": "Trust Source Document",
         "tags": [
           "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/eval-cases": {
+      "get": {
+        "operationId": "list_subject_quality_eval_cases",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EvalCaseState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalCaseListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List latest immutable versions of private Studio golden eval cases",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/eval-cases/export": {
+      "get": {
+        "operationId": "export_subject_quality_eval_cases",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export a bounded stable JSON contract for the offline eval runner",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/eval-cases/{eval_case_id}/approve": {
+      "post": {
+        "operationId": "approve_subject_quality_eval_case",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectQualityEvalApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Append second-reviewer approval with compare-and-swap",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/eval-runs": {
+      "post": {
+        "operationId": "run_subject_quality_evals",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectQualityEvalRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1.0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimiterUnavailableResponse"
+                }
+              }
+            },
+            "description": "Authenticated cost limiter unavailable; the costly operation fails closed"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replay approved cases through the current configured validation pipeline",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/eval-runs/{run_id}": {
+      "get": {
+        "operationId": "get_subject_quality_eval_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one immutable deterministic subject-quality eval run",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/feedback": {
+      "get": {
+        "operationId": "list_subject_quality_feedback",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "candidate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "curriculum_version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Curriculum Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityFeedbackListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List append-only reviewer evidence inside the private Studio",
+        "tags": [
+          "private-studio-subject-quality"
+        ]
+      }
+    },
+    "/api/v1/admin/subject-quality/feedback/{feedback_id}/promote": {
+      "post": {
+        "operationId": "promote_subject_quality_feedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectQualityPromotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectQualityEvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Private Studio quality evidence was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Immutable lineage, idempotency, version, or second-review conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The bounded quality-evidence request is invalid"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Explicitly promote one feedback item to an immutable draft golden eval case",
+        "tags": [
+          "private-studio-subject-quality"
         ]
       }
     },

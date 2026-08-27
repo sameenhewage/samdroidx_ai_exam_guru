@@ -38,13 +38,31 @@ const reviewPaper = client.GET("/api/v1/admin/review-papers/{paper_job_id}", {
 const regenerateQuestion = client.POST(
   "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/regenerate",
   {
-    body: { expected_version: 4, reason: "Prepare and validate a replacement." },
+    body: {
+      expected_version: 4,
+      note: "Prepare and validate a replacement.",
+      reason_code: "answer_incorrect",
+    },
     params: {
       header: { "Idempotency-Key": "replacement-1" },
       path: {
         paper_job_id: "00000000-0000-0000-0000-000000000801",
         question_id: "00000000-0000-0000-0000-000000000811",
       },
+    },
+  },
+);
+const promoteFeedback = client.POST(
+  "/api/v1/admin/subject-quality/feedback/{feedback_id}/promote",
+  {
+    body: {
+      defect_category: "answer_correctness",
+      expected_finding_codes: ["subject.math.answer_mismatch"],
+      expected_status: "fail",
+    },
+    params: {
+      header: { "Idempotency-Key": "promote-feedback-1" },
+      path: { feedback_id: "00000000-0000-0000-0000-000000000812" },
     },
   },
 );
@@ -66,6 +84,7 @@ void paperJob;
 void paperProgress;
 void reviewPaper;
 void regenerateQuestion;
+void promoteFeedback;
 void intent;
 void health;
 void session;

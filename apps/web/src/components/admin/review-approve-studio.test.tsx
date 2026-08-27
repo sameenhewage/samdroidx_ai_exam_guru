@@ -13,6 +13,8 @@ type ReviewQuestionRegenerate = components["schemas"]["ReviewQuestionRegenerateR
 const paperId = "00000000-0000-0000-0000-000000000901";
 const draftId = "00000000-0000-0000-0000-000000000902";
 const replacementId = "00000000-0000-0000-0000-000000000914";
+const feedbackId = "00000000-0000-0000-0000-000000000915";
+const evalCaseId = "00000000-0000-0000-0000-000000000916";
 const questionIds = [
   "00000000-0000-0000-0000-000000000911",
   "00000000-0000-0000-0000-000000000912",
@@ -361,6 +363,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
           label: option.option_id,
           text: option.text,
         })),
+        quality_feedback_id: feedbackId,
         requires_revalidation: true,
         stem: body.content.stem,
         validation: {
@@ -389,11 +392,16 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
       return Response.json(approved);
     }
     if (request.method === "POST" && question && path.endsWith(`/questions/${question.id}/reject`)) {
-      const body = (await request.json()) as components["schemas"]["ReviewCandidateRejectRequest"];
-      if (body.expected_version !== question.version || !body.reason) {
+      const body = (await request.json()) as components["schemas"]["ReviewQuestionRejectRequest"];
+      if (body.expected_version !== question.version || !body.reason_code) {
         return Response.json({ detail: { code: "review_question_version_conflict" } }, { status: 409 });
       }
-      const rejected = { ...question, review_state: "rejected", version: question.version + 1 };
+      const rejected: ReviewQuestion = {
+        ...question,
+        quality_feedback_id: feedbackId,
+        review_state: "rejected",
+        version: question.version + 1,
+      };
       replaceQuestion(rejected);
       return Response.json(rejected);
     }
@@ -403,7 +411,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
       path.endsWith(`/questions/${question.id}/regenerate`)
     ) {
       const body = (await request.json()) as ReviewQuestionRegenerate;
-      if (body.expected_version !== question.aggregate_slot_version || !body.reason) {
+      if (body.expected_version !== question.aggregate_slot_version || !body.reason_code) {
         return Response.json({ detail: { code: "review_question_version_conflict" } }, { status: 409 });
       }
       const replacement: ReviewQuestion = {
@@ -431,12 +439,52 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
         {
           job_id: "00000000-0000-0000-0000-000000000951",
           paper_id: paperId,
+          quality_feedback_id: feedbackId,
           question_id: replacementId,
           status: "generating",
           version: replacement.aggregate_slot_version,
         } satisfies components["schemas"]["ReviewQuestionRegenerationResponse"],
         { status: 202 },
       );
+    }
+    if (request.method === "POST" && path.endsWith(`/feedback/${feedbackId}/promote`)) {
+      return Response.json(
+        {
+          approved_at: null,
+          approved_by: null,
+          can_approve: true,
+          case_fingerprint: `sha256:${"b".repeat(64)}`,
+          created_at: "2026-08-25T10:05:00Z",
+          deduplicated: false,
+          defect_category: "language_clarity",
+          eval_case_id: evalCaseId,
+          expected_finding_codes: ["subject.language.ambiguous_wording"],
+          expected_status: "warn",
+          promoted_by: "00000000-0000-0000-0000-000000000999",
+          source_feedback_id: feedbackId,
+          state: "draft",
+          version: 1,
+        } satisfies components["schemas"]["SubjectQualityEvalCaseResponse"],
+        { status: 201 },
+      );
+    }
+    if (request.method === "POST" && path.endsWith(`/eval-cases/${evalCaseId}/approve`)) {
+      return Response.json({
+        approved_at: "2026-08-25T10:06:00Z",
+        approved_by: "00000000-0000-0000-0000-000000000998",
+        can_approve: false,
+        case_fingerprint: `sha256:${"b".repeat(64)}`,
+        created_at: "2026-08-25T10:05:00Z",
+        deduplicated: false,
+        defect_category: "language_clarity",
+        eval_case_id: evalCaseId,
+        expected_finding_codes: ["subject.language.ambiguous_wording"],
+        expected_status: "warn",
+        promoted_by: "00000000-0000-0000-0000-000000000999",
+        source_feedback_id: feedbackId,
+        state: "approved",
+        version: 2,
+      } satisfies components["schemas"]["SubjectQualityEvalCaseResponse"]);
     }
     if (request.method === "POST" && path.endsWith(`/review-papers/${paperId}/create-draft`)) {
       const body = (await request.json()) as components["schemas"]["ReviewPaperCreateDraftRequest"];
@@ -582,7 +630,10 @@ describe("ReviewApproveStudio", () => {
     fireEvent.change(within(editor).getByLabelText("Question"), {
       target: { value: "What fraction is shaded when three of four equal parts are shaded?" },
     });
-    fireEvent.change(within(editor).getByLabelText("Reason for change"), {
+    fireEvent.change(within(editor).getByLabelText("Why are you changing this question?"), {
+      target: { value: "ambiguous_wording" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Optional note"), {
       target: { value: "Clarify the wording for learners." },
     });
     fireEvent.click(within(editor).getByRole("button", { name: "Save changes" }));
@@ -599,7 +650,8 @@ describe("ReviewApproveStudio", () => {
     const body = (await patch?.clone().json()) as ReviewQuestionEdit;
     expect(body).toMatchObject({
       expected_version: 2,
-      reason: "Clarify the wording for learners.",
+      note: "Clarify the wording for learners.",
+      reason_code: "ambiguous_wording",
       content: {
         answer: "B — 3/4",
         marks: 2,
@@ -610,7 +662,10 @@ describe("ReviewApproveStudio", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Regenerate question" }));
     const regenerate = screen.getByRole("dialog", { name: "Regenerate question 1" });
-    fireEvent.change(within(regenerate).getByLabelText("Reason for regeneration"), {
+    fireEvent.change(within(regenerate).getByLabelText("Why should this question be replaced?"), {
+      target: { value: "answer_incorrect" },
+    });
+    fireEvent.change(within(regenerate).getByLabelText("Optional note"), {
       target: { value: "Prepare and validate a fresh replacement." },
     });
     fireEvent.click(within(regenerate).getByRole("button", { name: "Regenerate" }));
@@ -624,7 +679,8 @@ describe("ReviewApproveStudio", () => {
     expect(regenerateRequest?.headers.get("Idempotency-Key")).toMatch(/^review-regenerate-\S+$/);
     await expect(regenerateRequest?.clone().json()).resolves.toEqual({
       expected_version: 5,
-      reason: "Prepare and validate a fresh replacement.",
+      note: "Prepare and validate a fresh replacement.",
+      reason_code: "answer_incorrect",
     });
   });
 
@@ -634,7 +690,10 @@ describe("ReviewApproveStudio", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     const dialog = screen.getByRole("dialog", { name: "Reject question 1" });
-    fireEvent.change(within(dialog).getByLabelText("Reason for rejection"), {
+    fireEvent.change(within(dialog).getByLabelText("Why are you rejecting this question?"), {
+      target: { value: "distractor_quality" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Optional note"), {
       target: { value: "The distractors are not suitable for this lesson." },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Reject question" }));
@@ -645,7 +704,65 @@ describe("ReviewApproveStudio", () => {
     );
     await expect(rejectRequest?.clone().json()).resolves.toEqual({
       expected_version: 2,
-      reason: "The distractors are not suitable for this lesson.",
+      note: "The distractors are not suitable for this lesson.",
+      reason_code: "distractor_quality",
+    });
+  });
+
+  it("captures a plain-language reason and promotes review evidence without claiming model training", async () => {
+    const { requests } = await renderStudio();
+    await startFirstQuestion();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = screen.getByRole("dialog", { name: "Edit question 1" });
+    fireEvent.change(within(editor).getByLabelText("Question"), {
+      target: { value: "What fraction is shaded when three of four equal parts are shaded?" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Why are you changing this question?"), {
+      target: { value: "ambiguous_wording" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Optional note"), {
+      target: { value: "Two readings were possible." },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save changes" }));
+
+    const addExample = await screen.findByRole("button", { name: "Add to quality examples" });
+    fireEvent.click(addExample);
+    const promotion = screen.getByRole("dialog", { name: "Add review evidence to quality examples" });
+    expect(promotion).toHaveTextContent("does not train or automatically change the model");
+    fireEvent.change(within(promotion).getByLabelText("Expected check result"), {
+      target: { value: "warn" },
+    });
+    fireEvent.change(within(promotion).getByLabelText("Defect category"), {
+      target: { value: "language_clarity" },
+    });
+    const technical = within(promotion).getByText("Technical eval details", { selector: "summary" });
+    expect(technical.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(within(promotion).getByRole("button", { name: "Create draft quality example" }));
+    expect(
+      await screen.findByText("Draft quality example created. A second reviewer or administrator must approve it."),
+    ).toBeInTheDocument();
+
+    const patch = requests.find(
+      (request) =>
+        request.method === "PATCH" &&
+        new URL(request.url).pathname.endsWith(`/questions/${questionIds[0]}`),
+    );
+    await expect(patch?.clone().json()).resolves.toMatchObject({
+      expected_version: 2,
+      note: "Two readings were possible.",
+      reason_code: "ambiguous_wording",
+    });
+    const promote = requests.find(
+      (request) =>
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/promote"),
+    );
+    expect(promote?.headers.get("Idempotency-Key")).toMatch(/^quality-promotion-\S+$/);
+    await expect(promote?.clone().json()).resolves.toEqual({
+      defect_category: "language_clarity",
+      expected_finding_codes: ["subject.language.ambiguous_wording"],
+      expected_status: "warn",
     });
   });
 
@@ -658,7 +775,10 @@ describe("ReviewApproveStudio", () => {
     fireEvent.change(within(editor).getByLabelText("Question"), {
       target: { value: revisedStem },
     });
-    fireEvent.change(within(editor).getByLabelText("Reason for change"), {
+    fireEvent.change(within(editor).getByLabelText("Why are you changing this question?"), {
+      target: { value: "ambiguous_wording" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Optional note"), {
       target: { value: "Clarify wording." },
     });
     fireEvent.click(within(editor).getByRole("button", { name: "Save changes" }));

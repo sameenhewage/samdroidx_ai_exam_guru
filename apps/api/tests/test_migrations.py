@@ -43,6 +43,15 @@ from tests.integration.test_generation_runs_api import (
 from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_specification
 
 
+def test_0026_does_not_fabricate_feedback_from_historical_review_events() -> None:
+    migration = (
+        Path(__file__).parents[1] / "migrations" / "versions" / "0026_subject_quality_feedback.py"
+    ).read_text(encoding="utf-8")
+
+    normalized = " ".join(migration.lower().split())
+    assert "insert into subject_quality_feedback" not in normalized
+
+
 def test_versioned_migrations_do_not_import_mutable_application_modules() -> None:
     versions = Path(__file__).parents[1] / "migrations" / "versions"
     coupled = {

@@ -103,6 +103,8 @@ const materialIds = {
 const generationJobId = "00000000-0000-0000-0000-000000002002";
 const paperId = generationJobId;
 const questionId = "00000000-0000-0000-0000-000000002003";
+const feedbackId = "00000000-0000-0000-0000-000000002006";
+const evalCaseId = "00000000-0000-0000-0000-000000002007";
 const draftPaperId = "00000000-0000-0000-0000-000000002004";
 const publishedPaperId = "00000000-0000-0000-0000-000000002005";
 
@@ -1003,7 +1005,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     }
     if (method === "PATCH" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}`)) {
       const payload = body as components["schemas"]["ReviewQuestionEditRequest"] | null;
-      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason) {
+      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason_code) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
       }
       const edited: ReviewQuestion = {
@@ -1020,6 +1022,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
           label: option.option_id,
           text: option.text,
         })),
+        quality_feedback_id: feedbackId,
         requires_revalidation: true,
         stem: payload.content.stem,
         validation: {
@@ -1059,12 +1062,13 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       return json(route, approved);
     }
     if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/reject`)) {
-      const payload = body as components["schemas"]["ReviewCandidateRejectRequest"] | null;
-      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason) {
+      const payload = body as components["schemas"]["ReviewQuestionRejectRequest"] | null;
+      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason_code) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
       }
       const rejected: ReviewQuestion = {
         ...currentQuestion,
+        quality_feedback_id: feedbackId,
         review_state: "rejected",
         version: currentQuestion.version + 1,
       };
@@ -1077,7 +1081,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     }
     if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/regenerate`)) {
       const payload = body as components["schemas"]["ReviewQuestionRegenerateRequest"] | null;
-      if (!payload || payload.expected_version !== currentQuestion.aggregate_slot_version || !payload.reason) {
+      if (
+        !payload ||
+        payload.expected_version !== currentQuestion.aggregate_slot_version ||
+        !payload.reason_code
+      ) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
       }
       const replacement: ReviewQuestion = {
@@ -1102,12 +1110,53 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         {
           job_id: "00000000-0000-0000-0000-000000002031",
           paper_id: paperId,
+          quality_feedback_id: feedbackId,
           question_id: questionId,
           status: "generating",
           version: replacement.aggregate_slot_version,
         } satisfies components["schemas"]["ReviewQuestionRegenerationResponse"],
         202,
       );
+    }
+    if (method === "POST" && path.endsWith(`/subject-quality/feedback/${feedbackId}/promote`)) {
+      return json(
+        route,
+        {
+          approved_at: null,
+          approved_by: null,
+          can_approve: true,
+          case_fingerprint: `sha256:${"b".repeat(64)}`,
+          created_at: "2026-08-25T10:05:00Z",
+          deduplicated: false,
+          defect_category: "language_clarity",
+          eval_case_id: evalCaseId,
+          expected_finding_codes: ["subject.language.ambiguous_wording"],
+          expected_status: "warn",
+          promoted_by: "00000000-0000-0000-0000-000000002099",
+          source_feedback_id: feedbackId,
+          state: "draft",
+          version: 1,
+        } satisfies components["schemas"]["SubjectQualityEvalCaseResponse"],
+        201,
+      );
+    }
+    if (method === "POST" && path.endsWith(`/subject-quality/eval-cases/${evalCaseId}/approve`)) {
+      return json(route, {
+        approved_at: "2026-08-25T10:06:00Z",
+        approved_by: "00000000-0000-0000-0000-000000002098",
+        can_approve: false,
+        case_fingerprint: `sha256:${"b".repeat(64)}`,
+        created_at: "2026-08-25T10:05:00Z",
+        deduplicated: false,
+        defect_category: "language_clarity",
+        eval_case_id: evalCaseId,
+        expected_finding_codes: ["subject.language.ambiguous_wording"],
+        expected_status: "warn",
+        promoted_by: "00000000-0000-0000-0000-000000002099",
+        source_feedback_id: feedbackId,
+        state: "approved",
+        version: 2,
+      } satisfies components["schemas"]["SubjectQualityEvalCaseResponse"]);
     }
     if (method === "POST" && path.endsWith(`/review-papers/${paperId}/create-draft`)) {
       const payload = body as components["schemas"]["ReviewPaperCreateDraftRequest"] | null;

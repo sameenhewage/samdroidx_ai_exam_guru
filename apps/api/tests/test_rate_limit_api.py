@@ -164,6 +164,14 @@ def costly_requests(client: TestClient) -> Iterator[tuple[Response, RateLimitSco
     )
     yield (
         client.post(
+            "/api/v1/admin/subject-quality/eval-runs",
+            json={"case_ids": [str(OTHER_ID)]},
+            headers=ADMIN_HEADERS,
+        ),
+        RateLimitScope.VALIDATION_RUN,
+    )
+    yield (
+        client.post(
             f"{admin_curriculum}/papers/{OTHER_ID}/publish",
             json={"expected_version": 1},
             headers=ADMIN_HEADERS,
@@ -270,6 +278,7 @@ def test_openapi_documents_cost_controls_only_for_allowlisted_mutations() -> Non
             "/api/v1/admin/curricula/{curriculum_version_id}/validation-runs",
             "post",
         ),
+        ("/api/v1/admin/subject-quality/eval-runs", "post"),
         (
             "/api/v1/admin/curricula/{curriculum_version_id}/papers/{paper_id}/publish",
             "post",

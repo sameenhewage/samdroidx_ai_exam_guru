@@ -209,6 +209,7 @@ class ReviewCandidateService:
         *,
         expected_version: int,
         principal: Principal,
+        commit: bool = True,
     ) -> StoredQuestionCandidate:
         authorize(principal, Permission.CONTENT_REVIEW)
         record = await self._repository.get(curriculum_version_id, candidate_id)
@@ -232,6 +233,7 @@ class ReviewCandidateService:
             actor_id=principal.subject_id,
             action=ReviewAction.STARTED,
             reason=None,
+            commit=commit,
         )
 
     async def edit(
@@ -243,6 +245,7 @@ class ReviewCandidateService:
         reason: str,
         expected_version: int,
         principal: Principal,
+        commit: bool = True,
     ) -> StoredQuestionCandidate:
         authorize(principal, Permission.CONTENT_REVIEW)
         record = await self._repository.get(curriculum_version_id, candidate_id)
@@ -268,6 +271,7 @@ class ReviewCandidateService:
             actor_id=principal.subject_id,
             action=ReviewAction.EDITED,
             reason=reason,
+            commit=commit,
         )
 
     async def approve(
@@ -278,6 +282,7 @@ class ReviewCandidateService:
         expected_version: int,
         note: str | None,
         principal: Principal,
+        commit: bool = True,
     ) -> StoredQuestionCandidate:
         authorize(principal, Permission.CONTENT_REVIEW)
         record = await self._repository.get(curriculum_version_id, candidate_id)
@@ -304,6 +309,7 @@ class ReviewCandidateService:
             actor_id=principal.subject_id,
             action=ReviewAction.APPROVED,
             reason=note,
+            commit=commit,
         )
 
     async def reject(
@@ -314,6 +320,7 @@ class ReviewCandidateService:
         expected_version: int,
         reason: str,
         principal: Principal,
+        commit: bool = True,
     ) -> StoredQuestionCandidate:
         authorize(principal, Permission.CONTENT_REVIEW)
         record = await self._repository.get(curriculum_version_id, candidate_id)
@@ -338,6 +345,7 @@ class ReviewCandidateService:
             actor_id=principal.subject_id,
             action=ReviewAction.REJECTED,
             reason=reason,
+            commit=commit,
         )
 
     async def _persist_transition(
@@ -350,6 +358,7 @@ class ReviewCandidateService:
         actor_id: UUID,
         action: ReviewAction,
         reason: str | None,
+        commit: bool = True,
     ) -> StoredQuestionCandidate:
         from exam_guru_api.papers.domain import QuestionCandidate
 
@@ -407,7 +416,10 @@ class ReviewCandidateService:
                     "reason_recorded": reason is not None,
                 },
             )
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
+            else:
+                await self._session.flush()
             return await self._repository.get(
                 curriculum_version_id,
                 transitioned.candidate_id,

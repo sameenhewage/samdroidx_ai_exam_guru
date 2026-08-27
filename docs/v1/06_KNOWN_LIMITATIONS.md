@@ -32,6 +32,14 @@ This document records limitations that remain after the implemented Priority 1 e
 - This single non-failing English structured-contract run closes P8's baseline-execution gate; it is not a statistical quality study or evidence of Sinhala fluency, factual correctness, age appropriateness or semantic uniqueness.
 - Every generated result remains untrusted, requires canonical validation and cannot publish without human approval.
 
+### Multi-grade and subject-quality evidence
+
+- The reusable model, hard retrieval filters and teacher workflow now support Grades 1–13 with subject, unit and lesson scope; Grade 7 Maths fixtures prove architecture and isolation only.
+- Real educational-quality acceptance remains Grade 5-first. No Grade 1–4 or Grade 6–13 curriculum-quality claim is made from deterministic fixtures.
+- The Maths checker deliberately supports only bounded exact arithmetic, fractions, decimals and percentages. Symbolic algebra, word problems and unit conversion return an explicit warning for human review rather than a false pass.
+- Factual/language subjects use a structured grounded-verifier boundary, but no production semantic verifier is configured or evaluated yet. Missing or insufficient verification remains WARN and requires human judgement.
+- Reviewer revisions are audited and stale validation cannot approve edited content. Structured correction feedback, explicit promotion to immutable draft quality examples, second-reviewer approval, bounded export and deterministic replay are implemented. Promotion never trains a model or changes prompts, validators or thresholds automatically.
+
 ### Live production identity provider
 
 - The backend supports strict OIDC JWT/JWKS validation with fixed asymmetric algorithms, issuer/audience/time checks, bounded role mapping and stable UUID subject derivation.
@@ -52,6 +60,9 @@ This document records limitations that remain after the implemented Priority 1 e
 
 ### Object-storage lifecycle
 
+- The private Studio now defaults to durable local POSIX filesystem storage. The configured host path must support hard links, atomic replacement, directory `fsync` and Unix permission semantics.
+- Existing MinIO/S3 source objects are not migrated automatically. Switching an existing database to local storage requires explicit checksum-verified export/import; retained MinIO volumes must not be deleted before migration and backup verification.
+- Local reconciliation tags are bounded atomic sidecars owned by the application; they do not modify immutable source bytes and are not interchangeable with arbitrary S3 operator tags.
 - Scheduled reconciliation detects unreferenced content-addressed source objects after a grace period and persists candidate/resolution evidence.
 - Reconciliation never deletes objects. Optional app-owned candidate tags are disabled by default and require explicit production configuration.
 - Any lifecycle deletion rule requires separate operator approval, versioning/retention controls and recovery validation. It must never target the live `sources/` namespace without the documented candidate-tag conditions.
@@ -70,7 +81,7 @@ This document records limitations that remain after the implemented Priority 1 e
 ### Production configuration
 
 - Production settings reject deterministic identity, deterministic generation/embeddings, local credentials, insecure service connections and disabled application cost controls.
-- A deployment still needs real TLS endpoints, database/object-storage/Valkey credentials, OIDC configuration, OpenTelemetry/Sentry destinations and a non-deterministic embedding provider.
+- A deployment still needs real TLS endpoints, database/Valkey credentials, a private writable local storage root (or optional S3 credentials), OIDC configuration, OpenTelemetry/Sentry destinations and a non-deterministic embedding provider.
 
 ## Product boundaries
 
