@@ -175,6 +175,22 @@ class SqlAlchemyValidationRepository:
             ),
         )
 
+    async def lock_generation_for_validation(
+        self,
+        curriculum_version_id: UUID,
+        generation_run_id: UUID,
+    ) -> None:
+        locked_id = await self._session.scalar(
+            select(GenerationRunModel.id)
+            .where(
+                GenerationRunModel.id == generation_run_id,
+                GenerationRunModel.curriculum_version_id == curriculum_version_id,
+            )
+            .with_for_update()
+        )
+        if locked_id != generation_run_id:
+            raise ValidationGenerationNotFoundError(generation_run_id)
+
     async def selected_scope_is_valid(
         self,
         curriculum_version_id: UUID,

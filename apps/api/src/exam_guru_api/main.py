@@ -36,6 +36,7 @@ from exam_guru_api.teacher_papers.jobs import (
     create_paper_generation_dispatcher,
 )
 from exam_guru_api.validation.pipeline import ValidationPipeline, build_default_pipeline
+from exam_guru_api.validation.semantic_runtime import create_semantic_verifier
 
 ResourceFactory = Callable[[Settings], ApplicationResources]
 
@@ -123,7 +124,9 @@ def create_app(
         else create_generation_runtime(resolved_settings)
     )
     application.state.validation_pipeline = (
-        validation_pipeline if validation_pipeline is not None else build_default_pipeline()
+        validation_pipeline
+        if validation_pipeline is not None
+        else build_default_pipeline(semantic_verifier=create_semantic_verifier(resolved_settings))
     )
     resolved_embedding_registry = (
         embedding_provider_registry

@@ -74,7 +74,7 @@ def test_create_contract_accepts_only_a_generation_run_identifier() -> None:
 def test_validation_pipeline_fingerprint_binds_versioned_validator_composition() -> None:
     pipeline = build_default_pipeline()
     same = build_default_pipeline()
-    changed = replace(pipeline, version="deterministic-question-validation.v5")
+    changed = replace(pipeline, version="deterministic-question-validation.v6")
 
     assert pipeline.pipeline_fingerprint == same.pipeline_fingerprint
     assert len(pipeline.pipeline_fingerprint) == 64

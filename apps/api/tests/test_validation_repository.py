@@ -119,7 +119,7 @@ def test_validation_repository_lookup_and_missing_boundaries() -> None:
             cast(
                 AsyncSession,
                 ScriptedSession(
-                    scalar_results=(CURRICULUM_ID, validation(), object()),
+                    scalar_results=(CURRICULUM_ID, GENERATION_ID, validation(), object()),
                     execute_results=(ExecuteResult(row=(run, result_attempt)),),
                 ),
             )
@@ -128,6 +128,7 @@ def test_validation_repository_lookup_and_missing_boundaries() -> None:
         record = await repository.get_generation(CURRICULUM_ID, GENERATION_ID)
         assert record.run is run
         assert record.attempt is result_attempt
+        await repository.lock_generation_for_validation(CURRICULUM_ID, GENERATION_ID)
         assert (
             await repository.get_for_generation_pipeline(GENERATION_ID, "pipeline.v1") is not None
         )
@@ -141,6 +142,10 @@ def test_validation_repository_lookup_and_missing_boundaries() -> None:
         )
         with pytest.raises(ValidationGenerationNotFoundError):
             await missing_generation.get_generation(CURRICULUM_ID, GENERATION_ID)
+        with pytest.raises(ValidationGenerationNotFoundError):
+            await SqlAlchemyValidationRepository(
+                cast(AsyncSession, ScriptedSession(scalar_results=(None,)))
+            ).lock_generation_for_validation(CURRICULUM_ID, GENERATION_ID)
 
         assert (
             await SqlAlchemyValidationRepository(

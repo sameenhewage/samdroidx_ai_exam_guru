@@ -12,6 +12,7 @@ from exam_guru_api.generation.jobs import DramatiqGenerationDispatcher
 from exam_guru_api.generation.runtime import create_generation_runtime
 from exam_guru_api.retrieval.embeddings import create_embedding_provider_registry
 from exam_guru_api.validation.pipeline import build_default_pipeline
+from exam_guru_api.validation.semantic_runtime import create_semantic_verifier
 
 PAPER_GENERATION_QUEUE_NAME = "teacher-paper-generation"
 PAPER_GENERATION_JOB_MAX_RETRIES = 0
@@ -44,7 +45,7 @@ async def _advance_teacher_paper(job_id: UUID) -> None:
                 DramatiqGenerationDispatcher(),
                 create_generation_runtime(settings),
                 create_embedding_provider_registry(settings),
-                build_default_pipeline(),
+                build_default_pipeline(semantic_verifier=create_semantic_verifier(settings)),
                 actor_lease_seconds=settings.teacher_paper_actor_lease_seconds,
             ).advance(job_id)
     finally:

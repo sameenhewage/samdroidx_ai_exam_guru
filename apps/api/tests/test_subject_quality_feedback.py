@@ -585,7 +585,7 @@ def test_runner_replays_current_pipeline_without_provider_and_marks_semantic_cas
     assert result.comparison.passed is False
     assert "subject.factual.verifier_unavailable" in result.comparison.actual_finding_codes
     assert result.validator_versions
-    assert result.pipeline_version == "deterministic-question-validation.v4"
+    assert result.pipeline_version == "deterministic-question-validation.v5"
 
 
 def test_canonical_fingerprint_is_order_stable_and_sensitive_to_snapshot_content() -> None:

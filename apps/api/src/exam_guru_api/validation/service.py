@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
@@ -962,6 +963,7 @@ class ValidationRunService:
                 actor_id=actor_id,
             )
         except Exception as error:
+            await self._session.rollback()
             self._telemetry.validation_creation(
                 outcome="failed",
                 failure_code=_validation_creation_failure_code(error),
@@ -995,6 +997,10 @@ class ValidationRunService:
         result = reconstruct_generation_result(generation_record)
         canonical_generation_fingerprint = generation_result_fingerprint(result)
 
+        await self._repository.lock_generation_for_validation(
+            curriculum_version_id,
+            generation_run_id,
+        )
         existing = await self._repository.get_for_generation_pipeline(
             generation_run_id,
             self._pipeline.version,
@@ -1045,7 +1051,7 @@ class ValidationRunService:
             raise ValidationGenerationIntegrityError(
                 "canonical generation result fingerprint did not survive adaptation"
             )
-        report = self._pipeline.validate(validation_input)
+        report = await asyncio.to_thread(self._pipeline.validate, validation_input)
         if (
             report.candidate_id != canonical_generation_fingerprint
             or report.pipeline_version != self._pipeline.version

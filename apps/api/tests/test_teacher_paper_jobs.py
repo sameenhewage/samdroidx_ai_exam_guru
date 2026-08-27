@@ -90,6 +90,7 @@ def test_paper_actor_builds_private_worker_dependencies_and_closes_resources(
     generation_dispatcher = object()
     runtime = object()
     embedding_registry = object()
+    expected_semantic_verifier = object()
     pipeline = object()
     calls: list[UUID] = []
 
@@ -145,7 +146,13 @@ def test_paper_actor_builds_private_worker_dependencies_and_closes_resources(
     monkeypatch.setattr(
         jobs, "create_embedding_provider_registry", lambda actual: embedding_registry
     )
-    monkeypatch.setattr(jobs, "build_default_pipeline", lambda: pipeline)
+    monkeypatch.setattr(jobs, "create_semantic_verifier", lambda actual: expected_semantic_verifier)
+
+    def build_pipeline(*, semantic_verifier: object) -> object:
+        assert semantic_verifier is expected_semantic_verifier
+        return pipeline
+
+    monkeypatch.setattr(jobs, "build_default_pipeline", build_pipeline)
     monkeypatch.setattr(service, "TeacherPaperWorkerService", StubWorker)
 
     jobs.advance_teacher_paper(str(JOB_ID))

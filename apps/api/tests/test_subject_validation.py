@@ -17,6 +17,7 @@ from exam_guru_api.validation import (
     SemanticVerificationRequest,
     SemanticVerificationResult,
     SemanticVerificationStatus,
+    SemanticVerifierAccounting,
     SubjectFindingCode,
     SubjectValidationContext,
     SubjectValidationRouter,
@@ -342,6 +343,11 @@ class FakeSemanticVerifier(GroundedSemanticVerifier):
     verifier_id = "deterministic-semantic-fake"
     verifier_version = "1.0.0"
     prompt_version = "subject-factual-test.v1"
+    provider = "deterministic"
+    provider_version = "1.0.0"
+    model = "fixture-semantic-model"
+    model_version = "fixture-semantic-model-v1"
+    pricing_version = "zero-cost-v1"
 
     def __init__(self, status: SemanticVerificationStatus) -> None:
         self.status = status
@@ -362,6 +368,12 @@ class FakeSemanticVerifier(GroundedSemanticVerifier):
             verifier_id=self.verifier_id,
             verifier_version=self.verifier_version,
             prompt_version=self.prompt_version,
+            provider=self.provider,
+            provider_version=self.provider_version,
+            model=self.model,
+            model_version=self.model_version,
+            pricing_version=self.pricing_version,
+            accounting=SemanticVerifierAccounting(10, 5, 15, 0, 1),
         )
 
 
@@ -788,6 +800,12 @@ def semantic_result(**changes: object) -> SemanticVerificationResult:
         "verifier_id": "deterministic-semantic-fake",
         "verifier_version": "1.0.0",
         "prompt_version": "subject-factual-test.v1",
+        "provider": "deterministic",
+        "provider_version": "1.0.0",
+        "model": "fixture-semantic-model",
+        "model_version": "fixture-semantic-model-v1",
+        "pricing_version": "zero-cost-v1",
+        "accounting": SemanticVerifierAccounting(10, 5, 15, 0, 1),
     }
     values.update(changes)
     return SemanticVerificationResult(**values)  # type: ignore[arg-type]
@@ -808,6 +826,7 @@ def semantic_result(**changes: object) -> SemanticVerificationResult:
             )
         ),
         lambda: semantic_result(verifier_id="bad verifier"),
+        lambda: semantic_result(accounting=cast(SemanticVerifierAccounting, object())),
     ],
 )
 def test_semantic_contracts_reject_malformed_status_lineage_and_evidence(

@@ -60,7 +60,7 @@ def test_default_pipeline_is_composable_versioned_and_fully_deterministic() -> N
 
     assert first == second
     assert first.pipeline_version == DEFAULT_PIPELINE_VERSION
-    assert first.pipeline_version == "deterministic-question-validation.v4"
+    assert first.pipeline_version == "deterministic-question-validation.v5"
     assert first.overall_status is FindingStatus.WARN
     assert first.passed is False
     assert first.blocked is False

@@ -33,7 +33,11 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
 
     assert maintenance["command"] == ["exam-guru-maintenance"]
     assert maintenance["build"] == worker["build"]
-    assert maintenance["environment"] == worker["environment"]
+    assert api["environment"] == worker["environment"]
+    assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
+    assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
+    assert "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY" not in maintenance["environment"]
+    assert "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY" not in services["migrate"]["environment"]
     assert maintenance["environment"]["EXAM_GURU_STORAGE_BACKEND"] == "local"
     assert maintenance["environment"]["EXAM_GURU_STORAGE_ROOT"] == "/data"
     assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_INTERVAL_SECONDS"] == "3600"

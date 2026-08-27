@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="EXAM_GURU_",
+        env_ignore_empty=True,
         extra="ignore",
         frozen=True,
     )
@@ -269,6 +270,54 @@ class Settings(BaseSettings):
         le=100_000_000_000,
     )
     generation_timeout_ms: int | None = Field(default=None, ge=1, le=120_000)
+    semantic_verifier_provider: Literal["openai"] | None = None
+    semantic_verifier_openai_api_key: SecretStr | None = None
+    semantic_verifier_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    semantic_verifier_model_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    semantic_verifier_prompt_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    semantic_verifier_pricing_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    semantic_verifier_input_microusd_per_million_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000_000,
+    )
+    semantic_verifier_output_microusd_per_million_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000_000,
+    )
+    semantic_verifier_timeout_ms: int | None = Field(default=None, ge=1, le=30_000)
+    semantic_verifier_max_grounding_sources: int = Field(default=8, ge=1, le=32)
+    semantic_verifier_max_source_bytes: int = Field(default=8_192, ge=1, le=32_768)
+    semantic_verifier_max_total_source_bytes: int = Field(default=32_768, ge=1, le=262_144)
+    semantic_verifier_max_candidate_bytes: int = Field(default=32_768, ge=1, le=262_144)
+    semantic_verifier_max_request_bytes: int = Field(default=65_536, ge=1, le=524_288)
+    semantic_verifier_max_output_tokens: int = Field(default=512, ge=1, le=4_096)
+    semantic_verifier_max_cost_microusd: int = Field(
+        default=1_000_000,
+        ge=1,
+        le=100_000_000_000,
+    )
     generation_recovery_batch_size: int = Field(default=50, ge=1, le=100)
     generation_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
     generation_worker_lease_seconds: int = Field(
@@ -548,6 +597,39 @@ class Settings(BaseSettings):
                 raise ValueError("OpenAI generation API key must be bounded secret text")
         elif any(value is not None for value in openai_generation_values):
             raise ValueError("OpenAI generation settings require generation_provider=openai")
+        semantic_verifier_values = (
+            self.semantic_verifier_openai_api_key,
+            self.semantic_verifier_model,
+            self.semantic_verifier_model_version,
+            self.semantic_verifier_prompt_version,
+            self.semantic_verifier_pricing_version,
+            self.semantic_verifier_input_microusd_per_million_tokens,
+            self.semantic_verifier_output_microusd_per_million_tokens,
+            self.semantic_verifier_timeout_ms,
+        )
+        if self.semantic_verifier_provider == "openai":
+            if self.environment == "test":
+                raise ValueError("test configuration cannot use the paid OpenAI semantic verifier")
+            if any(value is None for value in semantic_verifier_values):
+                raise ValueError(
+                    "OpenAI semantic verifier requires explicit model, pricing, key, and timeout"
+                )
+            verifier_key = cast(SecretStr, self.semantic_verifier_openai_api_key).get_secret_value()
+            if (
+                not verifier_key
+                or verifier_key != verifier_key.strip()
+                or len(verifier_key) > 4_096
+                or any(
+                    character.isspace() or not character.isprintable() for character in verifier_key
+                )
+            ):
+                raise ValueError("OpenAI semantic verifier API key must be bounded secret text")
+        elif any(value is not None for value in semantic_verifier_values):
+            raise ValueError("semantic verifier settings require semantic_verifier_provider=openai")
+        if self.semantic_verifier_max_source_bytes > self.semantic_verifier_max_total_source_bytes:
+            raise ValueError("semantic verifier source bytes exceed the total source budget")
+        if self.semantic_verifier_max_candidate_bytes > self.semantic_verifier_max_request_bytes:
+            raise ValueError("semantic verifier candidate bytes exceed the request budget")
         if any(len(token) < 16 for token in deterministic_tokens):
             raise ValueError("deterministic identity tokens must contain at least 16 characters")
         if len(deterministic_tokens) != len(set(deterministic_tokens)):

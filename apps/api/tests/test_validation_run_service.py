@@ -974,12 +974,16 @@ class FakeSession:
     def __init__(self) -> None:
         self.added: list[object] = []
         self.commits = 0
+        self.rollbacks = 0
 
     def add(self, value: object) -> None:
         self.added.append(value)
 
     async def commit(self) -> None:
         self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 class FakeRepository:
@@ -999,11 +1003,19 @@ class FakeRepository:
         self.run_values: dict[str, object] | None = None
         self.listed_run = existing or ValidationRunModel(id=UUID(int=980_100))
         self.listed_finding = ValidationFindingModel(id=UUID(int=980_101))
+        self.lock_calls: list[tuple[UUID, UUID]] = []
 
     async def get_generation(self, curriculum_id: UUID, generation_id: UUID) -> object:
         assert curriculum_id == CURRICULUM_ID
         assert generation_id == RUN_ID
         return self.record
+
+    async def lock_generation_for_validation(
+        self,
+        curriculum_id: UUID,
+        generation_id: UUID,
+    ) -> None:
+        self.lock_calls.append((curriculum_id, generation_id))
 
     async def get_for_generation_pipeline(
         self,
@@ -1102,6 +1114,7 @@ def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None
         )
 
         assert created.deduplicated is False
+        assert repository.lock_calls == [(CURRICULUM_ID, RUN_ID)]
         assert created.run.overall_status == "warn"
         assert len(repository.stored_findings) == 15
         assert repository.run_values is not None
@@ -1161,7 +1174,7 @@ def test_validation_creation_failure_codes_are_fixed(error: Exception, code: str
 def test_validation_service_sanitizes_failed_creation_telemetry() -> None:
     async def exercise() -> None:
         record, _ = generation_record()
-        service, _session = service_with_fake(FakeRepository(record))
+        service, session = service_with_fake(FakeRepository(record))
         operational, telemetry_logger, _tracer = telemetry()
         service._telemetry = operational
 
@@ -1191,6 +1204,7 @@ def test_validation_service_sanitizes_failed_creation_telemetry() -> None:
             )
         ]
         assert "source secret" not in str(telemetry_logger.records)
+        assert session.rollbacks == 1
 
     asyncio.run(exercise())
 

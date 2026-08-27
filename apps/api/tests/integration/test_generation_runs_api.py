@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -6,7 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from threading import Barrier
+from threading import Barrier, Lock
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -75,6 +76,8 @@ from exam_guru_api.main import create_app
 from exam_guru_api.validation import (
     FindingCode,
     FindingStatus,
+    ValidationFinding,
+    ValidationInput,
     ValidationPipeline,
     build_default_pipeline,
 )
@@ -2141,7 +2144,31 @@ def test_validation_concurrent_create_converges_and_new_pipeline_version_reruns(
     )
     body = {"generation_run_id": str(generation_run_id)}
     barrier = Barrier(2)
-    with api_client(generation_seed, dispatcher, runtime=runtime) as client:
+    calls: list[str] = []
+    call_lock = Lock()
+    base_pipeline = build_default_pipeline()
+    base_validator = base_pipeline.validators[0]
+
+    class CountingValidator:
+        validator_id = base_validator.validator_id
+        validator_version = base_validator.validator_version
+
+        def validate(self, validation_input: ValidationInput) -> tuple[ValidationFinding, ...]:
+            with call_lock:
+                calls.append(validation_input.candidate_id)
+            time.sleep(0.2)
+            return base_validator.validate(validation_input)
+
+    counted_pipeline = replace(
+        base_pipeline,
+        validators=(CountingValidator(), *base_pipeline.validators[1:]),
+    )
+    with api_client(
+        generation_seed,
+        dispatcher,
+        runtime=runtime,
+        validation_pipeline=counted_pipeline,
+    ) as client:
 
         def submit() -> tuple[int, dict[str, Any]]:
             barrier.wait()
@@ -2156,26 +2183,27 @@ def test_validation_concurrent_create_converges_and_new_pipeline_version_reruns(
             results = tuple(executor.map(lambda _: submit(), range(2)))
 
     assert {status_code for status_code, _ in results} == {201}
+    assert len(calls) == 1
     assert len({result["id"] for _, result in results}) == 1
     assert sorted(result["deduplicated"] for _, result in results) == [False, True]
     first_id = results[0][1]["id"]
 
-    pipeline_v5 = replace(
+    pipeline_v6 = replace(
         build_default_pipeline(),
-        version="deterministic-question-validation.v5",
+        version="deterministic-question-validation.v6",
     )
     with api_client(
         generation_seed,
         dispatcher,
         runtime=runtime,
-        validation_pipeline=pipeline_v5,
+        validation_pipeline=pipeline_v6,
     ) as client:
         rerun = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
         duplicate = client.post(validation_path(generation_seed), json=body, headers=ADMIN_HEADERS)
 
     assert rerun.status_code == duplicate.status_code == 201
     assert rerun.json()["id"] != first_id
-    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v5"
+    assert rerun.json()["pipeline_version"] == "deterministic-question-validation.v6"
     assert rerun.json()["deduplicated"] is False
     assert duplicate.json()["id"] == rerun.json()["id"]
     assert duplicate.json()["deduplicated"] is True

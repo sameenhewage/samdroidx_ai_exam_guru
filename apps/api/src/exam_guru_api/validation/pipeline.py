@@ -32,7 +32,7 @@ from exam_guru_api.validation.validators import (
     SchemaCompletenessValidator,
 )
 
-DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v4"
+DEFAULT_PIPELINE_VERSION = "deterministic-question-validation.v5"
 
 
 class QuestionValidator(Protocol):
@@ -189,6 +189,10 @@ def build_default_pipeline(
     """Build canonical universal rules plus bounded trusted-subject routing."""
 
     factual = GroundedFactualSubjectValidator(verifier=semantic_verifier)
+    pipeline_version = DEFAULT_PIPELINE_VERSION
+    if semantic_verifier is not None:
+        configuration_fingerprint = factual.validator_version.rsplit("-", maxsplit=1)[-1]
+        pipeline_version = f"{DEFAULT_PIPELINE_VERSION}+semantic-{configuration_fingerprint}"
     return ValidationPipeline(
         validators=(
             SchemaCompletenessValidator(),
@@ -204,6 +208,7 @@ def build_default_pipeline(
             validators=(MathematicsSubjectValidator(), factual),
             fallback_validator=factual,
         ),
+        version=pipeline_version,
     )
 
 
