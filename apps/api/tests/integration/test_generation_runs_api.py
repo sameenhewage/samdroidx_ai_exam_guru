@@ -2544,7 +2544,7 @@ def test_validation_database_rejects_cross_scope_incomplete_and_malformed_report
                 def finding_model(
                     run: ValidationRunModel,
                     *,
-                    evidence: list[dict[str, str]] | None = None,
+                    evidence: list[dict[str, object]] | None = None,
                 ) -> ValidationFindingModel:
                     return ValidationFindingModel(
                         id=UUID(int=930_200 + run.id.int - 930_100),
@@ -2585,6 +2585,187 @@ def test_validation_database_rejects_cross_scope_incomplete_and_malformed_report
                     finding_model(valid_direct),
                 )
                 assert not valid_rejected, valid_detail
+
+                semantic_details: dict[str, object] = {
+                    "schema_version": "semantic-verification.v1",
+                    "decomposition_version": "deterministic-factual-claims.v1",
+                    "call_attempted": True,
+                    "failure_code": None,
+                    "status": "supported",
+                    "summary": "The claim is supported.",
+                    "claims": [
+                        {
+                            "claim_id": "answer",
+                            "claim_type": "answer",
+                            "location": "$.candidate.answer",
+                            "status": "supported",
+                            "summary": "The answer is supported.",
+                            "evidence_refs": [
+                                {
+                                    "context_id": "context-01",
+                                    "source_document_id": "source-01",
+                                    "page_number": 7,
+                                }
+                            ],
+                        }
+                    ],
+                    "lineage": {
+                        "verifier_id": "semantic-fixture",
+                        "verifier_version": "1.0.0",
+                        "prompt_version": "semantic.v1",
+                        "provider": "fixture",
+                        "provider_version": "1.0.0",
+                        "model": "fixture-model",
+                        "model_version": "fixture-model-v1",
+                        "pricing_version": "fixture-pricing-v1",
+                    },
+                    "accounting": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                        "cost_microusd": 7,
+                        "latency_ms": 9,
+                    },
+                }
+                valid_semantic = run_model(6)
+                semantic_rejected, semantic_detail = await rejected(
+                    valid_semantic,
+                    finding_model(
+                        valid_semantic,
+                        evidence=[
+                            {
+                                "location": "$.semantic_verification",
+                                "expected": "reviewed evidence",
+                                "observed": "supported",
+                                "details": semantic_details,
+                            }
+                        ],
+                    ),
+                )
+                assert not semantic_rejected, semantic_detail
+
+                configured_no_call_details = deepcopy(semantic_details)
+                configured_no_call_details["call_attempted"] = False
+                configured_no_call_details["failure_code"] = "unavailable-or-invalid-result"
+                configured_no_call_details["status"] = "unavailable"
+                configured_no_call_details["summary"] = "The request requires human review."
+                configured_no_call_details["claims"] = []
+                configured_no_call_details["accounting"] = None
+                configured_no_call = run_model(10)
+                no_call_rejected, no_call_detail = await rejected(
+                    configured_no_call,
+                    finding_model(
+                        configured_no_call,
+                        evidence=[
+                            {
+                                "location": "$.semantic_verification",
+                                "expected": "reviewed evidence",
+                                "observed": "unavailable",
+                                "details": configured_no_call_details,
+                            }
+                        ],
+                    ),
+                )
+                assert not no_call_rejected, no_call_detail
+
+                malformed_semantic = deepcopy(semantic_details)
+                cast(dict[str, object], malformed_semantic["accounting"])["total_tokens"] = 99
+                invalid_semantic = run_model(7)
+                assert (
+                    await rejected(
+                        invalid_semantic,
+                        finding_model(
+                            invalid_semantic,
+                            evidence=[
+                                {
+                                    "location": "$.semantic_verification",
+                                    "expected": "reviewed evidence",
+                                    "observed": "supported",
+                                    "details": malformed_semantic,
+                                }
+                            ],
+                        ),
+                    )
+                )[0]
+
+                duplicate_semantic_evidence = run_model(9)
+                duplicate_evidence_finding = finding_model(
+                    duplicate_semantic_evidence,
+                    evidence=[
+                        {
+                            "location": "$.semantic_verification",
+                            "expected": "reviewed evidence",
+                            "observed": "supported",
+                            "details": semantic_details,
+                        },
+                        {
+                            "location": "$.semantic_verification",
+                            "expected": "reviewed evidence",
+                            "observed": "supported again",
+                            "details": semantic_details,
+                        },
+                    ],
+                )
+                duplicate_evidence_finding.evidence_count = 2
+                assert (
+                    await rejected(
+                        duplicate_semantic_evidence,
+                        duplicate_evidence_finding,
+                    )
+                )[0]
+
+                duplicate_semantic = run_model(
+                    8,
+                    validator_lineage=[
+                        {
+                            "validator_id": "database-guard",
+                            "validator_version": "1.0.0",
+                        },
+                        {
+                            "validator_id": "semantic-second",
+                            "validator_version": "1.0.0",
+                        },
+                    ],
+                )
+                duplicate_semantic.finding_count = 2
+                duplicate_semantic.validator_count = 2
+                first_semantic_finding = finding_model(
+                    duplicate_semantic,
+                    evidence=[
+                        {
+                            "location": "$.semantic_verification",
+                            "expected": "reviewed evidence",
+                            "observed": "supported",
+                            "details": semantic_details,
+                        }
+                    ],
+                )
+                second_semantic_finding = ValidationFindingModel(
+                    id=UUID(int=930_300),
+                    validation_run_id=duplicate_semantic.id,
+                    ordinal=1,
+                    validator_id="semantic-second",
+                    validator_version="1.0.0",
+                    code="database.guard.second",
+                    status="pass",
+                    message="Second semantic finding.",
+                    evidence=[
+                        {
+                            "location": "$.semantic_verification",
+                            "expected": "reviewed evidence",
+                            "observed": "supported",
+                            "details": semantic_details,
+                        }
+                    ],
+                    evidence_count=1,
+                )
+                assert (
+                    await rejected(
+                        duplicate_semantic,
+                        first_semantic_finding,
+                        second_semantic_finding,
+                    )
+                )[0]
 
                 cross_scope = run_model(1, curriculum_version_id=OTHER_CURRICULUM_ID)
                 assert (await rejected(cross_scope, finding_model(cross_scope)))[0]

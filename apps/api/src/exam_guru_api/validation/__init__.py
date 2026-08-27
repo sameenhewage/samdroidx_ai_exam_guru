@@ -41,9 +41,13 @@ from exam_guru_api.validation.pipeline import (
     validate_question,
 )
 from exam_guru_api.validation.subject import (
+    FACTUAL_CLAIM_DECOMPOSITION_VERSION,
     CurriculumSelection,
+    FactualClaim,
+    FactualClaimType,
     GroundedFactualSubjectValidator,
     GroundedSemanticVerifier,
+    SemanticClaimVerification,
     SemanticEvidenceReference,
     SemanticVerificationRequest,
     SemanticVerificationResult,
@@ -55,6 +59,7 @@ from exam_guru_api.validation.subject import (
     SubjectValidationRouter,
     SubjectValidator,
     TrustedSubjectScopeValidator,
+    decompose_factual_claims,
 )
 from exam_guru_api.validation.validators import (
     AgeLanguageHeuristicsValidator,
@@ -73,6 +78,7 @@ from exam_guru_api.validation.validators import (
 
 __all__ = [
     "DEFAULT_PIPELINE_VERSION",
+    "FACTUAL_CLAIM_DECOMPOSITION_VERSION",
     "MAX_DUPLICATE_REFERENCES",
     "MAX_DUPLICATE_TEXT_CHARACTERS",
     "QUESTION_SCHEMA_VERSION",
@@ -88,6 +94,8 @@ __all__ = [
     "DuplicateReference",
     "ExactDuplicateValidator",
     "ExactHashDuplicateValidator",
+    "FactualClaim",
+    "FactualClaimType",
     "FindingCode",
     "FindingEvidence",
     "FindingStatus",
@@ -104,6 +112,7 @@ __all__ = [
     "PromptInjectionResidueValidator",
     "QuestionValidator",
     "SchemaCompletenessValidator",
+    "SemanticClaimVerification",
     "SemanticEvidenceReference",
     "SemanticVerificationRequest",
     "SemanticVerificationResult",
@@ -129,6 +138,7 @@ __all__ = [
     "build_default_pipeline",
     "canonical_text_sha256",
     "canonicalize_text",
+    "decompose_factual_claims",
     "generation_result_fingerprint",
     "generation_result_to_validation_input",
     "parse_exact_expression",

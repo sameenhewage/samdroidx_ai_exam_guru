@@ -20,6 +20,8 @@ type ReviewPaper = components["schemas"]["ReviewPaperDetailResponse"];
 type ReviewQuestion = components["schemas"]["ReviewQuestionResponse"];
 type QuestionContent = components["schemas"]["QuestionContentRequest"];
 type TechnicalFinding = components["schemas"]["TechnicalValidationFindingResponse"];
+type SemanticVerification = components["schemas"]["SemanticVerificationDetailsResponse"];
+type SemanticClaim = components["schemas"]["SemanticClaimEvidenceResponse"];
 type DraftCreated = components["schemas"]["ReviewPaperDraftCreatedResponse"];
 type ReviewReasonCode = components["schemas"]["CorrectionReasonCode"];
 type DefectCategory = components["schemas"]["DefectCategory"];
@@ -501,6 +503,58 @@ function scopeSummary(question: ReviewQuestion): string {
     .join(" · ");
 }
 
+function semanticClaimLabel(claim: SemanticClaim): string {
+  if (claim.claim_type === "answer") return "Answer";
+  if (claim.claim_type === "explanation") return "Explanation";
+  return "Marking guidance";
+}
+
+function semanticClaimStatus(status: SemanticClaim["status"]): string {
+  if (status === "supported") return "Supported";
+  if (status === "contradicted") return "Conflicts with source";
+  if (status === "insufficient_evidence") return "Needs more evidence";
+  return "Manual review needed";
+}
+
+function AnswerEvidence({ verification }: { verification: SemanticVerification }) {
+  return (
+    <section className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+      <h5 className="font-semibold text-sky-950">Answer evidence</h5>
+      <p className="mt-1 text-sm leading-6 text-sky-900">{safeText(verification.summary)}</p>
+      {verification.claims.length ? (
+        <ul className="mt-3 space-y-2">
+          {verification.claims.slice(0, 32).map((claim) => (
+            <li className="rounded-md border border-sky-200 bg-white p-3" key={claim.claim_id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">{semanticClaimLabel(claim)}</p>
+                <Badge className="border-sky-300 bg-sky-50 text-sky-950">
+                  {semanticClaimStatus(claim.status)}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm leading-6">{safeText(claim.summary)}</p>
+              {claim.evidence_refs.length ? (
+                <ul className="mt-2 space-y-1 text-xs text-slate-700">
+                  {claim.evidence_refs.map((reference, index) => (
+                    <li key={`${claim.claim_id}-${index}`}>
+                      Reviewed source · page {reference.page_number}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs font-semibold text-amber-900">
+                  No reviewed source citation was returned for this claim.
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm font-semibold">Review this answer manually.</p>
+      )}
+    </section>
+  );
+}
+
 function QuestionTechnicalDetails({ question }: { question: ReviewQuestion }) {
   const technical = question.technical_details;
   return (
@@ -551,6 +605,7 @@ function QuestionTechnicalDetails({ question }: { question: ReviewQuestion }) {
                     <dl className="mt-2 space-y-1 border-l border-slate-300 pl-3 text-xs">
                       {finding.evidence.slice(0, 20).flatMap((record, recordIndex) =>
                         Object.entries(record)
+                          .filter(([key]) => key !== "details")
                           .slice(0, 20)
                           .map(([key, value]) => (
                             <div key={`${recordIndex}-${key}`}>
@@ -1516,6 +1571,9 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                             {findingCategory(finding.code)}: {status}
                           </p>
                           <p className="mt-1 text-sm leading-6">{safeText(finding.message)}</p>
+                          {finding.semantic_verification ? (
+                            <AnswerEvidence verification={finding.semantic_verification} />
+                          ) : null}
                         </li>
                       );
                     })}

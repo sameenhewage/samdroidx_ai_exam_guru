@@ -51,6 +51,7 @@ from exam_guru_api.validation.repository import (
     ValidationGenerationRecord,
     ValidationTrustedScopeRecord,
 )
+from exam_guru_api.validation.schemas import ValidationFindingResponse
 from exam_guru_api.validation.service import (
     ValidationCurriculumNotFoundError,
     ValidationGenerationIntegrityError,
@@ -830,6 +831,85 @@ def test_finding_models_enforce_service_resource_bounds() -> None:
     models = _finding_models(UUID(int=1), report)
     assert len(models) == 1
     assert models[0].evidence_count == 1
+
+
+def test_finding_models_persist_structured_evidence_details() -> None:
+    report = ValidationReport(
+        candidate_id="candidate",
+        pipeline_version="pipeline.v1",
+        findings=(
+            ValidationFinding(
+                validator_id="semantic-fixture",
+                validator_version="1.0.0",
+                code="subject.factual.grounded",
+                status=FindingStatus.PASS,
+                message="Fixture semantic finding.",
+                evidence=(
+                    FindingEvidence(
+                        "$.semantic_verification",
+                        "reviewed evidence",
+                        "supported",
+                        details={
+                            "schema_version": "semantic-verification.v1",
+                            "decomposition_version": "deterministic-factual-claims.v1",
+                            "call_attempted": True,
+                            "failure_code": None,
+                            "status": "supported",
+                            "summary": "Supported fixture.",
+                            "claims": [
+                                {
+                                    "claim_id": "answer",
+                                    "claim_type": "answer",
+                                    "location": "$.candidate.answer",
+                                    "status": "supported",
+                                    "summary": "The answer is supported.",
+                                    "evidence_refs": [
+                                        {
+                                            "context_id": "context-01",
+                                            "source_document_id": "source-01",
+                                            "page_number": 7,
+                                        }
+                                    ],
+                                }
+                            ],
+                            "lineage": {
+                                "verifier_id": "semantic-fixture",
+                                "verifier_version": "1.0.0",
+                                "prompt_version": "semantic.v1",
+                                "provider": "fixture",
+                                "provider_version": "1.0.0",
+                                "model": "fixture-model",
+                                "model_version": "fixture-model-v1",
+                                "pricing_version": "fixture-pricing-v1",
+                            },
+                            "accounting": {
+                                "input_tokens": 10,
+                                "output_tokens": 5,
+                                "total_tokens": 15,
+                                "cost_microusd": 7,
+                                "latency_ms": 9,
+                            },
+                        },
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    models = _finding_models(UUID(int=1), report)
+
+    details = cast(dict[str, object], models[0].evidence[0]["details"])
+    assert details["schema_version"] == "semantic-verification.v1"
+    models[0].created_at = datetime(2026, 8, 27, tzinfo=UTC)
+    response = ValidationFindingResponse.from_model(models[0])
+    assert response.semantic_verification is not None
+    assert response.semantic_verification.claims[0].claim_id == "answer"
+    assert response.semantic_verification.accounting is not None
+    assert response.semantic_verification.accounting.cost_microusd == 7
+
+    models[0].evidence = [*models[0].evidence, dict(models[0].evidence[0])]
+    with pytest.raises(ValueError, match="duplicate semantic"):
+        ValidationFindingResponse.from_model(models[0])
 
 
 def persisted_validation_report() -> tuple[

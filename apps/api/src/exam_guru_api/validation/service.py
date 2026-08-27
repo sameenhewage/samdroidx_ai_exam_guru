@@ -587,8 +587,15 @@ def reconstruct_validation_report(
                 raise ValidationReportIntegrityError("validation finding evidence is incomplete")
             evidence: list[FindingEvidence] = []
             for item in raw_evidence:
-                if not isinstance(item, Mapping) or frozenset(item) != frozenset(
-                    {"location", "expected", "observed"}
+                required_keys = frozenset({"location", "expected", "observed"})
+                if (
+                    not isinstance(item, Mapping)
+                    or not required_keys.issubset(item)
+                    or not frozenset(item).issubset(required_keys | {"details"})
+                    or (
+                        item.get("details") is not None
+                        and not isinstance(item.get("details"), Mapping)
+                    )
                 ):
                     raise ValidationReportIntegrityError(
                         "validation finding evidence shape is invalid"
@@ -598,6 +605,7 @@ def reconstruct_validation_report(
                         location=_text(item["location"], label="evidence location"),
                         expected=_text(item["expected"], label="evidence expected"),
                         observed=_text(item["observed"], label="evidence observed"),
+                        details=cast(Mapping[str, object] | None, item.get("details")),
                     )
                 )
             reconstructed_findings.append(
@@ -636,15 +644,15 @@ def reconstruct_validation_report(
     if not isinstance(lineage, list) or len(lineage) != run.validator_count:
         raise ValidationReportIntegrityError("validation validator lineage count is invalid")
     expected_lineage: set[tuple[str, str]] = set()
-    for item in lineage:
+    for lineage_item in lineage:
         if (
-            not isinstance(item, Mapping)
-            or frozenset(item) != frozenset({"validator_id", "validator_version"})
-            or not isinstance(item["validator_id"], str)
-            or not isinstance(item["validator_version"], str)
+            not isinstance(lineage_item, Mapping)
+            or frozenset(lineage_item) != frozenset({"validator_id", "validator_version"})
+            or not isinstance(lineage_item["validator_id"], str)
+            or not isinstance(lineage_item["validator_version"], str)
         ):
             raise ValidationReportIntegrityError("validation validator lineage shape is invalid")
-        expected_lineage.add((item["validator_id"], item["validator_version"]))
+        expected_lineage.add((lineage_item["validator_id"], lineage_item["validator_version"]))
     observed_lineage = {
         (finding.validator_id, finding.validator_version) for finding in report.findings
     }
@@ -904,14 +912,16 @@ def _finding_models(run_id: UUID, report: ValidationReport) -> tuple[ValidationF
     for ordinal, finding in enumerate(report.findings):
         if len(finding.evidence) > MAX_VALIDATION_EVIDENCE_PER_FINDING:
             raise ValidationResourceLimitError("validation evidence count exceeds its bound")
-        evidence = [
-            {
+        evidence: list[dict[str, object]] = []
+        for item in finding.evidence:
+            evidence_item: dict[str, object] = {
                 "location": item.location,
                 "expected": item.expected,
                 "observed": item.observed,
             }
-            for item in finding.evidence
-        ]
+            if item.details is not None:
+                evidence_item["details"] = _plain_json(item.details)
+            evidence.append(evidence_item)
         models.append(
             ValidationFindingModel(
                 id=uuid5(

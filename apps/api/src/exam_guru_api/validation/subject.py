@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
@@ -29,6 +30,12 @@ MAX_SEMANTIC_SUMMARY_CHARACTERS = 1_024
 MAX_SEMANTIC_ACCOUNTING_TOKENS = 10_000_000
 MAX_SEMANTIC_COST_MICROUSD = 100_000_000_000
 MAX_SEMANTIC_LATENCY_MS = 120_000
+MAX_FACTUAL_CLAIMS = 32
+MAX_FACTUAL_CLAIM_TEXT_CHARACTERS = 16_000
+MAX_SEMANTIC_CLAIM_SUMMARY_CHARACTERS = 512
+FACTUAL_CLAIM_DECOMPOSITION_VERSION = "deterministic-factual-claims.v1"
+_CLAIM_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_CLAIM_SENTENCE_BOUNDARY = re.compile(r"(?:[\r\n]+|(?<=[.!?\u3002\uff01\uff1f])\s+)")
 
 
 class SubjectFindingCode(StrEnum):
@@ -103,6 +110,145 @@ class SemanticVerificationStatus(StrEnum):
     SUPPORTED = "supported"
     CONTRADICTED = "contradicted"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+class FactualClaimType(StrEnum):
+    ANSWER = "answer"
+    EXPLANATION = "explanation"
+    MARKING = "marking"
+
+
+@dataclass(frozen=True, slots=True)
+class FactualClaim:
+    claim_id: str
+    claim_type: FactualClaimType
+    location: str
+    text: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.claim_id, str)
+            or len(self.claim_id) > 128
+            or not _CLAIM_ID.fullmatch(self.claim_id)
+        ):
+            raise ValidationContractError("factual claim id must be a bounded machine identifier")
+        if not isinstance(self.claim_type, FactualClaimType):
+            raise ValidationContractError("factual claim type is invalid")
+        if (
+            not isinstance(self.location, str)
+            or not self.location.startswith("$.candidate.")
+            or len(self.location) > 512
+            or not self.location.isprintable()
+        ):
+            raise ValidationContractError("factual claim location must be a bounded candidate path")
+        if (
+            not isinstance(self.text, str)
+            or not self.text.strip()
+            or self.text != self.text.strip()
+            or len(self.text) > MAX_FACTUAL_CLAIM_TEXT_CHARACTERS
+        ):
+            raise ValidationContractError("factual claim text must be bounded trimmed text")
+
+
+def _claim_mapping(value: object, label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValidationContractError(f"claim decomposition {label} must be an object")
+    return cast(Mapping[str, object], value)
+
+
+def _claim_sequence(value: object, label: str) -> Sequence[object]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        raise ValidationContractError(f"claim decomposition {label} must be an array")
+    return cast(Sequence[object], value)
+
+
+def _claim_text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationContractError(f"claim decomposition {label} must be text")
+    return value.strip()
+
+
+def _claim_sentences(value: str) -> tuple[str, ...]:
+    return tuple(
+        sentence.strip() for sentence in _CLAIM_SENTENCE_BOUNDARY.split(value) if sentence.strip()
+    )
+
+
+def _marking_claim_id(value: str, ordinal: int) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    suffix = normalized[:96] or f"criterion-{ordinal + 1}"
+    return f"marking-{suffix}"
+
+
+def decompose_factual_claims(candidate: Mapping[str, object]) -> tuple[FactualClaim, ...]:
+    root = _claim_mapping(candidate, "candidate")
+    stem = _claim_text(root.get("stem"), "stem")
+    question_type = _claim_text(root.get("question_type"), "question_type")
+    answer = _claim_mapping(root.get("answer"), "answer")
+    explanation = _claim_text(answer.get("explanation"), "answer explanation")
+    answer_values: tuple[str, ...]
+    if question_type == "multiple_choice":
+        correct_option_id = _claim_text(answer.get("correct_option_id"), "correct option")
+        option_texts = {
+            _claim_text(option.get("option_id"), "option id"): _claim_text(
+                option.get("text"), "option text"
+            )
+            for option in (
+                _claim_mapping(item, "option")
+                for item in _claim_sequence(root.get("options"), "options")
+            )
+        }
+        if correct_option_id not in option_texts:
+            raise ValidationContractError("claim decomposition correct option is missing")
+        answer_values = (option_texts[correct_option_id],)
+    else:
+        answer_values = tuple(
+            _claim_text(item, "accepted response")
+            for item in _claim_sequence(answer.get("accepted_responses"), "accepted responses")
+        )
+        if not answer_values:
+            raise ValidationContractError("claim decomposition requires an accepted response")
+    claims: list[FactualClaim] = [
+        FactualClaim(
+            claim_id="answer" if question_type == "multiple_choice" else f"answer-{ordinal + 1}",
+            claim_type=FactualClaimType.ANSWER,
+            location=(
+                "$.candidate.answer"
+                if question_type == "multiple_choice"
+                else f"$.candidate.answer.accepted_responses[{ordinal}]"
+            ),
+            text=f"Question: {stem}\nProposed answer: {answer_value}",
+        )
+        for ordinal, answer_value in enumerate(answer_values)
+    ]
+    claims.extend(
+        FactualClaim(
+            claim_id=f"explanation-{ordinal + 1}",
+            claim_type=FactualClaimType.EXPLANATION,
+            location=f"$.candidate.answer.explanation#{ordinal + 1}",
+            text=sentence,
+        )
+        for ordinal, sentence in enumerate(_claim_sentences(explanation))
+    )
+    marking = _claim_mapping(root.get("marking"), "marking")
+    criteria = _claim_sequence(marking.get("criteria"), "marking criteria")
+    for ordinal, raw_criterion in enumerate(criteria):
+        criterion = _claim_mapping(raw_criterion, "marking criterion")
+        criterion_id = _claim_text(criterion.get("criterion_id"), "criterion id")
+        claims.append(
+            FactualClaim(
+                claim_id=_marking_claim_id(criterion_id, ordinal),
+                claim_type=FactualClaimType.MARKING,
+                location=f"$.candidate.marking.criteria[{ordinal}]",
+                text=_claim_text(criterion.get("description"), "criterion description"),
+            )
+        )
+    if not 2 <= len(claims) <= MAX_FACTUAL_CLAIMS:
+        raise ValidationContractError("claim decomposition count is outside its bound")
+    claim_ids = tuple(claim.claim_id for claim in claims)
+    if len(set(claim_ids)) != len(claim_ids):
+        raise ValidationContractError("claim decomposition identifiers must be unique")
+    return tuple(claims)
 
 
 def _bounded_semantic_integer(
@@ -235,6 +381,50 @@ class SemanticEvidenceReference:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticClaimVerification:
+    claim_id: str
+    status: SemanticVerificationStatus
+    summary: str
+    evidence_refs: tuple[SemanticEvidenceReference, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.claim_id, str)
+            or len(self.claim_id) > 128
+            or not _CLAIM_ID.fullmatch(self.claim_id)
+        ):
+            raise ValidationContractError("semantic claim id must be a bounded machine identifier")
+        if not isinstance(self.status, SemanticVerificationStatus):
+            raise ValidationContractError("semantic claim status is invalid")
+        if (
+            not isinstance(self.summary, str)
+            or not self.summary.strip()
+            or self.summary != self.summary.strip()
+            or len(self.summary) > MAX_SEMANTIC_CLAIM_SUMMARY_CHARACTERS
+        ):
+            raise ValidationContractError("semantic claim summary must be bounded trimmed text")
+        if (
+            not isinstance(self.evidence_refs, tuple)
+            or len(self.evidence_refs) > MAX_SEMANTIC_EVIDENCE_REFS
+            or any(not isinstance(item, SemanticEvidenceReference) for item in self.evidence_refs)
+        ):
+            raise ValidationContractError("semantic claim evidence must be a bounded tuple")
+        canonical = tuple(sorted(self.evidence_refs))
+        if len(set(canonical)) != len(canonical):
+            raise ValidationContractError("semantic claim evidence cannot contain duplicates")
+        if (
+            self.status
+            in {
+                SemanticVerificationStatus.SUPPORTED,
+                SemanticVerificationStatus.CONTRADICTED,
+            }
+            and not canonical
+        ):
+            raise ValidationContractError("conclusive claim verification requires evidence")
+        object.__setattr__(self, "evidence_refs", canonical)
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticVerificationRequest:
     grade: int
     medium: str
@@ -243,7 +433,19 @@ class SemanticVerificationRequest:
     curriculum_version_id: UUID
     selected_scope: CurriculumSelection
     candidate: Mapping[str, object]
+    claims: tuple[FactualClaim, ...]
     grounding_sources: tuple[GroundingSource, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.claims, tuple)
+            or not 1 <= len(self.claims) <= MAX_FACTUAL_CLAIMS
+            or any(not isinstance(claim, FactualClaim) for claim in self.claims)
+        ):
+            raise ValidationContractError("semantic verification claims must be a bounded tuple")
+        claim_ids = tuple(claim.claim_id for claim in self.claims)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise ValidationContractError("semantic verification claim identifiers must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +453,7 @@ class SemanticVerificationResult:
     status: SemanticVerificationStatus
     summary: str
     evidence_refs: tuple[SemanticEvidenceReference, ...]
+    claims: tuple[SemanticClaimVerification, ...]
     verifier_id: str
     verifier_version: str
     prompt_version: str
@@ -280,6 +483,32 @@ class SemanticVerificationResult:
         if len(set(canonical)) != len(canonical):
             raise ValidationContractError("semantic evidence references cannot contain duplicates")
         object.__setattr__(self, "evidence_refs", canonical)
+        if (
+            not isinstance(self.claims, tuple)
+            or not 1 <= len(self.claims) <= MAX_FACTUAL_CLAIMS
+            or any(not isinstance(claim, SemanticClaimVerification) for claim in self.claims)
+        ):
+            raise ValidationContractError("semantic claim results must be a bounded tuple")
+        claim_ids = tuple(claim.claim_id for claim in self.claims)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise ValidationContractError("semantic claim result identifiers must be unique")
+        aggregate_status = (
+            SemanticVerificationStatus.CONTRADICTED
+            if any(claim.status is SemanticVerificationStatus.CONTRADICTED for claim in self.claims)
+            else SemanticVerificationStatus.INSUFFICIENT_EVIDENCE
+            if any(
+                claim.status is SemanticVerificationStatus.INSUFFICIENT_EVIDENCE
+                for claim in self.claims
+            )
+            else SemanticVerificationStatus.SUPPORTED
+        )
+        if self.status is not aggregate_status:
+            raise ValidationContractError("semantic overall status must match its claim results")
+        claim_evidence = tuple(
+            sorted({reference for claim in self.claims for reference in claim.evidence_refs})
+        )
+        if canonical != claim_evidence:
+            raise ValidationContractError("semantic overall evidence must match its claim results")
         for field_name in (
             "verifier_id",
             "verifier_version",
@@ -539,7 +768,7 @@ class GroundedFactualSubjectValidator:
     verifier: GroundedSemanticVerifier | None = None
     subject_codes: frozenset[str] = FACTUAL_SUBJECT_CODES
     validator_id: str = "grounded-factual-subject"
-    base_validator_version: str = "1.1.0"
+    base_validator_version: str = "2.0.0"
 
     @property
     def validator_version(self) -> str:
@@ -574,19 +803,22 @@ class GroundedFactualSubjectValidator:
                         "No grounded semantic verifier is configured; human review is required."
                     ),
                     observed="verifier=not-configured",
+                    details=self._unconfigured_details(context),
                 ),
             )
-        request = SemanticVerificationRequest(
-            grade=context.grade,
-            medium=context.medium,
-            subject_id=context.subject_id,
-            subject_code=context.subject_code,
-            curriculum_version_id=context.curriculum_version_id,
-            selected_scope=context.selected_scope,
-            candidate=context.candidate,
-            grounding_sources=context.grounding_sources,
-        )
+        request: SemanticVerificationRequest | None = None
         try:
+            request = SemanticVerificationRequest(
+                grade=context.grade,
+                medium=context.medium,
+                subject_id=context.subject_id,
+                subject_code=context.subject_code,
+                curriculum_version_id=context.curriculum_version_id,
+                selected_scope=context.selected_scope,
+                candidate=context.candidate,
+                claims=decompose_factual_claims(context.candidate),
+                grounding_sources=context.grounding_sources,
+            )
             result = self.verifier.verify(request)
             self._validate_result(context, result)
         except Exception as error:
@@ -598,9 +830,11 @@ class GroundedFactualSubjectValidator:
                         "Grounded semantic verification was unavailable; human review is required."
                     ),
                     observed=self._failure_observed(error),
+                    details=self._failure_details(request, error),
                 ),
             )
 
+        details = self._success_details(request, result)
         evidence_refs = ",".join(
             f"{item.context_id}@{item.source_document_id}:p{item.page_number}"
             for item in result.evidence_refs
@@ -623,6 +857,7 @@ class GroundedFactualSubjectValidator:
                         "The structured verifier found the answer supported by reviewed evidence."
                     ),
                     observed=observed,
+                    details=details,
                 ),
             )
         if result.status is SemanticVerificationStatus.CONTRADICTED:
@@ -632,6 +867,7 @@ class GroundedFactualSubjectValidator:
                     status=FindingStatus.FAIL,
                     message="Reviewed evidence contradicts a material answer claim.",
                     observed=observed,
+                    details=details,
                 ),
             )
         return (
@@ -640,10 +876,134 @@ class GroundedFactualSubjectValidator:
                 status=FindingStatus.WARN,
                 message="Reviewed evidence is insufficient to verify the material answer claims.",
                 observed=observed,
+                details=details,
             ),
         )
 
-    def _failure_observed(self, error: Exception) -> str:
+    @staticmethod
+    def _accounting_details(accounting: SemanticVerifierAccounting) -> dict[str, int]:
+        return {
+            "input_tokens": accounting.input_tokens,
+            "output_tokens": accounting.output_tokens,
+            "total_tokens": accounting.total_tokens,
+            "cost_microusd": accounting.cost_microusd,
+            "latency_ms": accounting.latency_ms,
+        }
+
+    @staticmethod
+    def _reference_details(reference: SemanticEvidenceReference) -> dict[str, object]:
+        return {
+            "context_id": reference.context_id,
+            "source_document_id": reference.source_document_id,
+            "page_number": reference.page_number,
+        }
+
+    def _lineage_details(self) -> dict[str, str] | None:
+        verifier = self.verifier
+        if verifier is None:
+            return None
+        return {
+            "verifier_id": verifier.verifier_id,
+            "verifier_version": verifier.verifier_version,
+            "prompt_version": verifier.prompt_version,
+            "provider": verifier.provider,
+            "provider_version": verifier.provider_version,
+            "model": verifier.model,
+            "model_version": verifier.model_version,
+            "pricing_version": verifier.pricing_version,
+        }
+
+    def _success_details(
+        self,
+        request: SemanticVerificationRequest,
+        result: SemanticVerificationResult,
+    ) -> dict[str, object]:
+        inputs = {claim.claim_id: claim for claim in request.claims}
+        return {
+            "schema_version": "semantic-verification.v1",
+            "decomposition_version": FACTUAL_CLAIM_DECOMPOSITION_VERSION,
+            "call_attempted": True,
+            "failure_code": None,
+            "status": result.status.value,
+            "summary": result.summary,
+            "claims": [
+                {
+                    "claim_id": claim.claim_id,
+                    "claim_type": inputs[claim.claim_id].claim_type.value,
+                    "location": inputs[claim.claim_id].location,
+                    "status": claim.status.value,
+                    "summary": claim.summary,
+                    "evidence_refs": [
+                        self._reference_details(reference) for reference in claim.evidence_refs
+                    ],
+                }
+                for claim in result.claims
+            ],
+            "lineage": self._lineage_details(),
+            "accounting": self._accounting_details(result.accounting),
+        }
+
+    def _failure_details(
+        self,
+        request: SemanticVerificationRequest | None,
+        error: Exception,
+    ) -> dict[str, object]:
+        accounting = getattr(error, "accounting", None)
+        return {
+            "schema_version": "semantic-verification.v1",
+            "decomposition_version": FACTUAL_CLAIM_DECOMPOSITION_VERSION,
+            "call_attempted": request is not None,
+            "failure_code": self._failure_code(error),
+            "status": "unavailable",
+            "summary": "Grounded verification was unavailable; human review is required.",
+            "claims": [
+                {
+                    "claim_id": claim.claim_id,
+                    "claim_type": claim.claim_type.value,
+                    "location": claim.location,
+                    "status": "unavailable",
+                    "summary": "This claim requires human review.",
+                    "evidence_refs": [],
+                }
+                for claim in request.claims
+            ]
+            if request is not None
+            else [],
+            "lineage": self._lineage_details(),
+            "accounting": self._accounting_details(accounting)
+            if isinstance(accounting, SemanticVerifierAccounting)
+            else None,
+        }
+
+    def _unconfigured_details(self, context: SubjectValidationContext) -> dict[str, object]:
+        try:
+            claims = decompose_factual_claims(context.candidate)
+        except ValidationContractError:
+            claims = ()
+        return {
+            "schema_version": "semantic-verification.v1",
+            "decomposition_version": FACTUAL_CLAIM_DECOMPOSITION_VERSION,
+            "call_attempted": False,
+            "failure_code": "not_configured",
+            "status": "unavailable",
+            "summary": "No grounded verifier is configured; human review is required.",
+            "claims": [
+                {
+                    "claim_id": claim.claim_id,
+                    "claim_type": claim.claim_type.value,
+                    "location": claim.location,
+                    "status": "unavailable",
+                    "summary": "This claim requires human review.",
+                    "evidence_refs": [],
+                }
+                for claim in claims
+            ],
+            "lineage": None,
+            "accounting": None,
+        }
+
+    @staticmethod
+    def _failure_code(error: Exception) -> str:
         allowed_codes = {
             "authentication",
             "permission_denied",
@@ -658,7 +1018,10 @@ class GroundedFactualSubjectValidator:
         }
         raw_code = getattr(error, "code", None)
         code = raw_code.value if isinstance(raw_code, StrEnum) else None
-        failure_code = code if code in allowed_codes else "unavailable-or-invalid-result"
+        return code if code in allowed_codes else "unavailable-or-invalid-result"
+
+    def _failure_observed(self, error: Exception) -> str:
+        failure_code = self._failure_code(error)
         verifier = cast(GroundedSemanticVerifier, self.verifier)
         parts = [
             f"failure={failure_code}",
@@ -689,6 +1052,11 @@ class GroundedFactualSubjectValidator:
         verifier = self.verifier
         if verifier is None:
             raise ValidationContractError("semantic verifier is not configured")
+        expected_claim_ids = tuple(
+            claim.claim_id for claim in decompose_factual_claims(context.candidate)
+        )
+        if tuple(claim.claim_id for claim in result.claims) != expected_claim_ids:
+            raise ValidationContractError("semantic verifier claim set is inconsistent")
         if (
             result.verifier_id != verifier.verifier_id
             or result.verifier_version != verifier.verifier_version
@@ -727,6 +1095,7 @@ class GroundedFactualSubjectValidator:
         status: FindingStatus,
         message: str,
         observed: str,
+        details: Mapping[str, object],
     ) -> ValidationFinding:
         return ValidationFinding(
             validator_id=self.validator_id,
@@ -736,9 +1105,10 @@ class GroundedFactualSubjectValidator:
             message=message,
             evidence=(
                 FindingEvidence(
-                    location="$.grounding_sources",
+                    location="$.semantic_verification",
                     expected="bounded reviewed evidence with structured verification status",
                     observed=observed[:1_024],
+                    details=details,
                 ),
             ),
         )

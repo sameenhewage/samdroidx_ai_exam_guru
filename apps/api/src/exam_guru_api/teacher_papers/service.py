@@ -104,11 +104,10 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperOptionsResponse,
     TeacherPaperSlotProgressResponse,
     TeacherPaperStatus,
-    TechnicalFindingStatus,
     TechnicalValidationFindingResponse,
     UnitOption,
 )
-from exam_guru_api.validation.models import ValidationRunModel
+from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.pipeline import ValidationPipeline
 from exam_guru_api.validation.service import ValidationRunService
 
@@ -1443,6 +1442,28 @@ def _friendly_validation(source: ReviewSlotSource) -> ReviewValidationResponse:
     )
 
 
+def _technical_validation_finding(
+    finding: ValidationFindingModel,
+) -> TechnicalValidationFindingResponse:
+    semantic_details = [
+        item["details"]
+        for item in finding.evidence
+        if item.get("location") == "$.semantic_verification"
+        and isinstance(item.get("details"), dict)
+    ]
+    if len(semantic_details) > 1:
+        raise ValueError("finding contains duplicate semantic verification details")
+    return TechnicalValidationFindingResponse.model_validate(
+        {
+            "code": finding.code,
+            "status": finding.status,
+            "message": finding.message,
+            "evidence": tuple(finding.evidence),
+            "semantic_verification": semantic_details[0] if semantic_details else None,
+        }
+    )
+
+
 def _review_question(job: TeacherPaperJobModel, source: ReviewSlotSource) -> ReviewQuestionResponse:
     content = _question_content(source.content)
     context_items = cast(list[dict[str, object]], source.generation.context_snapshot["items"])
@@ -1470,13 +1491,7 @@ def _review_question(job: TeacherPaperJobModel, source: ReviewSlotSource) -> Rev
         )
     )
     technical_findings = tuple(
-        TechnicalValidationFindingResponse(
-            code=finding.code,
-            status=cast(TechnicalFindingStatus, finding.status),
-            message=finding.message,
-            evidence=tuple(finding.evidence),
-        )
-        for finding in source.findings
+        _technical_validation_finding(finding) for finding in source.findings
     )
     return ReviewQuestionResponse(
         id=source.generation.id,

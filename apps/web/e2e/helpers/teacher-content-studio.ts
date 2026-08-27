@@ -478,13 +478,66 @@ const reviewQuestion = {
       },
       {
         code: "subject.math.numeric_equivalence",
-        evidence: [{ result: "3/4" }],
+        evidence: [
+          {
+            location: "$.candidate.answer",
+            expected: "3/4",
+            observed: "3/4",
+          },
+        ],
         message: "The fraction calculation is correct.",
         status: "pass",
       },
       {
         code: "subject.factual.source_supported",
-        evidence: [{ page: "18" }],
+        evidence: [
+          {
+            location: "$.semantic_verification",
+            expected: "reviewed evidence",
+            observed: "supported",
+          },
+        ],
+        semantic_verification: {
+          schema_version: "semantic-verification.v1",
+          decomposition_version: "deterministic-factual-claims.v1",
+          call_attempted: true,
+          failure_code: null,
+          status: "supported",
+          summary: "Reviewed material supports the answer and explanation.",
+          claims: [
+            {
+              claim_id: "answer",
+              claim_type: "answer",
+              location: "$.candidate.answer",
+              status: "supported",
+              summary: "The proposed answer is supported.",
+              evidence_refs: [
+                {
+                  context_id: "context-01",
+                  source_document_id: "grade-7-maths-teacher-guide",
+                  page_number: 18,
+                },
+              ],
+            },
+          ],
+          lineage: {
+            verifier_id: "semantic-fixture",
+            verifier_version: "2.0.0",
+            prompt_version: "semantic.v2",
+            provider: "fixture",
+            provider_version: "1.0.0",
+            model: "fixture-model",
+            model_version: "fixture-model-v1",
+            pricing_version: "fixture-pricing-v1",
+          },
+          accounting: {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 120,
+            cost_microusd: 31,
+            latency_ms: 80,
+          },
+        },
         message: "The source supports the question and answer.",
         status: "pass",
       },

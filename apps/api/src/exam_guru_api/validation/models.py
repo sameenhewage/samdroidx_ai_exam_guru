@@ -12,6 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -254,6 +255,14 @@ class ValidationFindingModel(Base):
             "code",
             "status",
         ),
+        Index(
+            "uq_validation_findings_semantic_verification_per_run",
+            "validation_run_id",
+            unique=True,
+            postgresql_where=text(
+                'evidence @> \'[{"location": "$.semantic_verification"}]\'::jsonb'
+            ),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -267,7 +276,7 @@ class ValidationFindingModel(Base):
     code: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(8), nullable=False)
     message: Mapped[str] = mapped_column(String(1024), nullable=False)
-    evidence: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

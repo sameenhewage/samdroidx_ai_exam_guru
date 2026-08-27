@@ -15,6 +15,7 @@ from exam_guru_api.generation.models import GenerationRunModel, GenerationRunSta
 from exam_guru_api.infrastructure.migrations import assert_database_schema_current, upgrade_database
 from exam_guru_api.knowledge.models import EmbeddingJobModel, EmbeddingJobStatus
 from exam_guru_api.main import create_app
+from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 PATH = "/api/v1/admin/operations/summary"
@@ -130,6 +131,163 @@ def generation_run(
         disposition="requires_validation" if succeeded else None,
         created_by=ACTOR_ID,
         created_at=created_at,
+    )
+
+
+def semantic_validation_run(
+    *,
+    run_id: UUID,
+    generation_run_id: UUID,
+    created_at: datetime,
+    overall_status: str,
+) -> ValidationRunModel:
+    input_fingerprint = f"{run_id.int:064x}"
+    candidate_fingerprint = f"{run_id.int + 1:064x}"
+    generation_result_fingerprint = f"{generation_run_id.int + 2:064x}"
+    attempt_id = UUID(int=generation_run_id.int + 1_000)
+    return ValidationRunModel(
+        id=run_id,
+        curriculum_version_id=CURRICULUM_ID,
+        generation_run_id=generation_run_id,
+        generation_attempt_id=attempt_id,
+        pipeline_version=f"semantic-operations.v{run_id.int}",
+        pipeline_fingerprint=f"{run_id.int + 3:064x}",
+        input_schema_version="question-validation-input.v3",
+        report_schema_version="question-validation-report.v3",
+        generation_result_fingerprint=generation_result_fingerprint,
+        input_fingerprint=input_fingerprint,
+        candidate_fingerprint=candidate_fingerprint,
+        report_fingerprint=f"{run_id.int + 4:064x}",
+        overall_status=overall_status,
+        input_snapshot={
+            "schema_version": "question-validation-input.v3",
+            "trust": "server_reconstructed",
+            "generation": {
+                "generation_run_id": str(generation_run_id),
+                "generation_attempt_id": str(attempt_id),
+                "generation_result_fingerprint": generation_result_fingerprint,
+            },
+            "candidate": {},
+            "candidate_fingerprint": candidate_fingerprint,
+            "input_fingerprint": input_fingerprint,
+            "blueprint": {},
+            "grounding_sources": [{}],
+            "duplicate_references": [],
+            "subject_scope": {
+                "trust": "server_owned",
+                "grade": 5,
+                "medium": "en",
+                "subject_id": str(UUID(int=8_300_001)),
+                "subject_code": "SCIENCE",
+                "curriculum_version_id": str(CURRICULUM_ID),
+                "unit_ids": [],
+                "lesson_ids": [],
+            },
+            "generated_scope": {},
+            "context_scope_bindings": [],
+        },
+        validator_lineage=[
+            {
+                "validator_id": "grounded-factual-subject",
+                "validator_version": "2.0.0",
+            }
+        ],
+        limitations=["Fixture operational validation."],
+        finding_count=1,
+        validator_count=1,
+        grounding_source_count=1,
+        duplicate_reference_count=0,
+        created_by=ACTOR_ID,
+        created_at=created_at,
+    )
+
+
+def semantic_finding(
+    *,
+    finding_id: UUID,
+    run_id: UUID,
+    status: str,
+    claim_statuses: tuple[str, ...],
+    failure_code: str | None,
+    attempted: bool,
+    accounting: tuple[int, int, int, int, int] | None,
+) -> ValidationFindingModel:
+    claims = [
+        {
+            "claim_id": f"claim-{index + 1}",
+            "claim_type": "answer" if index == 0 else "explanation",
+            "location": "$.candidate.answer" if index == 0 else "$.candidate.answer.explanation",
+            "status": claim_status,
+            "summary": f"Claim {index + 1} is {claim_status}.",
+            "evidence_refs": [
+                {
+                    "context_id": "context-01",
+                    "source_document_id": "source-01",
+                    "page_number": 7,
+                }
+            ]
+            if claim_status in {"supported", "contradicted"}
+            else [],
+        }
+        for index, claim_status in enumerate(claim_statuses)
+    ]
+    details: dict[str, object] = {
+        "schema_version": "semantic-verification.v1",
+        "decomposition_version": "deterministic-factual-claims.v1",
+        "call_attempted": attempted,
+        "failure_code": failure_code,
+        "status": status,
+        "summary": f"Semantic verification is {status}.",
+        "claims": claims,
+        "lineage": {
+            "verifier_id": "semantic-fixture",
+            "verifier_version": "1.0.0",
+            "prompt_version": "semantic.v1",
+            "provider": "fixture",
+            "provider_version": "1.0.0",
+            "model": "fixture-model",
+            "model_version": "fixture-model-v1",
+            "pricing_version": "fixture-pricing-v1",
+        }
+        if attempted
+        else None,
+        "accounting": {
+            "input_tokens": accounting[0],
+            "output_tokens": accounting[1],
+            "total_tokens": accounting[2],
+            "cost_microusd": accounting[3],
+            "latency_ms": accounting[4],
+        }
+        if accounting is not None
+        else None,
+    }
+    finding_status = "pass" if status == "supported" else "warn"
+    code = (
+        "subject.factual.grounded"
+        if status == "supported"
+        else "subject.factual.unsupported_claim"
+        if status == "insufficient_evidence"
+        else "subject.factual.verifier_unavailable"
+    )
+    return ValidationFindingModel(
+        id=finding_id,
+        validation_run_id=run_id,
+        ordinal=0,
+        validator_id="grounded-factual-subject",
+        validator_version="2.0.0",
+        code=code,
+        status=finding_status,
+        message="Fixture semantic finding.",
+        evidence=[
+            {
+                "location": "$.semantic_verification",
+                "expected": "reviewed evidence",
+                "observed": status,
+                "details": details,
+            }
+        ],
+        evidence_count=1,
+        created_at=START,
     )
 
 
@@ -274,6 +432,149 @@ def test_postgres_summary_aggregates_known_generation_costs_statuses_and_failure
         "failure_codes": [],
     }
     assert body["practice_papers"]["paper_count"] == 0
+
+
+@pytest.mark.integration
+def test_postgres_summary_aggregates_semantic_verifier_claims_cost_and_failures(
+    operations_database_url: str,
+) -> None:
+    window_start = datetime(2026, 5, 1, tzinfo=UTC)
+    window_end = window_start + timedelta(days=1)
+    parent_run_id = UUID(int=8_300_100)
+    cases = (
+        (
+            8_300_201,
+            "pass",
+            "supported",
+            ("supported", "supported", "supported"),
+            None,
+            True,
+            (100, 20, 120, 31, 80),
+        ),
+        (
+            8_300_202,
+            "warn",
+            "unavailable",
+            ("unavailable", "unavailable"),
+            "timeout",
+            True,
+            (50, 10, 60, 9, 120),
+        ),
+        (
+            8_300_203,
+            "warn",
+            "unavailable",
+            ("unavailable", "unavailable", "unavailable"),
+            "not_configured",
+            False,
+            None,
+        ),
+        (
+            8_300_204,
+            "warn",
+            "insufficient_evidence",
+            ("supported", "insufficient_evidence"),
+            None,
+            True,
+            (30, 5, 35, 4, 60),
+        ),
+    )
+
+    async def seed() -> None:
+        engine = create_async_engine(operations_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                await session.execute(text("SET LOCAL session_replication_role = replica"))
+                session.add(
+                    generation_run(
+                        run_id=parent_run_id,
+                        status=GenerationRunStatus.SUCCEEDED,
+                        created_at=window_start + timedelta(minutes=30),
+                        attempt_count=1,
+                        input_tokens=1,
+                        output_tokens=1,
+                        cost_microusd=1,
+                        latency_ms=1,
+                        failure_code=None,
+                    )
+                )
+                for offset, case in enumerate(cases, start=1):
+                    (
+                        raw_id,
+                        overall_status,
+                        semantic_status,
+                        claims,
+                        failure,
+                        attempted,
+                        accounting,
+                    ) = case
+                    run_id = UUID(int=raw_id)
+                    session.add(
+                        semantic_validation_run(
+                            run_id=run_id,
+                            generation_run_id=parent_run_id,
+                            created_at=window_start + timedelta(hours=offset),
+                            overall_status=overall_status,
+                        )
+                    )
+                    session.add(
+                        semantic_finding(
+                            finding_id=UUID(int=raw_id + 1_000),
+                            run_id=run_id,
+                            status=semantic_status,
+                            claim_statuses=claims,
+                            failure_code=failure,
+                            attempted=attempted,
+                            accounting=accounting,
+                        )
+                    )
+                await session.flush()
+                await session.execute(text("SET LOCAL session_replication_role = origin"))
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(seed())
+    application = create_app(
+        identity_provider=StaticIdentityProvider(),
+        resource_factory=lambda _: DatabaseResources(operations_database_url),
+    )
+    with TestClient(application) as client:
+        response = client.get(
+            PATH,
+            headers=ADMIN_HEADERS,
+            params={"start": window_start.isoformat(), "end": window_end.isoformat()},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["semantic_verifier"] == {
+        "record_count": 4,
+        "attempt_count": 3,
+        "accounted_count": 3,
+        "status_counts": {
+            "supported": 1,
+            "contradicted": 0,
+            "insufficient_evidence": 1,
+            "unavailable": 2,
+        },
+        "failure_codes": [
+            {"code": "not_configured", "count": 1},
+            {"code": "timeout", "count": 1},
+        ],
+        "claim_count": 10,
+        "claim_status_counts": {
+            "supported": 4,
+            "contradicted": 0,
+            "insufficient_evidence": 1,
+            "unavailable": 5,
+        },
+        "input_tokens": 180,
+        "output_tokens": 35,
+        "total_tokens": 215,
+        "cost_microusd": 44,
+        "latency_ms": {"total": 260, "average": 86, "maximum": 120},
+    }
 
 
 @pytest.mark.integration

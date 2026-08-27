@@ -94,6 +94,33 @@ class EmptyOperationsSession:
                 ),
                 EmptyResult(
                     row=SimpleNamespace(
+                        record_count=0,
+                        attempt_count=0,
+                        accounted_count=0,
+                        supported_count=0,
+                        contradicted_count=0,
+                        insufficient_evidence_count=0,
+                        unavailable_count=0,
+                        input_tokens=0,
+                        output_tokens=0,
+                        total_tokens=0,
+                        cost_microusd=0,
+                        total_latency_ms=0,
+                        maximum_latency_ms=0,
+                    )
+                ),
+                EmptyResult(
+                    row=SimpleNamespace(
+                        claim_count=0,
+                        supported_count=0,
+                        contradicted_count=0,
+                        insufficient_evidence_count=0,
+                        unavailable_count=0,
+                    )
+                ),
+                EmptyResult(),
+                EmptyResult(
+                    row=SimpleNamespace(
                         document_count=0,
                         uploaded_count=0,
                         extraction_pending_count=0,
@@ -253,6 +280,30 @@ def test_operations_service_returns_typed_zeroes_and_null_data_bounds_for_empty_
             "finding_count": 0,
             "finding_status_counts": {"pass": 0, "warn": 0, "fail": 0},
         },
+        "semantic_verifier": {
+            "record_count": 0,
+            "attempt_count": 0,
+            "accounted_count": 0,
+            "status_counts": {
+                "supported": 0,
+                "contradicted": 0,
+                "insufficient_evidence": 0,
+                "unavailable": 0,
+            },
+            "failure_codes": [],
+            "claim_count": 0,
+            "claim_status_counts": {
+                "supported": 0,
+                "contradicted": 0,
+                "insufficient_evidence": 0,
+                "unavailable": 0,
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cost_microusd": 0,
+            "latency_ms": {"total": 0, "average": 0, "maximum": 0},
+        },
         "extraction": {
             "document_count": 0,
             "status_counts": {
@@ -296,7 +347,7 @@ def test_operations_service_returns_typed_zeroes_and_null_data_bounds_for_empty_
             "archive_count": 0,
         },
     }
-    assert len(session.statements) == 11
+    assert len(session.statements) == 14
 
 
 def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bounds() -> None:
@@ -334,6 +385,33 @@ def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bo
                 )
             ),
             EmptyResult(row=SimpleNamespace(pass_count=3, warn_count=1, fail_count=1)),
+            EmptyResult(
+                row=SimpleNamespace(
+                    record_count=2,
+                    attempt_count=2,
+                    accounted_count=1,
+                    supported_count=1,
+                    contradicted_count=0,
+                    insufficient_evidence_count=0,
+                    unavailable_count=1,
+                    input_tokens=20,
+                    output_tokens=5,
+                    total_tokens=25,
+                    cost_microusd=11,
+                    total_latency_ms=90,
+                    maximum_latency_ms=90,
+                )
+            ),
+            EmptyResult(
+                row=SimpleNamespace(
+                    claim_count=3,
+                    supported_count=2,
+                    contradicted_count=0,
+                    insufficient_evidence_count=0,
+                    unavailable_count=1,
+                )
+            ),
+            EmptyResult(rows=(("timeout", 1),)),
             EmptyResult(
                 row=SimpleNamespace(
                     document_count=2,
@@ -417,6 +495,30 @@ def test_operations_service_aggregates_fixed_statuses_costs_failures_and_data_bo
         "pass": 3,
         "warn": 1,
         "fail": 1,
+    }
+    assert summary.semantic_verifier.model_dump() == {
+        "record_count": 2,
+        "attempt_count": 2,
+        "accounted_count": 1,
+        "status_counts": {
+            "supported": 1,
+            "contradicted": 0,
+            "insufficient_evidence": 0,
+            "unavailable": 1,
+        },
+        "failure_codes": [{"code": "timeout", "count": 1}],
+        "claim_count": 3,
+        "claim_status_counts": {
+            "supported": 2,
+            "contradicted": 0,
+            "insufficient_evidence": 0,
+            "unavailable": 1,
+        },
+        "input_tokens": 20,
+        "output_tokens": 5,
+        "total_tokens": 25,
+        "cost_microusd": 11,
+        "latency_ms": {"total": 90, "average": 90, "maximum": 90},
     }
     assert summary.extraction.failure_codes[0].code == "ocr_timeout"
     assert summary.embedding.model_dump()["requested_count"] == 7
@@ -545,6 +647,7 @@ def test_operations_openapi_is_fixed_read_only_and_explicit_about_units_and_boun
         "units",
         "generation",
         "validation",
+        "semantic_verifier",
         "extraction",
         "embedding",
         "object_storage",

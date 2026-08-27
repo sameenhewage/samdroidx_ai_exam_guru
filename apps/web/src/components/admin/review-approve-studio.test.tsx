@@ -102,13 +102,80 @@ const questions = [
         },
         {
           code: "subject.math.numeric_equivalence",
-          evidence: [{ result: "3/4" }],
+          evidence: [
+            {
+              location: "$.candidate.answer",
+              expected: "3/4",
+              observed: "3/4",
+            },
+          ],
           message: "The fraction calculation is correct.",
           status: "pass",
         },
         {
           code: "subject.factual.source_supported",
-          evidence: [{ page: "18" }],
+          evidence: [
+            {
+              location: "$.semantic_verification",
+              expected: "reviewed evidence",
+              observed: "supported",
+            },
+          ],
+          semantic_verification: {
+            schema_version: "semantic-verification.v1",
+            decomposition_version: "deterministic-factual-claims.v1",
+            call_attempted: true,
+            failure_code: null,
+            status: "supported",
+            summary: "Reviewed material supports the answer and explanation.",
+            claims: [
+              {
+                claim_id: "answer",
+                claim_type: "answer",
+                location: "$.candidate.answer",
+                status: "supported",
+                summary: "The proposed answer is supported.",
+                evidence_refs: [
+                  {
+                    context_id: "context-01",
+                    source_document_id: "grade-7-maths-teacher-guide",
+                    page_number: 18,
+                  },
+                ],
+              },
+              {
+                claim_id: "explanation-1",
+                claim_type: "explanation",
+                location: "$.candidate.answer.explanation#1",
+                status: "supported",
+                summary: "The explanation is supported.",
+                evidence_refs: [
+                  {
+                    context_id: "context-01",
+                    source_document_id: "grade-7-maths-teacher-guide",
+                    page_number: 18,
+                  },
+                ],
+              },
+            ],
+            lineage: {
+              verifier_id: "semantic-fixture",
+              verifier_version: "2.0.0",
+              prompt_version: "semantic.v2",
+              provider: "fixture",
+              provider_version: "1.0.0",
+              model: "fixture-model",
+              model_version: "fixture-model-v1",
+              pricing_version: "fixture-pricing-v1",
+            },
+            accounting: {
+              input_tokens: 100,
+              output_tokens: 20,
+              total_tokens: 120,
+              cost_microusd: 31,
+              latency_ms: 80,
+            },
+          },
           message: "The source supports the question and answer.",
           status: "pass",
         },
@@ -236,7 +303,13 @@ const questions = [
         },
         {
           code: "subject.scope.outside_selected_lesson",
-          evidence: [{ selected_scope: "Lessons 1–3" }],
+          evidence: [
+            {
+              location: "$.candidate.scope",
+              expected: "Lessons 1–3",
+              observed: "Outside selected scope",
+            },
+          ],
           message: "The question may be outside the selected lessons.",
           status: "fail",
         },
@@ -555,6 +628,12 @@ describe("ReviewApproveStudio", () => {
     expect(question).toHaveTextContent("Answer check: Passed");
     expect(question).toHaveTextContent("Calculation check: Passed");
     expect(question).toHaveTextContent("Source check: Passed");
+    expect(question).toHaveTextContent("Answer evidence");
+    expect(question).toHaveTextContent("The proposed answer is supported.");
+    expect(question).toHaveTextContent("The explanation is supported.");
+    expect(question).toHaveTextContent("Reviewed source · page 18");
+    expect(question).not.toHaveTextContent("31 microusd");
+    expect(question).not.toHaveTextContent("input_tokens");
 
     for (const action of [
       "Start review",

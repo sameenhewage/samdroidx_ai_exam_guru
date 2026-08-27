@@ -3,7 +3,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, func, select, true
+from sqlalchemy import BigInteger, ColumnElement, column, func, select, true
+from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.documents.domain import ExtractionStatus
@@ -26,6 +28,8 @@ from exam_guru_api.operations.schemas import (
     OperationsWindowResponse,
     PracticePaperOperationsResponse,
     PracticePaperStateCountsResponse,
+    SemanticVerificationStatusCountsResponse,
+    SemanticVerifierOperationsResponse,
     StorageReconciliationOperationsResponse,
     ValidationOperationsResponse,
     ValidationStatusCountsResponse,
@@ -113,6 +117,14 @@ def _failure_counts(rows: tuple[tuple[str, int], ...]) -> list[FailureCodeCountR
     ]
 
 
+def _semantic_evidence_table() -> Any:
+    return (
+        func.jsonb_array_elements(ValidationFindingModel.evidence)
+        .table_valued(column("value", JSONB))
+        .lateral("semantic_evidence")
+    )
+
+
 def _observed_bounds(rows: tuple[Any, ...]) -> OperationsDataBoundsResponse:
     starts = tuple(value for row in rows if (value := row.earliest_observed_at) is not None)
     ends = tuple(value for row in rows if (value := row.latest_observed_at) is not None)
@@ -133,6 +145,9 @@ class OperationsSummaryService:
         generation_failures = await self._generation_failures(window)
         validation = await self._validation(window)
         validation_findings = await self._validation_findings(window)
+        semantic_verifier = await self._semantic_verifier(window)
+        semantic_claims = await self._semantic_claims(window)
+        semantic_failures = await self._semantic_failures(window)
         extraction = await self._extraction(window)
         extraction_failures = await self._extraction_failures(window)
         embedding = await self._embedding(window)
@@ -184,6 +199,39 @@ class OperationsSummaryService:
                         "warn": int(validation_findings.warn_count),
                         "fail": int(validation_findings.fail_count),
                     }
+                ),
+            ),
+            semantic_verifier=SemanticVerifierOperationsResponse(
+                record_count=int(semantic_verifier.record_count),
+                attempt_count=int(semantic_verifier.attempt_count),
+                accounted_count=int(semantic_verifier.accounted_count),
+                status_counts=SemanticVerificationStatusCountsResponse(
+                    supported=int(semantic_verifier.supported_count),
+                    contradicted=int(semantic_verifier.contradicted_count),
+                    insufficient_evidence=int(semantic_verifier.insufficient_evidence_count),
+                    unavailable=int(semantic_verifier.unavailable_count),
+                ),
+                failure_codes=semantic_failures,
+                claim_count=int(semantic_claims.claim_count),
+                claim_status_counts=SemanticVerificationStatusCountsResponse(
+                    supported=int(semantic_claims.supported_count),
+                    contradicted=int(semantic_claims.contradicted_count),
+                    insufficient_evidence=int(semantic_claims.insufficient_evidence_count),
+                    unavailable=int(semantic_claims.unavailable_count),
+                ),
+                input_tokens=int(semantic_verifier.input_tokens),
+                output_tokens=int(semantic_verifier.output_tokens),
+                total_tokens=int(semantic_verifier.total_tokens),
+                cost_microusd=int(semantic_verifier.cost_microusd),
+                latency_ms=LatencyMillisecondsResponse(
+                    total=int(semantic_verifier.total_latency_ms),
+                    average=(
+                        int(semantic_verifier.total_latency_ms)
+                        // int(semantic_verifier.accounted_count)
+                        if semantic_verifier.accounted_count
+                        else 0
+                    ),
+                    maximum=int(semantic_verifier.maximum_latency_ms),
                 ),
             ),
             extraction=ExtractionOperationsResponse(
@@ -334,6 +382,116 @@ class OperationsSummaryService:
             .where(timestamp >= window.start, timestamp < window.end)
         )
         return (await self._session.execute(statement)).one()
+
+    async def _semantic_verifier(self, window: OperationsWindow) -> Any:
+        evidence = _semantic_evidence_table()
+        details = evidence.c.value["details"]
+        accounting = details["accounting"]
+        accounted = func.jsonb_typeof(accounting) == "object"
+
+        def accounting_value(field_name: str) -> ColumnElement[int]:
+            return sql_cast(accounting[field_name].astext, BigInteger)
+
+        timestamp = ValidationRunModel.created_at
+        statement = (
+            select(
+                func.count(ValidationFindingModel.id).label("record_count"),
+                _count_when(details["call_attempted"].astext == "true").label("attempt_count"),
+                _count_when(accounted).label("accounted_count"),
+                _count_when(details["status"].astext == "supported").label("supported_count"),
+                _count_when(details["status"].astext == "contradicted").label("contradicted_count"),
+                _count_when(details["status"].astext == "insufficient_evidence").label(
+                    "insufficient_evidence_count"
+                ),
+                _count_when(details["status"].astext == "unavailable").label("unavailable_count"),
+                _zeroed_sum(accounting_value("input_tokens")).label("input_tokens"),
+                _zeroed_sum(accounting_value("output_tokens")).label("output_tokens"),
+                _zeroed_sum(accounting_value("total_tokens")).label("total_tokens"),
+                _zeroed_sum(accounting_value("cost_microusd")).label("cost_microusd"),
+                _zeroed_sum(accounting_value("latency_ms")).label("total_latency_ms"),
+                _zeroed_max(accounting_value("latency_ms")).label("maximum_latency_ms"),
+            )
+            .select_from(ValidationFindingModel)
+            .join(
+                ValidationRunModel,
+                ValidationRunModel.id == ValidationFindingModel.validation_run_id,
+            )
+            .join(evidence, true())
+            .where(
+                timestamp >= window.start,
+                timestamp < window.end,
+                evidence.c.value["location"].astext == "$.semantic_verification",
+            )
+        )
+        return (await self._session.execute(statement)).one()
+
+    async def _semantic_claims(self, window: OperationsWindow) -> Any:
+        evidence = _semantic_evidence_table()
+        details = evidence.c.value["details"]
+        claims = (
+            func.jsonb_array_elements(details["claims"])
+            .table_valued(column("value", JSONB))
+            .lateral("semantic_claim")
+        )
+        timestamp = ValidationRunModel.created_at
+        statement = (
+            select(
+                func.count().label("claim_count"),
+                _count_when(claims.c.value["status"].astext == "supported").label(
+                    "supported_count"
+                ),
+                _count_when(claims.c.value["status"].astext == "contradicted").label(
+                    "contradicted_count"
+                ),
+                _count_when(claims.c.value["status"].astext == "insufficient_evidence").label(
+                    "insufficient_evidence_count"
+                ),
+                _count_when(claims.c.value["status"].astext == "unavailable").label(
+                    "unavailable_count"
+                ),
+            )
+            .select_from(ValidationFindingModel)
+            .join(
+                ValidationRunModel,
+                ValidationRunModel.id == ValidationFindingModel.validation_run_id,
+            )
+            .join(evidence, true())
+            .join(claims, true())
+            .where(
+                timestamp >= window.start,
+                timestamp < window.end,
+                evidence.c.value["location"].astext == "$.semantic_verification",
+            )
+        )
+        return (await self._session.execute(statement)).one()
+
+    async def _semantic_failures(self, window: OperationsWindow) -> list[FailureCodeCountResponse]:
+        evidence = _semantic_evidence_table()
+        details = evidence.c.value["details"]
+        failure_code = details["failure_code"].astext
+        timestamp = ValidationRunModel.created_at
+        statement = (
+            select(failure_code, func.count(ValidationFindingModel.id))
+            .select_from(ValidationFindingModel)
+            .join(
+                ValidationRunModel,
+                ValidationRunModel.id == ValidationFindingModel.validation_run_id,
+            )
+            .join(evidence, true())
+            .where(
+                timestamp >= window.start,
+                timestamp < window.end,
+                evidence.c.value["location"].astext == "$.semantic_verification",
+                failure_code.is_not(None),
+            )
+            .group_by(failure_code)
+            .order_by(failure_code)
+        )
+        rows = cast(
+            tuple[tuple[str, int], ...],
+            tuple((await self._session.execute(statement)).all()),
+        )
+        return _failure_counts(rows)
 
     async def _extraction(self, window: OperationsWindow) -> Any:
         timestamp = SourceDocumentModel.updated_at

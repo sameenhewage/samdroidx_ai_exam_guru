@@ -52,6 +52,20 @@ def test_0026_does_not_fabricate_feedback_from_historical_review_events() -> Non
     assert "insert into subject_quality_feedback" not in normalized
 
 
+def test_0027_schema_qualifies_restore_time_helper_calls() -> None:
+    migration = (
+        Path(__file__).parents[1] / "migrations" / "versions" / "0027_semantic_claim_evidence.py"
+    ).read_text(encoding="utf-8")
+
+    for helper_name in (
+        "semantic_verification_accounting_valid",
+        "semantic_verification_claims_valid",
+        "semantic_verification_details_valid",
+        "semantic_verification_lineage_valid",
+    ):
+        assert f"public.{helper_name}(" in migration
+
+
 def test_versioned_migrations_do_not_import_mutable_application_modules() -> None:
     versions = Path(__file__).parents[1] / "migrations" / "versions"
     coupled = {

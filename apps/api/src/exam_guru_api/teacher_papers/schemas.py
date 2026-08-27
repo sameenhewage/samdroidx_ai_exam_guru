@@ -26,6 +26,10 @@ from exam_guru_api.teacher_papers.domain import (
     MAX_TEACHER_QUESTIONS,
     PaperDifficulty,
 )
+from exam_guru_api.validation.schemas import (
+    SemanticVerificationDetailsResponse,
+    ValidationFindingEvidenceResponse,
+)
 
 CodeText = Annotated[
     str,
@@ -280,7 +284,8 @@ class TechnicalValidationFindingResponse(_FrozenStrictModel):
     code: str
     status: TechnicalFindingStatus
     message: str
-    evidence: tuple[dict[str, str], ...]
+    evidence: tuple[ValidationFindingEvidenceResponse, ...]
+    semantic_verification: SemanticVerificationDetailsResponse | None = None
 
 
 class ReviewQuestionTechnicalDetailsResponse(_FrozenStrictModel):

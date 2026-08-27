@@ -44,6 +44,30 @@ const summary = {
     finding_count: 6,
     finding_status_counts: { pass: 4, warn: 1, fail: 1 },
   },
+  semantic_verifier: {
+    record_count: 4,
+    attempt_count: 3,
+    accounted_count: 3,
+    status_counts: {
+      supported: 1,
+      contradicted: 0,
+      insufficient_evidence: 1,
+      unavailable: 2,
+    },
+    failure_codes: [{ code: "provider_timeout", count: 1 }],
+    claim_count: 10,
+    claim_status_counts: {
+      supported: 4,
+      contradicted: 0,
+      insufficient_evidence: 1,
+      unavailable: 5,
+    },
+    input_tokens: 180,
+    output_tokens: 35,
+    total_tokens: 215,
+    cost_microusd: 44,
+    latency_ms: { total: 260, average: 86, maximum: 120 },
+  },
   extraction: {
     document_count: 6,
     status_counts: {
@@ -110,6 +134,30 @@ const emptySummary = {
     run_status_counts: { pass: 0, warn: 0, fail: 0 },
     finding_count: 0,
     finding_status_counts: { pass: 0, warn: 0, fail: 0 },
+  },
+  semantic_verifier: {
+    record_count: 0,
+    attempt_count: 0,
+    accounted_count: 0,
+    status_counts: {
+      supported: 0,
+      contradicted: 0,
+      insufficient_evidence: 0,
+      unavailable: 0,
+    },
+    failure_codes: [],
+    claim_count: 0,
+    claim_status_counts: {
+      supported: 0,
+      contradicted: 0,
+      insufficient_evidence: 0,
+      unavailable: 0,
+    },
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    cost_microusd: 0,
+    latency_ms: { total: 0, average: 0, maximum: 0 },
   },
   extraction: {
     document_count: 0,
@@ -230,6 +278,23 @@ describe("OperationsDashboard", () => {
     expect(screen.getByTestId("validation-finding-status-pass")).toHaveTextContent("4");
     expect(screen.getByTestId("validation-finding-status-warn")).toHaveTextContent("1");
     expect(screen.getByTestId("validation-finding-status-fail")).toHaveTextContent("1");
+
+    expect(screen.getByTestId("semantic-record-count")).toHaveTextContent("4");
+    expect(screen.getByTestId("semantic-attempt-count")).toHaveTextContent("3");
+    expect(screen.getByTestId("semantic-accounted-count")).toHaveTextContent("3");
+    expect(screen.getByTestId("semantic-status-supported")).toHaveTextContent("1");
+    expect(screen.getByTestId("semantic-status-insufficient-evidence")).toHaveTextContent("1");
+    expect(screen.getByTestId("semantic-status-unavailable")).toHaveTextContent("2");
+    expect(screen.getByTestId("semantic-claim-count")).toHaveTextContent("10");
+    expect(screen.getByTestId("semantic-claim-status-supported")).toHaveTextContent("4");
+    expect(screen.getByTestId("semantic-input-tokens")).toHaveTextContent("180");
+    expect(screen.getByTestId("semantic-total-tokens")).toHaveTextContent("215");
+    expect(screen.getByTestId("semantic-cost-microusd")).toHaveTextContent("44 microusd");
+    expect(screen.getByTestId("semantic-cost-usd")).toHaveTextContent("0.000044 USD");
+    expect(screen.getByTestId("semantic-latency-average")).toHaveTextContent("86 ms");
+    expect(screen.getByTestId("semantic-failure-0")).toHaveTextContent(
+      "provider_timeout — 1",
+    );
 
     expect(screen.getByTestId("extraction-document-count")).toHaveTextContent("6");
     expect(screen.getByTestId("extraction-ocr-page-count")).toHaveTextContent("7");

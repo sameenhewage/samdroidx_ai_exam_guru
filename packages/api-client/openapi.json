@@ -5537,6 +5537,9 @@
           "practice_papers": {
             "$ref": "#/components/schemas/PracticePaperOperationsResponse"
           },
+          "semantic_verifier": {
+            "$ref": "#/components/schemas/SemanticVerifierOperationsResponse"
+          },
           "units": {
             "$ref": "#/components/schemas/OperationsUnitsResponse"
           },
@@ -5553,6 +5556,7 @@
           "units",
           "generation",
           "validation",
+          "semantic_verifier",
           "extraction",
           "embedding",
           "object_storage",
@@ -9629,6 +9633,360 @@
         "title": "SectionSpecificationResponse",
         "type": "object"
       },
+      "SemanticClaimEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "claim_type": {
+            "enum": [
+              "answer",
+              "explanation",
+              "marking"
+            ],
+            "title": "Claim Type",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticEvidenceReferenceResponse"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "supported",
+              "contradicted",
+              "insufficient_evidence",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "claim_type",
+          "location",
+          "status",
+          "summary",
+          "evidence_refs"
+        ],
+        "title": "SemanticClaimEvidenceResponse",
+        "type": "object"
+      },
+      "SemanticEvidenceReferenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "context_id": {
+            "title": "Context Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_document_id": {
+            "title": "Source Document Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "context_id",
+          "source_document_id",
+          "page_number"
+        ],
+        "title": "SemanticEvidenceReferenceResponse",
+        "type": "object"
+      },
+      "SemanticVerificationDetailsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemanticVerifierAccountingResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "call_attempted": {
+            "title": "Call Attempted",
+            "type": "boolean"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticClaimEvidenceResponse"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "decomposition_version": {
+            "const": "deterministic-factual-claims.v1",
+            "title": "Decomposition Version",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "lineage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemanticVerifierLineageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": "semantic-verification.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "supported",
+              "contradicted",
+              "insufficient_evidence",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "decomposition_version",
+          "call_attempted",
+          "failure_code",
+          "status",
+          "summary",
+          "claims",
+          "lineage",
+          "accounting"
+        ],
+        "title": "SemanticVerificationDetailsResponse",
+        "type": "object"
+      },
+      "SemanticVerificationStatusCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "contradicted": {
+            "minimum": 0.0,
+            "title": "Contradicted",
+            "type": "integer"
+          },
+          "insufficient_evidence": {
+            "minimum": 0.0,
+            "title": "Insufficient Evidence",
+            "type": "integer"
+          },
+          "supported": {
+            "minimum": 0.0,
+            "title": "Supported",
+            "type": "integer"
+          },
+          "unavailable": {
+            "minimum": 0.0,
+            "title": "Unavailable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "supported",
+          "contradicted",
+          "insufficient_evidence",
+          "unavailable"
+        ],
+        "title": "SemanticVerificationStatusCountsResponse",
+        "type": "object"
+      },
+      "SemanticVerifierAccountingResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_microusd": {
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "cost_microusd",
+          "latency_ms"
+        ],
+        "title": "SemanticVerifierAccountingResponse",
+        "type": "object"
+      },
+      "SemanticVerifierLineageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "pricing_version": {
+            "title": "Pricing Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_version": {
+            "title": "Provider Version",
+            "type": "string"
+          },
+          "verifier_id": {
+            "title": "Verifier Id",
+            "type": "string"
+          },
+          "verifier_version": {
+            "title": "Verifier Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verifier_id",
+          "verifier_version",
+          "prompt_version",
+          "provider",
+          "provider_version",
+          "model",
+          "model_version",
+          "pricing_version"
+        ],
+        "title": "SemanticVerifierLineageResponse",
+        "type": "object"
+      },
+      "SemanticVerifierOperationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accounted_count": {
+            "minimum": 0.0,
+            "title": "Accounted Count",
+            "type": "integer"
+          },
+          "attempt_count": {
+            "minimum": 0.0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "claim_count": {
+            "minimum": 0.0,
+            "title": "Claim Count",
+            "type": "integer"
+          },
+          "claim_status_counts": {
+            "$ref": "#/components/schemas/SemanticVerificationStatusCountsResponse"
+          },
+          "cost_microusd": {
+            "minimum": 0.0,
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "failure_codes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureCodeCountResponse"
+            },
+            "title": "Failure Codes",
+            "type": "array"
+          },
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "$ref": "#/components/schemas/LatencyMillisecondsResponse"
+          },
+          "output_tokens": {
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "record_count": {
+            "minimum": 0.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "status_counts": {
+            "$ref": "#/components/schemas/SemanticVerificationStatusCountsResponse"
+          },
+          "total_tokens": {
+            "minimum": 0.0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record_count",
+          "attempt_count",
+          "accounted_count",
+          "status_counts",
+          "failure_codes",
+          "claim_count",
+          "claim_status_counts",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "cost_microusd",
+          "latency_ms"
+        ],
+        "title": "SemanticVerifierOperationsResponse",
+        "type": "object"
+      },
       "SlotEvidenceResponse": {
         "additionalProperties": false,
         "properties": {
@@ -12325,10 +12683,7 @@
           },
           "evidence": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/ValidationFindingEvidenceResponse"
             },
             "title": "Evidence",
             "type": "array"
@@ -12336,6 +12691,16 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "semantic_verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemanticVerificationDetailsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "enum": [
@@ -12515,6 +12880,42 @@
         "title": "ValidationEvidenceResponse",
         "type": "object"
       },
+      "ValidationFindingEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "observed": {
+            "title": "Observed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "location",
+          "expected",
+          "observed"
+        ],
+        "title": "ValidationFindingEvidenceResponse",
+        "type": "object"
+      },
       "ValidationFindingResponse": {
         "additionalProperties": false,
         "properties": {
@@ -12529,10 +12930,7 @@
           },
           "evidence": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/ValidationFindingEvidenceResponse"
             },
             "title": "Evidence",
             "type": "array"
@@ -12553,6 +12951,16 @@
           "ordinal": {
             "title": "Ordinal",
             "type": "integer"
+          },
+          "semantic_verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemanticVerificationDetailsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "enum": [

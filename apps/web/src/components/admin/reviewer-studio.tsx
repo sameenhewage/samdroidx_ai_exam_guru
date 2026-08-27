@@ -30,6 +30,8 @@ type Generation = components["schemas"]["GenerationRunResponse"];
 type Validation = components["schemas"]["ValidationRunResponse"];
 type ValidationSummary = components["schemas"]["ValidationRunSummaryResponse"];
 type Finding = components["schemas"]["ValidationFindingResponse"];
+type SemanticVerification = components["schemas"]["SemanticVerificationDetailsResponse"];
+type SemanticClaim = components["schemas"]["SemanticClaimEvidenceResponse"];
 type Role = "admin" | "reviewer";
 type JsonObject = Record<string, unknown>;
 type ApiOutcome = { error?: unknown; response: Response };
@@ -532,6 +534,140 @@ function GeneratedEvidence({ generation }: { generation: Generation }) {
   );
 }
 
+function semanticStatusLabel(status: SemanticClaim["status"]): string {
+  if (status === "supported") return "Supported";
+  if (status === "contradicted") return "Conflicts with source";
+  if (status === "insufficient_evidence") return "Needs more evidence";
+  return "Manual review needed";
+}
+
+function semanticStatusClass(status: SemanticClaim["status"]): string {
+  if (status === "supported") return "border-emerald-300 bg-emerald-50 text-emerald-950";
+  if (status === "contradicted") return "border-red-300 bg-red-50 text-red-950";
+  if (status === "insufficient_evidence") return "border-amber-300 bg-amber-50 text-amber-950";
+  return "border-slate-300 bg-slate-50 text-slate-800";
+}
+
+function semanticOutcomeText(status: SemanticVerification["status"]): string {
+  if (status === "supported") return "Reviewed materials support all checked answer claims.";
+  if (status === "contradicted") return "At least one answer claim conflicts with reviewed material.";
+  if (status === "insufficient_evidence") return "Some answer claims still need reviewed evidence.";
+  return "Automated evidence checking was unavailable. Review each claim manually.";
+}
+
+function claimTypeLabel(claimType: SemanticClaim["claim_type"]): string {
+  if (claimType === "answer") return "Answer claim";
+  if (claimType === "explanation") return "Explanation claim";
+  return "Marking guidance claim";
+}
+
+function SemanticClaimEvidence({ verification }: { verification: SemanticVerification }) {
+  return (
+    <section
+      aria-labelledby="answer-evidence-check-heading"
+      className="mt-4 rounded-xl border border-sky-300 bg-sky-50 p-4 text-sky-950"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h5 className="font-semibold" id="answer-evidence-check-heading">
+          Answer evidence check
+        </h5>
+        <span
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${semanticStatusClass(verification.status)}`}
+        >
+          {semanticStatusLabel(verification.status)}
+        </span>
+      </div>
+      <p className="mt-2 text-sm font-semibold leading-6">{semanticOutcomeText(verification.status)}</p>
+      <p className="mt-1 text-sm leading-6 text-sky-900">{safeText(verification.summary)}</p>
+      {verification.claims.length ? (
+        <ol className="mt-4 space-y-3">
+          {verification.claims.slice(0, MAX_DISPLAY_RECORDS).map((claim) => (
+            <li className="rounded-lg border border-sky-200 bg-white p-3" key={claim.claim_id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h6 className="font-semibold">{claimTypeLabel(claim.claim_type)}</h6>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${semanticStatusClass(claim.status)}`}
+                >
+                  {semanticStatusLabel(claim.status)}
+                </span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">
+                {safeText(claim.summary)}
+              </p>
+              {claim.evidence_refs.length ? (
+                <ul className="mt-2 space-y-2 text-sm">
+                  {claim.evidence_refs.map((reference, index) => (
+                    <li className="rounded-md bg-sky-50 px-3 py-2" key={`${claim.claim_id}-${index}`}>
+                      <span className="font-semibold">Reviewed source · page {reference.page_number}</span>
+                      <details className="mt-1 text-xs text-slate-600">
+                        <summary className="cursor-pointer font-semibold">Source reference</summary>
+                        <p className="mt-1 break-all font-mono">
+                          {safeText(reference.source_document_id)} · {safeText(reference.context_id)}
+                        </p>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs font-semibold text-amber-900">
+                  No reviewed source citation was returned for this claim.
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="mt-3 text-sm font-semibold">No individual claims were available; review manually.</p>
+      )}
+      <details className="mt-4 border-t border-sky-200 pt-3 text-xs text-slate-600">
+        <summary className="cursor-pointer font-semibold">Technical verification details</summary>
+        <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+          <Definition label="Schema" mono value={safeText(verification.schema_version)} />
+          <Definition
+            label="Claim decomposition"
+            mono
+            value={safeText(verification.decomposition_version)}
+          />
+          <Definition label="Failure code" mono value={safeText(verification.failure_code, "None")} />
+          <Definition
+            label="Verifier"
+            mono
+            value={safeText(verification.lineage?.verifier_id, "Not configured")}
+          />
+          <Definition
+            label="Model version"
+            mono
+            value={safeText(verification.lineage?.model_version, "Not configured")}
+          />
+        </dl>
+      </details>
+    </section>
+  );
+}
+
+function TechnicalFindingEvidence({ evidence }: { evidence: Finding["evidence"] }) {
+  return (
+    <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+        Technical finding evidence
+      </summary>
+      <div className="mt-3 space-y-2">
+        {evidence.slice(0, MAX_DISPLAY_RECORDS).map((record, index) => (
+          <div className="rounded-lg bg-white p-3" key={index}>
+            <PlainRecord
+              record={{
+                location: record.location,
+                expected: record.expected,
+                observed: record.observed,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function ValidationEvidence({ findings, validation }: { findings: Finding[]; validation: Validation }) {
   return (
     <section
@@ -593,13 +729,10 @@ function ValidationEvidence({ findings, validation }: { findings: Finding[]; val
                 <p className="mt-2 font-mono text-xs text-slate-600">
                   {safeText(item.validator_id)} · {safeText(item.validator_version)}
                 </p>
-                <div className="mt-3 space-y-2">
-                  {item.evidence.slice(0, MAX_DISPLAY_RECORDS).map((record, index) => (
-                    <div className="rounded-lg bg-slate-50 p-3" key={index}>
-                      <PlainRecord record={record} />
-                    </div>
-                  ))}
-                </div>
+                {item.semantic_verification ? (
+                  <SemanticClaimEvidence verification={item.semantic_verification} />
+                ) : null}
+                <TechnicalFindingEvidence evidence={item.evidence} />
               </li>
             ))}
           </ol>

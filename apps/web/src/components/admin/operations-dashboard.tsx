@@ -374,6 +374,150 @@ function SummaryView({ summary }: { summary: Summary }) {
         </div>
       </section>
 
+      <section
+        aria-labelledby="semantic-operations-heading"
+        className="border border-slate-300 bg-white p-5 shadow-sm"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 pb-4">
+          <div>
+            <p className="font-mono text-xs text-slate-500">Grounded answer-check accounting</p>
+            <h2 className="mt-1 text-xl font-semibold" id="semantic-operations-heading">
+              Semantic verification
+            </h2>
+          </div>
+          <dl className="grid gap-2 sm:grid-cols-3">
+            <Definition
+              label="Recorded checks"
+              testId="semantic-record-count"
+              value={formatCount(summary.semantic_verifier.record_count)}
+            />
+            <Definition
+              label="Attempts"
+              testId="semantic-attempt-count"
+              value={formatCount(summary.semantic_verifier.attempt_count)}
+            />
+            <Definition
+              label="With accounting"
+              testId="semantic-accounted-count"
+              value={formatCount(summary.semantic_verifier.accounted_count)}
+            />
+          </dl>
+        </div>
+        <div className="mt-5 grid gap-5">
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div>
+              <h3 className="mb-3 text-sm font-semibold">Check outcomes</h3>
+              <StatusDefinitions
+                entries={[
+                  ["Supported", "status-supported", summary.semantic_verifier.status_counts.supported],
+                  [
+                    "Contradicted",
+                    "status-contradicted",
+                    summary.semantic_verifier.status_counts.contradicted,
+                  ],
+                  [
+                    "Needs evidence",
+                    "status-insufficient-evidence",
+                    summary.semantic_verifier.status_counts.insufficient_evidence,
+                  ],
+                  ["Unavailable", "status-unavailable", summary.semantic_verifier.status_counts.unavailable],
+                ]}
+                prefix="semantic"
+              />
+            </div>
+            <div>
+              <h3 className="mb-3 text-sm font-semibold">Individual claim outcomes</h3>
+              <dl className="mb-2">
+                <Definition
+                  label="Claims checked"
+                  testId="semantic-claim-count"
+                  value={formatCount(summary.semantic_verifier.claim_count)}
+                />
+              </dl>
+              <StatusDefinitions
+                entries={[
+                  [
+                    "Supported",
+                    "status-supported",
+                    summary.semantic_verifier.claim_status_counts.supported,
+                  ],
+                  [
+                    "Contradicted",
+                    "status-contradicted",
+                    summary.semantic_verifier.claim_status_counts.contradicted,
+                  ],
+                  [
+                    "Needs evidence",
+                    "status-insufficient-evidence",
+                    summary.semantic_verifier.claim_status_counts.insufficient_evidence,
+                  ],
+                  [
+                    "Unavailable",
+                    "status-unavailable",
+                    summary.semantic_verifier.claim_status_counts.unavailable,
+                  ],
+                ]}
+                prefix="semantic-claim"
+              />
+            </div>
+          </div>
+          <div>
+            <h3 className="mb-3 text-sm font-semibold">Tokens and exact cost</h3>
+            <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <Definition
+                label="Input tokens"
+                testId="semantic-input-tokens"
+                value={formatCount(summary.semantic_verifier.input_tokens)}
+              />
+              <Definition
+                label="Output tokens"
+                testId="semantic-output-tokens"
+                value={formatCount(summary.semantic_verifier.output_tokens)}
+              />
+              <Definition
+                label="Total tokens"
+                testId="semantic-total-tokens"
+                value={formatCount(summary.semantic_verifier.total_tokens)}
+              />
+              <Definition
+                label="Exact cost"
+                testId="semantic-cost-microusd"
+                value={formatMicrousd(summary.semantic_verifier.cost_microusd)}
+              />
+              <Definition
+                label="Lossless USD"
+                testId="semantic-cost-usd"
+                value={formatUsdFromMicrousd(summary.semantic_verifier.cost_microusd)}
+              />
+            </dl>
+          </div>
+          <div>
+            <h3 className="mb-3 text-sm font-semibold">Latency for accounted checks</h3>
+            <dl className="grid gap-2 sm:grid-cols-3">
+              <Definition
+                label="Total latency"
+                testId="semantic-latency-total"
+                value={formatMilliseconds(summary.semantic_verifier.latency_ms.total)}
+              />
+              <Definition
+                label="Average latency"
+                testId="semantic-latency-average"
+                value={formatMilliseconds(summary.semantic_verifier.latency_ms.average)}
+              />
+              <Definition
+                label="Maximum latency"
+                testId="semantic-latency-maximum"
+                value={formatMilliseconds(summary.semantic_verifier.latency_ms.maximum)}
+              />
+            </dl>
+          </div>
+          <div>
+            <h3 className="mb-3 text-sm font-semibold">Sanitized failure codes</h3>
+            <FailureCodes failures={summary.semantic_verifier.failure_codes} prefix="semantic" />
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="validation-operations-heading" className="border border-slate-300 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold" id="validation-operations-heading">

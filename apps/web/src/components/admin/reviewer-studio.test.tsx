@@ -311,18 +311,76 @@ function validationSummary(value: Validation, overrides: Partial<ValidationSumma
   };
 }
 
+const semanticVerification: components["schemas"]["SemanticVerificationDetailsResponse"] = {
+  schema_version: "semantic-verification.v1",
+  decomposition_version: "deterministic-factual-claims.v1",
+  call_attempted: true,
+  failure_code: null,
+  status: "insufficient_evidence",
+  summary: "The answer is supported, but its explanation needs more evidence.",
+  claims: [
+    {
+      claim_id: "answer",
+      claim_type: "answer",
+      location: "$.candidate.answer",
+      status: "supported",
+      summary: "The selected answer is supported by the reviewed material.",
+      evidence_refs: [
+        {
+          context_id: "context-01",
+          source_document_id: "reviewed-maths-guide",
+          page_number: 7,
+        },
+      ],
+    },
+    {
+      claim_id: "explanation",
+      claim_type: "explanation",
+      location: "$.candidate.answer.explanation",
+      status: "insufficient_evidence",
+      summary: "The explanation needs a clearer source reference.",
+      evidence_refs: [],
+    },
+  ],
+  lineage: {
+    verifier_id: "grounded-factual-subject",
+    verifier_version: "2.0.0",
+    prompt_version: "subject-factual-semantic.v2",
+    provider: "fixture",
+    provider_version: "1.0.0",
+    model: "fixture-model",
+    model_version: "fixture-model-v1",
+    pricing_version: "fixture-pricing-v1",
+  },
+  accounting: {
+    input_tokens: 100,
+    output_tokens: 20,
+    total_tokens: 120,
+    cost_microusd: 31,
+    latency_ms: 80,
+  },
+};
+
 const finding = {
-  code: "grounding_reference_present",
+  code: "subject.factual.unsupported_claim",
   created_at: now,
-  evidence: [{ note: "<script>findingAttack()</script> Grounding reference retained." }],
+  evidence: [
+    {
+      location: "$.semantic_verification",
+      expected: "reviewed evidence",
+      observed: "<script>findingAttack()</script> Grounding reference retained.",
+      details: semanticVerification,
+    },
+  ],
+  semantic_verification: semanticVerification,
   evidence_count: 1,
   id: ids.finding,
-  message: "Generated answer has persisted grounding provenance.",
+  message: "Some answer claims need more reviewed evidence.",
   ordinal: 1,
-  status: "pass",
+  status: "warn",
   validation_run_id: ids.validation,
-  validator_id: "grounding-provenance",
-  validator_version: "1.2.0",
+  validator_id: "grounded-factual-subject",
+  validator_version: "2.0.0",
 } satisfies Finding;
 
 type FixtureOptions = {
@@ -525,11 +583,24 @@ describe("ReviewerStudio", () => {
     expect(screen.getByRole("region", { name: "Generation blueprint evidence" })).toHaveTextContent("REV-A-001");
     expect(screen.getByRole("region", { name: "Generation context provenance" })).toHaveTextContent("document-1");
     expect(screen.getByRole("region", { name: "P8 validation report and findings" })).toHaveTextContent("canonical-validation.v1");
-    expect(screen.getByRole("region", { name: "P8 validation report and findings" })).toHaveTextContent("grounding_reference_present");
+    expect(screen.getByRole("region", { name: "P8 validation report and findings" })).toHaveTextContent("subject.factual.unsupported_claim");
+    expect(screen.getByRole("heading", { name: "Answer evidence check" })).toBeVisible();
+    expect(
+      screen.getByText("Some answer claims still need reviewed evidence."),
+    ).toBeVisible();
+    expect(screen.getByText("The selected answer is supported by the reviewed material.")).toBeVisible();
+    expect(screen.getByText("The explanation needs a clearer source reference.")).toBeVisible();
+    expect(screen.getByText("Reviewed source · page 7")).toBeVisible();
+    const validationRegion = screen.getByRole("region", {
+      name: "P8 validation report and findings",
+    });
+    expect(validationRegion).not.toHaveTextContent("31 microusd");
+    expect(validationRegion).not.toHaveTextContent("input_tokens");
     expect(screen.getByRole("region", { name: "Candidate revisions and events" })).toHaveTextContent("Started");
     expect(screen.getByRole("region", { name: "Review decision" })).toHaveTextContent("No final decision recorded");
     expect(document.querySelector("img")).toBeNull();
     expect(document.querySelector("script")).toBeNull();
+    fireEvent.click(screen.getByText("Technical finding evidence"));
     expect(screen.getByText("<script>findingAttack()</script> Grounding reference retained.")).toBeVisible();
   });
 

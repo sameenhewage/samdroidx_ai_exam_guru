@@ -154,7 +154,13 @@ function finding(ordinal: number): Finding {
   return {
     code: ordinal === 2 ? "grounding_reference_warning" : "schema_complete",
     created_at: now,
-    evidence: [{ location: `$.candidate[${ordinal}]`, note: ordinal === 2 ? "<script>unsafe()</script>" : "bounded evidence" }],
+    evidence: [
+      {
+        location: `$.candidate[${ordinal}]`,
+        expected: "bounded evidence",
+        observed: ordinal === 2 ? "<script>unsafe()</script>" : "bounded evidence",
+      },
+    ],
     evidence_count: 1,
     id: `00000000-0000-0000-0000-${String(ordinal).padStart(12, "0")}`,
     message: ordinal === 2 ? "Grounding needs human interpretation." : `Deterministic check ${ordinal} completed.`,

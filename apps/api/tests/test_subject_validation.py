@@ -1,5 +1,5 @@
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, cast
 from uuid import UUID
@@ -9,10 +9,13 @@ import pytest
 import exam_guru_api.validation.maths as maths_validation
 from exam_guru_api.validation import (
     ContextScopeBinding,
+    FactualClaim,
+    FactualClaimType,
     FindingEvidence,
     FindingStatus,
     GeneratedSubjectScope,
     GroundedSemanticVerifier,
+    SemanticClaimVerification,
     SemanticEvidenceReference,
     SemanticVerificationRequest,
     SemanticVerificationResult,
@@ -28,6 +31,7 @@ from exam_guru_api.validation import (
     ValidationInput,
     ValidationReport,
     build_default_pipeline,
+    decompose_factual_claims,
 )
 from tests.test_validation_fixtures import valid_candidate, validation_input
 
@@ -339,6 +343,229 @@ def test_unknown_subject_routes_to_explicit_warning_not_universal_pass() -> None
     assert finding.validator_id == "subject-validation-router"
 
 
+def test_factual_claim_decomposition_is_deterministic_bounded_and_candidate_only() -> None:
+    value = candidate(
+        stem="Which temperature is supported?",
+        options=(("A", "0 C"), ("B", "50 C")),
+        correct_option_id="A",
+        explanation=(
+            "The reviewed lesson states that water freezes at 0 C. "
+            "That temperature is therefore the supported choice."
+        ),
+        marking_description="Award two marks for identifying 0 C.",
+    )
+
+    first = decompose_factual_claims(value)
+    second = decompose_factual_claims(value)
+
+    assert first == second
+    assert tuple(claim.claim_id for claim in first) == (
+        "answer",
+        "explanation-1",
+        "explanation-2",
+        "marking-correct-answer",
+    )
+    assert tuple(claim.claim_type for claim in first) == (
+        FactualClaimType.ANSWER,
+        FactualClaimType.EXPLANATION,
+        FactualClaimType.EXPLANATION,
+        FactualClaimType.MARKING,
+    )
+    assert first[0].location == "$.candidate.answer"
+    assert "Which temperature is supported?" in first[0].text
+    assert "0 C" in first[0].text
+    assert all("reviewed source" not in claim.text.lower() for claim in first)
+
+    malformed = dict(value)
+    malformed["answer"] = "not-an-object"
+    with pytest.raises(ValidationContractError, match="claim decomposition"):
+        decompose_factual_claims(malformed)
+    with pytest.raises(ValidationContractError, match="claim id"):
+        FactualClaim(
+            claim_id="bad claim",
+            claim_type=FactualClaimType.ANSWER,
+            location="$.candidate.answer",
+            text="A bounded claim.",
+        )
+    with pytest.raises(ValidationContractError, match="claim type"):
+        FactualClaim(
+            claim_id="answer",
+            claim_type=cast(FactualClaimType, "answer"),
+            location="$.candidate.answer",
+            text="A bounded claim.",
+        )
+    with pytest.raises(ValidationContractError, match="claim location"):
+        FactualClaim(
+            claim_id="answer",
+            claim_type=FactualClaimType.ANSWER,
+            location="$.foreign.answer",
+            text="A bounded claim.",
+        )
+    with pytest.raises(ValidationContractError, match="claim text"):
+        FactualClaim(
+            claim_id="answer",
+            claim_type=FactualClaimType.ANSWER,
+            location="$.candidate.answer",
+            text=" ",
+        )
+
+    missing_option = dict(value)
+    missing_option["answer"] = {
+        "correct_option_id": "missing",
+        "accepted_responses": [],
+        "explanation": "A bounded explanation.",
+    }
+    with pytest.raises(ValidationContractError, match="correct option"):
+        decompose_factual_claims(missing_option)
+
+    duplicate_criteria = dict(value)
+    duplicate_criteria["marking"] = {
+        "total_marks": 2,
+        "criteria": [
+            {"criterion_id": "duplicate!", "description": "First.", "marks": 1},
+            {"criterion_id": "duplicate?", "description": "Second.", "marks": 1},
+        ],
+    }
+    with pytest.raises(ValidationContractError, match="identifiers"):
+        decompose_factual_claims(duplicate_criteria)
+
+
+def test_factual_claim_decomposition_keeps_short_answer_alternatives_separate() -> None:
+    value = valid_candidate()
+    value["question_type"] = "short_answer"
+    value["stem"] = "Name the process."
+    value["options"] = []
+    value["answer"] = {
+        "correct_option_id": None,
+        "accepted_responses": ["evaporation", "water evaporation"],
+        "explanation": "Liquid water changes into water vapour.",
+    }
+
+    claims = decompose_factual_claims(value)
+
+    assert tuple(claim.claim_id for claim in claims[:3]) == (
+        "answer-1",
+        "answer-2",
+        "explanation-1",
+    )
+    assert "evaporation" in claims[0].text
+    assert "water evaporation" in claims[1].text
+
+    oversized = dict(value)
+    oversized["answer"] = {
+        "correct_option_id": None,
+        "accepted_responses": [f"response {index}" for index in range(31)],
+        "explanation": "One explanation.",
+    }
+    with pytest.raises(ValidationContractError, match="count"):
+        decompose_factual_claims(oversized)
+
+    missing_answer = dict(value)
+    missing_answer["answer"] = {
+        "correct_option_id": None,
+        "accepted_responses": [],
+        "explanation": "One explanation.",
+    }
+    with pytest.raises(ValidationContractError, match="accepted response"):
+        decompose_factual_claims(missing_answer)
+
+
+def test_finding_evidence_supports_bounded_immutable_structured_details() -> None:
+    evidence = FindingEvidence(
+        location="$.semantic_verification",
+        expected="reviewed-source verification",
+        observed="supported",
+        details={
+            "schema_version": "semantic-verification.v1",
+            "accounting": {"total_tokens": 15, "cost_microusd": 7},
+        },
+    )
+
+    assert evidence.details is not None
+    assert evidence.details["schema_version"] == "semantic-verification.v1"
+    with pytest.raises(TypeError):
+        cast(dict[str, object], evidence.details)["schema_version"] = "forged"
+    with pytest.raises(ValidationContractError, match="details"):
+        FindingEvidence(
+            location="$.semantic_verification",
+            expected="reviewed-source verification",
+            observed="supported",
+            details={"oversized": "x" * 70_000},
+        )
+    with pytest.raises(ValidationContractError, match="JSON object"):
+        FindingEvidence(
+            location="$.semantic_verification",
+            expected="reviewed-source verification",
+            observed="supported",
+            details=cast(Mapping[str, object], []),
+        )
+    with pytest.raises(ValidationContractError, match="bounded JSON"):
+        FindingEvidence(
+            location="$.semantic_verification",
+            expected="reviewed-source verification",
+            observed="supported",
+            details={"unsupported": object()},
+        )
+
+
+def test_semantic_claim_result_requires_bounded_unique_conclusive_evidence() -> None:
+    evidence = SemanticEvidenceReference(
+        context_id="context-01",
+        source_document_id="curriculum-grade-5-maths",
+        page_number=7,
+    )
+    supported = SemanticClaimVerification(
+        claim_id="answer",
+        status=SemanticVerificationStatus.SUPPORTED,
+        summary="The answer is supported.",
+        evidence_refs=(evidence,),
+    )
+    assert supported.evidence_refs == (evidence,)
+
+    with pytest.raises(ValidationContractError, match="conclusive claim"):
+        SemanticClaimVerification(
+            claim_id="answer",
+            status=SemanticVerificationStatus.CONTRADICTED,
+            summary="Contradicted without a citation.",
+            evidence_refs=(),
+        )
+    with pytest.raises(ValidationContractError, match="duplicate"):
+        SemanticClaimVerification(
+            claim_id="answer",
+            status=SemanticVerificationStatus.SUPPORTED,
+            summary="Duplicate references.",
+            evidence_refs=(evidence, evidence),
+        )
+    with pytest.raises(ValidationContractError, match="claim id"):
+        SemanticClaimVerification(
+            claim_id="bad claim",
+            status=SemanticVerificationStatus.INSUFFICIENT_EVIDENCE,
+            summary="Invalid identifier.",
+            evidence_refs=(),
+        )
+    with pytest.raises(ValidationContractError, match="claim status"):
+        SemanticClaimVerification(
+            claim_id="answer",
+            status=cast(SemanticVerificationStatus, "supported"),
+            summary="Invalid status type.",
+            evidence_refs=(evidence,),
+        )
+    with pytest.raises(ValidationContractError, match="claim summary"):
+        SemanticClaimVerification(
+            claim_id="answer",
+            status=SemanticVerificationStatus.INSUFFICIENT_EVIDENCE,
+            summary=" ",
+            evidence_refs=(),
+        )
+    with pytest.raises(ValidationContractError, match="claim evidence"):
+        SemanticClaimVerification(
+            claim_id="answer",
+            status=SemanticVerificationStatus.INSUFFICIENT_EVIDENCE,
+            summary="Malformed evidence tuple.",
+            evidence_refs=cast(tuple[SemanticEvidenceReference, ...], []),
+        )
+
+
 class FakeSemanticVerifier(GroundedSemanticVerifier):
     verifier_id = "deterministic-semantic-fake"
     verifier_version = "1.0.0"
@@ -355,15 +582,25 @@ class FakeSemanticVerifier(GroundedSemanticVerifier):
 
     def verify(self, request: SemanticVerificationRequest) -> SemanticVerificationResult:
         self.requests.append(request)
+        evidence_refs = (
+            SemanticEvidenceReference(
+                context_id="context-01",
+                source_document_id="curriculum-grade-5-maths",
+                page_number=7,
+            ),
+        )
         return SemanticVerificationResult(
             status=self.status,
             summary=f"fixture-{self.status.value}",
-            evidence_refs=(
-                SemanticEvidenceReference(
-                    context_id="context-01",
-                    source_document_id="curriculum-grade-5-maths",
-                    page_number=7,
-                ),
+            evidence_refs=evidence_refs,
+            claims=tuple(
+                SemanticClaimVerification(
+                    claim_id=claim.claim_id,
+                    status=self.status,
+                    summary=f"fixture-{claim.claim_id}-{self.status.value}",
+                    evidence_refs=evidence_refs,
+                )
+                for claim in request.claims
             ),
             verifier_id=self.verifier_id,
             verifier_version=self.verifier_version,
@@ -427,6 +664,62 @@ def test_grounded_semantic_fake_maps_structured_status_and_evidence(
     assert verifier.requests[0].subject_code == "SCIENCE"
     assert verifier.requests[0].grounding_sources[0].context_id == "context-01"
     assert any("context-01" in evidence.observed for evidence in finding.evidence)
+    details = finding.evidence[0].details
+    assert details is not None
+    assert details["schema_version"] == "semantic-verification.v1"
+    assert details["decomposition_version"] == "deterministic-factual-claims.v1"
+    assert details["call_attempted"] is True
+    assert details["failure_code"] is None
+    assert details["accounting"] == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "cost_microusd": 0,
+        "latency_ms": 1,
+    }
+    claims = cast(tuple[Mapping[str, object], ...], details["claims"])
+    assert tuple(claim["claim_id"] for claim in claims) == (
+        "answer",
+        "explanation-1",
+        "marking-correct-answer",
+    )
+    assert all("text" not in claim for claim in claims)
+
+
+def test_semantic_request_rejects_empty_and_duplicate_claim_sets() -> None:
+    verifier = FakeSemanticVerifier(SemanticVerificationStatus.SUPPORTED)
+    build_default_pipeline(semantic_verifier=verifier).validate(factual_input())
+    request = verifier.requests[0]
+
+    with pytest.raises(ValidationContractError, match="bounded tuple"):
+        replace(request, claims=())
+    with pytest.raises(ValidationContractError, match="identifiers"):
+        replace(request, claims=(request.claims[0], request.claims[0]))
+
+
+def test_configured_verifier_does_not_call_provider_for_malformed_claim_input() -> None:
+    verifier = FakeSemanticVerifier(SemanticVerificationStatus.SUPPORTED)
+    value = candidate(
+        stem="Which answer is supported?",
+        options=(("A", "One"), ("B", "Two")),
+        correct_option_id="A",
+    )
+    value["answer"] = "malformed"
+    report = build_default_pipeline(semantic_verifier=verifier).validate(
+        subject_input(
+            value,
+            scope=trusted_scope(subject_id=SCIENCE_SUBJECT_ID, subject_code="SCIENCE"),
+        )
+    )
+    finding = findings_by_code(report)[SubjectFindingCode.FACTUAL_VERIFIER_UNAVAILABLE]
+    details = finding.evidence[0].details
+
+    assert verifier.requests == []
+    assert details is not None
+    assert details["call_attempted"] is False
+    assert details["failure_code"] == "unavailable-or-invalid-result"
+    assert details["lineage"] is not None
+    assert details["accounting"] is None
 
 
 def test_factual_verification_without_provider_is_warning_not_pass() -> None:
@@ -797,6 +1090,20 @@ def semantic_result(**changes: object) -> SemanticVerificationResult:
                 7,
             ),
         ),
+        "claims": (
+            SemanticClaimVerification(
+                claim_id="answer",
+                status=SemanticVerificationStatus.SUPPORTED,
+                summary="supported answer fixture",
+                evidence_refs=(
+                    SemanticEvidenceReference(
+                        "context-01",
+                        "curriculum-grade-5-maths",
+                        7,
+                    ),
+                ),
+            ),
+        ),
         "verifier_id": "deterministic-semantic-fake",
         "verifier_version": "1.0.0",
         "prompt_version": "subject-factual-test.v1",
@@ -809,6 +1116,13 @@ def semantic_result(**changes: object) -> SemanticVerificationResult:
     }
     values.update(changes)
     return SemanticVerificationResult(**values)  # type: ignore[arg-type]
+
+
+def forged_semantic_result(**changes: object) -> SemanticVerificationResult:
+    result = semantic_result()
+    for field_name, value in changes.items():
+        object.__setattr__(result, field_name, value)
+    return result
 
 
 @pytest.mark.parametrize(
@@ -827,6 +1141,11 @@ def semantic_result(**changes: object) -> SemanticVerificationResult:
         ),
         lambda: semantic_result(verifier_id="bad verifier"),
         lambda: semantic_result(accounting=cast(SemanticVerifierAccounting, object())),
+        lambda: semantic_result(claims=cast(tuple[SemanticClaimVerification, ...], [])),
+        lambda: semantic_result(claims=(semantic_result().claims[0], semantic_result().claims[0])),
+        lambda: semantic_result(
+            evidence_refs=(SemanticEvidenceReference("different-context", "source", 1),)
+        ),
     ],
 )
 def test_semantic_contracts_reject_malformed_status_lineage_and_evidence(
@@ -834,6 +1153,40 @@ def test_semantic_contracts_reject_malformed_status_lineage_and_evidence(
 ) -> None:
     with pytest.raises(ValidationContractError):
         build()
+
+
+class AdversarialSemanticVerifier(FakeSemanticVerifier):
+    def __init__(self, mutation: str) -> None:
+        super().__init__(SemanticVerificationStatus.SUPPORTED)
+        self.mutation = mutation
+
+    def verify(self, request: SemanticVerificationRequest) -> SemanticVerificationResult:
+        result = super().verify(request)
+        if self.mutation == "lineage":
+            object.__setattr__(result, "verifier_version", "forged")
+            return result
+        if self.mutation == "foreign-evidence":
+            foreign = (SemanticEvidenceReference("foreign-context", "foreign-source", 1),)
+            return replace(
+                result,
+                evidence_refs=foreign,
+                claims=tuple(replace(claim, evidence_refs=foreign) for claim in result.claims),
+            )
+        object.__setattr__(result, "evidence_refs", ())
+        return result
+
+
+@pytest.mark.parametrize("mutation", ["lineage", "foreign-evidence", "missing-evidence"])
+def test_adversarial_semantic_results_degrade_to_warning(mutation: str) -> None:
+    report = build_default_pipeline(
+        semantic_verifier=AdversarialSemanticVerifier(mutation)
+    ).validate(factual_input())
+
+    assert report.overall_status is FindingStatus.WARN
+    assert (
+        findings_by_code(report)[SubjectFindingCode.FACTUAL_VERIFIER_UNAVAILABLE].status
+        is FindingStatus.WARN
+    )
 
 
 class InvalidSemanticVerifier(FakeSemanticVerifier):
@@ -851,8 +1204,10 @@ class InvalidSemanticVerifier(FakeSemanticVerifier):
     [
         object(),
         semantic_result(verifier_version="forged"),
-        semantic_result(evidence_refs=(SemanticEvidenceReference("other-context", "source", 1),)),
-        semantic_result(evidence_refs=()),
+        forged_semantic_result(
+            evidence_refs=(SemanticEvidenceReference("other-context", "source", 1),)
+        ),
+        forged_semantic_result(evidence_refs=()),
     ],
 )
 def test_invalid_semantic_provider_results_degrade_to_warning(result: object) -> None:
@@ -871,6 +1226,7 @@ def test_grounded_validator_defensively_rejects_missing_configured_verifier() ->
     assert pipeline.subject_router is not None
     fallback = pipeline.subject_router.fallback_validator
     assert fallback is not None
+    assert fallback._lineage_details() is None
     with pytest.raises(ValidationContractError, match="not configured"):
         fallback._validate_result(
             SubjectValidationContext.from_input(factual_input()),

@@ -22,7 +22,7 @@ from uuid import UUID
 
 from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
 
-REPORT_SCHEMA_VERSION = "question-validation-report.v2"
+REPORT_SCHEMA_VERSION = "question-validation-report.v3"
 QUESTION_SCHEMA_VERSION = "question.v1"
 MAX_CANDIDATE_CHARACTERS = 262_144
 MAX_JSON_DEPTH = 24
@@ -32,6 +32,7 @@ MAX_GROUNDING_SOURCES = 128
 MAX_DUPLICATE_REFERENCES = 10_000
 MAX_SOURCE_TEXT_CHARACTERS = 32_000
 MAX_DUPLICATE_TEXT_CHARACTERS = 16_000
+MAX_FINDING_EVIDENCE_DETAILS_BYTES = 65_536
 
 REPORT_LIMITATIONS = (
     "Deterministic checks cover declared structure, encoded blueprint rules, trusted subject/scope "
@@ -143,11 +144,38 @@ class FindingEvidence:
     location: str
     expected: str
     observed: str
+    details: Mapping[str, object] | None = field(default=None, compare=False, hash=False)
+    _details_json: str = field(init=False, repr=False, compare=True)
 
     def __post_init__(self) -> None:
         _require_text(self.location, "evidence location", maximum=512)
         _require_text(self.expected, "evidence expected", maximum=1_024)
         _require_text(self.observed, "evidence observed", maximum=1_024)
+        if self.details is None:
+            object.__setattr__(self, "_details_json", "")
+            return
+        if not isinstance(self.details, Mapping):
+            raise ValidationContractError("evidence details must be a JSON object or null")
+        try:
+            frozen, plain = _snapshot_json_value(
+                self.details,
+                depth=0,
+                active_container_ids=set(),
+                node_count=[0],
+            )
+            serialized = json.dumps(
+                plain,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError, ValidationContractError) as error:
+            raise ValidationContractError("evidence details must contain bounded JSON") from error
+        if len(serialized.encode("utf-8")) > MAX_FINDING_EVIDENCE_DETAILS_BYTES:
+            raise ValidationContractError("evidence details exceed the byte limit")
+        object.__setattr__(self, "details", cast(Mapping[str, object], frozen))
+        object.__setattr__(self, "_details_json", serialized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -697,6 +725,11 @@ class ValidationReport:
                     "code": item.code,
                     "evidence": [
                         {
+                            "details": (
+                                json.loads(evidence._details_json)
+                                if evidence.details is not None
+                                else None
+                            ),
                             "expected": evidence.expected,
                             "location": evidence.location,
                             "observed": evidence.observed,

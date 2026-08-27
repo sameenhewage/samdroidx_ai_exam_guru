@@ -1293,7 +1293,33 @@ def review_slot_source(
         code="subject.factual.verifier_unavailable",
         status="warn",
         message="Human review is required.",
-        evidence=[],
+        evidence=[
+            {
+                "location": "$.semantic_verification",
+                "expected": "reviewed evidence",
+                "observed": "verifier=not-configured",
+                "details": {
+                    "schema_version": "semantic-verification.v1",
+                    "decomposition_version": "deterministic-factual-claims.v1",
+                    "call_attempted": False,
+                    "failure_code": "not_configured",
+                    "status": "unavailable",
+                    "summary": "Human review is required.",
+                    "claims": [
+                        {
+                            "claim_id": "answer",
+                            "claim_type": "answer",
+                            "location": "$.candidate.answer",
+                            "status": "unavailable",
+                            "summary": "This claim requires human review.",
+                            "evidence_refs": [],
+                        }
+                    ],
+                    "lineage": None,
+                    "accounting": None,
+                },
+            }
+        ],
     )
     candidate_model = (
         QuestionCandidateModel(
@@ -1325,6 +1351,18 @@ def test_friendly_validation_and_review_question_cover_unfinished_edits_and_sour
     assert failed_question.review_state == "failed_check"
     assert len(failed_question.sources) == 1
     assert failed_question.sources[0].filename == "Reviewed source material"
+    semantic = failed_question.technical_details.validator_findings[0].semantic_verification
+    assert semantic is not None
+    assert semantic.decomposition_version == "deterministic-factual-claims.v1"
+    assert semantic.claims[0].status == "unavailable"
+
+    duplicate = review_slot_source(validation_status="pass")
+    duplicate.findings[0].evidence = [
+        *duplicate.findings[0].evidence,
+        dict(duplicate.findings[0].evidence[0]),
+    ]
+    with pytest.raises(ValueError, match="duplicate semantic"):
+        _review_question(job(), duplicate)
 
     ready = review_slot_source(validation_status="pass")
     assert _friendly_validation(ready).status == "ready"

@@ -78,6 +78,28 @@ class ValidationOperationsResponse(_FrozenStrictModel):
     finding_status_counts: ValidationStatusCountsResponse
 
 
+class SemanticVerificationStatusCountsResponse(_FrozenStrictModel):
+    supported: NonNegativeInt
+    contradicted: NonNegativeInt
+    insufficient_evidence: NonNegativeInt
+    unavailable: NonNegativeInt
+
+
+class SemanticVerifierOperationsResponse(_FrozenStrictModel):
+    record_count: NonNegativeInt
+    attempt_count: NonNegativeInt
+    accounted_count: NonNegativeInt
+    status_counts: SemanticVerificationStatusCountsResponse
+    failure_codes: list[FailureCodeCountResponse]
+    claim_count: NonNegativeInt
+    claim_status_counts: SemanticVerificationStatusCountsResponse
+    input_tokens: NonNegativeInt
+    output_tokens: NonNegativeInt
+    total_tokens: NonNegativeInt
+    cost_microusd: NonNegativeInt
+    latency_ms: LatencyMillisecondsResponse
+
+
 class ExtractionStatusCountsResponse(_FrozenStrictModel):
     uploaded: NonNegativeInt
     extraction_pending: NonNegativeInt
@@ -147,6 +169,7 @@ class OperationsSummaryResponse(_FrozenStrictModel):
     units: OperationsUnitsResponse
     generation: GenerationOperationsResponse
     validation: ValidationOperationsResponse
+    semantic_verifier: SemanticVerifierOperationsResponse
     extraction: ExtractionOperationsResponse
     embedding: EmbeddingOperationsResponse
     object_storage: ObjectStorageOperationsResponse

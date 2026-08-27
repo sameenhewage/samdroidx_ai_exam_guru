@@ -309,6 +309,10 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   await expect(question).toContainText("Answer check: Passed");
   await expect(question).toContainText("Calculation check: Passed");
   await expect(question).toContainText("Source check: Passed");
+  await expect(question).toContainText("Answer evidence");
+  await expect(question).toContainText("The proposed answer is supported.");
+  await expect(question).toContainText("Reviewed source · page 18");
+  await expect(question).not.toContainText("31 microusd");
   for (const action of [
     "Start review",
     "Approve",

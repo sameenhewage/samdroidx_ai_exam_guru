@@ -203,6 +203,10 @@ The verifier must use schema-constrained output.
 
 Do not ask only `Is this answer correct?`. Require claim-level evidence and contradiction reporting.
 
+The initial `deterministic-factual-claims.v1` implementation keeps accepted-answer alternatives separate, splits explanations at bounded deterministic punctuation/newline boundaries and retains each marking criterion as a stable claim. The complete bounded claim set is verified in one provider call rather than multiplying cost per claim. Provider output must preserve every claim identity and order; first-party code recomputes the aggregate status and exact citation union. Append-only `semantic-verification.v1` evidence persists claim outcomes, references, lineage and integer accounting without duplicating private source text, while teacher review shows plain-language outcomes before collapsed diagnostics.
+
+This deterministic split is reproducible, not a general semantic proposition parser. Its over/under-segmentation limitations remain explicit in `06_KNOWN_LIMITATIONS.md`, and human review remains authoritative.
+
 ### Independence rule
 The verifier should be logically independent from the generator:
 

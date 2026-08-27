@@ -3801,6 +3801,7 @@ export interface components {
             generation: components["schemas"]["GenerationOperationsResponse"];
             object_storage: components["schemas"]["ObjectStorageOperationsResponse"];
             practice_papers: components["schemas"]["PracticePaperOperationsResponse"];
+            semantic_verifier: components["schemas"]["SemanticVerifierOperationsResponse"];
             units: components["schemas"]["OperationsUnitsResponse"];
             validation: components["schemas"]["ValidationOperationsResponse"];
             window: components["schemas"]["OperationsWindowResponse"];
@@ -5491,6 +5492,131 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** SemanticClaimEvidenceResponse */
+        SemanticClaimEvidenceResponse: {
+            /** Claim Id */
+            claim_id: string;
+            /**
+             * Claim Type
+             * @enum {string}
+             */
+            claim_type: "answer" | "explanation" | "marking";
+            /** Evidence Refs */
+            evidence_refs: components["schemas"]["SemanticEvidenceReferenceResponse"][];
+            /** Location */
+            location: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "supported" | "contradicted" | "insufficient_evidence" | "unavailable";
+            /** Summary */
+            summary: string;
+        };
+        /** SemanticEvidenceReferenceResponse */
+        SemanticEvidenceReferenceResponse: {
+            /** Context Id */
+            context_id: string;
+            /** Page Number */
+            page_number: number;
+            /** Source Document Id */
+            source_document_id: string;
+        };
+        /** SemanticVerificationDetailsResponse */
+        SemanticVerificationDetailsResponse: {
+            accounting: components["schemas"]["SemanticVerifierAccountingResponse"] | null;
+            /** Call Attempted */
+            call_attempted: boolean;
+            /** Claims */
+            claims: components["schemas"]["SemanticClaimEvidenceResponse"][];
+            /**
+             * Decomposition Version
+             * @constant
+             */
+            decomposition_version: "deterministic-factual-claims.v1";
+            /** Failure Code */
+            failure_code: string | null;
+            lineage: components["schemas"]["SemanticVerifierLineageResponse"] | null;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "semantic-verification.v1";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "supported" | "contradicted" | "insufficient_evidence" | "unavailable";
+            /** Summary */
+            summary: string;
+        };
+        /** SemanticVerificationStatusCountsResponse */
+        SemanticVerificationStatusCountsResponse: {
+            /** Contradicted */
+            contradicted: number;
+            /** Insufficient Evidence */
+            insufficient_evidence: number;
+            /** Supported */
+            supported: number;
+            /** Unavailable */
+            unavailable: number;
+        };
+        /** SemanticVerifierAccountingResponse */
+        SemanticVerifierAccountingResponse: {
+            /** Cost Microusd */
+            cost_microusd: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+        };
+        /** SemanticVerifierLineageResponse */
+        SemanticVerifierLineageResponse: {
+            /** Model */
+            model: string;
+            /** Model Version */
+            model_version: string;
+            /** Pricing Version */
+            pricing_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Provider Version */
+            provider_version: string;
+            /** Verifier Id */
+            verifier_id: string;
+            /** Verifier Version */
+            verifier_version: string;
+        };
+        /** SemanticVerifierOperationsResponse */
+        SemanticVerifierOperationsResponse: {
+            /** Accounted Count */
+            accounted_count: number;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Claim Count */
+            claim_count: number;
+            claim_status_counts: components["schemas"]["SemanticVerificationStatusCountsResponse"];
+            /** Cost Microusd */
+            cost_microusd: number;
+            /** Failure Codes */
+            failure_codes: components["schemas"]["FailureCodeCountResponse"][];
+            /** Input Tokens */
+            input_tokens: number;
+            latency_ms: components["schemas"]["LatencyMillisecondsResponse"];
+            /** Output Tokens */
+            output_tokens: number;
+            /** Record Count */
+            record_count: number;
+            status_counts: components["schemas"]["SemanticVerificationStatusCountsResponse"];
+            /** Total Tokens */
+            total_tokens: number;
+        };
         /** SlotEvidenceResponse */
         SlotEvidenceResponse: {
             /** Baseline Backtest Score */
@@ -6462,11 +6588,10 @@ export interface components {
             /** Code */
             code: string;
             /** Evidence */
-            evidence: {
-                [key: string]: string;
-            }[];
+            evidence: components["schemas"]["ValidationFindingEvidenceResponse"][];
             /** Message */
             message: string;
+            semantic_verification?: components["schemas"]["SemanticVerificationDetailsResponse"] | null;
             /**
              * Status
              * @enum {string}
@@ -6546,6 +6671,19 @@ export interface components {
             /** Validator Version */
             validator_version: string;
         };
+        /** ValidationFindingEvidenceResponse */
+        ValidationFindingEvidenceResponse: {
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expected */
+            expected: string;
+            /** Location */
+            location: string;
+            /** Observed */
+            observed: string;
+        };
         /** ValidationFindingResponse */
         ValidationFindingResponse: {
             /** Code */
@@ -6556,9 +6694,7 @@ export interface components {
              */
             created_at: string;
             /** Evidence */
-            evidence: {
-                [key: string]: string;
-            }[];
+            evidence: components["schemas"]["ValidationFindingEvidenceResponse"][];
             /** Evidence Count */
             evidence_count: number;
             /**
@@ -6570,6 +6706,7 @@ export interface components {
             message: string;
             /** Ordinal */
             ordinal: number;
+            semantic_verification?: components["schemas"]["SemanticVerificationDetailsResponse"] | null;
             /**
              * Status
              * @enum {string}
