@@ -719,7 +719,127 @@ A local source corpus exists at:
 
 `/home/sameen/SAMDROIDX-PROJECTS/samdroidx_ai_exam_guru/RAG DATA`
 
-This directory contains syllabus, teacher guides and papers.
+This is now a **real Grade 3 / Grade 4 / Grade 5 operator corpus** and must be used as the primary local validation dataset for the Grade 5 Scholarship teacher pilot.
+
+The current operator-organized structure includes folders similar to:
+
+```text
+RAG DATA/
+├── Grade 3/
+│   ├── grade 3 Buddhism/
+│   ├── grade 3 Catholicism/
+│   ├── grade 3 Christianity/
+│   ├── grade 3 English/
+│   ├── grade 3 Islam/
+│   ├── grade 3 Maths/
+│   ├── grade 3 Parisaraya/
+│   ├── grade 3 Sinhala/
+│   └── grade 3 Teacher Guides (NIE)/
+│
+├── Grade 4/
+│   ├── grade 4 English/
+│   ├── grade 4 Maths/
+│   ├── grade 4 Parisaraya/
+│   ├── grade 4 Sinhala/
+│   └── grade 4 Teacher Guides (NIE)/
+│
+└── Grade 5/
+    ├── grade 5 -teachers guide book - sinhala.../
+    ├── grade 5 Buddhism/
+    ├── grade 5 English/
+    ├── grade 5 Maths/
+    ├── grade 5 Parisaraya/
+    ├── grade 5 Sinhala/
+    └── grade 5 Teacher Guides (NIE)/
+```
+
+There may also be `.local-evidence` folders and other operator evidence directories. Treat those as local evidence, not automatically as trusted production source documents.
+
+### 16.0 Corpus interpretation rules
+
+Do not assume that:
+
+- every folder is complete;
+- every PDF is official/current;
+- every folder name is authoritative metadata;
+- every Grade 3/4/5 subject is part of Grade 5 Scholarship Paper II;
+- every teacher guide applies to the same curriculum version;
+- every Grade 5 lesson belongs to eligible Terms 1-2;
+- religion folders are Scholarship Paper II scope merely because they exist locally.
+
+The folder hierarchy is an operator organization aid, not the final programme specification.
+
+Use authoritative evidence to decide which subjects/skills/scopes participate in the Grade 5 Scholarship programme.
+
+Where metadata cannot be proven from the document or authoritative programme material, mark it as inferred/unconfirmed and do not silently promote it into trusted programme configuration.
+
+### 16.0.1 Required corpus inventory
+
+Recursively inspect Grade 3, Grade 4 and Grade 5.
+
+Produce a local evidence inventory with at least:
+
+- absolute/relative path;
+- filename;
+- SHA-256;
+- bytes;
+- page count;
+- native-text / scanned / mixed classification;
+- detected language/script;
+- candidate grade;
+- candidate subject;
+- candidate material type;
+- candidate year;
+- candidate curriculum/version;
+- candidate term applicability;
+- official/source publisher evidence when visible;
+- extraction suitability;
+- duplicate relationships;
+- review/trust status;
+- notes for uncertain metadata.
+
+Do not modify or delete source files while inventorying.
+
+Do not commit raw educational PDFs or bulk copyrighted extracted text to Git.
+
+### 16.0.2 Build the Grade 5 Scholarship programme evidence set
+
+From the real corpus plus authoritative official material already referenced by the project, build a versioned Grade 5 Scholarship programme evidence set.
+
+It should distinguish:
+
+1. **Programme / assessment specification**
+   - official paper structure;
+   - Paper I ability/reasoning framework;
+   - Paper II curriculum coverage policy;
+   - duration/question-format rules only when supported by authoritative evidence;
+   - historical item-analysis/performance evidence where available.
+
+2. **Curriculum source material**
+   - applicable Grade 3 reviewed syllabus/teacher-guide material;
+   - applicable Grade 4 reviewed syllabus/teacher-guide material;
+   - eligible Grade 5 reviewed material, constrained to the configured eligible term scope.
+
+3. **Historical exam evidence**
+   - official past Paper I papers;
+   - official past Paper II papers;
+   - answers/marking/evaluation reports where available.
+
+Do not mix these roles. A syllabus is not an assessment specification. A past paper is not a syllabus. An item-analysis report is not a teacher guide.
+
+Treat programme/assessment documents as an explicit source/material type such as `programme_specification`, `assessment_framework`, or the repository's equivalent typed model.
+
+Treat historical past papers as exam evidence, not as the sole truth for curriculum content.
+
+### 16.0.3 V1 product scope remains Grade 5
+
+The system may ingest Grade 3 and Grade 4 supporting sources because Grade 5 Scholarship Paper II may require them.
+
+That does **not** expand the teacher product to Grade 3 or Grade 4.
+
+The V1 UI remains Grade 5-focused.
+
+Grade 3/4 source records exist to satisfy the Grade 5 Scholarship programme coverage policy.
 
 Treat this as important real-data input for this implementation loop.
 
@@ -803,6 +923,268 @@ Prove in a clean runtime:
 Do not fabricate a human quality label.
 
 If a step requires human adjudication, identify it as a human gate rather than auto-claiming success.
+
+---
+
+# 16.4 Mandatory repeat-until-green real-data engineering loop
+
+Do not execute this work as:
+
+`implement everything -> run one test -> stop`.
+
+Run it as an engineering feedback loop.
+
+## Loop 1 — Discover
+
+- inspect current runtime;
+- inspect real Grade 3/4/5 corpus;
+- identify authoritative programme evidence;
+- identify missing/uncertain source metadata;
+- identify code/schema/UI gaps;
+- write/update the gap matrix.
+
+## Loop 2 — Reproduce
+
+For every material defect, programme-scope defect, retrieval defect, generation defect, validation defect or teacher-UX defect:
+
+- reproduce it against current code/runtime;
+- add the smallest meaningful failing test where practical;
+- capture enough evidence to prove the root cause.
+
+## Loop 3 — Implement
+
+Fix root causes across the appropriate layer:
+
+- domain model;
+- migrations;
+- repositories;
+- API contracts;
+- generated client;
+- RAG scope resolver;
+- programme coverage resolver;
+- blueprint engine;
+- generation;
+- validators;
+- Teacher Studio UI;
+- review/publishing flow.
+
+Do not patch only the screenshot if the backend contract is wrong.
+
+## Loop 4 — Validate the increment
+
+After each coherent change:
+
+- run focused backend tests;
+- run focused frontend tests;
+- run integration tests;
+- run the affected runtime/browser journey;
+- inspect real persisted state;
+- verify no new scope leakage.
+
+If it fails, return to Reproduce/Implement.
+
+## Loop 5 — Generate sample papers from real reviewed sources
+
+Once enough real reviewed/trusted source coverage exists, create real sample generation runs.
+
+Do not rely only on deterministic fake-provider fixtures for this phase when live generation credentials are available.
+
+Generate, at minimum:
+
+### Sample family A — Scholarship Paper I
+
+Generate multiple Paper I samples using the versioned ability/reasoning framework.
+
+Verify:
+
+- it behaves like Paper I, not an ordinary subject quiz;
+- ability categories/slots follow the configured blueprint;
+- language is appropriate for Grade 5;
+- no unsupported answer/logic is accepted;
+- duplicates/near-duplicates are detected;
+- every generated question has a review state and validation evidence.
+
+### Sample family B — Scholarship Paper II
+
+Generate multiple Paper II samples using the real programme coverage resolver.
+
+Verify:
+
+- real reviewed Grade 3/4/eligible Grade 5 source scopes are available to retrieval according to policy;
+- the system does not force Paper II into one Grade 5 subject/curriculum;
+- cross-medium content cannot leak;
+- out-of-policy Grade 5 term/lesson content cannot leak;
+- source/page provenance reaches Review & Approve;
+- question/answer correctness validators run;
+- Sinhala script/language checks run;
+- subject-specific deterministic validators run where applicable.
+
+Do **not** artificially force equal question counts from Grade 3, Grade 4 and Grade 5 unless authoritative programme evidence requires that distribution.
+
+### Sample family C — Full Scholarship Practice
+
+Generate at least one complete teacher-reviewable Full Scholarship Practice package that composes Paper I + Paper II while preserving separate paper rules.
+
+Do not flatten it into one generic question pool.
+
+Use authoritative programme rules for actual full-paper counts, section structure and duration. If those rules are not yet supported by verified evidence, block the full-size acceptance honestly rather than inventing counts.
+
+### Sample family D — Grade 5 normal-paper regression
+
+Generate at least one Grade 5 subject/Term Test sample if that feature remains in V1.
+
+This is a regression check only; do not let it distract from Scholarship readiness.
+
+## Loop 6 — Automated sample-paper audit
+
+For every generated sample paper, produce machine-readable and human-readable audit results covering as applicable:
+
+- programme/paper mode;
+- blueprint/version;
+- expected vs actual question counts/types;
+- source scope distribution;
+- source provenance completeness;
+- unsupported/contradicted claim findings;
+- answer correctness findings;
+- mathematical equivalence/calculation findings;
+- Sinhala/script/language findings;
+- duplicate/near-duplicate findings;
+- difficulty distribution;
+- marking-scheme completeness;
+- unreviewed question count;
+- failed-check count;
+- generation/provider errors;
+- latency/cost diagnostics where already supported.
+
+A generated paper with failed required checks is evidence of a defect to fix, not a successful sample.
+
+## Loop 7 — Adversarial sample-paper checks
+
+Deliberately attempt to break the system:
+
+- Grade 5 Scholarship + arbitrary ordinary subject;
+- Paper I forced through normal subject RAG;
+- Paper II restricted incorrectly to Grade 5-only;
+- Grade 3/4 material from wrong medium;
+- Grade 5 content outside eligible term scope;
+- inactive/unreviewed source retrieval;
+- duplicate PDF ingestion;
+- malformed programme configuration;
+- missing required programme source scope;
+- zero-question blueprint;
+- impossible question composition;
+- wrong answer returned by generator;
+- duplicated generated question;
+- unconfirmed marks;
+- publish attempt with one unresolved question.
+
+The server/domain layer must reject or fail safely even if the UI is bypassed.
+
+## Loop 8 — Fix and regenerate
+
+When sample-paper validation exposes a failure:
+
+`failure -> reproduce -> regression test -> fix root cause -> re-run focused tests -> regenerate sample -> re-audit`
+
+Repeat until no engineering-fixable blocker remains.
+
+Do not document a known engineering defect and move on while still claiming pilot readiness.
+
+---
+
+# 16.5 Final clean-system validation AFTER development is complete
+
+After all planned development/fixes are complete and focused loops are green, perform a **fresh final validation from a clean isolated environment**.
+
+This final pass is separate from incremental development testing.
+
+## Final validation setup
+
+- latest `master`;
+- clean isolated Compose project;
+- fresh database/volumes;
+- migrations from zero to head;
+- no polluted acceptance/test fixture data;
+- real local Grade 3/4/5 source corpus mounted/read through the supported private Studio path;
+- background workers running;
+- actual configured embedding/generation providers where credentials permit;
+- browser pointed to the real frontend/backend.
+
+## Final validation sequence
+
+Run the complete operational path:
+
+```text
+Real Grade 3/4/5 source inventory
+    ->
+Import/upload through supported domain boundary
+    ->
+Extraction / OCR
+    ->
+Human-review gate / trusted-source preparation
+    ->
+Chunk + embed + index
+    ->
+Grade 5 Scholarship programme configuration
+    ->
+Paper I sample generation
+    ->
+Paper II sample generation
+    ->
+Full Scholarship Practice generation
+    ->
+Automated validation
+    ->
+Review & Approve
+    ->
+Teacher correction + revalidation
+    ->
+Teacher-controlled marking confirmation
+    ->
+Approval
+    ->
+Immutable publication
+    ->
+Published-paper readback / integrity verification
+```
+
+Validate both API/domain state and browser behavior.
+
+## Required final evidence
+
+Retain/report:
+
+- source inventory counts by grade/subject/type;
+- number of real documents ingested;
+- number trusted/Ready for AI;
+- extraction/OCR failures;
+- embedding/index counts;
+- Scholarship programme policy version;
+- Paper I sample count;
+- Paper II sample count;
+- Full Scholarship sample count;
+- generation success/failure counts;
+- validator pass/fail counts;
+- provenance coverage;
+- duplicate findings;
+- teacher-review status;
+- marking-confirmation status;
+- publication version/checksum;
+- browser acceptance results;
+- exact test counts;
+- CI status.
+
+## Final validation rule
+
+If the final clean-system pass reveals an engineering defect:
+
+**do not stop**.
+
+Return to the engineering loop, fix it, and rerun final validation from the affected clean checkpoint.
+
+The final clean validation must pass again after the fix.
+
+Only then evaluate the Teacher Pilot Readiness gates.
 
 ---
 
@@ -1015,9 +1397,18 @@ Required browser journeys include:
 - rerun checks;
 - approve only when valid.
 
-### Journey G — real RAG DATA material
+### Journey G — real Grade 3/4/5 RAG DATA
 
-Use a representative real document from the local `RAG DATA` directory through the real ingestion/review/generation path and prove provenance in Review & Approve.
+Use representative real documents from all supporting grades required by the configured Grade 5 Scholarship Paper II policy.
+
+At minimum prove in runtime that:
+
+- one applicable Grade 3 source is ingested/reviewed/retrievable;
+- one applicable Grade 4 source is ingested/reviewed/retrievable;
+- one eligible Grade 5 source is ingested/reviewed/retrievable;
+- Paper II retrieval can resolve evidence across those configured scopes;
+- each selected source preserves document/page provenance;
+- wrong-medium and out-of-policy content is excluded.
 
 Take screenshots or retain browser artifacts where the repo convention supports them.
 
@@ -1218,24 +1609,33 @@ Return a concise but evidence-rich release report:
    - migration/restore if applicable
    - security/static gates
 
-6. **Runtime evidence**
-   - isolated environment
+6. **Sample-paper validation**
+   - Paper I samples generated and audited
+   - Paper II samples generated and audited
+   - Full Scholarship sample generated and audited
+   - defects found during sample generation and how each was fixed
+   - remaining human quality judgments
+
+7. **Final clean-system validation**
+   - isolated fresh environment
+   - real Grade 3/4/5 corpus evidence
+   - end-to-end ingestion -> generation -> review -> publish
    - browser journeys
    - screenshots/artifacts if retained
 
-7. **Commit**
+8. **Commit**
    - SHA
    - remote CI run/result
 
-8. **Teacher pilot verdict**
+9. **Teacher pilot verdict**
    - use the exact readiness verdict from `07_GRADE5_TEACHER_PILOT_READINESS.md`
    - list any failed gate by name
 
-9. **Teacher test handoff**
+10. **Teacher test handoff**
    - if and only if READY FOR TEACHER PILOT, provide the exact teacher tasks to run
    - do not ask teachers to test engineering internals
 
-10. **Remaining blockers**
+11. **Remaining blockers**
    - external credentials
    - human-reviewed OCR/eval labels
    - real subject-teacher adjudication
@@ -1260,4 +1660,8 @@ with:
 - no technical Blueprint/RAG complexity forced on the teacher;
 - real scoped RAG evidence;
 - full runtime/browser validation;
-- existing quality/security gates preserved.
+- existing quality/security gates preserved;
+- real Paper I, Paper II and Full Scholarship sample generation has been exercised;
+- final clean-system validation has passed after all development fixes.
+
+Do not mark the work complete after code implementation alone. The last engineering activity before teacher-pilot verdict must be a successful final clean-system validation of the complete Grade 5 workflow.
