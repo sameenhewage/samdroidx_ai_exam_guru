@@ -96,6 +96,7 @@ Read in full, not just snippets:
 - `docs/SYSTEM_ARCHITECTURE.md`
 - `docs/v1/02_PRIORITY_1_ADMIN_RAG_LLM_SPEC.md`
 - `docs/v1/06_SUBJECT_QUALITY_VALIDATION_ENGINE.md`
+- `docs/v1/07_GRADE5_TEACHER_PILOT_READINESS.md`
 - all other active V1 tracker/specification documents relevant to Teacher Studio, Materials, RAG, generation, review and publishing;
 - `ui-reference/teacher-studio-v1/README.md`
 - `ui-reference/teacher-studio-v1/teacher-studio-reference.html`
@@ -1174,6 +1175,15 @@ After all applicable local gates pass:
 
 Do not report DONE before remote CI is green.
 
+Before the teacher handoff, evaluate every gate in `docs/v1/07_GRADE5_TEACHER_PILOT_READINESS.md` and return exactly one pilot verdict:
+
+- READY FOR TEACHER PILOT
+- NOT READY — ENGINEERING BLOCKER
+- NOT READY — SOURCE DATA BLOCKER
+- NOT READY — HUMAN ADJUDICATION BLOCKER
+
+Do not use `architecture ready` as a teacher-pilot verdict.
+
 ---
 
 # 27. Final report format
@@ -1217,7 +1227,15 @@ Return a concise but evidence-rich release report:
    - SHA
    - remote CI run/result
 
-8. **Remaining blockers**
+8. **Teacher pilot verdict**
+   - use the exact readiness verdict from `07_GRADE5_TEACHER_PILOT_READINESS.md`
+   - list any failed gate by name
+
+9. **Teacher test handoff**
+   - if and only if READY FOR TEACHER PILOT, provide the exact teacher tasks to run
+   - do not ask teachers to test engineering internals
+
+10. **Remaining blockers**
    - external credentials
    - human-reviewed OCR/eval labels
    - real subject-teacher adjudication
