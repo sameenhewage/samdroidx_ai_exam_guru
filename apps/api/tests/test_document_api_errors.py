@@ -849,10 +849,10 @@ def test_material_routes_cover_reads_and_sanitized_transition_errors(
                 values.session,
                 values.object_storage,
                 values.settings,
-                7,
-                UUID(int=1),
-                50,
-                0,
+                grade=7,
+                subject_id=UUID(int=1),
+                limit=50,
+                offset=0,
             )
         )
         == []

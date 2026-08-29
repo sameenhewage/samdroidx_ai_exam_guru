@@ -23,6 +23,13 @@ from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRu
 from exam_guru_api.generation.repository import GenerationContextRecord
 from exam_guru_api.generation.run_service import _candidate_snapshot
 from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.retrieval.domain import (
+    RetrievalScope,
+    RetrievalScopeSet,
+    TaxonomyScope,
+    serialize_retrieval_filters,
+    serialize_retrieval_scope,
+)
 from exam_guru_api.validation import (
     BlueprintRequirements,
     FindingEvidence,
@@ -72,6 +79,7 @@ from exam_guru_api.validation.service import (
     _optional_text,
     _optional_uuid,
     _plain_json,
+    _programme_context_ids,
     _question_from_snapshot,
     _request_fingerprint_payload,
     _text,
@@ -341,6 +349,40 @@ def _mutate_context(
     return record
 
 
+def _retrieval_scope(*, grade: int = 5) -> RetrievalScope:
+    return RetrievalScope(
+        grade=grade,
+        exam_id=UUID(int=980_030),
+        medium_id=UUID(int=980_031),
+        subject_id=_PAPER.curriculum_scope.subject_id,
+        curriculum_version_id=CURRICULUM_ID,
+        taxonomy=TaxonomyScope(
+            competency_id=_PAPER.slots[0].taxonomy_target.competency_id,
+        ),
+    )
+
+
+def _retrieval_scoped_record(
+    *,
+    programme: bool = False,
+) -> tuple[ValidationGenerationRecord, RetrievalScope]:
+    record, _ = generation_record()
+    scope = _retrieval_scope()
+    filters: RetrievalScope | RetrievalScopeSet = scope
+    if programme:
+        filters = RetrievalScopeSet(
+            policy_version="grade5-scholarship-paper-ii.v1",
+            scopes=(scope,),
+        )
+    snapshot = deepcopy(record.run.context_snapshot)
+    snapshot["retrieval_filters"] = serialize_retrieval_filters(filters)
+    for item in cast(list[dict[str, object]], snapshot["items"]):
+        item["retrieval_scope"] = serialize_retrieval_scope(scope)
+    record.run.context_snapshot = snapshot
+    _refingerprint(record.run)
+    return record, scope
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -408,6 +450,105 @@ def test_reconstruction_rejects_malformed_context_shape(
 ) -> None:
     with pytest.raises(ValidationGenerationIntegrityError):
         reconstruct_generation_result(_mutate_context(mutation))
+
+
+def test_reconstruction_rejects_invalid_declared_retrieval_filters() -> None:
+    record = _mutate_context(
+        lambda snapshot: snapshot.update({"retrieval_filters": {"kind": "unsupported"}})
+    )
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation retrieval filters are invalid$",
+    ):
+        reconstruct_generation_result(record)
+
+
+def test_reconstruction_rejects_malformed_context_retrieval_scope() -> None:
+    record, _ = _retrieval_scoped_record()
+    snapshot = deepcopy(record.run.context_snapshot)
+    first = cast(list[dict[str, object]], snapshot["items"])[0]
+    first["retrieval_scope"] = {"grade": 5}
+    record.run.context_snapshot = snapshot
+    _refingerprint(record.run)
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation context retrieval scope is invalid$",
+    ):
+        reconstruct_generation_result(record)
+
+
+def test_reconstruction_rejects_context_scope_that_disagrees_with_taxonomy() -> None:
+    record, _ = _retrieval_scoped_record()
+    snapshot = deepcopy(record.run.context_snapshot)
+    first = cast(list[dict[str, object]], snapshot["items"])[0]
+    taxonomy = cast(dict[str, object], first["taxonomy"])
+    taxonomy["competency_id"] = str(UUID(int=980_032))
+    record.run.context_snapshot = snapshot
+    _refingerprint(record.run)
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation context retrieval scope is inconsistent$",
+    ):
+        reconstruct_generation_result(record)
+
+
+def test_reconstruction_rejects_context_scope_without_declared_filters() -> None:
+    scope = _retrieval_scope()
+    record = _mutate_context(
+        lambda snapshot: cast(list[dict[str, object]], snapshot["items"])[0].update(
+            {"retrieval_scope": serialize_retrieval_scope(scope)}
+        )
+    )
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation context retrieval scope requires declared filters$",
+    ):
+        reconstruct_generation_result(record)
+
+
+def test_programme_context_ids_reject_non_object_items() -> None:
+    record, _ = _retrieval_scoped_record(programme=True)
+    snapshot = deepcopy(record.run.context_snapshot)
+    cast(list[object], snapshot["items"])[0] = "not-an-object"
+    record.run.context_snapshot = snapshot
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation context item 0 must be an object$",
+    ):
+        _programme_context_ids(record.run)
+
+
+def test_programme_context_ids_reject_malformed_retrieval_scope() -> None:
+    record, _ = _retrieval_scoped_record(programme=True)
+    snapshot = deepcopy(record.run.context_snapshot)
+    first = cast(list[dict[str, object]], snapshot["items"])[0]
+    first["retrieval_scope"] = None
+    record.run.context_snapshot = snapshot
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation programme context scope is invalid$",
+    ):
+        _programme_context_ids(record.run)
+
+
+def test_programme_context_ids_reject_scope_outside_immutable_policy() -> None:
+    record, scope = _retrieval_scoped_record(programme=True)
+    snapshot = deepcopy(record.run.context_snapshot)
+    first = cast(list[dict[str, object]], snapshot["items"])[0]
+    first["retrieval_scope"] = serialize_retrieval_scope(replace(scope, grade=4))
+    record.run.context_snapshot = snapshot
+
+    with pytest.raises(
+        ValidationGenerationIntegrityError,
+        match=r"^generation programme context is outside its policy$",
+    ):
+        _programme_context_ids(record.run)
 
 
 def _trusted_context_record(

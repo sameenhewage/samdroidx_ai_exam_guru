@@ -125,10 +125,53 @@ def test_question_and_chunk_models_round_trip_domain_records() -> None:
         assert json_type.none_as_null is True
 
 
+def test_repository_import_values_preserve_source_learning_scope() -> None:
+    provenance = Provenance(UUID(int=40), 1, UUID(int=41))
+    question = HistoricalQuestion(
+        id=UUID(int=42),
+        curriculum_version_id=UUID(int=43),
+        unit_id=UUID(int=44),
+        lesson_id=UUID(int=45),
+        year=2020,
+        paper_code="P1",
+        question_number="1",
+        text="Historical question",
+        question_type=QuestionType.MULTIPLE_CHOICE,
+        marks=1,
+        provenance=provenance,
+    )
+    chunk = KnowledgeChunk(
+        id=UUID(int=46),
+        curriculum_version_id=UUID(int=43),
+        unit_id=UUID(int=44),
+        lesson_id=UUID(int=45),
+        chunk_type=ChunkType.EXPLANATION,
+        text="Scoped explanation",
+        educational_boundary="Grade 3 / lesson 1",
+        sequence=0,
+        provenance=provenance,
+    )
+
+    question_values = SqlAlchemyKnowledgeRepository._question_values(question, ACTOR_ID)
+    chunk_values = SqlAlchemyKnowledgeRepository._chunk_values(chunk, ACTOR_ID)
+    assert question_values["unit_id"] == chunk_values["unit_id"] == UUID(int=44)
+    assert question_values["lesson_id"] == chunk_values["lesson_id"] == UUID(int=45)
+    chunk_model = KnowledgeChunkModel.from_domain(chunk, ACTOR_ID)
+    assert SqlAlchemyKnowledgeRepository._same_chunk_import(
+        chunk_model, replace(chunk, id=UUID(int=47))
+    )
+    assert not SqlAlchemyKnowledgeRepository._same_chunk_import(
+        chunk_model,
+        replace(chunk, unit_id=UUID(int=48), lesson_id=UUID(int=49)),
+    )
+
+
 def test_question_import_comparison_includes_every_source_metadata_field() -> None:
     question = HistoricalQuestion(
         id=UUID(int=30),
         curriculum_version_id=UUID(int=31),
+        unit_id=UUID(int=35),
+        lesson_id=UUID(int=36),
         year=2020,
         paper_code="P1",
         question_number="1",
@@ -148,6 +191,8 @@ def test_question_import_comparison_includes_every_source_metadata_field() -> No
     )
     model = HistoricalQuestionModel.from_domain(question, ACTOR_ID)
     candidates = (
+        replace(question, unit_id=UUID(int=37), lesson_id=UUID(int=38)),
+        replace(question, lesson_id=UUID(int=39)),
         replace(question, media_references=("source://page/1/figure/2",)),
         replace(question, options=("A", "B", "C", "D", "E")),
         replace(question, answer="C"),

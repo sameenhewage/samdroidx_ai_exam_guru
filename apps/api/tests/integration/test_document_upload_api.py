@@ -292,6 +292,19 @@ def test_wrong_grade_material_remove_restore_is_readable_audited_and_cas_safe(
             params={"grade": 5, "subject_id": subject.json()["id"]},
             headers={"Authorization": "Bearer reviewer-token"},
         )
+        filtered_materials = client.get(
+            "/api/v1/admin/materials",
+            params={
+                "grade": 5,
+                "subject_id": subject.json()["id"],
+                "medium_id": medium.json()["id"],
+                "material_type": "past_paper",
+                "year": 2025,
+                "status": "removed",
+                "search": "grade-11-paper",
+            },
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
         summary = client.get(
             "/api/v1/admin/materials/grade-summary",
             headers={"Authorization": "Bearer reviewer-token"},
@@ -322,6 +335,8 @@ def test_wrong_grade_material_remove_restore_is_readable_audited_and_cas_safe(
     assert material["subject"] == "Mathematics"
     assert material["medium"] == "English"
     assert material["status"] == "removed"
+    assert filtered_materials.status_code == 200
+    assert [item["id"] for item in filtered_materials.json()] == [uploaded.json()["id"]]
     grade_five = next(item for item in summary.json() if item["grade"] == 5)
     assert grade_five["removed_count"] == 1
     assert restored.status_code == 200

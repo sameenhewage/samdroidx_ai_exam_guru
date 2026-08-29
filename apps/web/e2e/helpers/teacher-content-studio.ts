@@ -331,41 +331,60 @@ const generationLessons = [
 ] satisfies components["schemas"]["LessonOption"][];
 
 const generationOptions = {
-  assessment_programmes: [
-    { code: "SCHOOL-G7", grade: 7, label: "School practice paper" },
+  defaults: {
+    difficulty: "balanced",
+    duration_minutes: 45,
+    mcq_count: 5,
+    paper_name: "Grade 5 practice paper",
+    structured_count: 0,
+    teacher_instruction: null,
+    written_count: 5,
+  },
+  grades: [5],
+  media: [{ code: "si", label: "Sinhala Medium" }],
+  paper_types: [
+    { code: "subject_practice", grade: 5, label: "Subject Practice" },
+    { code: "term_test", grade: 5, label: "Term Test" },
+    { code: "scholarship_practice", grade: 5, label: "Grade 5 Scholarship Practice" },
   ],
-  defaults: { difficulty: "balanced", duration_minutes: 45, question_count: 10 },
-  grades: Array.from({ length: 13 }, (_, index) => index + 1),
-  media: [{ code: "en", label: "English" }],
+  scholarship_modes: [
+    { code: "paper_i", label: "Paper I — Ability & Reasoning" },
+    { code: "paper_ii", label: "Paper II — Curriculum Knowledge" },
+    { code: "full", label: "Full Scholarship Practice — Paper I + Paper II" },
+  ],
   subjects: [
     {
-      assessment_programme: "SCHOOL-G7",
       code: "MATHEMATICS",
-      grade: 7,
+      grade: 5,
       label: "Maths",
       lessons: generationLessons,
-      medium: "en",
+      medium: "si",
       units: [{ code: "NUMBERS", label: "Numbers" }],
     },
+  ],
+  terms: [
+    { code: "term_1", label: "1st Term" },
+    { code: "term_2", label: "2nd Term" },
+    { code: "term_3", label: "3rd Term" },
   ],
 } satisfies TeacherPaperOptions;
 
 const teacherCurricula = {
   items: [
     {
-      assessment_label: "School Grade 7",
-      assessment_programme: "SCHOOL-G7",
-      code: "G7-MATHS-2026",
-      label: "Grade 7 Maths 2026",
+      assessment_label: "School Grade 5",
+      assessment_programme: "SCHOOL-G5",
+      code: "G5-MATHS-2026",
+      label: "Grade 5 Maths 2026",
     },
   ],
 } satisfies CurriculumLabels;
 
 const teacherLessons = {
   curriculum: teacherCurricula.items[0],
-  grade: 7,
+  grade: 5,
   lessons: generationLessons,
-  medium: "en",
+  medium: "si",
   subject: "MATHEMATICS",
 } satisfies LessonLabels;
 
@@ -384,11 +403,11 @@ function teacherPaperJob(overrides: Partial<TeacherPaperJob> = {}): TeacherPaper
     created_at: "2026-08-25T10:00:00Z",
     deduplicated: false,
     failure: null,
-    grade: 7,
+    grade: 5,
     job_id: generationJobId,
-    medium: "English",
+    medium: "Sinhala Medium",
     paper_id: paperId,
-    paper_reference: "EGP-G7-MATH-0001",
+    paper_reference: "EGP-G5-MATH-0001",
     progress: ["preparing", "generating", "checking_answers", "ready_for_review"],
     review_url: `/admin/review-approve?paper=${generationJobId}`,
     scope_summary: "Lessons 1–3",
@@ -405,7 +424,7 @@ function teacherPaperJob(overrides: Partial<TeacherPaperJob> = {}): TeacherPaper
     })),
     status: "ready_for_review",
     subject: "Maths",
-    title: "Grade 7 Maths practice paper",
+    title: "Grade 5 Maths practice paper",
     total_tokens: 2_100,
     updated_at: "2026-08-25T10:03:00Z",
     version: 4,
@@ -420,6 +439,7 @@ const reviewQuestion = {
     answer: "B — 3/4",
     explanation: "Three of the four equal parts are shaded, so the fraction is 3/4.",
     marking_guide: ["Identifies three shaded parts out of four equal parts."],
+    marking_point_marks: [2],
     marks: 2,
     options: [
       { option_id: "A", text: "1/4" },
@@ -434,7 +454,13 @@ const reviewQuestion = {
   id: questionId,
   marking_scheme: {
     criteria: ["Identifies three shaded parts out of four equal parts."],
+    point_marks: [2],
     total_marks: 2,
+  },
+  marking_confirmation: {
+    confirmed: false,
+    confirmed_at: null,
+    status: "teacher_confirmation_required",
   },
   number: 1,
   options: [
@@ -446,7 +472,7 @@ const reviewQuestion = {
   requires_revalidation: false,
   review_state: "validated",
   scope: {
-    grade: 7,
+    grade: 5,
     lesson: "Lesson 3 — Fractions",
     lessons: "Lessons 1–3",
     subject: "Maths",
@@ -455,9 +481,9 @@ const reviewQuestion = {
   },
   sources: [
     {
-      filename: "grade-7-maths-teacher-guide.pdf",
+      filename: "grade-5-maths-teacher-guide.pdf",
       page: 18,
-      title: "Grade 7 Maths Teacher Guide",
+      title: "Grade 5 Maths Teacher Guide",
     },
   ],
   stem: "What fraction of the four equal parts is shaded when three parts are shaded?",
@@ -554,10 +580,10 @@ const reviewQuestion = {
 const reviewPaper = {
   created_at: "2026-08-25T10:00:00Z",
   draft: null,
-  grade: 7,
+  grade: 5,
   id: paperId,
-  medium: "English",
-  paper_reference: "EGP-G7-MATH-0001",
+  medium: "Sinhala Medium",
+  paper_reference: "EGP-G5-MATH-0001",
   questions: [reviewQuestion],
   scope_summary: "Lessons 1–3",
   status: "in_review",
@@ -569,7 +595,7 @@ const reviewPaper = {
     request_fingerprint: `sha256:${"a".repeat(64)}`,
     total_tokens: 2_100,
   },
-  title: "Grade 7 Maths practice paper",
+  title: "Grade 5 Maths practice paper",
   version: 4,
 } satisfies ReviewPaper;
 
@@ -584,7 +610,7 @@ const publishedPaper = {
   latest_publication_hash: `sha256:${"b".repeat(64)}`,
   paper_blueprint_id: "00000000-0000-0000-0000-000000002022",
   state: "published",
-  title: "Grade 7 Maths Lessons 1–3 practice paper",
+  title: "Grade 5 Maths Lessons 1–3 practice paper",
   updated_at: "2026-08-25T11:00:00Z",
   updated_by: "00000000-0000-0000-0000-000000002023",
 } satisfies PublishedPaper;
@@ -822,6 +848,22 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       );
     }
 
+    if (
+      method === "GET" &&
+      path.includes("/source-documents/") &&
+      path.endsWith("/content")
+    ) {
+      return route.fulfill({
+        body: syntheticPdf("verified original material preview"),
+        contentType: "application/pdf",
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+          "X-Content-Type-Options": "nosniff",
+        },
+        status: 200,
+      });
+    }
     if (method === "GET" && path.endsWith("/source-documents")) {
       return json(route, state.sourceDocuments);
     }
@@ -1069,6 +1111,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         explanation: payload.content.explanation,
         marking_scheme: {
           criteria: payload.content.marking_guide,
+          point_marks: payload.content.marking_point_marks,
           total_marks: payload.content.marks,
         },
         options: payload.content.options.map((option) => ({
@@ -1093,9 +1136,10 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       return json(route, edited);
     }
     if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/approve`)) {
-      const payload = body as components["schemas"]["ReviewCandidateApproveRequest"] | null;
+      const payload = body as components["schemas"]["ReviewQuestionApproveRequest"] | null;
       if (
         !payload ||
+        payload.marking_confirmed !== true ||
         payload.expected_version !== currentQuestion.version ||
         currentQuestion.requires_revalidation ||
         currentQuestion.validation.status === "failed_check"
@@ -1104,6 +1148,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       }
       const approved: ReviewQuestion = {
         ...currentQuestion,
+        marking_confirmation: {
+          confirmed: true,
+          confirmed_at: "2026-08-25T10:02:00Z",
+          status: "teacher_confirmed",
+        },
         review_state: "approved",
         version: currentQuestion.version + 1,
       };
@@ -1226,7 +1275,8 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         {
           draft_id: draftPaperId,
           draft_version: 1,
-          paper_id: paperId,
+          paper_id: draftPaperId,
+          paper_job_id: paperId,
           paper_reference: currentReviewPaper.paper_reference,
           publication_path: `/api/v1/admin/curricula/${educationIds.gradeSevenCurriculum}/papers/${draftPaperId}`,
         } satisfies components["schemas"]["ReviewPaperDraftCreatedResponse"],

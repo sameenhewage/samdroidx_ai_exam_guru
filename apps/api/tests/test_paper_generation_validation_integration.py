@@ -222,11 +222,8 @@ def test_passing_generation_and_report_become_only_a_validated_paper_candidate()
     assert candidate.content.answer == "B"
     assert candidate.content.explanation == result.question.answer.explanation
     assert candidate.content.marks == 2
-    assert json.loads(candidate.content.marking_guide[0]) == {
-        "criterion_id": "correct-answer",
-        "description": "Selects the correct sum.",
-        "marks": 2,
-    }
+    assert candidate.content.marking_guide == ("Selects the correct sum.",)
+    assert candidate.content.marking_point_marks == (2,)
 
     assert candidate.validation is not None
     assert candidate.validation.validation_run_id == VALIDATION_RUN_ID
@@ -427,14 +424,11 @@ def test_constructed_response_and_each_marking_criterion_remain_lossless() -> No
     candidate = adapt_persisted(result, passing_report(result))
 
     assert json.loads(candidate.content.answer) == ["42", "forty-two | 42\nunits"]
-    assert tuple(json.loads(item) for item in candidate.content.marking_guide) == (
-        {"criterion_id": "numeric", "description": "Writes the numeral.", "marks": 1},
-        {
-            "criterion_id": "equivalent",
-            "description": "Writes an equivalent form.",
-            "marks": 1,
-        },
+    assert candidate.content.marking_guide == (
+        "Writes the numeral.",
+        "Writes an equivalent form.",
     )
+    assert candidate.content.marking_point_marks == (1, 1)
 
 
 def test_adapter_rejects_untyped_boundary_values() -> None:

@@ -383,11 +383,42 @@ class SourceDocumentService:
         *,
         grade: int | None = None,
         subject_id: UUID | None = None,
+        medium_id: UUID | None = None,
+        material_type: SourceDocumentType | None = None,
+        year: int | None = None,
+        status: MaterialStatus | None = None,
+        search: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[MaterialListItemResponse, ...]:
         if not 1 <= limit <= 100 or not 0 <= offset <= 100_000:
             raise ValueError("material pagination is out of bounds")
+        normalized_search = None if search is None else search.strip()
+        if search is not None and (not normalized_search or len(normalized_search) > 200):
+            raise ValueError("material search is out of bounds")
+        status_conditions = {
+            MaterialStatus.READY_FOR_AI: and_(
+                SourceDocumentModel.active_for_ai.is_(True),
+                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
+            ),
+            MaterialStatus.NEEDS_REVIEW: and_(
+                SourceDocumentModel.active_for_ai.is_(True),
+                SourceDocumentModel.extraction_status.in_(
+                    (
+                        ExtractionStatus.EXTRACTED,
+                        ExtractionStatus.IN_REVIEW,
+                        ExtractionStatus.FAILED,
+                    )
+                ),
+            ),
+            MaterialStatus.PROCESSING: and_(
+                SourceDocumentModel.active_for_ai.is_(True),
+                SourceDocumentModel.extraction_status.in_(
+                    (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING)
+                ),
+            ),
+            MaterialStatus.REMOVED: SourceDocumentModel.active_for_ai.is_(False),
+        }
         statement = (
             select(
                 SourceDocumentModel,
@@ -421,6 +452,18 @@ class SourceDocumentService:
             statement = statement.where(ExamConfigurationModel.grade == grade)
         if subject_id is not None:
             statement = statement.where(SubjectModel.id == subject_id)
+        if medium_id is not None:
+            statement = statement.where(MediumModel.id == medium_id)
+        if material_type is not None:
+            statement = statement.where(SourceDocumentModel.document_type == material_type)
+        if year is not None:
+            statement = statement.where(SourceDocumentModel.year == year)
+        if status is not None:
+            statement = statement.where(status_conditions[status])
+        if normalized_search is not None:
+            statement = statement.where(
+                SourceDocumentModel.original_filename.icontains(normalized_search, autoescape=True)
+            )
         statement = statement.limit(limit).offset(offset)
         rows = (await self._session.execute(statement)).all()
         return tuple(

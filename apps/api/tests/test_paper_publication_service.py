@@ -254,6 +254,22 @@ def test_create_draft_is_deterministic_order_independent_audited_and_conflict_sa
             "slot-b",
         )
 
+        uncommitted_service, uncommitted_session, uncommitted_repository = service_with()
+        uncommitted = await uncommitted_service.create_draft(
+            CURRICULUM_ID,
+            paper_blueprint_id=PAPER_BLUEPRINT_ID,
+            title="Grade 5 Scholarship Practice Paper",
+            candidate_ids=tuple(
+                candidate.candidate_id for candidate in uncommitted_repository.candidates
+            ),
+            idempotency_key="paper-create-uncommitted",
+            principal=REVIEWER,
+            commit=False,
+        )
+        assert uncommitted.deduplicated is False
+        assert uncommitted_session.commits == 0
+        assert uncommitted_session.flushes == 1
+
         repository.existing = repository.paper
         repository.paper.create_request_fingerprint = cast(
             str, repository.last_initial["request_fingerprint"]
@@ -824,6 +840,35 @@ def test_create_race_winner_and_successful_revision_return_authoritative_records
         )
         assert result.deduplicated is True
         assert session.commits == 1
+
+        service, session, repository = service_with()
+        repository.created = False
+        uncommitted_calls = 0
+
+        async def uncommitted_race_winner(_key_hash: str) -> PracticePaperModel | None:
+            nonlocal uncommitted_calls
+            uncommitted_calls += 1
+            if uncommitted_calls == 1:
+                return None
+            repository.paper.id = cast(UUID, repository.last_initial["paper_id"])
+            repository.paper.create_request_fingerprint = cast(
+                str,
+                repository.last_initial["request_fingerprint"],
+            )
+            return repository.paper
+
+        object.__setattr__(repository, "find_by_idempotency_hash", uncommitted_race_winner)
+        uncommitted = await service.create_draft(
+            CURRICULUM_ID,
+            paper_blueprint_id=PAPER_BLUEPRINT_ID,
+            title="Paper",
+            candidate_ids=tuple(c.candidate_id for c in repository.candidates),
+            idempotency_key="race-winner-uncommitted",
+            principal=REVIEWER,
+            commit=False,
+        )
+        assert uncommitted.deduplicated is True
+        assert session.commits == 0
 
         service, session, repository = service_with()
         make_published(repository)

@@ -1,6 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { requireIsolatedE2ERuntime } from "./playwright-runtime";
+
 const channel = process.env.PLAYWRIGHT_CHANNEL;
+const runtime = requireIsolatedE2ERuntime(process.env);
 
 export default defineConfig({
   expect: { timeout: 10_000 },
@@ -18,7 +21,7 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+    baseURL: runtime.baseURL,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

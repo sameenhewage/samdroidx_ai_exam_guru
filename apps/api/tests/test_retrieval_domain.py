@@ -11,9 +11,14 @@ from exam_guru_api.retrieval.domain import (
     RetrievalContractError,
     RetrievalRecord,
     RetrievalScope,
+    RetrievalScopeSet,
     SourceProvenance,
     TaxonomyScope,
     VectorCandidate,
+    deserialize_retrieval_filters,
+    deserialize_retrieval_scope,
+    serialize_retrieval_filters,
+    serialize_retrieval_scope,
 )
 from tests.test_retrieval_fixtures import (
     COMPETENCY_ID,
@@ -51,6 +56,70 @@ def test_grade_seven_subject_unit_and_lesson_are_hard_scope_boundaries() -> None
     assert not selected.allows(replace(selected, subject_id=UUID(int=54)))
     assert not selected.allows(replace(selected, unit_ids=(UUID(int=55),)))
     assert not selected.allows(replace(selected, lesson_ids=(UUID(int=56),)))
+
+
+def test_scholarship_scope_set_allows_only_policy_owned_cross_grade_sources() -> None:
+    scopes = tuple(
+        RetrievalScope(
+            grade=grade,
+            exam_id=UUID(int=60 + grade),
+            medium_id=MEDIUM_ID,
+            subject_id=UUID(int=70 + grade),
+            curriculum_version_id=UUID(int=80 + grade),
+            unit_ids=(UUID(int=90 + grade),),
+            lesson_ids=(UUID(int=100 + grade),),
+            taxonomy=TaxonomyScope(competency_id=UUID(int=110 + grade)),
+        )
+        for grade in (3, 4, 5)
+    )
+    policy_scope = RetrievalScopeSet(
+        policy_version="grade5-scholarship-paper-ii.v1",
+        scopes=scopes,
+    )
+
+    assert {scope.grade for scope in policy_scope.scopes} == {3, 4, 5}
+    assert all(policy_scope.allows(scope) for scope in scopes)
+    assert not policy_scope.allows(replace(scopes[2], lesson_ids=(UUID(int=999),)))
+    assert not policy_scope.allows(replace(scopes[1], medium_id=OTHER_MEDIUM_ID))
+    assert not policy_scope.allows(replace(scopes[0], grade=6))
+    assert not policy_scope.allows(cast(RetrievalScope, "not-a-scope"))
+
+
+def test_retrieval_filter_snapshots_round_trip_without_losing_policy_scope() -> None:
+    scope = grade_five_scope()
+    scope_set = RetrievalScopeSet(policy_version="scholarship.v1", scopes=(scope,))
+
+    assert deserialize_retrieval_scope(serialize_retrieval_scope(scope)) == scope
+    assert deserialize_retrieval_filters(serialize_retrieval_filters(scope)) == scope
+    assert deserialize_retrieval_filters(serialize_retrieval_filters(scope_set)) == scope_set
+
+    for invalid in (None, "scope", {}, {"kind": "unknown"}):
+        with pytest.raises(RetrievalContractError):
+            deserialize_retrieval_filters(invalid)
+    with pytest.raises(RetrievalContractError):
+        serialize_retrieval_filters(cast(RetrievalScope, "scope"))
+    with pytest.raises(RetrievalContractError):
+        serialize_retrieval_scope(cast(RetrievalScope, "scope"))
+
+    snapshot = serialize_retrieval_scope(scope)
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_scope({**snapshot, "extra": True})
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_scope({**snapshot, "taxonomy": "invalid"})
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_scope({**snapshot, "exam_id": "not-a-uuid"})
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_scope({**snapshot, "exam_id": 123})
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_scope({**snapshot, "unit_ids": "not-an-array"})
+    with pytest.raises(RetrievalContractError):
+        deserialize_retrieval_filters(
+            {
+                "kind": "scope_set",
+                "policy_version": "policy.v1",
+                "scopes": "not-an-array",
+            }
+        )
 
 
 def test_hard_scope_requires_every_grade_exam_medium_curriculum_and_taxonomy_match() -> None:
@@ -186,6 +255,27 @@ def test_candidate_contracts_preserve_opaque_text_scope_provenance_and_fingerpri
             curriculum_version_id=CURRICULUM_ID,
             taxonomy=TaxonomyScope(competency_id=COMPETENCY_ID),
             lesson_ids=(LESSON_ID,),
+        ),
+        lambda: RetrievalScopeSet(cast(str, 123), (grade_five_scope(),)),
+        lambda: RetrievalScopeSet("", (grade_five_scope(),)),
+        lambda: RetrievalScopeSet(" padded ", (grade_five_scope(),)),
+        lambda: RetrievalScopeSet("x" * 129, (grade_five_scope(),)),
+        lambda: RetrievalScopeSet("policy.v1", ()),
+        lambda: RetrievalScopeSet(
+            "policy.v1",
+            cast(tuple[RetrievalScope, ...], [grade_five_scope()]),
+        ),
+        lambda: RetrievalScopeSet(
+            "policy.v1",
+            (grade_five_scope(), grade_five_scope()),
+        ),
+        lambda: RetrievalScopeSet(
+            "policy.v1",
+            (grade_five_scope(), replace(grade_five_scope(), medium_id=OTHER_MEDIUM_ID)),
+        ),
+        lambda: RetrievalScopeSet(
+            "policy.v1",
+            tuple(replace(grade_five_scope(), grade=(index % 13) + 1) for index in range(65)),
         ),
         lambda: SourceProvenance(source_document_id=cast(UUID, "document"), page_number=1),
         lambda: SourceProvenance(source_document_id=UUID(int=1), page_number=0),

@@ -234,6 +234,7 @@ it("shows the authorized original PDF beside corrected text and follows page nav
     raw_text: "Second page text",
     reviewed_text: "Corrected second page text",
   });
+  const blockRequests: string[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -251,9 +252,11 @@ it("shows the authorized original PDF beside corrected text and follows page nav
         return Response.json([firstPage, secondPage]);
       }
       if (request.method === "GET" && request.url.endsWith("/pages/1/blocks")) {
+        blockRequests.push("page-1");
         return Response.json([sourceBlock()]);
       }
       if (request.method === "GET" && request.url.endsWith("/pages/2/blocks")) {
+        blockRequests.push("page-2");
         return Response.json([
           sourceBlock({
             id: "00000000-0000-0000-0000-000000000026",
@@ -271,6 +274,7 @@ it("shows the authorized original PDF beside corrected text and follows page nav
   render(<ExtractionReviewStudio documentId={documentId} experience="materials" role="admin" />);
 
   const original = await screen.findByRole("region", { name: "Original PDF" });
+  await waitFor(() => expect(blockRequests).toEqual(["page-1"]));
   const preview = within(original).getByTitle("Original PDF preview");
   const firstUrl = `/api/v1/admin/source-documents/${documentId}/content#page=1&view=FitH`;
   expect(preview).toHaveAttribute("src", firstUrl);
@@ -300,6 +304,7 @@ it("shows the authorized original PDF beside corrected text and follows page nav
   expect(screen.getByRole("region", { name: "Extracted and corrected text" })).toHaveTextContent(
     "Corrected second page text",
   );
+  await waitFor(() => expect(blockRequests).toEqual(["page-1", "page-2"]));
 });
 
 it("shows a recoverable teacher-facing error when text review cannot load", async () => {
@@ -471,10 +476,11 @@ it("renders bounded mixed native and OCR provenance as accessible untrusted plai
   expect(ocrProvenance).not.toHaveTextContent(hiddenNestedValue);
   expect(ocrProvenance).not.toHaveTextContent(oversizedScalar);
 
-  fireEvent.click(within(ocrArticle).getByText("Block provenance (1)"));
-  const blockProvenance = within(ocrArticle).getByRole("region", {
+  fireEvent.click(within(ocrArticle).getByText(/Block provenance/));
+  const blockProvenance = await within(ocrArticle).findByRole("region", {
     name: "Block 1 extraction provenance",
   });
+  expect(within(ocrArticle).getByText("Block provenance (1)")).toBeInTheDocument();
   expect(blockProvenance).toHaveTextContent(/Extractor\s+tesseract/);
   expect(blockProvenance).toHaveTextContent(/Extractor version\s+5\.4\.1/);
   expect(blockProvenance).toHaveTextContent(/Confidence\s+0\.81/);

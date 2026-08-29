@@ -15,8 +15,15 @@ from exam_guru_api.curriculum.models import (
 )
 from exam_guru_api.generation.models import GenerationJobModel, GenerationRunModel
 from exam_guru_api.papers.models import QuestionCandidateModel, QuestionCandidateRevisionModel
-from exam_guru_api.teacher_papers.models import TeacherPaperJobModel, TeacherPaperSlotModel
+from exam_guru_api.teacher_papers.models import (
+    AssessmentProgrammePolicyScopeModel,
+    AssessmentProgrammePolicyVersionModel,
+    TeacherPaperJobModel,
+    TeacherPaperMarkingConfirmationModel,
+    TeacherPaperSlotModel,
+)
 from exam_guru_api.teacher_papers.repository import (
+    ProgrammePolicyNotFoundError,
     TeacherPaperJobNotFoundError,
     TeacherPaperPersistenceConflictError,
     TeacherPaperQuestionNotFoundError,
@@ -92,6 +99,9 @@ class ScriptedSession:
     def add(self, value: object) -> None:
         self.added.append(value)
 
+    def add_all(self, values: tuple[object, ...]) -> None:
+        self.added.extend(values)
+
     async def commit(self) -> None:
         self.commits += 1
 
@@ -128,6 +138,137 @@ def slot(
 
 def repository(session: ScriptedSession) -> TeacherPaperRepository:
     return TeacherPaperRepository(cast(AsyncSession, session))
+
+
+def test_programme_policy_repository_identity_persistence_and_missing_boundaries() -> None:
+    curriculum_id = UUID(int=25_901_001)
+    exam_id = UUID(int=25_901_002)
+    medium_id = UUID(int=25_901_003)
+    subject_id = UUID(int=25_901_004)
+
+    empty = ScriptedSession()
+    assert asyncio.run(repository(empty).curriculum_identities(())) == {}
+    assert empty.execute_results == []
+
+    identity_session = ScriptedSession(
+        execute_results=(Result(rows=((curriculum_id, 5, exam_id, medium_id, subject_id),)),)
+    )
+    assert asyncio.run(repository(identity_session).curriculum_identities((curriculum_id,))) == {
+        curriculum_id: (5, exam_id, medium_id, subject_id)
+    }
+
+    policy = AssessmentProgrammePolicyVersionModel(id=UUID(int=25_901_005))
+    scopes = (AssessmentProgrammePolicyScopeModel(id=UUID(int=25_901_006)),)
+    insert_session = ScriptedSession()
+    stored = asyncio.run(repository(insert_session).insert_programme_policy(policy, scopes))
+    assert stored.policy is policy
+    assert stored.scopes == scopes
+    assert insert_session.added == [policy, *scopes]
+    assert insert_session.flushes == 2
+
+    missing_lookup = ScriptedSession(scalar_results=(None,))
+    assert (
+        asyncio.run(repository(missing_lookup).find_programme_policy(policy.id, for_update=True))
+        is None
+    )
+
+    missing_get = ScriptedSession(scalar_results=(None,))
+    with pytest.raises(ProgrammePolicyNotFoundError) as captured:
+        asyncio.run(repository(missing_get).get_programme_policy(policy.id))
+    assert captured.value.args == (policy.id,)
+
+    active = ScriptedSession(
+        scalar_results=(policy.id, policy),
+        scalar_rows=(scopes,),
+    )
+    active_policy = asyncio.run(
+        repository(active).active_programme_policy(
+            code="G5-SCHOLARSHIP",
+            grade=5,
+            medium="si",
+        )
+    )
+    assert active_policy is not None
+    assert active_policy.policy is policy
+    assert active_policy.scopes == scopes
+
+    inactive = ScriptedSession(scalar_results=(None,))
+    assert (
+        asyncio.run(
+            repository(inactive).active_programme_policy(
+                code="G5-SCHOLARSHIP",
+                grade=5,
+                medium="si",
+            )
+        )
+        is None
+    )
+
+
+def test_unavailable_programme_scope_supports_taxonomy_only_retrieval_boundaries() -> None:
+    available_scope = AssessmentProgrammePolicyScopeModel(
+        id=UUID(int=25_901_010),
+        source_curriculum_version_id=UUID(int=25_901_011),
+        source_unit_id=None,
+        source_lesson_id=None,
+        source_competency_id=UUID(int=25_901_012),
+        source_skill_id=None,
+        source_sub_skill_id=None,
+        source_learning_concept_id=None,
+    )
+    unavailable_scope = AssessmentProgrammePolicyScopeModel(
+        id=UUID(int=25_901_013),
+        source_curriculum_version_id=UUID(int=25_901_014),
+        source_unit_id=None,
+        source_lesson_id=None,
+        source_competency_id=UUID(int=25_901_015),
+        source_skill_id=None,
+        source_sub_skill_id=None,
+        source_learning_concept_id=None,
+    )
+    scripted = ScriptedSession(scalar_results=(True, False, False, False))
+
+    unavailable = asyncio.run(
+        repository(scripted).unavailable_programme_policy_scopes(
+            (available_scope, unavailable_scope)
+        )
+    )
+
+    assert unavailable == (unavailable_scope.id,)
+    assert scripted.scalar_results == []
+
+
+def test_confirm_marking_distinguishes_created_existing_and_lost_conflicts() -> None:
+    candidate_id = UUID(int=25_901_020)
+    values: dict[str, object] = {
+        "id": UUID(int=25_901_021),
+        "paper_job_id": JOB_ID,
+        "slot_id": SLOT_ID,
+        "curriculum_version_id": CURRICULUM_ID,
+        "candidate_id": candidate_id,
+        "candidate_revision": 2,
+        "review_candidate_version": 3,
+        "marking_fingerprint": "sha256:" + "c" * 64,
+        "total_marks": 1,
+        "criteria_count": 1,
+        "confirmed_by": ACTOR_ID,
+    }
+    created = TeacherPaperMarkingConfirmationModel(id=cast(UUID, values["id"]))
+    created_result = asyncio.run(
+        repository(ScriptedSession(scalar_results=(created,))).confirm_marking(values)
+    )
+    assert created_result == (created, True)
+
+    existing = TeacherPaperMarkingConfirmationModel(id=UUID(int=25_901_022))
+    existing_session = ScriptedSession(scalar_results=(None, existing))
+    assert asyncio.run(repository(existing_session).confirm_marking(values)) == (existing, False)
+
+    missing_session = ScriptedSession(scalar_results=(None, None))
+    with pytest.raises(
+        TeacherPaperPersistenceConflictError,
+        match="confirmation insert conflicted",
+    ):
+        asyncio.run(repository(missing_session).confirm_marking(values))
 
 
 def test_repository_empty_curriculum_and_missing_insert_winner_fail_closed() -> None:
@@ -334,7 +475,7 @@ def test_review_sources_reconstructs_generated_and_revised_content_paths() -> No
     )
     finding = ValidationFindingModel(id=UUID(int=75), ordinal=0)
     revised_session = ScriptedSession(
-        scalar_results=(revision, "Unit", "Lesson", "Taxonomy"),
+        scalar_results=(revision, None, "Unit", "Lesson", "Taxonomy"),
         scalar_rows=((active_slot,), (finding,)),
         execute_results=(Result(rows=((source_id, "source.pdf"),)),),
         get_results=(generated, validation, candidate),

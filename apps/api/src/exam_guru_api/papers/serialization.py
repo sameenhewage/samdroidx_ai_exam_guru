@@ -199,13 +199,18 @@ def _blueprint(value: object) -> PaperBlueprintReference:
 
 
 def _content(value: object, path: str) -> QuestionContent:
-    root = _object(
-        value,
-        path,
-        frozenset(
-            {"answer", "explanation", "marking_guide", "marks", "options", "question_type", "stem"}
-        ),
-    )
+    keys = {
+        "answer",
+        "explanation",
+        "marking_guide",
+        "marks",
+        "options",
+        "question_type",
+        "stem",
+    }
+    if isinstance(value, Mapping) and "marking_point_marks" in value:
+        keys.add("marking_point_marks")
+    root = _object(value, path, frozenset(keys))
     options = tuple(
         _option(item, f"{path}.options[{index}]")
         for index, item in enumerate(_array(root["options"], f"{path}.options"))
@@ -223,6 +228,14 @@ def _content(value: object, path: str) -> QuestionContent:
                 _nonempty_array(root["marking_guide"], f"{path}.marking_guide")
             )
         ),
+        marking_point_marks=tuple(
+            _integer(item, f"{path}.marking_point_marks[{index}]")
+            for index, item in enumerate(
+                _nonempty_array(root["marking_point_marks"], f"{path}.marking_point_marks")
+            )
+        )
+        if "marking_point_marks" in root
+        else (),
     )
 
 

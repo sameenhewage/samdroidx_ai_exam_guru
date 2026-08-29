@@ -704,14 +704,17 @@ class TrustedSubjectScopeValidator:
         if not callable(add):
             raise ValidationContractError("scope mismatch collector must be callable")
         location = f"$.context_scope_bindings[{binding.context_id}]"
-        if binding.curriculum_version_id != trusted.curriculum_version_id:
+        if (
+            not binding.programme_authorized
+            and binding.curriculum_version_id != trusted.curriculum_version_id
+        ):
             add(
                 SubjectFindingCode.SCOPE_CURRICULUM_MISMATCH,
                 f"{location}.curriculum_version_id",
                 trusted.curriculum_version_id,
                 binding.curriculum_version_id,
             )
-        if binding.subject_id != trusted.subject_id:
+        if not binding.programme_authorized and binding.subject_id != trusted.subject_id:
             add(
                 SubjectFindingCode.SCOPE_SUBJECT_MISMATCH,
                 f"{location}.subject_id",
@@ -732,14 +735,22 @@ class TrustedSubjectScopeValidator:
                 binding.lesson_id,
                 binding.snapshot_lesson_id,
             )
-        if trusted.unit_ids and binding.unit_id not in trusted.unit_ids:
+        if (
+            not binding.programme_authorized
+            and trusted.unit_ids
+            and binding.unit_id not in trusted.unit_ids
+        ):
             add(
                 SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_UNIT,
                 f"{location}.unit_id",
                 trusted.unit_ids,
                 binding.unit_id,
             )
-        if trusted.lesson_ids and binding.lesson_id not in trusted.lesson_ids:
+        if (
+            not binding.programme_authorized
+            and trusted.lesson_ids
+            and binding.lesson_id not in trusted.lesson_ids
+        ):
             add(
                 SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_LESSON,
                 f"{location}.lesson_id",

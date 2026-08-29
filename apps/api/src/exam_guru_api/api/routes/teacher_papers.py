@@ -28,6 +28,7 @@ from exam_guru_api.generation.runtime import (
 from exam_guru_api.teacher_papers.domain import PaperScopeError
 from exam_guru_api.teacher_papers.jobs import PaperGenerationDispatcher
 from exam_guru_api.teacher_papers.repository import (
+    ProgrammePolicyNotFoundError,
     TeacherPaperJobNotFoundError,
     TeacherPaperPersistenceConflictError,
     TeacherPaperRepository,
@@ -35,6 +36,9 @@ from exam_guru_api.teacher_papers.repository import (
 from exam_guru_api.teacher_papers.schemas import (
     CurriculumLabelsResponse,
     LessonLabelsResponse,
+    ProgrammePolicyCreateRequest,
+    ProgrammePolicyResponse,
+    ProgrammePolicyReviewRequest,
     TeacherPaperAdvanceRequest,
     TeacherPaperJobCreateRequest,
     TeacherPaperJobResponse,
@@ -42,6 +46,9 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperRetryRequest,
 )
 from exam_guru_api.teacher_papers.service import (
+    ProgrammePolicyScopeError,
+    ProgrammePolicyVersionConflictError,
+    ScholarshipProgrammePolicyService,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -83,6 +90,18 @@ CreatePrincipal = Annotated[
         )
     ),
 ]
+PolicyReadPrincipal = Annotated[
+    Principal,
+    Depends(require_permission(Permission.TAXONOMY_READ)),
+]
+PolicyWritePrincipal = Annotated[
+    Principal,
+    Depends(require_permission(Permission.TAXONOMY_WRITE)),
+]
+PolicyReviewPrincipal = Annotated[
+    Principal,
+    Depends(require_permission(Permission.CONTENT_REVIEW)),
+]
 IdempotencyKey = Annotated[
     str,
     Header(alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^\S+$"),
@@ -113,6 +132,66 @@ _COSTLY_RESPONSES: dict[int | str, dict[str, Any]] = {
     status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
     status.HTTP_503_SERVICE_UNAVAILABLE: RATE_LIMITER_UNAVAILABLE_OPENAPI_RESPONSE,
 }
+
+
+@router.post(
+    "/programme-policies",
+    operation_id="create_assessment_programme_policy",
+    response_model=ProgrammePolicyResponse,
+    responses=_ERROR_RESPONSES,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create one immutable assessment-programme policy version",
+)
+async def create_assessment_programme_policy(
+    request: ProgrammePolicyCreateRequest,
+    principal: PolicyWritePrincipal,
+    session: DatabaseSession,
+) -> ProgrammePolicyResponse:
+    return await _execute(
+        session,
+        lambda: ScholarshipProgrammePolicyService(session).create(request, principal=principal),
+    )
+
+
+@router.get(
+    "/programme-policies/{policy_id}",
+    operation_id="get_assessment_programme_policy",
+    response_model=ProgrammePolicyResponse,
+    responses=_ERROR_RESPONSES,
+    summary="Read one assessment-programme policy version",
+)
+async def get_assessment_programme_policy(
+    policy_id: UUID,
+    principal: PolicyReadPrincipal,
+    session: DatabaseSession,
+) -> ProgrammePolicyResponse:
+    return await _execute(
+        session,
+        lambda: ScholarshipProgrammePolicyService(session).get(policy_id, principal=principal),
+    )
+
+
+@router.post(
+    "/programme-policies/{policy_id}/review",
+    operation_id="review_assessment_programme_policy",
+    response_model=ProgrammePolicyResponse,
+    responses=_ERROR_RESPONSES,
+    summary="Review and activate one immutable assessment-programme policy version",
+)
+async def review_assessment_programme_policy(
+    policy_id: UUID,
+    request: ProgrammePolicyReviewRequest,
+    principal: PolicyReviewPrincipal,
+    session: DatabaseSession,
+) -> ProgrammePolicyResponse:
+    return await _execute(
+        session,
+        lambda: ScholarshipProgrammePolicyService(session).review(
+            policy_id,
+            expected_version=request.expected_version,
+            principal=principal,
+        ),
+    )
 
 
 @router.get(
@@ -309,6 +388,11 @@ async def _execute[ResultT](
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "paper_generation_persistence_conflict"},
         ) from error
+    except ProgrammePolicyNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "assessment_programme_policy_not_found"},
+        ) from error
     except (TeacherPaperCurriculumNotFoundError, TeacherPaperJobNotFoundError) as error:
         code = (
             "paper_generation_curriculum_not_found"
@@ -325,6 +409,11 @@ async def _execute[ResultT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "paper_generation_idempotency_conflict"},
+        ) from error
+    except ProgrammePolicyVersionConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "assessment_programme_policy_version_conflict"},
         ) from error
     except TeacherPaperVersionConflictError as error:
         raise HTTPException(
@@ -345,6 +434,11 @@ async def _execute[ResultT](
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "paper_generation_cost_limit_exceeded"},
+        ) from error
+    except ProgrammePolicyScopeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "assessment_programme_policy_scope_invalid"},
         ) from error
     except PaperScopeError as error:
         detail: dict[str, object] = {"code": error.code}

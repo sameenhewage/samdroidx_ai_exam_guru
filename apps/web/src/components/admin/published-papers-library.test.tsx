@@ -166,7 +166,11 @@ describe("PublishedPapersLibrary", () => {
       pages: { 0: firstPage, 100: [draftPaper], 200: [] },
     });
 
+    await screen.findByRole("article", { name: "Published paper 1" });
+    expect(screen.queryByRole("article", { name: draftPaper.title })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByRole("article", { name: draftPaper.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     const offsets = requests
       .filter((request) =>
         new URL(request.url).pathname.endsWith(`/curricula/${curriculum.id}/papers`),

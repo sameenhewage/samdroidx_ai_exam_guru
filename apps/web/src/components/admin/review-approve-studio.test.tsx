@@ -1,5 +1,5 @@
 import type { components } from "@exam-guru/api-client";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -33,6 +33,7 @@ function content(
     answer,
     explanation,
     marking_guide: markingGuide,
+    marking_point_marks: markingGuide.length === 1 ? [marks] : [],
     marks,
     options: options.map((option) => ({ option_id: option.label, text: option.text })),
     question_type: options.length ? "multiple_choice" : "structured_response",
@@ -47,7 +48,7 @@ const firstOptions = [
   { label: "D", text: "4/3" },
 ];
 
-const questions = [
+const questions: ReviewQuestion[] = [
   {
     aggregate_slot_version: 4,
     answer: "B — 3/4",
@@ -63,7 +64,13 @@ const questions = [
     id: questionIds[0],
     marking_scheme: {
       criteria: ["Identifies three shaded parts out of four equal parts."],
+      point_marks: [2],
       total_marks: 2,
+    },
+    marking_confirmation: {
+      confirmed: false,
+      confirmed_at: null,
+      status: "teacher_confirmation_required",
     },
     number: 1,
     options: firstOptions,
@@ -204,7 +211,16 @@ const questions = [
     ),
     explanation: "Three groups of four make twelve.",
     id: questionIds[1],
-    marking_scheme: { criteria: ["Multiplies 3 by 4."], total_marks: 1 },
+    marking_scheme: {
+      criteria: ["Multiplies 3 by 4."],
+      point_marks: [1],
+      total_marks: 1,
+    },
+    marking_confirmation: {
+      confirmed: false,
+      confirmed_at: null,
+      status: "teacher_confirmation_required",
+    },
     number: 2,
     options: [
       { label: "A", text: "12" },
@@ -265,7 +281,12 @@ const questions = [
     ),
     explanation: "The selected sources do not support a single answer.",
     id: questionIds[2],
-    marking_scheme: { criteria: [], total_marks: 2 },
+    marking_scheme: { criteria: [], point_marks: [], total_marks: 2 },
+    marking_confirmation: {
+      confirmed: false,
+      confirmed_at: null,
+      status: "teacher_confirmation_required",
+    },
     number: 3,
     options: [],
     requires_revalidation: false,
@@ -322,7 +343,7 @@ const questions = [
     },
     version: 1,
   },
-] satisfies ReviewQuestion[];
+];
 
 function reviewPaper(questionRecords: ReviewQuestion[] = structuredClone(questions)): ReviewPaper {
   return {
@@ -361,7 +382,14 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
   const requests: Request[] = [];
   const initialQuestions = structuredClone(questions);
   if (configuration.allApproved) {
-    for (const question of initialQuestions) question.review_state = "approved";
+    for (const question of initialQuestions) {
+      question.review_state = "approved";
+      question.marking_confirmation = {
+        confirmed: true,
+        confirmed_at: "2026-08-25T10:02:00Z",
+        status: "teacher_confirmed",
+      };
+    }
   }
   let currentPaper = reviewPaper(initialQuestions);
 
@@ -430,6 +458,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
         explanation: body.content.explanation,
         marking_scheme: {
           criteria: body.content.marking_guide,
+          point_marks: body.content.marking_point_marks,
           total_marks: body.content.marks,
         },
         options: body.content.options.map((option) => ({
@@ -450,7 +479,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
       return Response.json(edited);
     }
     if (request.method === "POST" && question && path.endsWith(`/questions/${question.id}/approve`)) {
-      const body = (await request.json()) as components["schemas"]["ReviewCandidateApproveRequest"];
+      const body = (await request.json()) as components["schemas"]["ReviewQuestionApproveRequest"];
       if (body.expected_version !== question.version) {
         return Response.json({ detail: { code: "review_question_version_conflict" } }, { status: 409 });
       }
@@ -460,7 +489,22 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
           { status: 409 },
         );
       }
-      const approved = { ...question, review_state: "approved", version: question.version + 1 };
+      if (body.marking_confirmed !== true) {
+        return Response.json(
+          { detail: { code: "review_marking_confirmation_required" } },
+          { status: 422 },
+        );
+      }
+      const approved = {
+        ...question,
+        marking_confirmation: {
+          confirmed: true,
+          confirmed_at: "2026-08-25T10:02:00Z",
+          status: "teacher_confirmed" as const,
+        },
+        review_state: "approved",
+        version: question.version + 1,
+      };
       replaceQuestion(approved);
       return Response.json(approved);
     }
@@ -573,7 +617,8 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
         {
           draft_id: draftId,
           draft_version: 1,
-          paper_id: paperId,
+          paper_id: draftId,
+          paper_job_id: paperId,
           paper_reference: currentPaper.paper_reference,
           publication_path: `/api/v1/admin/curricula/00000000-0000-0000-0000-000000000940/papers/${draftId}`,
         } satisfies components["schemas"]["ReviewPaperDraftCreatedResponse"],
@@ -621,6 +666,9 @@ describe("ReviewApproveStudio", () => {
       "Three of the four equal parts are shaded, so the fraction is 3/4.",
     );
     expect(question).toHaveTextContent("2 marks");
+    expect(question).toHaveTextContent(
+      "Marks not confirmed — suggested marking requires teacher confirmation",
+    );
     expect(question).toHaveTextContent("Identifies three shaded parts out of four equal parts.");
     expect(question).toHaveTextContent("Grade 7 Maths · Lessons 1–3 · Fractions");
     expect(question).toHaveTextContent("Grade 7 Maths Teacher Guide — page 18");
@@ -651,7 +699,43 @@ describe("ReviewApproveStudio", () => {
     expect(within(question).getByRole("button", { name: "Next" })).toBeEnabled();
 
     await startFirstQuestion();
+    expect(within(question).getByRole("button", { name: "Approve" })).toBeDisabled();
+    fireEvent.click(
+      within(question).getByRole("checkbox", {
+        name: "I checked these marks and marking guidance",
+      }),
+    );
     expect(within(question).getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("shows every question state and lets a teacher jump directly to one", async () => {
+    await renderStudio();
+    const overview = screen.getByRole("region", { name: "Questions in this paper" });
+    expect(within(overview).getByRole("button", { name: /Question 1/ })).toHaveTextContent(
+      "Marking not confirmed",
+    );
+    expect(within(overview).getByRole("button", { name: /Question 3/ })).toHaveTextContent(
+      "Failed check",
+    );
+
+    fireEvent.click(within(overview).getByRole("button", { name: /Question 2/ }));
+    const selected = await screen.findByRole("region", { name: "Question 2 of 3" });
+    expect(selected).toHaveTextContent("What is 3 × 4?");
+  });
+
+  it("traps initial focus and closes review dialogs with Escape", async () => {
+    await renderStudio();
+    await startFirstQuestion();
+    const editButton = screen.getByRole("button", { name: "Edit" });
+    editButton.focus();
+    fireEvent.click(editButton);
+    const dialog = screen.getByRole("dialog", { name: "Edit question 1" });
+    await waitFor(() =>
+      expect(dialog).toContainElement(document.activeElement as HTMLElement),
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Edit question 1" })).not.toBeInTheDocument();
+    expect(editButton).toHaveFocus();
   });
 
   it("keeps warning judgement explicit and prevents a failed check from approval", async () => {
@@ -680,12 +764,18 @@ describe("ReviewApproveStudio", () => {
   it("starts and approves with the authoritative expected version", async () => {
     const { requests } = await renderStudio();
     await startFirstQuestion();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "I checked these marks and marking guidance",
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(await screen.findByText("Question approved.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Regenerate question" })).toBeDisabled();
+    expect(screen.getByText("Teacher-confirmed marking")).toBeInTheDocument();
 
     const startRequest = requests.find((request) =>
       new URL(request.url).pathname.endsWith(`/questions/${questionIds[0]}/start`),
@@ -696,6 +786,7 @@ describe("ReviewApproveStudio", () => {
     await expect(startRequest?.clone().json()).resolves.toEqual({ expected_version: 1 });
     await expect(approveRequest?.clone().json()).resolves.toEqual({
       expected_version: 2,
+      marking_confirmed: true,
       note: null,
     });
   });
@@ -733,6 +824,8 @@ describe("ReviewApproveStudio", () => {
       reason_code: "ambiguous_wording",
       content: {
         answer: "B — 3/4",
+        marking_guide: ["Identifies three shaded parts out of four equal parts."],
+        marking_point_marks: [2],
         marks: 2,
         question_type: "multiple_choice",
         stem: "What fraction is shaded when three of four equal parts are shaded?",
@@ -761,6 +854,54 @@ describe("ReviewApproveStudio", () => {
       note: "Prepare and validate a fresh replacement.",
       reason_code: "answer_incorrect",
     });
+  });
+
+  it("lets a teacher add, remove, and allocate marks to each marking point", async () => {
+    const { requests } = await renderStudio();
+    await startFirstQuestion();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = screen.getByRole("dialog", { name: "Edit question 1" });
+
+    fireEvent.click(within(editor).getByRole("button", { name: "Add marking point" }));
+    expect(within(editor).getByLabelText("Point 2")).toBeInTheDocument();
+    const removeButtons = within(editor).getAllByRole("button", { name: "Remove" });
+    expect(removeButtons[0]).toBeEnabled();
+    fireEvent.click(removeButtons[1]);
+    expect(within(editor).queryByLabelText("Point 2")).not.toBeInTheDocument();
+
+    fireEvent.click(within(editor).getByRole("button", { name: "Add marking point" }));
+    fireEvent.change(within(editor).getByLabelText("Total marks"), {
+      target: { value: "3" },
+    });
+    fireEvent.change(within(editor).getAllByLabelText("Point marks")[0], {
+      target: { value: "1" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Point 2"), {
+      target: { value: "Explains why three of four parts are shaded." },
+    });
+    fireEvent.change(within(editor).getAllByLabelText("Point marks")[1], {
+      target: { value: "2" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Why are you changing this question?"), {
+      target: { value: "marking_inconsistent" },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save changes" }));
+    expect(
+      await screen.findByText("Question changes saved. A fresh check is required."),
+    ).toBeInTheDocument();
+
+    const patch = requests.find(
+      (request) =>
+        request.method === "PATCH" &&
+        new URL(request.url).pathname.endsWith(`/questions/${questionIds[0]}`),
+    );
+    const body = (await patch?.clone().json()) as ReviewQuestionEdit;
+    expect(body.content.marking_guide).toEqual([
+      "Identifies three shaded parts out of four equal parts.",
+      "Explains why three of four parts are shaded.",
+    ]);
+    expect(body.content.marking_point_marks).toEqual([1, 2]);
+    expect(body.content.marks).toBe(3);
   });
 
   it("requires and sends a teacher rejection reason", async () => {
@@ -896,7 +1037,7 @@ describe("ReviewApproveStudio", () => {
     expect(await screen.findByText("Draft created. It is ready in Published Papers.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to Published Papers" })).toHaveAttribute(
       "href",
-      `/admin/published-papers?paper=${draftId}`,
+      `/admin/published-papers?curriculum=00000000-0000-0000-0000-000000000940&paper=${draftId}`,
     );
 
     const request = requests.find(

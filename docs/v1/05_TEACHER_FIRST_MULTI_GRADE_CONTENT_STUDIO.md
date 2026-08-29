@@ -280,6 +280,8 @@ Detailed validator findings and model metadata can be expanded under `Why?` / `T
 
 A teacher must be able to review the **paper and its answers together** before publication/export.
 
+Generated marks and marking guidance remain suggestions until a teacher explicitly confirms them or edits them and completes fresh validation. Question approval and draft assembly must fail closed without immutable confirmation tied to the current reviewed candidate revision.
+
 ## 11. Generated paper library
 Operators need a simple list of generated papers with:
 - grade;

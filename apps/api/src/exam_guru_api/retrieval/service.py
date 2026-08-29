@@ -17,7 +17,9 @@ from exam_guru_api.retrieval.context import (
 from exam_guru_api.retrieval.domain import (
     LexicalCandidate,
     RetrievalContractError,
+    RetrievalFilters,
     RetrievalScope,
+    RetrievalScopeSet,
     VectorCandidate,
 )
 from exam_guru_api.retrieval.fusion import FusedCandidate, FusionConfig, fuse_candidates
@@ -41,7 +43,7 @@ class HybridCandidateRepository(Protocol):
         *,
         query: str,
         query_vector: Sequence[object],
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> RetrievalCandidateSet: ...
 
 
@@ -154,7 +156,7 @@ class HybridRetrievalService:
         *,
         query: str,
         query_vector: Sequence[object],
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> HybridRetrievalResult:
         if (
             not isinstance(query, str)
@@ -162,8 +164,8 @@ class HybridRetrievalService:
             or len(query) > MAX_RETRIEVAL_QUERY_CHARACTERS
         ):
             raise RetrievalContractError("retrieval query must be non-blank and bounded")
-        if not isinstance(filters, RetrievalScope):
-            raise RetrievalContractError("filters must be a RetrievalScope")
+        if not isinstance(filters, (RetrievalScope, RetrievalScopeSet)):
+            raise RetrievalContractError("filters must be a RetrievalScope or RetrievalScopeSet")
         vector = validate_query_vector(
             query_vector,
             expected_dimension=self._embedding_config.dimension,

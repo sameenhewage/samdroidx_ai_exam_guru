@@ -205,6 +205,7 @@ def edit_payload() -> dict[str, object]:
             "explanation": "Two is intended.",
             "marks": 1,
             "marking_guide": ["Selects B."],
+            "marking_point_marks": [1],
         },
     }
 
@@ -229,12 +230,13 @@ def test_teacher_actions_require_bounded_structured_reason_codes_and_optional_no
     assert (
         ReviewQuestionApproveRequest(
             expected_version=4,
+            marking_confirmed=True,
             note="Meaningful confirmation.",
         ).note
         == "Meaningful confirmation."
     )
     with pytest.raises(ValidationError):
-        ReviewQuestionApproveRequest(expected_version=4, note=" padded ")
+        ReviewQuestionApproveRequest(expected_version=4, marking_confirmed=True, note=" padded ")
 
     for payload in (
         {**edit_payload(), "reason_code": "free_form_not_allowed"},

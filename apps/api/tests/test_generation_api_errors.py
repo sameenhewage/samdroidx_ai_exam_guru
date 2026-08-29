@@ -28,6 +28,7 @@ from exam_guru_api.generation.run_service import (
     GenerationContextLimitError,
     GenerationContextNotFoundError,
     GenerationContextNotReviewedError,
+    GenerationContextScopeInactiveError,
     GenerationContextSourceUntrustedError,
     GenerationContextTaxonomyMismatchError,
     GenerationCreationResult,
@@ -90,6 +91,11 @@ class RollbackSession:
             GenerationContextSourceUntrustedError(RESOURCE_ID),
             422,
             "generation_context_source_untrusted",
+        ),
+        (
+            GenerationContextScopeInactiveError(RESOURCE_ID),
+            422,
+            "generation_context_scope_inactive",
         ),
         (
             GenerationContextTaxonomyMismatchError(RESOURCE_ID),

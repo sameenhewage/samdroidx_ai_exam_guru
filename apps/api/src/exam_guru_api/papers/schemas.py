@@ -52,6 +52,10 @@ class QuestionContentRequest(_StrictModel):
         tuple[Annotated[str, Field(min_length=1, max_length=8_192)], ...],
         Field(min_length=1, max_length=64),
     ]
+    marking_point_marks: Annotated[
+        tuple[Annotated[int, Field(strict=True, ge=1, le=100)], ...],
+        Field(max_length=64),
+    ] = ()
 
     @field_validator("stem", "answer", "explanation")
     @classmethod
@@ -76,6 +80,11 @@ class QuestionContentRequest(_StrictModel):
             len(option_ids) < 2 or option_ids.count(self.answer) != 1
         ):
             raise ValueError("multiple-choice answer must reference exactly one option")
+        if self.marking_point_marks and (
+            len(self.marking_point_marks) != len(self.marking_guide)
+            or sum(self.marking_point_marks) != self.marks
+        ):
+            raise ValueError("marking point allocations must match and sum to total marks")
         serialized = json.dumps(
             self.model_dump(mode="json"),
             ensure_ascii=False,
@@ -98,6 +107,7 @@ class QuestionContentRequest(_StrictModel):
             explanation=self.explanation,
             marks=self.marks,
             marking_guide=self.marking_guide,
+            marking_point_marks=self.marking_point_marks,
         )
 
 
@@ -159,6 +169,7 @@ class QuestionContentResponse(_FrozenStrictModel):
     explanation: str
     marks: int
     marking_guide: tuple[str, ...]
+    marking_point_marks: tuple[int, ...] = ()
 
     @classmethod
     def from_domain(cls, value: QuestionContent) -> Self:
@@ -173,6 +184,7 @@ class QuestionContentResponse(_FrozenStrictModel):
             explanation=value.explanation,
             marks=value.marks,
             marking_guide=value.marking_guide,
+            marking_point_marks=value.marking_point_marks,
         )
 
 

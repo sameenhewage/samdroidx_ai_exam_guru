@@ -724,6 +724,8 @@ class SqlAlchemyKnowledgeRepository:
         return {
             "id": question.id,
             "curriculum_version_id": question.curriculum_version_id,
+            "unit_id": question.unit_id,
+            "lesson_id": question.lesson_id,
             "year": question.year,
             "paper_code": question.paper_code,
             "question_number": question.question_number,
@@ -759,6 +761,8 @@ class SqlAlchemyKnowledgeRepository:
         return {
             "id": chunk.id,
             "curriculum_version_id": chunk.curriculum_version_id,
+            "unit_id": chunk.unit_id,
+            "lesson_id": chunk.lesson_id,
             "chunk_type": chunk.chunk_type,
             "text": chunk.text,
             "educational_boundary": chunk.educational_boundary,
@@ -784,6 +788,8 @@ class SqlAlchemyKnowledgeRepository:
         persisted = existing.to_domain()
         return (
             persisted.curriculum_version_id,
+            persisted.unit_id,
+            persisted.lesson_id,
             persisted.year,
             persisted.paper_code,
             persisted.question_number,
@@ -802,6 +808,8 @@ class SqlAlchemyKnowledgeRepository:
             persisted.provenance,
         ) == (
             candidate.curriculum_version_id,
+            candidate.unit_id,
+            candidate.lesson_id,
             candidate.year,
             candidate.paper_code,
             candidate.question_number,
@@ -825,6 +833,8 @@ class SqlAlchemyKnowledgeRepository:
         persisted = existing.to_domain()
         return (
             persisted.curriculum_version_id,
+            persisted.unit_id,
+            persisted.lesson_id,
             persisted.chunk_type,
             persisted.text,
             persisted.educational_boundary,
@@ -832,6 +842,8 @@ class SqlAlchemyKnowledgeRepository:
             persisted.provenance,
         ) == (
             candidate.curriculum_version_id,
+            candidate.unit_id,
+            candidate.lesson_id,
             candidate.chunk_type,
             candidate.text,
             candidate.educational_boundary,

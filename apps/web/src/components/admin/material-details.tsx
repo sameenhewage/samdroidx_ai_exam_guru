@@ -27,6 +27,8 @@ const statusLabels: Record<MaterialStatus, string> = {
   removed: "Removed",
 };
 
+const MATERIAL_PAGE_LIMIT = 100;
+const MAX_DISCOVERED_MATERIALS = 5_000;
 const secondaryButton =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 outline-none hover:border-slate-500 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2";
 
@@ -82,20 +84,31 @@ export function MaterialDetails({
     setError("");
     setPermissionDenied(false);
     try {
-      const [materialResult, sourceResult] = await Promise.all([
-        api.GET("/api/v1/admin/materials", {
-          params: { query: { limit: 100, offset: 0 } },
-        }),
-        api.GET("/api/v1/admin/source-documents"),
-      ]);
-      if (materialResult.error || sourceResult.error) {
-        const failed = materialResult.error ? materialResult : sourceResult;
-        setPermissionDenied(failed.response.status === 403);
-        setError(errorCode(failed.error));
+      const sourcePromise = api.GET("/api/v1/admin/source-documents");
+      let nextMaterial: Material | null = null;
+      for (let offset = 0; offset < MAX_DISCOVERED_MATERIALS; offset += MATERIAL_PAGE_LIMIT) {
+        const materialResult = await api.GET("/api/v1/admin/materials", {
+          params: { query: { limit: MATERIAL_PAGE_LIMIT, offset } },
+        });
+        if (materialResult.error) {
+          setPermissionDenied(materialResult.response.status === 403);
+          setError(errorCode(materialResult.error));
+          return;
+        }
+        const page = materialResult.data ?? [];
+        nextMaterial = page.find((candidate) => candidate.id === documentId) ?? null;
+        if (nextMaterial || page.length < MATERIAL_PAGE_LIMIT) break;
+      }
+      const sourceResult = (await sourcePromise) as {
+        data?: SourceDocument[];
+        error?: unknown;
+        response: Response;
+      };
+      if (sourceResult.error) {
+        setPermissionDenied(sourceResult.response.status === 403);
+        setError(errorCode(sourceResult.error));
         return;
       }
-      const nextMaterial =
-        materialResult.data?.find((candidate) => candidate.id === documentId) ?? null;
       const nextSource = sourceResult.data?.find((candidate) => candidate.id === documentId) ?? null;
       if (!nextMaterial || !nextSource) {
         setError("source_document_not_found");
@@ -188,6 +201,34 @@ export function MaterialDetails({
           )}
         </div>
       </header>
+
+      <section aria-labelledby="original-pdf-heading" className="mt-8">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-semibold" id="original-pdf-heading">
+              Original PDF
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Compare the preserved original with extracted text before trusting this material.
+            </p>
+          </div>
+          <a
+            className={secondaryButton}
+            href={`/api/v1/admin/source-documents/${documentId}/content`}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Open original PDF in a new tab
+          </a>
+        </div>
+        <iframe
+          className="mt-4 h-[70vh] min-h-[32rem] w-full rounded-xl border border-slate-300 bg-white"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          src={`/api/v1/admin/source-documents/${documentId}/content`}
+          title={`Original PDF: ${material.title}`}
+        />
+      </section>
 
       <section aria-labelledby="material-details-heading" className="mt-8">
         <h2 className="text-2xl font-semibold" id="material-details-heading">

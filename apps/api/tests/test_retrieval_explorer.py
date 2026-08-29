@@ -14,7 +14,7 @@ from exam_guru_api.knowledge.embeddings import (
     EmbeddingConfig,
 )
 from exam_guru_api.knowledge.models import EmbeddingConfigurationModel
-from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope
+from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalFilters, RetrievalScope
 from exam_guru_api.retrieval.embeddings import (
     EmbeddingProvider,
     EmbeddingProviderRegistry,
@@ -80,14 +80,14 @@ class ScalarSession:
 class FakeRepository:
     candidates: RetrievalCandidateSet
     embedding_config: EmbeddingConfig = CONFIG
-    calls: list[tuple[str, Sequence[object], RetrievalScope]] = field(default_factory=list)
+    calls: list[tuple[str, Sequence[object], RetrievalFilters]] = field(default_factory=list)
 
     async def retrieve_candidates(
         self,
         *,
         query: str,
         query_vector: Sequence[object],
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> RetrievalCandidateSet:
         self.calls.append((query, query_vector, filters))
         return self.candidates

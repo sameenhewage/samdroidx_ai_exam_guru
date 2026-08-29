@@ -1230,6 +1230,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/paper-generation/programme-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create one immutable assessment-programme policy version */
+        post: operations["create_assessment_programme_policy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/programme-policies/{policy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one assessment-programme policy version */
+        get: operations["get_assessment_programme_policy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/paper-generation/programme-policies/{policy_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review and activate one immutable assessment-programme policy version */
+        post: operations["review_assessment_programme_policy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/retrieval/explore": {
         parameters: {
             query?: never;
@@ -1983,15 +2034,6 @@ export interface components {
             detail: components["schemas"]["ApiErrorDetail"] | {
                 [key: string]: components["schemas"]["JsonValue"];
             }[];
-        };
-        /** AssessmentProgrammeOption */
-        AssessmentProgrammeOption: {
-            /** Code */
-            code: string;
-            /** Grade */
-            grade: number;
-            /** Label */
-            label: string;
         };
         /** AuthSessionResponse */
         AuthSessionResponse: {
@@ -2894,6 +2936,14 @@ export interface components {
              * @enum {string}
              */
             kind: "full_subject";
+        };
+        /** FullTermScopeRequest */
+        FullTermScopeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "full_term";
         };
         /** FusedRetrievalCandidateResponse */
         FusedRetrievalCandidateResponse: {
@@ -4210,6 +4260,14 @@ export interface components {
              */
             updated_by: string;
         };
+        /** PaperTypeOption */
+        PaperTypeOption: {
+            code: components["schemas"]["TeacherPaperType"];
+            /** Grade */
+            grade: number;
+            /** Label */
+            label: string;
+        };
         /** PracticePaperOperationsResponse */
         PracticePaperOperationsResponse: {
             /** Archive Count */
@@ -4302,6 +4360,190 @@ export interface components {
             marks: components["schemas"]["ExactFraction"];
             recency: components["schemas"]["ExactFraction"];
             syllabus: components["schemas"]["ExactFraction"];
+        };
+        /** ProgrammePolicyCreateRequest */
+        ProgrammePolicyCreateRequest: {
+            /**
+             * Anchor Curriculum Version Id
+             * Format: uuid
+             */
+            anchor_curriculum_version_id: string;
+            /** Code */
+            code: string;
+            /**
+             * Medium Id
+             * Format: uuid
+             */
+            medium_id: string;
+            /** Paper I Profile Version */
+            paper_i_profile_version: string;
+            /** Paper I Weight */
+            paper_i_weight: number;
+            /** Paper Ii Profile Version */
+            paper_ii_profile_version: string;
+            /** Paper Ii Weight */
+            paper_ii_weight: number;
+            /**
+             * Programme Exam Configuration Id
+             * Format: uuid
+             */
+            programme_exam_configuration_id: string;
+            /** Scopes */
+            scopes: components["schemas"]["ProgrammePolicyScopeCreateRequest"][];
+            /** Title */
+            title: string;
+            /** Version */
+            version: string;
+        };
+        /** ProgrammePolicyResponse */
+        ProgrammePolicyResponse: {
+            /**
+             * Anchor Curriculum Version Id
+             * Format: uuid
+             */
+            anchor_curriculum_version_id: string;
+            /** Code */
+            code: string;
+            /** Content Hash */
+            content_hash: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Lock Version */
+            lock_version: number;
+            /**
+             * Medium Id
+             * Format: uuid
+             */
+            medium_id: string;
+            /** Paper I Profile Version */
+            paper_i_profile_version: string;
+            /** Paper I Weight */
+            paper_i_weight: number;
+            /** Paper Ii Profile Version */
+            paper_ii_profile_version: string;
+            /** Paper Ii Weight */
+            paper_ii_weight: number;
+            /**
+             * Programme Exam Configuration Id
+             * Format: uuid
+             */
+            programme_exam_configuration_id: string;
+            /** Reviewed At */
+            reviewed_at: string | null;
+            /** Scopes */
+            scopes: components["schemas"]["ProgrammePolicyScopeResponse"][];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "draft" | "reviewed" | "retired";
+            /** Title */
+            title: string;
+            /** Version */
+            version: string;
+        };
+        /** ProgrammePolicyReviewRequest */
+        ProgrammePolicyReviewRequest: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** ProgrammePolicyScopeCreateRequest */
+        ProgrammePolicyScopeCreateRequest: {
+            /**
+             * Anchor Competency Id
+             * Format: uuid
+             */
+            anchor_competency_id: string;
+            /** Anchor Learning Concept Id */
+            anchor_learning_concept_id?: string | null;
+            /**
+             * Anchor Lesson Id
+             * Format: uuid
+             */
+            anchor_lesson_id: string;
+            /** Anchor Skill Id */
+            anchor_skill_id?: string | null;
+            /** Anchor Sub Skill Id */
+            anchor_sub_skill_id?: string | null;
+            /**
+             * Anchor Unit Id
+             * Format: uuid
+             */
+            anchor_unit_id: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Part
+             * @enum {string}
+             */
+            part: "paper_i" | "paper_ii";
+            /**
+             * Source Competency Id
+             * Format: uuid
+             */
+            source_competency_id: string;
+            /**
+             * Source Curriculum Version Id
+             * Format: uuid
+             */
+            source_curriculum_version_id: string;
+            /** Source Learning Concept Id */
+            source_learning_concept_id?: string | null;
+            /** Source Lesson Id */
+            source_lesson_id?: string | null;
+            /** Source Skill Id */
+            source_skill_id?: string | null;
+            /** Source Sub Skill Id */
+            source_sub_skill_id?: string | null;
+            /** Source Unit Id */
+            source_unit_id?: string | null;
+        };
+        /** ProgrammePolicyScopeResponse */
+        ProgrammePolicyScopeResponse: {
+            /**
+             * Anchor Lesson Id
+             * Format: uuid
+             */
+            anchor_lesson_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Part
+             * @enum {string}
+             */
+            part: "paper_i" | "paper_ii";
+            /**
+             * Source Curriculum Version Id
+             * Format: uuid
+             */
+            source_curriculum_version_id: string;
+            /** Source Grade */
+            source_grade: number;
+            /** Source Lesson Id */
+            source_lesson_id: string | null;
+            /** Source Unit Id */
+            source_unit_id: string | null;
+        };
+        /** ProgrammeScopeRequest */
+        ProgrammeScopeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "programme";
         };
         /** PublishedBlueprintResponse */
         PublishedBlueprintResponse: {
@@ -4539,6 +4781,11 @@ export interface components {
             explanation: string;
             /** Marking Guide */
             marking_guide: string[];
+            /**
+             * Marking Point Marks
+             * @default []
+             */
+            marking_point_marks: number[];
             /** Marks */
             marks: number;
             /** Options */
@@ -4559,6 +4806,11 @@ export interface components {
             explanation: string;
             /** Marking Guide */
             marking_guide: string[];
+            /**
+             * Marking Point Marks
+             * @default []
+             */
+            marking_point_marks: number[];
             /** Marks */
             marks: number;
             /** Options */
@@ -5072,10 +5324,24 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ReviewMarkingConfirmationResponse */
+        ReviewMarkingConfirmationResponse: {
+            /** Confirmed */
+            confirmed: boolean;
+            /** Confirmed At */
+            confirmed_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "teacher_confirmation_required" | "teacher_confirmed";
+        };
         /** ReviewMarkingSchemeResponse */
         ReviewMarkingSchemeResponse: {
             /** Criteria */
             criteria: string[];
+            /** Point Marks */
+            point_marks: number[];
             /** Total Marks */
             total_marks: number;
         };
@@ -5131,6 +5397,11 @@ export interface components {
              * Format: uuid
              */
             paper_id: string;
+            /**
+             * Paper Job Id
+             * Format: uuid
+             */
+            paper_job_id: string;
             /** Paper Reference */
             paper_reference: string;
             /** Publication Path */
@@ -5203,6 +5474,11 @@ export interface components {
         ReviewQuestionApproveRequest: {
             /** Expected Version */
             expected_version: number;
+            /**
+             * Marking Confirmed
+             * @constant
+             */
+            marking_confirmed: true;
             /** Note */
             note?: string | null;
         };
@@ -5285,6 +5561,7 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            marking_confirmation: components["schemas"]["ReviewMarkingConfirmationResponse"];
             marking_scheme: components["schemas"]["ReviewMarkingSchemeResponse"];
             /** Number */
             number: number;
@@ -5430,6 +5707,22 @@ export interface components {
             /** Windows */
             windows: components["schemas"]["BacktestWindowResponse"][];
         };
+        /** ScholarshipModeOption */
+        ScholarshipModeOption: {
+            code: components["schemas"]["ScholarshipPaperMode"];
+            /** Label */
+            label: string;
+        };
+        /**
+         * ScholarshipPaperMode
+         * @enum {string}
+         */
+        ScholarshipPaperMode: "paper_i" | "paper_ii" | "full";
+        /**
+         * SchoolTerm
+         * @enum {string}
+         */
+        SchoolTerm: "term_1" | "term_2" | "term_3";
         /** SectionSpecificationRequest */
         SectionSpecificationRequest: {
             /**
@@ -5491,6 +5784,16 @@ export interface components {
             section_id: string;
             /** Title */
             title: string;
+        };
+        /** SelectedLessonsScopeRequest */
+        SelectedLessonsScopeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "selected_lessons";
+            /** Lesson Numbers */
+            lesson_numbers: number[];
         };
         /** SemanticClaimEvidenceResponse */
         SemanticClaimEvidenceResponse: {
@@ -5856,8 +6159,6 @@ export interface components {
         };
         /** SubjectOption */
         SubjectOption: {
-            /** Assessment Programme */
-            assessment_programme: string;
             /** Code */
             code: string;
             /** Grade */
@@ -6437,10 +6738,27 @@ export interface components {
              */
             duration_minutes: number;
             /**
-             * Question Count
-             * @default 10
+             * Mcq Count
+             * @default 5
              */
-            question_count: number;
+            mcq_count: number;
+            /**
+             * Paper Name
+             * @default Grade 5 practice paper
+             */
+            paper_name: string;
+            /**
+             * Structured Count
+             * @default 0
+             */
+            structured_count: number;
+            /** Teacher Instruction */
+            teacher_instruction?: string | null;
+            /**
+             * Written Count
+             * @default 5
+             */
+            written_count: number;
         };
         /** TeacherPaperFailureResponse */
         TeacherPaperFailureResponse: {
@@ -6452,7 +6770,7 @@ export interface components {
         /** TeacherPaperJobCreateRequest */
         TeacherPaperJobCreateRequest: {
             /** Scope */
-            scope: components["schemas"]["FullSubjectScopeRequest"] | components["schemas"]["LessonRangeScopeRequest"];
+            scope: components["schemas"]["FullSubjectScopeRequest"] | components["schemas"]["FullTermScopeRequest"] | components["schemas"]["ProgrammeScopeRequest"] | components["schemas"]["LessonRangeScopeRequest"] | components["schemas"]["SelectedLessonsScopeRequest"];
             settings: components["schemas"]["TeacherPaperSettingsRequest"];
             target: components["schemas"]["TeacherPaperTargetRequest"];
         };
@@ -6519,13 +6837,14 @@ export interface components {
         };
         /** TeacherPaperOptionsResponse */
         TeacherPaperOptionsResponse: {
-            /** Assessment Programmes */
-            assessment_programmes: components["schemas"]["AssessmentProgrammeOption"][];
             /**
              * @default {
              *       "difficulty": "balanced",
              *       "duration_minutes": 45,
-             *       "question_count": 10
+             *       "mcq_count": 5,
+             *       "paper_name": "Grade 5 practice paper",
+             *       "structured_count": 0,
+             *       "written_count": 5
              *     }
              */
             defaults: components["schemas"]["TeacherPaperDefaults"];
@@ -6533,8 +6852,14 @@ export interface components {
             grades: number[];
             /** Media */
             media: components["schemas"]["MediumOption"][];
+            /** Paper Types */
+            paper_types: components["schemas"]["PaperTypeOption"][];
+            /** Scholarship Modes */
+            scholarship_modes: components["schemas"]["ScholarshipModeOption"][];
             /** Subjects */
             subjects: components["schemas"]["SubjectOption"][];
+            /** Terms */
+            terms: components["schemas"]["TermOption"][];
         };
         /** TeacherPaperRetryRequest */
         TeacherPaperRetryRequest: {
@@ -6546,8 +6871,16 @@ export interface components {
             difficulty: components["schemas"]["PaperDifficulty"];
             /** Duration Minutes */
             duration_minutes: number;
-            /** Question Count */
-            question_count: number;
+            /** Mcq Count */
+            mcq_count: number;
+            /** Paper Name */
+            paper_name: string;
+            /** Structured Count */
+            structured_count: number;
+            /** Teacher Instruction */
+            teacher_instruction?: string | null;
+            /** Written Count */
+            written_count: number;
         };
         /** TeacherPaperSlotProgressResponse */
         TeacherPaperSlotProgressResponse: {
@@ -6574,15 +6907,21 @@ export interface components {
         };
         /** TeacherPaperTargetRequest */
         TeacherPaperTargetRequest: {
-            /** Assessment Programme */
-            assessment_programme?: string | null;
             /** Grade */
             grade: number;
             /** Medium */
             medium: string;
+            paper_type: components["schemas"]["TeacherPaperType"];
+            scholarship_mode?: components["schemas"]["ScholarshipPaperMode"] | null;
             /** Subject */
-            subject: string;
+            subject?: string | null;
+            term?: components["schemas"]["SchoolTerm"] | null;
         };
+        /**
+         * TeacherPaperType
+         * @enum {string}
+         */
+        TeacherPaperType: "subject_practice" | "term_test" | "scholarship_practice";
         /** TechnicalValidationFindingResponse */
         TechnicalValidationFindingResponse: {
             /** Code */
@@ -6597,6 +6936,12 @@ export interface components {
              * @enum {string}
              */
             status: "pass" | "warn" | "fail";
+        };
+        /** TermOption */
+        TermOption: {
+            code: components["schemas"]["SchoolTerm"];
+            /** Label */
+            label: string;
         };
         /** UniquenessPolicyRequest */
         UniquenessPolicyRequest: {
@@ -10176,6 +10521,11 @@ export interface operations {
             query?: {
                 grade?: number | null;
                 subject_id?: string | null;
+                medium_id?: string | null;
+                material_type?: components["schemas"]["SourceDocumentType"] | null;
+                year?: number | null;
+                status?: components["schemas"]["MaterialStatus"] | null;
+                search?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -10909,6 +11259,186 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TeacherPaperOptionsResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_assessment_programme_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgrammePolicyCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgrammePolicyResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_assessment_programme_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgrammePolicyResponse"];
+                };
+            };
+            /** @description The requested active curriculum or paper job was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Curriculum ambiguity, idempotency, version, state, or lineage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The teacher scope or bounded command is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The configured generation runtime or durable queue is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    review_assessment_programme_policy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgrammePolicyReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgrammePolicyResponse"];
                 };
             };
             /** @description The requested active curriculum or paper job was not found */

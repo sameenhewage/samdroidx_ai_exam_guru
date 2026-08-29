@@ -9,8 +9,10 @@ from uuid import UUID
 from exam_guru_api.retrieval.domain import (
     LexicalCandidate,
     RetrievalContractError,
+    RetrievalFilters,
     RetrievalRecord,
     RetrievalScope,
+    RetrievalScopeSet,
     SourceProvenance,
     VectorCandidate,
     validate_embedding_config_fingerprint,
@@ -186,7 +188,7 @@ def _validate_vector_space(
 
 def _rank_lexical(
     candidates: tuple[LexicalCandidate, ...],
-    filters: RetrievalScope,
+    filters: RetrievalFilters,
 ) -> tuple[LexicalCandidate, ...]:
     ordered = sorted(
         (candidate for candidate in candidates if filters.allows(candidate.record.scope)),
@@ -204,7 +206,7 @@ def _rank_lexical(
 
 def _rank_vector(
     candidates: tuple[VectorCandidate, ...],
-    filters: RetrievalScope,
+    filters: RetrievalFilters,
 ) -> tuple[VectorCandidate, ...]:
     ordered = sorted(
         (candidate for candidate in candidates if filters.allows(candidate.record.scope)),
@@ -224,7 +226,7 @@ def fuse_candidates(
     lexical_candidates: Iterable[LexicalCandidate],
     vector_candidates: Iterable[VectorCandidate],
     *,
-    filters: RetrievalScope,
+    filters: RetrievalFilters,
     embedding_config_fingerprint: str,
     config: FusionConfig | None = None,
 ) -> tuple[FusedCandidate, ...]:
@@ -238,8 +240,8 @@ def fuse_candidates(
     active_config = FusionConfig() if config is None else config
     if not isinstance(active_config, FusionConfig):
         raise RetrievalContractError("config must be a FusionConfig")
-    if not isinstance(filters, RetrievalScope):
-        raise RetrievalContractError("filters must be a RetrievalScope")
+    if not isinstance(filters, (RetrievalScope, RetrievalScopeSet)):
+        raise RetrievalContractError("filters must be a RetrievalScope or RetrievalScopeSet")
     expected_fingerprint = validate_embedding_config_fingerprint(embedding_config_fingerprint)
 
     lexical_snapshot = tuple(lexical_candidates)

@@ -38,6 +38,13 @@ from exam_guru_api.generation.models import (
     GenerationRunStatus,
 )
 from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
+from exam_guru_api.retrieval.domain import RetrievalContractError as RetrievalScopeError
+from exam_guru_api.retrieval.domain import (
+    RetrievalFilters,
+    RetrievalScopeSet,
+    deserialize_retrieval_filters,
+    deserialize_retrieval_scope,
+)
 from exam_guru_api.validation.domain import (
     MAX_DUPLICATE_TEXT_CHARACTERS,
     REPORT_SCHEMA_VERSION,
@@ -225,12 +232,29 @@ def _optional_text(value: object, *, label: str) -> str | None:
     return None if value is None else _text(value, label=label)
 
 
-def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
-    root = _object(
-        run.context_snapshot,
-        keys=frozenset({"items", "trust"}),
-        label="generation context",
+def _context_snapshot_root(
+    snapshot: object,
+) -> tuple[Mapping[str, object], RetrievalFilters | None]:
+    raw_keys = frozenset(snapshot) if isinstance(snapshot, Mapping) else frozenset()
+    keys = (
+        frozenset({"items", "trust", "retrieval_filters"})
+        if "retrieval_filters" in raw_keys
+        else frozenset({"items", "trust"})
     )
+    root = _object(snapshot, keys=keys, label="generation context")
+    if "retrieval_filters" not in root:
+        return root, None
+    try:
+        filters = deserialize_retrieval_filters(root["retrieval_filters"])
+    except RetrievalScopeError as error:
+        raise ValidationGenerationIntegrityError(
+            "generation retrieval filters are invalid"
+        ) from error
+    return root, filters
+
+
+def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
+    root, retrieval_filters = _context_snapshot_root(run.context_snapshot)
     if root["trust"] != "untrusted_data":
         raise ValidationGenerationIntegrityError("generation context trust marker is invalid")
     raw_items = _array(root["items"], label="generation context items")
@@ -254,11 +278,11 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     )
     for index, raw_item in enumerate(raw_items):
         raw_item_keys = frozenset(raw_item) if isinstance(raw_item, Mapping) else frozenset()
-        item_keys = (
-            legacy_item_keys | {"learning_scope"}
-            if "learning_scope" in raw_item_keys
-            else legacy_item_keys
-        )
+        item_keys = legacy_item_keys
+        if "learning_scope" in raw_item_keys:
+            item_keys |= {"learning_scope"}
+        if "retrieval_scope" in raw_item_keys:
+            item_keys |= {"retrieval_scope"}
         item = _object(
             raw_item,
             keys=item_keys,
@@ -277,11 +301,13 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
             ),
             label=f"generation context provenance {index}",
         )
-        _object(
+        taxonomy = _object(
             item["taxonomy"],
             keys=frozenset({"competency_id", "skill_id", "sub_skill_id", "learning_concept_id"}),
             label=f"generation context taxonomy {index}",
         )
+        unit_id: str | None = None
+        lesson_id: str | None = None
         if "learning_scope" in item:
             learning_scope = _object(
                 item["learning_scope"],
@@ -294,6 +320,47 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
                 raise ValidationGenerationIntegrityError(
                     "generation context lesson scope requires a unit"
                 )
+        raw_retrieval_scope = item.get("retrieval_scope")
+        if retrieval_filters is not None:
+            try:
+                retrieval_scope = deserialize_retrieval_scope(raw_retrieval_scope)
+            except RetrievalScopeError as error:
+                raise ValidationGenerationIntegrityError(
+                    "generation context retrieval scope is invalid"
+                ) from error
+            expected_taxonomy = {
+                "competency_id": str(retrieval_scope.taxonomy.competency_id),
+                "skill_id": (
+                    None
+                    if retrieval_scope.taxonomy.skill_id is None
+                    else str(retrieval_scope.taxonomy.skill_id)
+                ),
+                "sub_skill_id": (
+                    None
+                    if retrieval_scope.taxonomy.sub_skill_id is None
+                    else str(retrieval_scope.taxonomy.sub_skill_id)
+                ),
+                "learning_concept_id": (
+                    None
+                    if retrieval_scope.taxonomy.learning_concept_id is None
+                    else str(retrieval_scope.taxonomy.learning_concept_id)
+                ),
+            }
+            if (
+                not retrieval_filters.allows(retrieval_scope)
+                or dict(taxonomy) != expected_taxonomy
+                or tuple(() if unit_id is None else (unit_id,))
+                != tuple(str(value) for value in retrieval_scope.unit_ids)
+                or tuple(() if lesson_id is None else (lesson_id,))
+                != tuple(str(value) for value in retrieval_scope.lesson_ids)
+            ):
+                raise ValidationGenerationIntegrityError(
+                    "generation context retrieval scope is inconsistent"
+                )
+        elif raw_retrieval_scope is not None:
+            raise ValidationGenerationIntegrityError(
+                "generation context retrieval scope requires declared filters"
+            )
         record_kind = _text(item["record_kind"], label="record_kind")
         record_id = _text(item["record_id"], label="record_id")
         context_id = _text(item["context_id"], label="context_id")
@@ -339,11 +406,7 @@ def _optional_uuid(value: object, *, label: str) -> UUID | None:
 def _context_learning_scopes(
     run: GenerationRunModel,
 ) -> dict[str, tuple[UUID | None, UUID | None]]:
-    root = _object(
-        run.context_snapshot,
-        keys=frozenset({"items", "trust"}),
-        label="generation context",
-    )
+    root, _ = _context_snapshot_root(run.context_snapshot)
     scopes: dict[str, tuple[UUID | None, UUID | None]] = {}
     for index, raw_item in enumerate(_array(root["items"], label="generation context items")):
         if not isinstance(raw_item, Mapping):
@@ -365,6 +428,31 @@ def _context_learning_scopes(
             _optional_uuid(learning_scope["lesson_id"], label="lesson_id"),
         )
     return scopes
+
+
+def _programme_context_ids(run: GenerationRunModel) -> frozenset[str]:
+    root, filters = _context_snapshot_root(run.context_snapshot)
+    if not isinstance(filters, RetrievalScopeSet):
+        return frozenset()
+    authorized: set[str] = set()
+    for index, raw_item in enumerate(_array(root["items"], label="generation context items")):
+        if not isinstance(raw_item, Mapping):
+            raise ValidationGenerationIntegrityError(
+                f"generation context item {index} must be an object"
+            )
+        context_id = _text(raw_item.get("context_id"), label="context_id")
+        try:
+            scope = deserialize_retrieval_scope(raw_item.get("retrieval_scope"))
+        except RetrievalScopeError as error:
+            raise ValidationGenerationIntegrityError(
+                "generation programme context scope is invalid"
+            ) from error
+        if not filters.allows(scope):
+            raise ValidationGenerationIntegrityError(
+                "generation programme context is outside its policy"
+            )
+        authorized.add(context_id)
+    return frozenset(authorized)
 
 
 def _question_from_snapshot(candidate: object) -> GeneratedQuestion:
@@ -781,6 +869,7 @@ def _input_snapshot(
                     if binding.snapshot_lesson_id is not None
                     else None
                 ),
+                "programme_authorized": binding.programme_authorized,
             }
             for binding in validation_input.context_scope_bindings
         ],
@@ -877,6 +966,7 @@ async def _trusted_scope_and_bindings(
         lesson_ids=scope.lesson_ids,
     )
     snapshot_scopes = _context_learning_scopes(run)
+    programme_context_ids = _programme_context_ids(run)
     bindings: list[ContextScopeBinding] = []
     for scoped_context in trusted_record.context_records:
         context = scoped_context.context
@@ -898,6 +988,7 @@ async def _trusted_scope_and_bindings(
                 lesson_id=context.lesson_id,
                 snapshot_unit_id=snapshot_unit_id,
                 snapshot_lesson_id=snapshot_lesson_id,
+                programme_authorized=context_id in programme_context_ids,
             )
         )
     if set(snapshot_scopes) != {binding.context_id for binding in bindings}:

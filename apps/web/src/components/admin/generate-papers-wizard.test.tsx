@@ -11,21 +11,31 @@ type LessonLabels = components["schemas"]["LessonLabelsResponse"];
 type PaperJob = components["schemas"]["TeacherPaperJobResponse"];
 
 const generationOptions = {
-  assessment_programmes: [
-    { code: "SCHOOL-G7", grade: 7, label: "School practice paper" },
-  ],
   defaults: {
     difficulty: "balanced",
     duration_minutes: 45,
-    question_count: 10,
+    mcq_count: 5,
+    paper_name: "Grade 5 practice paper",
+    structured_count: 0,
+    teacher_instruction: null,
+    written_count: 5,
   },
-  grades: Array.from({ length: 13 }, (_, index) => index + 1),
-  media: [{ code: "en", label: "English" }],
+  grades: [5],
+  media: [{ code: "si", label: "Sinhala Medium" }],
+  paper_types: [
+    { code: "subject_practice", grade: 5, label: "Subject Practice" },
+    { code: "term_test", grade: 5, label: "Term Test" },
+    { code: "scholarship_practice", grade: 5, label: "Grade 5 Scholarship Practice" },
+  ],
+  scholarship_modes: [
+    { code: "paper_i", label: "Paper I — Ability & Reasoning" },
+    { code: "paper_ii", label: "Paper II — Curriculum Knowledge" },
+    { code: "full", label: "Full Scholarship Practice — Paper I + Paper II" },
+  ],
   subjects: [
     {
-      assessment_programme: "SCHOOL-G7",
       code: "MATHEMATICS",
-      grade: 7,
+      grade: 5,
       label: "Maths",
       lessons: [
         {
@@ -57,28 +67,62 @@ const generationOptions = {
           unit: "Numbers",
         },
       ],
-      medium: "en",
+      medium: "si",
       units: [{ code: "NUMBERS", label: "Numbers" }],
     },
   ],
+  terms: [
+    { code: "term_1", label: "1st Term" },
+    { code: "term_2", label: "2nd Term" },
+    { code: "term_3", label: "3rd Term" },
+  ],
 } satisfies GenerationOptions;
+
+const gradeFivePilotOptions = generationOptions;
+
+const gradeFiveCurriculumLabels = {
+  items: [
+    {
+      assessment_label: "Grade 5 school curriculum",
+      assessment_programme: "SCHOOL-G5",
+      code: "G5-MATH-V1",
+      label: "Grade 5 Mathematics",
+    },
+  ],
+} satisfies CurriculumLabels;
+
+const gradeFiveLessonLabels = {
+  curriculum: gradeFiveCurriculumLabels.items[0],
+  grade: 5,
+  lessons: [
+    {
+      code: "LESSON-1",
+      label: "Lesson 1 — Whole numbers",
+      number: 1,
+      taxonomy: ["Whole numbers"],
+      unit: "Numbers",
+    },
+  ],
+  medium: "si",
+  subject: "MATHEMATICS",
+} satisfies LessonLabels;
 
 const curriculumLabels = {
   items: [
     {
-      assessment_label: "School Grade 7",
-      assessment_programme: "SCHOOL-G7",
-      code: "G7-MATH-V1",
-      label: "Grade 7 Mathematics",
+      assessment_label: "School Grade 5",
+      assessment_programme: "SCHOOL-G5",
+      code: "G5-MATH-V1",
+      label: "Grade 5 Mathematics",
     },
   ],
 } satisfies CurriculumLabels;
 
 const lessonLabels = {
   curriculum: curriculumLabels.items[0],
-  grade: 7,
+  grade: 5,
   lessons: generationOptions.subjects[0].lessons,
-  medium: "en",
+  medium: "si",
   subject: "MATHEMATICS",
 } satisfies LessonLabels;
 
@@ -101,11 +145,11 @@ function paperJob(overrides: Partial<PaperJob> = {}): PaperJob {
     created_at: "2026-08-25T10:00:00Z",
     deduplicated: false,
     failure: null,
-    grade: 7,
+    grade: 5,
     job_id: jobId,
-    medium: "English",
+    medium: "Sinhala Medium",
     paper_id: paperId,
-    paper_reference: "EGP-G7-MATH-0001",
+    paper_reference: "EGP-G5-MATH-0001",
     progress: ["preparing", "generating", "checking_answers", "ready_for_review"],
     review_url: reviewUrl,
     scope_summary: "Lessons 1–3",
@@ -122,7 +166,7 @@ function paperJob(overrides: Partial<PaperJob> = {}): PaperJob {
     })),
     status: "ready_for_review",
     subject: "Mathematics",
-    title: "Grade 7 Mathematics practice paper",
+    title: "Grade 5 Mathematics practice paper",
     total_tokens: 2_100,
     updated_at: "2026-08-25T10:03:00Z",
     version: 4,
@@ -136,6 +180,8 @@ function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
 
 type FixtureConfiguration = {
   curricula?: CurriculumLabels;
+  lessons?: LessonLabels;
+  options?: GenerationOptions;
   curriculaError?: { code: string; status: number };
   createError?: { code: string; retryAfter?: string; status: number };
   failCreateOnce?: boolean;
@@ -154,7 +200,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
     const path = url.pathname;
 
     if (request.method === "GET" && path.endsWith("/paper-generation/options")) {
-      return Response.json(generationOptions);
+      return Response.json(configuration.options ?? generationOptions);
     }
     if (request.method === "GET" && path.endsWith("/paper-generation/curricula")) {
       if (configuration.curriculaError) {
@@ -166,7 +212,7 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
       return Response.json(configuration.curricula ?? curriculumLabels);
     }
     if (request.method === "GET" && path.endsWith("/paper-generation/lessons")) {
-      return Response.json(lessonLabels);
+      return Response.json(configuration.lessons ?? lessonLabels);
     }
     if (request.method === "POST" && path.endsWith("/paper-generation/jobs")) {
       createAttempts += 1;
@@ -239,13 +285,11 @@ async function renderWizard(configuration: FixtureConfiguration = {}) {
   return { ...fixture, ...view };
 }
 
-async function chooseGradeSevenMaths() {
-  fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "7" } });
-  fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "en" } });
+async function chooseGradeFiveMaths() {
+  fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+  fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
   fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
-  fireEvent.change(screen.getByLabelText("Paper type"), {
-    target: { value: "SCHOOL-G7" },
-  });
   const continueButton = screen.getByRole("button", { name: "Continue to scope" });
   await waitFor(() => expect(continueButton).toBeEnabled());
   fireEvent.click(continueButton);
@@ -254,7 +298,8 @@ async function chooseGradeSevenMaths() {
 
 function chooseSimpleSettings() {
   fireEvent.click(screen.getByRole("button", { name: "Continue to paper settings" }));
-  fireEvent.change(screen.getByLabelText("Number of questions"), { target: { value: "12" } });
+  fireEvent.change(screen.getByLabelText("MCQ questions"), { target: { value: "12" } });
+  fireEvent.change(screen.getByLabelText("Written questions"), { target: { value: "0" } });
   fireEvent.change(screen.getByLabelText("Duration in minutes"), { target: { value: "50" } });
   fireEvent.change(screen.getByLabelText("Difficulty"), { target: { value: "balanced" } });
 }
@@ -290,15 +335,97 @@ afterEach(() => {
 });
 
 describe("GeneratePapersWizard", () => {
-  it("generates Grade 7 Maths Lessons 1–3 from current teacher API choices", async () => {
+  it("offers only the Grade 5 pilot paper types and hides subject for Scholarship", async () => {
+    await renderWizard({ options: gradeFivePilotOptions });
+
+    const grade = screen.getByLabelText("Grade");
+    expect(within(grade).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Choose grade",
+      "Grade 5",
+    ]);
+    fireEvent.change(grade, { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+
+    expect(screen.getByRole("radio", { name: "Subject Practice" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Term Test" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Grade 5 Scholarship Practice" }));
+
+    expect(screen.queryByLabelText("Subject")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Paper I — Ability & Reasoning" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Paper II — Curriculum Knowledge" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Full Scholarship Practice — Paper I + Paper II" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/O\/L|A\/L|Grade 6/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Term Test" }));
+    expect(screen.getByLabelText("Subject")).toBeInTheDocument();
+    expect(screen.getByLabelText("Term")).toHaveTextContent("1st Term");
+    expect(screen.getByLabelText("Term")).toHaveTextContent("2nd Term");
+    expect(screen.getByLabelText("Term")).toHaveTextContent("3rd Term");
+  });
+
+  it("submits teacher-owned paper metadata and per-type question counts without mark presets", async () => {
+    const { requests } = await renderWizard({
+      curricula: gradeFiveCurriculumLabels,
+      lessons: gradeFiveLessonLabels,
+      options: gradeFivePilotOptions,
+    });
+
+    fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
+    const continueButton = screen.getByRole("button", { name: "Continue to scope" });
+    await waitFor(() => expect(continueButton).toBeEnabled());
+    fireEvent.click(continueButton);
+    fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to paper settings" }));
+
+    fireEvent.change(screen.getByLabelText("Paper name"), {
+      target: { value: "Grade 5 Mathematics practice" },
+    });
+    fireEvent.change(screen.getByLabelText("MCQ questions"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Written questions"), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText("Structured questions"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Teacher instruction (optional)"), {
+      target: { value: "Use familiar classroom wording." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
+
+    const body = await submittedBody(requests);
+    expect(body).toMatchObject({
+      scope: { kind: "full_subject" },
+      settings: {
+        difficulty: "balanced",
+        duration_minutes: 45,
+        mcq_count: 5,
+        paper_name: "Grade 5 Mathematics practice",
+        structured_count: 0,
+        teacher_instruction: "Use familiar classroom wording.",
+        written_count: 10,
+      },
+      target: {
+        grade: 5,
+        medium: "si",
+        paper_type: "subject_practice",
+        subject: "MATHEMATICS",
+      },
+    });
+    expect(allKeys(body)).not.toEqual(
+      expect.arrayContaining(["marks_per_mcq", "marks_per_written", "marks_per_structured"]),
+    );
+  });
+
+  it("generates Grade 5 Maths Lessons 1–3 from current teacher API choices", async () => {
     const { requests } = await renderWizard();
 
-    await chooseGradeSevenMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Lesson range" }));
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Choose specific lessons" }));
     fireEvent.change(screen.getByLabelText("First lesson"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Last lesson"), { target: { value: "3" } });
     expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
-      "Grade 7 Maths · Lessons 1–3",
+      "Grade 5 Maths · Lessons 1–3",
     );
 
     chooseSimpleSettings();
@@ -307,11 +434,17 @@ describe("GeneratePapersWizard", () => {
     const body = await submittedBody(requests);
     expect(body).toMatchObject({
       scope: { end_lesson: 3, kind: "lesson_range", start_lesson: 1 },
-      settings: { difficulty: "balanced", duration_minutes: 50, question_count: 12 },
+      settings: {
+        difficulty: "balanced",
+        duration_minutes: 50,
+        mcq_count: 12,
+        structured_count: 0,
+        written_count: 0,
+      },
       target: {
-        assessment_programme: "SCHOOL-G7",
-        grade: 7,
-        medium: "en",
+        grade: 5,
+        medium: "si",
+        paper_type: "subject_practice",
         subject: "MATHEMATICS",
       },
     });
@@ -356,20 +489,44 @@ describe("GeneratePapersWizard", () => {
     expect(progress).not.toHaveTextContent("generation run");
   });
 
-  it("supports a full Grade 7 Maths subject without requiring lesson or module IDs", async () => {
+  it("submits only the individually selected lessons", async () => {
     const { requests } = await renderWizard();
 
-    await chooseGradeSevenMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Full syllabus" }));
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Pick individual lessons" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Lesson 1 — Whole numbers" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Lesson 3 — Fractions" }));
     expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
-      "Grade 7 Maths · Full syllabus",
+      "Grade 5 Maths · Lessons 1 and 3",
+    );
+
+    chooseSimpleSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
+
+    expect(await submittedBody(requests)).toMatchObject({
+      scope: { kind: "selected_lessons", lesson_numbers: [1, 3] },
+    });
+  });
+
+  it("supports a full Grade 5 Maths subject without requiring lesson or module IDs", async () => {
+    const { requests } = await renderWizard();
+
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
+    expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
+      "Grade 5 Maths · Full subject",
     );
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
 
     await expect(submittedBody(requests)).resolves.toMatchObject({
       scope: { kind: "full_subject" },
-      target: { grade: 7, medium: "en", subject: "MATHEMATICS" },
+      target: {
+        grade: 5,
+        medium: "si",
+        paper_type: "subject_practice",
+        subject: "MATHEMATICS",
+      },
     });
   });
 
@@ -394,14 +551,14 @@ describe("GeneratePapersWizard", () => {
 
   it("reuses the same idempotency key for an explicit safe retry and preserves inputs", async () => {
     const { requests } = await renderWizard({ failCreateOnce: true });
-    await chooseGradeSevenMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Full syllabus" }));
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("temporarily unavailable");
-    expect(screen.getByLabelText("Number of questions")).toHaveValue(12);
+    expect(screen.getByLabelText("MCQ questions")).toHaveValue(12);
     fireEvent.click(within(alert).getByRole("button", { name: "Try again safely" }));
     await screen.findByRole("link", { name: "Review this paper" });
 
@@ -419,15 +576,15 @@ describe("GeneratePapersWizard", () => {
     await renderWizard({
       createError: { code: "rate_limit_exceeded", retryAfter: "17", status: 429 },
     });
-    await chooseGradeSevenMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Full syllabus" }));
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("17 seconds");
-    expect(screen.getByLabelText("Grade")).toHaveValue("7");
-    expect(screen.getByLabelText("Number of questions")).toHaveValue(12);
+    expect(screen.getByLabelText("Grade")).toHaveValue("5");
+    expect(screen.getByLabelText("MCQ questions")).toHaveValue(12);
   });
 
   it.each([
@@ -435,13 +592,13 @@ describe("GeneratePapersWizard", () => {
     ["paper_generation_curriculum_not_found", 404, "No matching curriculum content"],
   ])("handles %s while preserving target choices", async (code, status, message) => {
     await renderWizard({ curriculaError: { code, status } });
-    fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "7" } });
-    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "en" } });
+    fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
     fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
-    fireEvent.change(screen.getByLabelText("Paper type"), { target: { value: "SCHOOL-G7" } });
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
-    expect(screen.getByLabelText("Grade")).toHaveValue("7");
+    expect(screen.getByLabelText("Grade")).toHaveValue("5");
     expect(screen.getByLabelText("Subject")).toHaveValue("MATHEMATICS");
   });
 
@@ -465,8 +622,8 @@ describe("GeneratePapersWizard", () => {
       version: 5,
     });
     const { requests } = await renderWizard({ pollJob: partial });
-    await chooseGradeSevenMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Lesson range" }));
+    await chooseGradeFiveMaths();
+    fireEvent.click(screen.getByRole("radio", { name: "Choose specific lessons" }));
     fireEvent.change(screen.getByLabelText("First lesson"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Last lesson"), { target: { value: "3" } });
     chooseSimpleSettings();

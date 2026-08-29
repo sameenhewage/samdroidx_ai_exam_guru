@@ -21,6 +21,9 @@ type Lesson = components["schemas"]["LessonOption"];
 type PaperJob = components["schemas"]["TeacherPaperJobResponse"];
 type PaperIntent = components["schemas"]["TeacherPaperJobCreateRequest"];
 type Difficulty = components["schemas"]["PaperDifficulty"];
+type PaperType = components["schemas"]["TeacherPaperType"];
+type ScholarshipMode = components["schemas"]["ScholarshipPaperMode"];
+type SchoolTerm = components["schemas"]["SchoolTerm"];
 type UiError = {
   code: string;
   message: string;
@@ -171,6 +174,19 @@ function generationError(error: unknown, response: Response, surface: "selection
           "A selected lesson is not ready for paper generation. Ask a curriculum administrator to complete its educational mapping.",
         title: "Lesson is not ready",
       },
+      paper_generation_pilot_grade_unavailable: {
+        message: "The teacher pilot currently supports Grade 5 only.",
+        title: "Grade is not available in the pilot",
+      },
+      paper_generation_programme_policy_unavailable: {
+        message:
+          "The reviewed Grade 5 Scholarship programme policy is not ready yet. No paper was generated.",
+        title: "Scholarship policy is not ready",
+      },
+      paper_generation_term_policy_unavailable: {
+        message: "The selected term does not yet have reviewed curriculum coverage.",
+        title: "Term coverage is not ready",
+      },
       paper_generation_scope_invalid: {
         message: "The selected curriculum scope is not valid. Review the lesson choices and try again.",
         title: "Check the curriculum scope",
@@ -305,19 +321,28 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   const [optionsError, setOptionsError] = useState<UiError | null>(null);
   const [grade, setGrade] = useState("");
   const [medium, setMedium] = useState("");
+  const [paperType, setPaperType] = useState<PaperType | "">("");
   const [subject, setSubject] = useState("");
-  const [assessmentProgramme, setAssessmentProgramme] = useState("");
+  const [term, setTerm] = useState<SchoolTerm | "">("");
+  const [scholarshipMode, setScholarshipMode] = useState<ScholarshipMode | "">("");
   const [curriculum, setCurriculum] = useState<CurriculumLabel | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionError, setSelectionError] = useState<UiError | null>(null);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [scopeKind, setScopeKind] = useState<"full_subject" | "lesson_range">("full_subject");
+  const [scopeKind, setScopeKind] = useState<
+    "full_subject" | "full_term" | "programme" | "lesson_range" | "selected_lessons"
+  >("full_subject");
   const [firstLesson, setFirstLesson] = useState("");
   const [lastLesson, setLastLesson] = useState("");
-  const [questionCount, setQuestionCount] = useState(10);
+  const [selectedLessonNumbers, setSelectedLessonNumbers] = useState<number[]>([]);
+  const [paperName, setPaperName] = useState("Grade 5 practice paper");
+  const [mcqCount, setMcqCount] = useState(5);
+  const [writtenCount, setWrittenCount] = useState(5);
+  const [structuredCount, setStructuredCount] = useState(0);
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [difficulty, setDifficulty] = useState<Difficulty>("balanced");
+  const [teacherInstruction, setTeacherInstruction] = useState("");
   const [formError, setFormError] = useState("");
   const [requestError, setRequestError] = useState<UiError | null>(null);
   const [busy, setBusy] = useState<"create" | "retry" | "poll" | "">("");
@@ -341,44 +366,48 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     return [...deduplicated.values()];
   }, [grade, medium, options]);
 
-  const availableProgrammes = useMemo(() => {
-    if (!options || !grade) return [];
-    const subjectProgrammes = new Set(
-      options.subjects
-        .filter(
-          (item) =>
-            item.grade === Number(grade) &&
-            item.medium === medium &&
-            (!subject || item.code === subject),
-        )
-        .map((item) => item.assessment_programme),
-    );
-    return options.assessment_programmes.filter(
-      (item) => item.grade === Number(grade) && (!subjectProgrammes.size || subjectProgrammes.has(item.code)),
-    );
-  }, [grade, medium, options, subject]);
+  const availablePaperTypes = useMemo(
+    () => options?.paper_types.filter((item) => item.grade === Number(grade)) ?? [],
+    [grade, options],
+  );
 
   const selectedSubject = useMemo(
     () => availableSubjects.find((item) => item.code === subject) ?? null,
     [availableSubjects, subject],
   );
   const subjectLabel = selectedSubject?.label ?? subject;
-  const targetReady = Boolean(grade && medium && subject);
+  const scholarshipSelected = paperType === "scholarship_practice";
+  const targetReady = Boolean(
+    grade &&
+      medium &&
+      paperType &&
+      (scholarshipSelected ? scholarshipMode : subject) &&
+      (paperType !== "term_test" || term),
+  );
   const lessonNumbers = useMemo(() => new Set(lessons.map((lesson) => lesson.number)), [lessons]);
   const rangeStart = Number(firstLesson);
   const rangeEnd = Number(lastLesson);
   const rangeValid =
-    scopeKind === "full_subject" ||
+    scopeKind !== "lesson_range" ||
     (Number.isInteger(rangeStart) &&
       Number.isInteger(rangeEnd) &&
       rangeStart <= rangeEnd &&
       Array.from({ length: rangeEnd - rangeStart + 1 }, (_, index) => rangeStart + index).every(
         (number) => lessonNumbers.has(number),
       ));
+  const selectedLessonsValid =
+    scopeKind !== "selected_lessons" ||
+    (selectedLessonNumbers.length > 0 &&
+      selectedLessonNumbers.every((number) => lessonNumbers.has(number)));
+  const scopeValid = rangeValid && selectedLessonsValid;
+  const totalQuestions = mcqCount + writtenCount + structuredCount;
   const settingsValid =
-    Number.isInteger(questionCount) &&
-    questionCount >= 1 &&
-    questionCount <= MAX_QUESTIONS &&
+    Boolean(paperName.trim()) &&
+    [mcqCount, writtenCount, structuredCount].every(
+      (count) => Number.isInteger(count) && count >= 0 && count <= MAX_QUESTIONS,
+    ) &&
+    totalQuestions >= 1 &&
+    totalQuestions <= MAX_QUESTIONS &&
     Number.isInteger(durationMinutes) &&
     durationMinutes >= 1 &&
     durationMinutes <= MAX_DURATION_MINUTES;
@@ -405,9 +434,13 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         return;
       }
       setOptions(data);
-      setQuestionCount(data.defaults.question_count);
+      setPaperName(data.defaults.paper_name);
+      setMcqCount(data.defaults.mcq_count);
+      setWrittenCount(data.defaults.written_count);
+      setStructuredCount(data.defaults.structured_count);
       setDurationMinutes(data.defaults.duration_minutes);
       setDifficulty(data.defaults.difficulty);
+      setTeacherInstruction(data.defaults.teacher_instruction ?? "");
     } catch {
       if (requestId === optionsRequest.current) setOptionsError(networkError("selection"));
     } finally {
@@ -426,7 +459,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   }, [loadOptions]);
 
   useEffect(() => {
-    if (!targetReady) return;
+    if (!targetReady || scholarshipSelected) return;
     const timeout = window.setTimeout(() => {
       const requestId = ++selectionRequest.current;
       setSelectionLoading(true);
@@ -434,7 +467,6 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       setCurriculum(null);
       setLessons([]);
       const query = {
-        assessment_programme: assessmentProgramme || undefined,
         grade: Number(grade),
         medium,
         subject,
@@ -489,6 +521,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         const nextLessons = [...lessonResponse.lessons].sort((left, right) => left.number - right.number);
         setCurriculum(curricula[0] ?? null);
         setLessons(nextLessons);
+        setSelectedLessonNumbers([]);
         setFirstLesson(String(nextLessons[0]?.number ?? ""));
         setLastLesson(String(nextLessons.at(-1)?.number ?? ""));
         } catch {
@@ -502,7 +535,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       window.clearTimeout(timeout);
       selectionRequest.current += 1;
     };
-  }, [api, assessmentProgramme, grade, medium, subject, targetReady]);
+  }, [api, grade, medium, scholarshipSelected, subject, targetReady, term]);
 
   const pollJob = useCallback(
     async (initialJob: PaperJob) => {
@@ -555,36 +588,50 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
 
   function buildIntent(): PaperIntent | null {
     setFormError("");
-    if (!targetReady || !curriculum) {
-      setFormError("Choose an available grade, medium, subject, and paper type before continuing.");
+    if (!targetReady || (!scholarshipSelected && !curriculum)) {
+      setFormError("Choose an available Grade 5 paper target before continuing.");
       return null;
     }
-    if (!rangeValid) {
-      setFormError("Choose an exact inclusive lesson range from the available lessons.");
+    if (!scopeValid) {
+      setFormError(
+        scopeKind === "selected_lessons"
+          ? "Choose at least one available lesson."
+          : "Choose an exact inclusive lesson range from the available lessons.",
+      );
       return null;
     }
     if (!settingsValid) {
       setFormError(
-        `Choose 1–${MAX_QUESTIONS} questions and a duration from 1–${MAX_DURATION_MINUTES} minutes.`,
+        `Choose 1–${MAX_QUESTIONS} questions in total and a duration from 1–${MAX_DURATION_MINUTES} minutes.`,
       );
       return null;
     }
+    const scope: PaperIntent["scope"] =
+      scopeKind === "lesson_range"
+        ? { end_lesson: rangeEnd, kind: "lesson_range", start_lesson: rangeStart }
+        : scopeKind === "selected_lessons"
+          ? { kind: "selected_lessons", lesson_numbers: selectedLessonNumbers }
+          : { kind: scopeKind };
+    const target: PaperIntent["target"] = {
+      grade: Number(grade),
+      medium,
+      paper_type: paperType as PaperType,
+      ...(subject ? { subject } : {}),
+      ...(term ? { term } : {}),
+      ...(scholarshipMode ? { scholarship_mode: scholarshipMode } : {}),
+    };
     return {
-      scope:
-        scopeKind === "full_subject"
-          ? { kind: "full_subject" }
-          : { end_lesson: rangeEnd, kind: "lesson_range", start_lesson: rangeStart },
+      scope,
       settings: {
         difficulty,
         duration_minutes: durationMinutes,
-        question_count: questionCount,
+        mcq_count: mcqCount,
+        paper_name: paperName.trim(),
+        structured_count: structuredCount,
+        teacher_instruction: teacherInstruction.trim() || null,
+        written_count: writtenCount,
       },
-      target: {
-        ...(assessmentProgramme ? { assessment_programme: assessmentProgramme } : {}),
-        grade: Number(grade),
-        medium,
-        subject,
-      },
+      target,
     };
   }
 
@@ -713,6 +760,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     setJob(null);
     setCurriculum(null);
     setLessons([]);
+    setSelectedLessonNumbers([]);
     setSelectionError(null);
     setSelectionLoading(false);
     setRequestError(null);
@@ -722,10 +770,27 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     pollRequest.current += 1;
   }
 
+  const scholarshipLabel =
+    options?.scholarship_modes.find((item) => item.code === scholarshipMode)?.label ?? "Scholarship";
+  const termLabel = options?.terms.find((item) => item.code === term)?.label ?? "Term";
+  const selectedLessonsLabel =
+    selectedLessonNumbers.length === 1
+      ? String(selectedLessonNumbers[0])
+      : selectedLessonNumbers.length === 2
+        ? `${selectedLessonNumbers[0]} and ${selectedLessonNumbers[1]}`
+        : selectedLessonNumbers.length > 2
+          ? `${selectedLessonNumbers.slice(0, -1).join(", ")}, and ${selectedLessonNumbers.at(-1)}`
+          : "none";
   const selectedScope =
-    scopeKind === "full_subject"
-      ? `Grade ${grade} ${subjectLabel} · Full syllabus`
-      : `Grade ${grade} ${subjectLabel} · Lessons ${firstLesson || "?"}–${lastLesson || "?"}`;
+    scopeKind === "programme"
+      ? `Grade ${grade} Scholarship · ${scholarshipLabel}`
+      : scopeKind === "full_term"
+        ? `Grade ${grade} ${subjectLabel} · ${termLabel}`
+        : scopeKind === "full_subject"
+          ? `Grade ${grade} ${subjectLabel} · Full subject`
+          : scopeKind === "selected_lessons"
+            ? `Grade ${grade} ${subjectLabel} · Lessons ${selectedLessonsLabel}`
+            : `Grade ${grade} ${subjectLabel} · Lessons ${firstLesson || "?"}–${lastLesson || "?"}`;
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 px-5 py-8 sm:px-8 sm:py-10">
@@ -761,15 +826,17 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             description="Start with teacher-readable curriculum choices. No internal curriculum or generation identifiers are needed."
             title="1. Choose the paper target"
           >
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <label className={fieldClass}>
                 Grade
                 <select
                   className={inputClass}
                   onChange={(event) => {
                     setGrade(event.target.value);
+                    setPaperType("");
                     setSubject("");
-                    setAssessmentProgramme("");
+                    setTerm("");
+                    setScholarshipMode("");
                     resetAfterTargetChange();
                   }}
                   value={grade}
@@ -789,8 +856,10 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   className={inputClass}
                   onChange={(event) => {
                     setMedium(event.target.value);
+                    setPaperType("");
                     setSubject("");
-                    setAssessmentProgramme("");
+                    setTerm("");
+                    setScholarshipMode("");
                     resetAfterTargetChange();
                   }}
                   value={medium}
@@ -803,48 +872,119 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   ))}
                 </select>
               </label>
-
-              <label className={fieldClass}>
-                Subject
-                <select
-                  className={inputClass}
-                  disabled={!grade || !medium}
-                  onChange={(event) => {
-                    setSubject(event.target.value);
-                    setAssessmentProgramme("");
-                    resetAfterTargetChange();
-                  }}
-                  value={subject}
-                >
-                  <option value="">Choose subject</option>
-                  {availableSubjects.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className={fieldClass}>
-                Paper type
-                <select
-                  className={inputClass}
-                  disabled={!grade || !medium || !subject}
-                  onChange={(event) => {
-                    setAssessmentProgramme(event.target.value);
-                    resetAfterTargetChange();
-                  }}
-                  value={assessmentProgramme}
-                >
-                  <option value="">School paper / no programme</option>
-                  {availableProgrammes.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
+
+            <fieldset className="mt-5 space-y-3">
+              <legend className="text-sm font-semibold text-slate-800">Paper type</legend>
+              <div className="grid gap-3 md:grid-cols-3">
+                {availablePaperTypes.map((item) => (
+                  <label
+                    className="flex min-h-20 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500"
+                    key={item.code}
+                  >
+                    <input
+                      aria-label={item.label}
+                      checked={paperType === item.code}
+                      className="mt-1 size-4 accent-slate-950"
+                      disabled={!grade || !medium}
+                      name="paper-type"
+                      onChange={() => {
+                        setPaperType(item.code);
+                        setSubject("");
+                        setTerm("");
+                        setScholarshipMode("");
+                        setScopeKind(
+                          item.code === "scholarship_practice"
+                            ? "programme"
+                            : item.code === "term_test"
+                              ? "full_term"
+                              : "full_subject",
+                        );
+                        resetAfterTargetChange();
+                      }}
+                      type="radio"
+                    />
+                    <span className="font-semibold">{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {paperType && !scholarshipSelected ? (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <label className={fieldClass}>
+                  Subject
+                  <select
+                    aria-label="Subject"
+                    className={inputClass}
+                    disabled={!grade || !medium}
+                    onChange={(event) => {
+                      setSubject(event.target.value);
+                      resetAfterTargetChange();
+                    }}
+                    value={subject}
+                  >
+                    <option value="">Choose subject</option>
+                    {availableSubjects.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {paperType === "term_test" ? (
+                  <label className={fieldClass}>
+                    Term
+                    <select
+                      aria-label="Term"
+                      className={inputClass}
+                      onChange={(event) => {
+                        setTerm(event.target.value as SchoolTerm);
+                        resetAfterTargetChange();
+                      }}
+                      value={term}
+                    >
+                      <option value="">Choose term</option>
+                      {options.terms.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+
+            {scholarshipSelected ? (
+              <fieldset className="mt-5 space-y-3">
+                <legend className="text-sm font-semibold text-slate-800">Scholarship paper</legend>
+                <p className="text-sm leading-6 text-slate-600">
+                  Uses the reviewed Grade 5 Scholarship coverage configured for this exam.
+                </p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {options.scholarship_modes.map((item) => (
+                    <label
+                      className="flex min-h-24 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500"
+                      key={item.code}
+                    >
+                      <input
+                        aria-label={item.label}
+                        checked={scholarshipMode === item.code}
+                        className="mt-1 size-4 accent-slate-950"
+                        name="scholarship-mode"
+                        onChange={() => {
+                          setScholarshipMode(item.code);
+                          resetAfterTargetChange();
+                        }}
+                        type="radio"
+                      />
+                      <span className="font-semibold">{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ) : null}
 
             {selectionLoading ? (
               <p className="mt-4 text-sm text-slate-600" aria-live="polite">
@@ -868,7 +1008,12 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             <div className="mt-5 flex justify-end">
               <button
                 className={primaryButton}
-                disabled={!targetReady || selectionLoading || Boolean(selectionError) || !curriculum}
+                disabled={
+                  !targetReady ||
+                  selectionLoading ||
+                  Boolean(selectionError) ||
+                  (!scholarshipSelected && !curriculum)
+                }
                 onClick={() => setStep(2)}
                 type="button"
               >
@@ -879,52 +1024,84 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
 
           {step >= 2 ? (
             <Panel
-              description="Choose the whole subject or an exact inclusive lesson range. Only reviewed material in this scope may be used."
+              description="Choose the whole subject, individual lessons, or an inclusive lesson range. Only reviewed material in this scope may be used."
               title="2. Choose curriculum scope"
             >
-              <fieldset className="space-y-4">
-                <legend className="text-sm font-semibold text-slate-800">Paper coverage</legend>
-                <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
-                  <input
-                    aria-label="Full syllabus"
-                    checked={scopeKind === "full_subject"}
-                    className="mt-1 size-4 accent-slate-950"
-                    name="scope"
-                    onChange={() => {
-                      setScopeKind("full_subject");
-                      setFormError("");
-                      submission.current = null;
-                    }}
-                    type="radio"
-                  />
-                  <span>
-                    <span className="block font-semibold">Full syllabus</span>
-                    <span className="mt-1 block text-sm text-slate-600">
-                      Use all available reviewed content for this subject.
+              {scholarshipSelected ? (
+                <section className="rounded-xl border border-slate-300 bg-slate-50 p-4">
+                  <h3 className="font-semibold">Scholarship programme coverage</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    The selected Paper I, Paper II, or full Scholarship policy controls coverage. No
+                    ordinary single-subject lesson picker is needed.
+                  </p>
+                </section>
+              ) : (
+                <fieldset className="space-y-4">
+                  <legend className="text-sm font-semibold text-slate-800">Paper coverage</legend>
+                  <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
+                    <input
+                      aria-label={paperType === "term_test" ? "All lessons for this term" : "Full subject"}
+                      checked={scopeKind === (paperType === "term_test" ? "full_term" : "full_subject")}
+                      className="mt-1 size-4 accent-slate-950"
+                      name="scope"
+                      onChange={() => {
+                        setScopeKind(paperType === "term_test" ? "full_term" : "full_subject");
+                        setFormError("");
+                        submission.current = null;
+                      }}
+                      type="radio"
+                    />
+                    <span>
+                      <span className="block font-semibold">
+                        {paperType === "term_test" ? "All lessons for this term" : "Full subject"}
+                      </span>
+                      <span className="mt-1 block text-sm text-slate-600">
+                        Use all reviewed content within this exact scope.
+                      </span>
                     </span>
-                  </span>
-                </label>
-                <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
-                  <input
-                    aria-label="Lesson range"
-                    checked={scopeKind === "lesson_range"}
-                    className="mt-1 size-4 accent-slate-950"
-                    name="scope"
-                    onChange={() => {
-                      setScopeKind("lesson_range");
-                      setFormError("");
-                      submission.current = null;
-                    }}
-                    type="radio"
-                  />
-                  <span>
-                    <span className="block font-semibold">Lesson range</span>
-                    <span className="mt-1 block text-sm text-slate-600">
-                      Include every lesson from the first through the last lesson.
+                  </label>
+                  <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
+                    <input
+                      aria-label="Choose specific lessons"
+                      checked={scopeKind === "lesson_range"}
+                      className="mt-1 size-4 accent-slate-950"
+                      name="scope"
+                      onChange={() => {
+                        setScopeKind("lesson_range");
+                        setFormError("");
+                        submission.current = null;
+                      }}
+                      type="radio"
+                    />
+                    <span>
+                      <span className="block font-semibold">Choose specific lessons</span>
+                      <span className="mt-1 block text-sm text-slate-600">
+                        Include every lesson from the first through the last selected lesson.
+                      </span>
                     </span>
-                  </span>
-                </label>
-              </fieldset>
+                  </label>
+                  <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
+                    <input
+                      aria-label="Pick individual lessons"
+                      checked={scopeKind === "selected_lessons"}
+                      className="mt-1 size-4 accent-slate-950"
+                      name="scope"
+                      onChange={() => {
+                        setScopeKind("selected_lessons");
+                        setFormError("");
+                        submission.current = null;
+                      }}
+                      type="radio"
+                    />
+                    <span>
+                      <span className="block font-semibold">Pick individual lessons</span>
+                      <span className="mt-1 block text-sm text-slate-600">
+                        Choose only the lessons you want, even when they are not next to each other.
+                      </span>
+                    </span>
+                  </label>
+                </fieldset>
+              )}
 
               {scopeKind === "lesson_range" ? (
                 lessons.length ? (
@@ -978,6 +1155,53 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                 )
               ) : null}
 
+              {scopeKind === "selected_lessons" ? (
+                lessons.length ? (
+                  <fieldset className="mt-4 rounded-xl border border-slate-300 bg-white p-4">
+                    <legend className="px-1 text-sm font-semibold text-slate-800">
+                      Lessons to include
+                    </legend>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {lessons.map((lesson) => (
+                        <label
+                          className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 focus-within:ring-2 focus-within:ring-amber-500"
+                          key={lesson.code}
+                        >
+                          <input
+                            aria-label={lesson.label}
+                            checked={selectedLessonNumbers.includes(lesson.number)}
+                            className="mt-1 size-4 accent-slate-950"
+                            onChange={(event) => {
+                              setSelectedLessonNumbers((current) =>
+                                event.target.checked
+                                  ? [...current, lesson.number].sort((left, right) => left - right)
+                                  : current.filter((number) => number !== lesson.number),
+                              );
+                              setFormError("");
+                              submission.current = null;
+                            }}
+                            type="checkbox"
+                          />
+                          <span>
+                            <span className="block font-semibold">{lesson.label}</span>
+                            <span className="mt-1 block text-xs text-slate-600">{lesson.unit}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ) : (
+                  <ErrorPanel
+                    error={{
+                      code: "paper_generation_lessons_empty",
+                      message: "No active lessons are available for individual selection.",
+                      retryable: false,
+                      title: "No lessons available",
+                    }}
+                  />
+                )
+              ) : null}
+
               <section
                 aria-label="Selected scope"
                 className="mt-5 rounded-xl border border-slate-300 bg-slate-50 p-4"
@@ -990,6 +1214,10 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   <p className="mt-2 text-sm text-red-800">
                     Choose a complete range in which every lesson is available.
                   </p>
+                ) : scopeKind === "selected_lessons" && !selectedLessonsValid ? (
+                  <p className="mt-2 text-sm text-red-800">
+                    Choose at least one available lesson.
+                  </p>
                 ) : null}
               </section>
 
@@ -999,7 +1227,11 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                 </button>
                 <button
                   className={primaryButton}
-                  disabled={!rangeValid || (scopeKind === "lesson_range" && !lessons.length)}
+                  disabled={
+                    !scopeValid ||
+                    ((scopeKind === "lesson_range" || scopeKind === "selected_lessons") &&
+                      !lessons.length)
+                  }
                   onClick={() => setStep(3)}
                   type="button"
                 >
@@ -1014,22 +1246,49 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
               description="Use simple settings your learners will understand. The service applies the detailed blueprint and source rules."
               title="3. Set up the paper"
             >
-              <div className="grid gap-4 sm:grid-cols-3">
-                <label className={fieldClass}>
-                  Number of questions
-                  <input
-                    className={inputClass}
-                    max={MAX_QUESTIONS}
-                    min={1}
-                    onChange={(event) => {
-                      setQuestionCount(event.currentTarget.valueAsNumber);
-                      setFormError("");
-                      submission.current = null;
-                    }}
-                    type="number"
-                    value={Number.isNaN(questionCount) ? "" : questionCount}
-                  />
-                </label>
+              <label className={fieldClass}>
+                Paper name
+                <input
+                  className={inputClass}
+                  maxLength={512}
+                  onChange={(event) => {
+                    setPaperName(event.target.value);
+                    setFormError("");
+                    submission.current = null;
+                  }}
+                  value={paperName}
+                />
+              </label>
+              <fieldset className="mt-4">
+                <legend className="text-sm font-semibold text-slate-800">Question counts</legend>
+                <div className="mt-2 grid gap-4 sm:grid-cols-3">
+                  {(
+                    [
+                      ["MCQ questions", mcqCount, setMcqCount],
+                      ["Written questions", writtenCount, setWrittenCount],
+                      ["Structured questions", structuredCount, setStructuredCount],
+                    ] as const
+                  ).map(([label, value, update]) => (
+                    <label className={fieldClass} key={label}>
+                      {label}
+                      <input
+                        className={inputClass}
+                        max={MAX_QUESTIONS}
+                        min={0}
+                        onChange={(event) => {
+                          update(event.currentTarget.valueAsNumber);
+                          setFormError("");
+                          submission.current = null;
+                        }}
+                        type="number"
+                        value={Number.isNaN(value) ? "" : value}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-2 text-sm text-slate-600">Total questions: {totalQuestions}</p>
+              </fieldset>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className={fieldClass}>
                   Duration in minutes
                   <input
@@ -1062,6 +1321,19 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   </select>
                 </label>
               </div>
+              <label className={`${fieldClass} mt-4`}>
+                Teacher instruction (optional)
+                <textarea
+                  className={`${inputClass} min-h-24`}
+                  maxLength={2_048}
+                  onChange={(event) => {
+                    setTeacherInstruction(event.target.value);
+                    setFormError("");
+                    submission.current = null;
+                  }}
+                  value={teacherInstruction}
+                />
+              </label>
 
               {role !== "admin" ? (
                 <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">

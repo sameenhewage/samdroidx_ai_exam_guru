@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import ClassVar, cast
 from uuid import UUID
@@ -8,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.generator import generate_blueprint
 from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.core.config import Settings
@@ -21,6 +23,7 @@ from exam_guru_api.papers.review_service import (
     ReviewCandidateStateConflictError,
     ReviewCandidateVersionConflictError,
 )
+from exam_guru_api.retrieval.domain import RetrievalScopeSet
 from exam_guru_api.retrieval.embeddings import (
     ActiveEmbeddingConfigUnavailableError,
     EmbeddingProviderUnavailableError,
@@ -32,21 +35,33 @@ from exam_guru_api.teacher_papers.domain import (
     PaperScopeError,
     PaperSettings,
     PaperSlotStatus,
+    ResolvedCurriculum,
+    ScholarshipPaperMode,
+    SlotLessonAssignment,
     TeacherScopeKind,
     TeacherScopeSelection,
+    assign_blueprint_lessons,
     build_blueprint_specification,
     translate_teacher_scope,
 )
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
-from exam_guru_api.teacher_papers.models import TeacherPaperJobModel, TeacherPaperSlotModel
+from exam_guru_api.teacher_papers.models import (
+    AssessmentProgrammePolicyScopeModel,
+    AssessmentProgrammePolicyVersionModel,
+    TeacherPaperJobModel,
+    TeacherPaperMarkingConfirmationModel,
+    TeacherPaperSlotModel,
+)
 from exam_guru_api.teacher_papers.repository import (
     ReviewSlotSource,
+    StoredProgrammePolicy,
     StoredTeacherPaper,
     StoredTeacherPaperInsert,
     TeacherPaperQuestionNotFoundError,
     TeacherPaperRepository,
 )
 from exam_guru_api.teacher_papers.schemas import (
+    ProgrammePolicyCreateRequest,
     ReviewPaperCreateDraftRequest,
     ReviewQuestionEditRequest,
     ReviewQuestionRegenerateRequest,
@@ -55,6 +70,9 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperJobCreateRequest,
 )
 from exam_guru_api.teacher_papers.service import (
+    ProgrammePolicyScopeError,
+    ProgrammePolicyVersionConflictError,
+    ScholarshipProgrammePolicyService,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -72,17 +90,22 @@ from exam_guru_api.teacher_papers.service import (
     TeacherPaperWorkerService,
     _content_snapshot,
     _friendly_validation,
+    _marking_fingerprint,
+    _question_content,
     _replace_generation_run,
     _require_context_ids,
+    _resolve_programme_scope,
     _resolved_job_scope,
+    _retrieval_filters_for_assignment,
     _review_question,
     _review_status,
+    _selection,
     _validate_idempotency_key,
     teacher_paper_job_response,
 )
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.pipeline import build_default_pipeline
-from tests.test_teacher_paper_domain import curriculum, lesson
+from tests.test_teacher_paper_domain import curriculum, lesson, programme_scope, target
 
 NOW = datetime(2026, 8, 25, tzinfo=UTC)
 JOB_ID = UUID(int=25_910_001)
@@ -110,6 +133,9 @@ class DummySession:
     async def rollback(self) -> None:
         self.rollbacks += 1
 
+    async def refresh(self, value: object) -> None:
+        del value
+
 
 def session(value: DummySession) -> AsyncSession:
     return cast(AsyncSession, value)
@@ -119,14 +145,25 @@ def principal() -> Principal:
     return Principal(ACTOR_ID, frozenset({AdminRole.ADMIN}))
 
 
+def pilot_curriculum() -> object:
+    return replace(
+        curriculum(lessons=(lesson(1),)),
+        assessment_code="SCHOOL-G5",
+        assessment_label="School Grade 5",
+        grade=5,
+        medium_code="si",
+        medium_label="Sinhala",
+    )
+
+
 def create_request(*, full: bool = False) -> TeacherPaperJobCreateRequest:
     return TeacherPaperJobCreateRequest.model_validate(
         {
             "target": {
-                "grade": 7,
-                "medium": "en",
+                "grade": 5,
+                "medium": "si",
+                "paper_type": "subject_practice",
                 "subject": "MATHEMATICS",
-                "assessment_programme": "SCHOOL-G7",
             },
             "scope": (
                 {"kind": "full_subject"}
@@ -134,7 +171,10 @@ def create_request(*, full: bool = False) -> TeacherPaperJobCreateRequest:
                 else {"kind": "lesson_range", "start_lesson": 1, "end_lesson": 1}
             ),
             "settings": {
-                "question_count": 1,
+                "paper_name": "Grade 5 Mathematics practice",
+                "mcq_count": 1,
+                "written_count": 0,
+                "structured_count": 0,
                 "duration_minutes": 45,
                 "difficulty": PaperDifficulty.BALANCED,
             },
@@ -204,6 +244,316 @@ def paper_slot(*, status: str = PaperSlotStatus.GENERATING.value) -> TeacherPape
     )
 
 
+def programme_policy_request() -> ProgrammePolicyCreateRequest:
+    anchor_curriculum_id = UUID(int=25_920_001)
+    anchor_unit_id = UUID(int=25_920_002)
+    anchor_lesson_ids = (UUID(int=25_920_003), UUID(int=25_920_004))
+    anchor_competencies = (UUID(int=25_920_005), UUID(int=25_920_006))
+    source_curricula = tuple(UUID(int=25_920_010 + index) for index in range(4))
+    return ProgrammePolicyCreateRequest.model_validate(
+        {
+            "programme_exam_configuration_id": UUID(int=25_920_020),
+            "medium_id": UUID(int=25_920_021),
+            "anchor_curriculum_version_id": anchor_curriculum_id,
+            "code": "G5-SCHOLARSHIP",
+            "version": "2026.v1",
+            "title": "Grade 5 Scholarship",
+            "paper_i_profile_version": "ability.v1",
+            "paper_ii_profile_version": "curriculum-coverage.v1",
+            "paper_i_weight": 1,
+            "paper_ii_weight": 1,
+            "scopes": [
+                {
+                    "part": "paper_i",
+                    "ordinal": 1,
+                    "anchor_unit_id": anchor_unit_id,
+                    "anchor_lesson_id": anchor_lesson_ids[0],
+                    "anchor_competency_id": anchor_competencies[0],
+                    "source_curriculum_version_id": source_curricula[0],
+                    "source_competency_id": UUID(int=25_920_030),
+                },
+                *(
+                    {
+                        "part": "paper_ii",
+                        "ordinal": index,
+                        "anchor_unit_id": anchor_unit_id,
+                        "anchor_lesson_id": anchor_lesson_ids[1],
+                        "anchor_competency_id": anchor_competencies[1],
+                        "source_curriculum_version_id": source_curricula[index],
+                        "source_unit_id": UUID(int=25_920_040 + index),
+                        "source_lesson_id": UUID(int=25_920_050 + index),
+                        "source_competency_id": UUID(int=25_920_060 + index),
+                    }
+                    for index in range(1, 4)
+                ),
+            ],
+        }
+    )
+
+
+class ProgrammePolicyRepository:
+    def __init__(self, request: ProgrammePolicyCreateRequest) -> None:
+        self.request = request
+        self.stored: StoredProgrammePolicy | None = None
+        self.unavailable_scope_ids: tuple[UUID, ...] = ()
+
+    async def find_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> StoredProgrammePolicy | None:
+        del for_update
+        if self.stored is not None and self.stored.policy.id == policy_id:
+            return self.stored
+        return None
+
+    async def curriculum_identities(
+        self,
+        curriculum_ids: tuple[UUID, ...],
+    ) -> dict[UUID, tuple[int, UUID, UUID, UUID]]:
+        source_grades = (5, 3, 4, 5)
+        source_ids = tuple(scope.source_curriculum_version_id for scope in self.request.scopes)
+        identities = {
+            self.request.anchor_curriculum_version_id: (
+                5,
+                self.request.programme_exam_configuration_id,
+                self.request.medium_id,
+                UUID(int=25_920_070),
+            )
+        }
+        identities.update(
+            {
+                curriculum_id: (
+                    source_grades[index],
+                    UUID(int=25_920_080 + index),
+                    self.request.medium_id,
+                    UUID(int=25_920_090 + index),
+                )
+                for index, curriculum_id in enumerate(source_ids)
+            }
+        )
+        return {key: value for key, value in identities.items() if key in curriculum_ids}
+
+    async def insert_programme_policy(
+        self,
+        policy: AssessmentProgrammePolicyVersionModel,
+        scopes: tuple[AssessmentProgrammePolicyScopeModel, ...],
+    ) -> StoredProgrammePolicy:
+        policy.created_at = NOW
+        for scope in scopes:
+            scope.created_at = NOW
+        self.stored = StoredProgrammePolicy(policy=policy, scopes=scopes)
+        return self.stored
+
+    async def get_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> StoredProgrammePolicy:
+        del for_update
+        assert self.stored is not None
+        assert self.stored.policy.id == policy_id
+        return self.stored
+
+    async def unavailable_programme_policy_scopes(
+        self,
+        scopes: tuple[AssessmentProgrammePolicyScopeModel, ...],
+    ) -> tuple[UUID, ...]:
+        del scopes
+        return self.unavailable_scope_ids
+
+    async def review_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        expected_version: int,
+        snapshot: dict[str, object],
+        content_hash: str,
+        reviewed_by: UUID,
+        reviewed_at: datetime,
+    ) -> AssessmentProgrammePolicyVersionModel | None:
+        assert self.stored is not None
+        policy = self.stored.policy
+        if policy.id != policy_id or policy.lock_version != expected_version:
+            return None
+        policy.state = "reviewed"
+        policy.lock_version += 1
+        policy.review_snapshot = snapshot
+        policy.content_hash = content_hash
+        policy.reviewed_by = reviewed_by
+        policy.reviewed_at = reviewed_at
+        return policy
+
+
+def test_programme_policy_creation_and_review_persist_canonical_scope_evidence() -> None:
+    async def exercise() -> None:
+        request = programme_policy_request()
+        dummy = DummySession()
+        repository = ProgrammePolicyRepository(request)
+        service = ScholarshipProgrammePolicyService(session(dummy))
+        service._repository = cast(TeacherPaperRepository, repository)
+
+        created = await service.create(request, principal=principal())
+        assert created.state == "draft"
+        assert created.lock_version == 0
+        assert await service.create(request, principal=principal()) == created
+        assert [scope.source_grade for scope in created.scopes] == [5, 3, 4, 5]
+        reviewed = await service.review(
+            created.id,
+            expected_version=created.lock_version,
+            principal=principal(),
+        )
+
+        assert reviewed.state == "reviewed"
+        assert reviewed.lock_version == 1
+        assert reviewed.content_hash is not None
+        assert len(reviewed.content_hash) == 64
+        assert repository.stored is not None
+        assert repository.stored.policy.review_snapshot is not None
+        assert (
+            repository.stored.policy.review_snapshot["schema"] == "assessment-programme-policy.v1"
+        )
+        assert dummy.commits == 2
+        assert [
+            event.action for event in dummy.added if isinstance(event, AdminAuditEventModel)
+        ] == [
+            "assessment_programme_policy.created",
+            "assessment_programme_policy.reviewed",
+        ]
+
+        loaded = await service.get(created.id, principal=principal())
+        assert loaded == reviewed
+
+        request_by_part = {
+            part: next(scope for scope in request.scopes if scope.part == part)
+            for part in ("paper_i", "paper_ii")
+        }
+        anchor_lessons = tuple(
+            replace(
+                lesson(index),
+                id=request_by_part[part].anchor_lesson_id,
+                unit_id=request_by_part[part].anchor_unit_id,
+                taxonomy_targets=(
+                    replace(
+                        target(index),
+                        competency_id=request_by_part[part].anchor_competency_id,
+                        skill_id=request_by_part[part].anchor_skill_id,
+                        sub_skill_id=request_by_part[part].anchor_sub_skill_id,
+                        learning_concept_id=(request_by_part[part].anchor_learning_concept_id),
+                    ),
+                ),
+            )
+            for index, part in enumerate(("paper_i", "paper_ii"), start=1)
+        )
+        anchor_curriculum = replace(
+            curriculum(lessons=anchor_lessons),
+            curriculum_version_id=request.anchor_curriculum_version_id,
+            exam_configuration_id=request.programme_exam_configuration_id,
+            assessment_code="G5-SCHOLARSHIP",
+            assessment_label="Grade 5 Scholarship",
+            grade=5,
+            medium_id=request.medium_id,
+            medium_code="si",
+            medium_label="Sinhala",
+        )
+        programme_scope = _resolve_programme_scope(
+            repository.stored,
+            anchor_curriculum,
+            ScholarshipPaperMode.FULL,
+        )
+        repository.stored.policy.state = "retired"
+        assert (
+            _resolve_programme_scope(
+                repository.stored,
+                anchor_curriculum,
+                ScholarshipPaperMode.FULL,
+            ).programme
+            == programme_scope.programme
+        )
+        specification = build_blueprint_specification(
+            anchor_curriculum,
+            programme_scope,
+            PaperSettings(
+                paper_name="Full Scholarship Practice",
+                mcq_count=2,
+                written_count=0,
+                structured_count=0,
+                duration_minutes=60,
+                difficulty=PaperDifficulty.BALANCED,
+            ),
+            paper_reference="EGP-ABCD-12345678",
+            request_fingerprint="sha256:" + "a" * 64,
+        )
+        blueprint = generate_blueprint(specification, seed=29)
+        assignments = assign_blueprint_lessons(blueprint, programme_scope)
+        assert [section.title for section in blueprint.sections] == [
+            "Paper I — Multiple-choice",
+            "Paper II — Multiple-choice",
+        ]
+        filters = tuple(
+            _retrieval_filters_for_assignment(
+                anchor_curriculum,
+                programme_scope,
+                assignment,
+            )
+            for assignment in assignments
+        )
+        assert {
+            tuple(scope.grade for scope in cast(RetrievalScopeSet, item).scopes) for item in filters
+        } == {(5,), (3, 4, 5)}
+
+        with pytest.raises(ProgrammePolicyVersionConflictError):
+            await service.review(created.id, expected_version=0, principal=principal())
+
+    asyncio.run(exercise())
+
+
+def test_programme_policy_review_rejects_incomplete_or_unbounded_grade_five_scope() -> None:
+    async def exercise() -> None:
+        request = programme_policy_request()
+        for retain in (
+            lambda scope: scope.source_grade != 4,
+            lambda scope: not (scope.part == "paper_ii" and scope.source_grade == 5),
+        ):
+            dummy = DummySession()
+            repository = ProgrammePolicyRepository(request)
+            service = ScholarshipProgrammePolicyService(session(dummy))
+            service._repository = cast(TeacherPaperRepository, repository)
+            created = await service.create(request, principal=principal())
+            assert repository.stored is not None
+            if retain(repository.stored.scopes[-1]):
+                repository.stored = StoredProgrammePolicy(
+                    policy=repository.stored.policy,
+                    scopes=tuple(scope for scope in repository.stored.scopes if retain(scope)),
+                )
+            else:
+                grade_five_scope = repository.stored.scopes[-1]
+                grade_five_scope.source_lesson_id = None
+            with pytest.raises(ProgrammePolicyScopeError):
+                await service.review(
+                    created.id,
+                    expected_version=0,
+                    principal=principal(),
+                )
+
+        repository = ProgrammePolicyRepository(request)
+        service = ScholarshipProgrammePolicyService(session(DummySession()))
+        service._repository = cast(TeacherPaperRepository, repository)
+        created = await service.create(request, principal=principal())
+        assert repository.stored is not None
+        repository.unavailable_scope_ids = (repository.stored.scopes[0].id,)
+        with pytest.raises(ProgrammePolicyScopeError, match="reviewed, trusted, embedded"):
+            await service.review(
+                created.id,
+                expected_version=0,
+                principal=principal(),
+            )
+
+    asyncio.run(exercise())
+
+
 class QueryRepository:
     def __init__(self, records: tuple[object, ...]) -> None:
         self.records = records
@@ -262,13 +612,24 @@ def test_query_service_returns_empty_options_and_exact_readable_labels() -> None
     service = TeacherPaperQueryService(session(DummySession()))
     service._repository = QueryRepository(())  # type: ignore[assignment]
     empty = asyncio.run(service.options())
+    assert empty.grades == (5,)
     assert empty.media == ()
+    assert [item.code.value for item in empty.paper_types] == [
+        "subject_practice",
+        "term_test",
+        "scholarship_practice",
+    ]
+    assert [item.code.value for item in empty.scholarship_modes] == [
+        "paper_i",
+        "paper_ii",
+        "full",
+    ]
     assert empty.subjects == ()
     assert (
         asyncio.run(
             service.curricula(
-                grade=7,
-                medium="en",
+                grade=5,
+                medium="si",
                 subject="MATHEMATICS",
                 assessment_programme=None,
             )
@@ -276,23 +637,42 @@ def test_query_service_returns_empty_options_and_exact_readable_labels() -> None
         == ()
     )
 
-    resolved = curriculum(lessons=(lesson(1),))
-    service._repository = QueryRepository((resolved,))  # type: ignore[assignment]
-    exact = asyncio.run(
-        service._resolve(
+    grade_seven = asyncio.run(
+        service.curricula(
             grade=7,
             medium="en",
             subject="MATHEMATICS",
-            assessment_programme="SCHOOL-G7",
+            assessment_programme=None,
+        )
+    )
+    assert grade_seven.items == ()
+    with pytest.raises(TeacherPaperCurriculumNotFoundError):
+        asyncio.run(
+            service.lessons(
+                grade=7,
+                medium="en",
+                subject="MATHEMATICS",
+                assessment_programme=None,
+            )
+        )
+
+    resolved = pilot_curriculum()
+    service._repository = QueryRepository((resolved,))  # type: ignore[assignment]
+    exact = asyncio.run(
+        service._resolve(
+            grade=5,
+            medium="si",
+            subject="MATHEMATICS",
+            assessment_programme="SCHOOL-G5",
         )
     )
     assert exact == resolved
     lessons = asyncio.run(
         service.lessons(
-            grade=7,
-            medium="en",
+            grade=5,
+            medium="si",
             subject="MATHEMATICS",
-            assessment_programme="SCHOOL-G7",
+            assessment_programme="SCHOOL-G5",
         )
     )
     assert lessons.lessons[0].label == "Lesson 1 — Whole numbers"
@@ -327,7 +707,10 @@ class CreateRepository:
 
     async def list_curricula(self, **kwargs: object) -> tuple[object, ...]:
         del kwargs
-        return (curriculum(lessons=(lesson(1),)),)
+        return (pilot_curriculum(),)
+
+    async def active_programme_policy(self, **kwargs: object) -> None:
+        del kwargs
 
     async def insert_job(self, values: dict[str, object]) -> StoredTeacherPaperInsert:
         self.values = values
@@ -368,6 +751,96 @@ def job_service(
     return service
 
 
+def test_job_create_fails_closed_for_targets_without_a_ready_pilot_policy() -> None:
+    settings_payload = create_request().settings.model_dump(mode="json")
+    requests = (
+        (
+            TeacherPaperJobCreateRequest.model_validate(
+                {
+                    "target": {
+                        "grade": 5,
+                        "medium": "si",
+                        "paper_type": "term_test",
+                        "subject": "MATHEMATICS",
+                        "term": "term_1",
+                    },
+                    "scope": {"kind": "full_term"},
+                    "settings": settings_payload,
+                }
+            ),
+            "paper_generation_term_policy_unavailable",
+        ),
+        (
+            TeacherPaperJobCreateRequest.model_validate(
+                {
+                    "target": {
+                        "grade": 5,
+                        "medium": "si",
+                        "paper_type": "scholarship_practice",
+                        "scholarship_mode": "paper_ii",
+                    },
+                    "scope": {"kind": "programme"},
+                    "settings": settings_payload,
+                }
+            ),
+            "paper_generation_programme_policy_unavailable",
+        ),
+    )
+    assert _selection(requests[0][0]).kind is TeacherScopeKind.FULL_TERM
+    assert _selection(requests[1][0]).kind is TeacherScopeKind.PROGRAMME
+    for request, code in requests:
+        service = job_service(DummySession(), RecordingDispatcher(), CreateRepository())
+        with pytest.raises(PaperScopeError) as captured:
+            asyncio.run(
+                service.create(request, idempotency_key=f"policy-{code}", principal=principal())
+            )
+        assert captured.value.code == code
+
+
+def test_subject_practice_job_service_reuses_the_pipeline_beyond_grade_five() -> None:
+    resolved = curriculum()
+
+    class GradeSevenRepository(CreateRepository):
+        async def list_curricula(self, **kwargs: object) -> tuple[object, ...]:
+            assert kwargs == {"grade": 7, "medium": "en", "subject": "MATHEMATICS"}
+            return (resolved,)
+
+    request = TeacherPaperJobCreateRequest.model_validate(
+        {
+            "target": {
+                "grade": 7,
+                "medium": "en",
+                "paper_type": "subject_practice",
+                "subject": "MATHEMATICS",
+            },
+            "scope": {"kind": "selected_lessons", "lesson_numbers": [1, 3]},
+            "settings": create_request().settings.model_dump(mode="json"),
+        }
+    )
+    dispatcher = RecordingDispatcher()
+    repository = GradeSevenRepository()
+    result = asyncio.run(
+        job_service(DummySession(), dispatcher, repository).create(
+            request,
+            idempotency_key="grade-seven-subject-practice",
+            principal=principal(),
+        )
+    )
+
+    target_snapshot = cast(dict[str, object], result.record.job.teacher_intent["target"])
+    assert target_snapshot["grade"] == 7
+    assert result.record.job.curriculum_version_id == resolved.curriculum_version_id
+    ordered_lessons = sorted(
+        resolved.lessons,
+        key=lambda item: (item.unit_ordinal, item.ordinal, item.id.int),
+    )
+    assert result.record.job.resolution_snapshot["lesson_ids"] == [
+        str(ordered_lessons[0].id),
+        str(ordered_lessons[2].id),
+    ]
+    assert dispatcher.calls == [result.record.job.id]
+
+
 def test_job_create_rejects_missing_and_ambiguous_curriculum() -> None:
     class ScopeRepository(CreateRepository):
         def __init__(self, records: tuple[object, ...]) -> None:
@@ -380,7 +853,7 @@ def test_job_create_rejects_missing_and_ambiguous_curriculum() -> None:
 
     for records, error in (
         ((), TeacherPaperCurriculumNotFoundError),
-        ((curriculum(), curriculum()), TeacherPaperCurriculumAmbiguousError),
+        ((pilot_curriculum(), pilot_curriculum()), TeacherPaperCurriculumAmbiguousError),
     ):
         service = job_service(DummySession(), RecordingDispatcher(), ScopeRepository(records))
         with pytest.raises(error):
@@ -847,7 +1320,14 @@ def test_worker_resume_reuses_blueprint_and_existing_slot_without_new_generation
     specification = build_blueprint_specification(
         resolved,
         selected,
-        PaperSettings(1, 45, PaperDifficulty.BALANCED),
+        PaperSettings(
+            paper_name="Grade 7 Mathematics practice",
+            mcq_count=1,
+            written_count=0,
+            structured_count=0,
+            duration_minutes=45,
+            difficulty=PaperDifficulty.BALANCED,
+        ),
         paper_reference="EGP-ABCD-12345678",
         request_fingerprint="sha256:" + "b" * 64,
     )
@@ -877,7 +1357,8 @@ def test_worker_resume_reuses_blueprint_and_existing_slot_without_new_generation
     existing.blueprint_slot_id = blueprint.slots[0].slot_id
 
     class ResumeRepository:
-        async def list_curricula(self) -> tuple[object, ...]:
+        async def list_curricula(self, **kwargs: object) -> tuple[object, ...]:
+            del kwargs
             return (resolved,)
 
         async def list_slots(self, job_id: UUID) -> tuple[TeacherPaperSlotModel, ...]:
@@ -1156,22 +1637,39 @@ def test_review_status_and_constructed_answer_snapshot_cover_safe_fallbacks() ->
                 "accepted_responses": ["four", "4"],
                 "explanation": "Both forms are accepted.",
             },
-            "marking": {"total_marks": 1, "criteria": []},
+            "marking": {
+                "total_marks": 1,
+                "criteria": [{"description": "Accepts either form.", "marks": 1}],
+            },
         }
     )
     assert accepted["answer"] == "four / 4"
-    assert accepted["marking_guide"] == ["Review the proposed answer."]
+    assert accepted["marking_guide"] == ["Accepts either form."]
+    assert accepted["marking_point_marks"] == [1]
 
-    missing = _content_snapshot(
+    legacy = _content_snapshot(
         {
             "question_type": "short_answer",
             "stem": "Name the value.",
             "options": [],
-            "answer": {"correct_option_id": None, "accepted_responses": None},
+            "answer": "four",
+            "explanation": "Four is supported.",
+            "marks": 2,
+            "marking_guide": ['{"criterion_id":"answer","description":"Gives four.","marks":2}'],
         }
     )
-    assert missing["answer"] == "Answer requires review"
-    assert missing["explanation"] == "Explanation requires review"
+    assert legacy["marking_guide"] == ["Gives four."]
+    assert legacy["marking_point_marks"] == [2]
+
+    with pytest.raises(ValueError, match="marking"):
+        _content_snapshot(
+            {
+                "question_type": "short_answer",
+                "stem": "Name the value.",
+                "options": [],
+                "answer": {"correct_option_id": None, "accepted_responses": None},
+            }
+        )
 
 
 def test_job_response_maps_passing_validation_and_safe_failure_message() -> None:
@@ -1256,7 +1754,7 @@ def review_slot_source(
             },
             "marking": {
                 "total_marks": 1,
-                "criteria": [{"description": "Selects B."}],
+                "criteria": [{"description": "Selects B.", "marks": 1}],
             },
         },
         context_snapshot={
@@ -1335,6 +1833,7 @@ def review_slot_source(
         generation=generation,
         validation=validation,
         candidate=candidate_model,
+        marking_confirmation=None,
         content=cast(dict[str, object], generation.candidate),
         findings=(finding,),
         filenames={},
@@ -1377,23 +1876,43 @@ class ReviewRepository:
         self.record = record
         self.active_slot = active_slot
         self.slot_updates: list[dict[str, object]] = []
+        self.locked_job_reads = 0
+        self.locked_slot_reads = 0
+        self.job_updates: list[dict[str, object]] = []
 
-    async def get(self, job_id: UUID) -> StoredTeacherPaper:
+    async def get(self, job_id: UUID, *, for_update: bool = False) -> StoredTeacherPaper:
         assert job_id == JOB_ID
+        self.locked_job_reads += int(for_update)
         return self.record
 
-    async def find_slot(self, job_id: UUID, question_id: UUID) -> TeacherPaperSlotModel:
+    async def find_slot(
+        self,
+        job_id: UUID,
+        question_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> TeacherPaperSlotModel:
         assert job_id == JOB_ID
         del question_id
+        self.locked_slot_reads += int(for_update)
         return self.active_slot
 
     async def review_sources(self, job_id: UUID) -> tuple[ReviewSlotSource, ...]:
         assert job_id == JOB_ID
         return ()
 
+    async def confirm_marking(
+        self,
+        values: dict[str, object],
+    ) -> tuple[TeacherPaperMarkingConfirmationModel, bool]:
+        confirmation = TeacherPaperMarkingConfirmationModel(**values)
+        confirmation.confirmed_at = datetime.now(UTC)
+        return confirmation, True
+
     async def cas_job(self, job_id: UUID, **kwargs: object) -> TeacherPaperJobModel:
         assert job_id == JOB_ID
         values = cast(dict[str, object], kwargs["values"])
+        self.job_updates.append(values)
         for field, value in values.items():
             setattr(self.record.job, field, value)
         self.record.job.version += 1
@@ -1489,6 +2008,7 @@ def edit_request() -> ReviewQuestionEditRequest:
                 "explanation": "The source supports B.",
                 "marks": 1,
                 "marking_guide": ["Selects B."],
+                "marking_point_marks": [1],
             },
             "reason_code": "ambiguous_wording",
             "note": "Clarify wording.",
@@ -1563,6 +2083,17 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
         active_slot,
     )
     service = review_service(repository)
+    approval_source = review_slot_source(validation_status="warn")
+    assert approval_source.candidate is not None
+    approval_source.candidate.id = active_slot.current_candidate_id
+    approval_source.candidate.state = "in_review"
+    approval_source.candidate.version = 3
+    approval_source.candidate.current_revision = 1
+
+    async def source_for_approval(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return approval_source
+
+    monkeypatch.setattr(service, "_review_source", source_for_approval)
 
     action_calls: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
         (
@@ -1584,6 +2115,7 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
                 JOB_ID,
                 RUN_ID,
                 expected_version=3,
+                marking_confirmed=True,
                 note=None,
                 principal=principal(),
             ),
@@ -1632,6 +2164,7 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
                     JOB_ID,
                     RUN_ID,
                     expected_version=3,
+                    marking_confirmed=True,
                     note=None,
                     principal=principal(),
                 )
@@ -1644,6 +2177,7 @@ def test_review_actions_normalize_candidate_version_state_and_revalidation_error
                 JOB_ID,
                 RUN_ID,
                 expected_version=3,
+                marking_confirmed=True,
                 note=None,
                 principal=principal(),
             )
@@ -1679,6 +2213,11 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
         SuccessfulFeedbackService,
     )
     feedback_source = review_slot_source(validation_status="warn")
+    assert feedback_source.candidate is not None
+    feedback_source.candidate.id = active_slot.current_candidate_id
+    feedback_source.candidate.state = "in_review"
+    feedback_source.candidate.version = 3
+    feedback_source.candidate.current_revision = 1
 
     async def source_for_slot(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
         return feedback_source
@@ -1734,6 +2273,7 @@ def test_review_actions_sync_successful_candidate_state_into_the_paper_aggregate
                 JOB_ID,
                 RUN_ID,
                 expected_version=3,
+                marking_confirmed=True,
                 note=None,
                 principal=principal(),
             )
@@ -1787,8 +2327,15 @@ def test_meaningful_approval_confirmation_appends_feedback(
         SuccessfulFeedbackService,
     )
 
+    approval_source = review_slot_source(validation_status="warn")
+    assert approval_source.candidate is not None
+    approval_source.candidate.id = active_slot.current_candidate_id
+    approval_source.candidate.state = "in_review"
+    approval_source.candidate.version = 3
+    approval_source.candidate.current_revision = 1
+
     async def source_for_slot(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
-        return review_slot_source(validation_status="warn")
+        return approval_source
 
     async def sync_slot(*_args: object, **_kwargs: object) -> None:
         pass
@@ -1813,6 +2360,7 @@ def test_meaningful_approval_confirmation_appends_feedback(
             JOB_ID,
             RUN_ID,
             expected_version=3,
+            marking_confirmed=True,
             note="Answer, marking, wording, and source confirmed.",
             principal=principal(),
         )
@@ -1927,6 +2475,8 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
     )
     assert regenerated.question_id == replacement.current_generation_run_id
     assert dispatcher.calls == [JOB_ID]
+    assert repository.locked_job_reads >= 1
+    assert repository.locked_slot_reads >= 1
 
     draft_id = UUID(int=905)
 
@@ -1935,7 +2485,8 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
             del actual_session
 
         async def create_draft(self, *args: object, **kwargs: object) -> object:
-            del args, kwargs
+            del args
+            assert kwargs["commit"] is False
             return SimpleNamespace(
                 record=SimpleNamespace(draft=SimpleNamespace(paper_id=draft_id, version=1))
             )
@@ -1949,6 +2500,43 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
     active_slot.current_candidate_id = UUID(int=906)
     active_slot.requires_revalidation = False
     draft_service = review_service(repository)
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            draft_service.create_draft(
+                JOB_ID,
+                ReviewPaperCreateDraftRequest(expected_version=8),
+                principal=principal(),
+            )
+        )
+
+    draft_source = review_slot_source(validation_status="pass")
+    assert draft_source.candidate is not None
+    draft_source.candidate.id = active_slot.current_candidate_id
+    draft_source.candidate.state = "approved"
+    draft_source.candidate.version = 4
+    draft_source.candidate.current_revision = 1
+    confirmation = TeacherPaperMarkingConfirmationModel(
+        marking_fingerprint=_marking_fingerprint(_question_content(draft_source.content))
+    )
+    confirmation.confirmed_at = datetime.now(UTC)
+    draft_source = replace(draft_source, marking_confirmation=confirmation)
+
+    async def draft_sources(_job_id: UUID) -> tuple[ReviewSlotSource, ...]:
+        return (draft_source,)
+
+    monkeypatch.setattr(repository, "review_sources", draft_sources)
+    draft_service = review_service(repository)
+    active_job.status = PaperJobStatus.CHECKING_ANSWERS.value
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            draft_service.create_draft(
+                JOB_ID,
+                ReviewPaperCreateDraftRequest(expected_version=8),
+                principal=principal(),
+            )
+        )
+    active_job.status = PaperJobStatus.READY_FOR_REVIEW.value
+    locked_reads = repository.locked_job_reads
     draft = asyncio.run(
         draft_service.create_draft(
             JOB_ID,
@@ -1956,8 +2544,19 @@ def test_regeneration_dispatch_and_draft_creation_happy_and_queue_failure_paths(
             principal=principal(),
         )
     )
-    assert draft.draft_id == draft_id
+    assert draft.paper_job_id == JOB_ID
+    assert draft.paper_id == draft.draft_id == draft_id
     assert draft.publication_path.endswith(str(draft_id))
+    assert repository.locked_job_reads == locked_reads + 1
+    assert repository.job_updates[-1]["status"] == PaperJobStatus.READY_FOR_REVIEW.value
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            draft_service._require_candidate_slot(
+                JOB_ID,
+                active_slot.current_candidate_id,
+                principal(),
+            )
+        )
 
 
 def test_regeneration_and_question_lookup_version_and_not_found_guards(
@@ -1970,9 +2569,8 @@ def test_regeneration_and_question_lookup_version_and_not_found_guards(
     active_slot.version = 4
     active_slot.current_candidate_id = UUID(int=25_940_001)
     active_slot.current_generation_run_id = UUID(int=25_940_002)
-    service = review_service(
-        ReviewRepository(StoredTeacherPaper(active_job, (active_slot,)), active_slot)
-    )
+    repository = ReviewRepository(StoredTeacherPaper(active_job, (active_slot,)), active_slot)
+    service = review_service(repository)
     with pytest.raises(TeacherPaperVersionConflictError):
         asyncio.run(
             service.regenerate(
@@ -1987,6 +2585,23 @@ def test_regeneration_and_question_lookup_version_and_not_found_guards(
                 principal=principal(),
             )
         )
+
+    active_job.practice_paper_id = UUID(int=25_940_003)
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            service.regenerate(
+                JOB_ID,
+                RUN_ID,
+                ReviewQuestionRegenerateRequest(
+                    expected_version=4,
+                    reason_code="answer_incorrect",
+                    note="Replace.",
+                ),
+                idempotency_key="replacement-key-after-draft",
+                principal=principal(),
+            )
+        )
+    active_job.practice_paper_id = None
 
     exact = cast(ReviewQuestionResponse, SimpleNamespace(id=RUN_ID))
 
@@ -2016,3 +2631,531 @@ def test_regeneration_and_question_lookup_version_and_not_found_guards(
 
     monkeypatch.setattr(service, "get", replacement_detail)
     assert asyncio.run(service._get_question(JOB_ID, RUN_ID, principal())) is replacement
+
+
+def reviewed_programme_fixture() -> tuple[StoredProgrammePolicy, ResolvedCurriculum]:
+    request = programme_policy_request()
+    repository = ProgrammePolicyRepository(request)
+    service = ScholarshipProgrammePolicyService(session(DummySession()))
+    service._repository = cast(TeacherPaperRepository, repository)
+    asyncio.run(service.create(request, principal=principal()))
+    assert repository.stored is not None
+    repository.stored.policy.state = "reviewed"
+    repository.stored.policy.content_hash = "c" * 64
+
+    request_by_part = {
+        part: next(scope for scope in request.scopes if scope.part == part)
+        for part in ("paper_i", "paper_ii")
+    }
+    anchor_lessons = tuple(
+        replace(
+            lesson(index),
+            id=request_by_part[part].anchor_lesson_id,
+            unit_id=request_by_part[part].anchor_unit_id,
+            taxonomy_targets=(
+                replace(
+                    target(index),
+                    competency_id=request_by_part[part].anchor_competency_id,
+                    skill_id=request_by_part[part].anchor_skill_id,
+                    sub_skill_id=request_by_part[part].anchor_sub_skill_id,
+                    learning_concept_id=request_by_part[part].anchor_learning_concept_id,
+                ),
+            ),
+        )
+        for index, part in enumerate(("paper_i", "paper_ii"), start=1)
+    )
+    anchor_curriculum = replace(
+        curriculum(lessons=anchor_lessons),
+        curriculum_version_id=request.anchor_curriculum_version_id,
+        exam_configuration_id=request.programme_exam_configuration_id,
+        assessment_code="G5-SCHOLARSHIP",
+        assessment_label="Grade 5 Scholarship",
+        grade=5,
+        medium_id=request.medium_id,
+        medium_code="si",
+        medium_label="Sinhala",
+    )
+    return repository.stored, anchor_curriculum
+
+
+def test_programme_scope_resolution_rejects_unavailable_policy_and_anchor_boundaries() -> None:
+    stored, anchor_curriculum = reviewed_programme_fixture()
+
+    stored.policy.content_hash = None
+    with pytest.raises(PaperScopeError) as unavailable_policy:
+        _resolve_programme_scope(stored, anchor_curriculum, ScholarshipPaperMode.FULL)
+    assert unavailable_policy.value.code == "paper_generation_programme_policy_unavailable"
+    stored.policy.content_hash = "c" * 64
+
+    with pytest.raises(PaperScopeError) as missing_lesson:
+        _resolve_programme_scope(
+            stored,
+            replace(anchor_curriculum, lessons=()),
+            ScholarshipPaperMode.FULL,
+        )
+    assert missing_lesson.value.code == "paper_generation_programme_anchor_unavailable"
+
+    paper_i_lesson_id = next(
+        scope.anchor_lesson_id for scope in stored.scopes if scope.part == "paper_i"
+    )
+    missing_target_curriculum = replace(
+        anchor_curriculum,
+        lessons=tuple(
+            replace(item, taxonomy_targets=()) if item.id == paper_i_lesson_id else item
+            for item in anchor_curriculum.lessons
+        ),
+    )
+    with pytest.raises(PaperScopeError) as missing_target:
+        _resolve_programme_scope(
+            stored,
+            missing_target_curriculum,
+            ScholarshipPaperMode.PAPER_I,
+        )
+    assert missing_target.value.code == "paper_generation_programme_anchor_unavailable"
+
+    paper_ii_only = StoredProgrammePolicy(
+        policy=stored.policy,
+        scopes=tuple(scope for scope in stored.scopes if scope.part == "paper_ii"),
+    )
+    with pytest.raises(PaperScopeError) as missing_part:
+        _resolve_programme_scope(
+            paper_ii_only,
+            anchor_curriculum,
+            ScholarshipPaperMode.PAPER_I,
+        )
+    assert missing_part.value.code == "paper_generation_programme_policy_unavailable"
+
+
+def test_programme_policy_service_rejects_identity_medium_and_update_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        request = programme_policy_request()
+
+        conflict_repository = ProgrammePolicyRepository(request)
+        conflict_service = ScholarshipProgrammePolicyService(session(DummySession()))
+        conflict_service._repository = cast(TeacherPaperRepository, conflict_repository)
+        await conflict_service.create(request, principal=principal())
+        assert conflict_repository.stored is not None
+        conflict_repository.stored.policy.request_fingerprint = "sha256:" + "f" * 64
+        with pytest.raises(ProgrammePolicyVersionConflictError):
+            await conflict_service.create(request, principal=principal())
+
+        class MissingIdentityRepository(ProgrammePolicyRepository):
+            async def curriculum_identities(
+                self,
+                curriculum_ids: tuple[UUID, ...],
+            ) -> dict[UUID, tuple[int, UUID, UUID, UUID]]:
+                del curriculum_ids
+                return {}
+
+        missing_service = ScholarshipProgrammePolicyService(session(DummySession()))
+        missing_service._repository = cast(
+            TeacherPaperRepository,
+            MissingIdentityRepository(request),
+        )
+        with pytest.raises(ProgrammePolicyScopeError, match="scope is unavailable"):
+            await missing_service.create(request, principal=principal())
+
+        class MixedMediumRepository(ProgrammePolicyRepository):
+            async def curriculum_identities(
+                self,
+                curriculum_ids: tuple[UUID, ...],
+            ) -> dict[UUID, tuple[int, UUID, UUID, UUID]]:
+                identities = await super().curriculum_identities(curriculum_ids)
+                source_id = self.request.scopes[-1].source_curriculum_version_id
+                grade, exam_id, _medium_id, subject_id = identities[source_id]
+                identities[source_id] = (
+                    grade,
+                    exam_id,
+                    UUID(int=25_920_999),
+                    subject_id,
+                )
+                return identities
+
+        mixed_service = ScholarshipProgrammePolicyService(session(DummySession()))
+        mixed_service._repository = cast(
+            TeacherPaperRepository,
+            MixedMediumRepository(request),
+        )
+        with pytest.raises(ProgrammePolicyScopeError, match="one medium"):
+            await mixed_service.create(request, principal=principal())
+
+        lost_repository = ProgrammePolicyRepository(request)
+        lost_service = ScholarshipProgrammePolicyService(session(DummySession()))
+        lost_service._repository = cast(TeacherPaperRepository, lost_repository)
+        created = await lost_service.create(request, principal=principal())
+
+        async def lose_review_update(policy_id: UUID, **kwargs: object) -> None:
+            del policy_id, kwargs
+
+        monkeypatch.setattr(
+            lost_repository,
+            "review_programme_policy",
+            lose_review_update,
+        )
+        with pytest.raises(ProgrammePolicyVersionConflictError):
+            await lost_service.review(
+                created.id,
+                expected_version=created.lock_version,
+                principal=principal(),
+            )
+
+    asyncio.run(exercise())
+
+
+def test_scholarship_job_uses_the_active_policy_anchor_curriculum() -> None:
+    request = TeacherPaperJobCreateRequest.model_validate(
+        {
+            "target": {
+                "grade": 5,
+                "medium": "si",
+                "paper_type": "scholarship_practice",
+                "scholarship_mode": "paper_i",
+            },
+            "scope": {"kind": "programme"},
+            "settings": create_request().settings.model_dump(mode="json"),
+        }
+    )
+    anchor_curriculum_id = UUID(int=25_921_001)
+
+    class ReadyPolicyRepository:
+        def __init__(self) -> None:
+            self.policy_lookup: dict[str, object] | None = None
+            self.curriculum_lookup: dict[str, object] | None = None
+
+        async def active_programme_policy(self, **kwargs: object) -> StoredProgrammePolicy:
+            self.policy_lookup = kwargs
+            return StoredProgrammePolicy(
+                policy=AssessmentProgrammePolicyVersionModel(
+                    id=UUID(int=25_921_002),
+                    anchor_curriculum_version_id=anchor_curriculum_id,
+                ),
+                scopes=(),
+            )
+
+        async def list_curricula(self, **kwargs: object) -> tuple[object, ...]:
+            self.curriculum_lookup = kwargs
+            return ()
+
+    repository = ReadyPolicyRepository()
+    service = job_service(DummySession(), RecordingDispatcher(), repository)
+    with pytest.raises(TeacherPaperCurriculumNotFoundError):
+        asyncio.run(
+            service.create(
+                request,
+                idempotency_key="ready-scholarship-policy",
+                principal=principal(),
+            )
+        )
+    assert repository.policy_lookup == {
+        "code": "G5-SCHOLARSHIP",
+        "grade": 5,
+        "medium": "si",
+    }
+    assert repository.curriculum_lookup == {"curriculum_id": anchor_curriculum_id}
+
+
+def test_resolved_programme_snapshot_and_slot_mapping_fail_closed() -> None:
+    resolved_curriculum = curriculum(lessons=(lesson(1),))
+
+    invalid_snapshot_job = job()
+    invalid_snapshot_job.resolution_snapshot["programme"] = {
+        "policy_id": "not-a-uuid",
+        "mode": "paper_i",
+    }
+    with pytest.raises(PaperScopeError) as malformed_snapshot:
+        asyncio.run(
+            _resolved_job_scope(
+                cast(TeacherPaperRepository, QueryRepository((resolved_curriculum,))),
+                invalid_snapshot_job,
+            )
+        )
+    assert malformed_snapshot.value.code == "paper_generation_programme_snapshot_invalid"
+
+    policy_id = UUID(int=25_921_010)
+    policy = AssessmentProgrammePolicyVersionModel(
+        id=policy_id,
+        version="current",
+        content_hash="d" * 64,
+    )
+
+    class SnapshotRepository(QueryRepository):
+        async def get_programme_policy(self, requested_id: UUID) -> StoredProgrammePolicy:
+            assert requested_id == policy_id
+            return StoredProgrammePolicy(policy=policy, scopes=())
+
+    stale_snapshot_job = job()
+    stale_snapshot_job.resolution_snapshot["programme"] = {
+        "policy_id": str(policy_id),
+        "mode": "paper_i",
+        "policy_version": "stale",
+        "content_hash": policy.content_hash,
+        "mapping_ids": [],
+    }
+    with pytest.raises(PaperScopeError) as stale_snapshot:
+        asyncio.run(
+            _resolved_job_scope(
+                cast(
+                    TeacherPaperRepository,
+                    SnapshotRepository((resolved_curriculum,)),
+                ),
+                stale_snapshot_job,
+            )
+        )
+    assert stale_snapshot.value.code == "paper_generation_programme_snapshot_invalid"
+
+    resolved_scope = programme_scope(ScholarshipPaperMode.PAPER_I, ())
+    assignment = SlotLessonAssignment(
+        slot_id="unmapped-slot",
+        ordinal=1,
+        lesson=lesson(1),
+        lesson_number=1,
+        taxonomy_target=target(1),
+    )
+    with pytest.raises(PaperScopeError) as missing_mapping:
+        _retrieval_filters_for_assignment(
+            curriculum(),
+            resolved_scope,
+            assignment,
+        )
+    assert missing_mapping.value.code == "paper_generation_programme_slot_mapping_missing"
+
+
+def test_content_snapshot_rejects_incomplete_marking_and_preserves_unsafe_legacy_shapes() -> None:
+    generated: dict[str, object] = {
+        "question_type": "short_answer",
+        "stem": "Name the value.",
+        "options": [],
+        "answer": {
+            "correct_option_id": None,
+            "accepted_responses": ["four"],
+            "explanation": "Four is supported.",
+        },
+    }
+    with pytest.raises(ValueError, match="marking is incomplete"):
+        _content_snapshot(
+            {
+                **generated,
+                "marking": {"total_marks": 1, "criteria": []},
+            }
+        )
+    with pytest.raises(ValueError, match="allocations do not sum"):
+        _content_snapshot(
+            {
+                **generated,
+                "marking": {
+                    "total_marks": 2,
+                    "criteria": [{"description": "Gives four.", "marks": 1}],
+                },
+            }
+        )
+
+    legacy_base: dict[str, object] = {
+        "question_type": "short_answer",
+        "stem": "Name the value.",
+        "options": [],
+        "answer": "four",
+        "explanation": "Four is supported.",
+        "marks": 1,
+    }
+    unsafe_guides: tuple[object, ...] = (
+        "not-a-list",
+        [1],
+        ["not-json"],
+        ['{"description":"Gives four.","marks":true}'],
+    )
+    for guide in unsafe_guides:
+        raw = {**legacy_base, "marking_guide": guide}
+        assert _content_snapshot(raw) is raw
+
+
+def test_approval_rejects_missing_confirmation_candidate_version_and_mark_allocations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_job = job(status=PaperJobStatus.READY_FOR_REVIEW.value)
+    active_slot = paper_slot(status=PaperSlotStatus.IN_REVIEW.value)
+    active_slot.current_candidate_id = UUID(int=25_921_020)
+    repository = ReviewRepository(StoredTeacherPaper(active_job, (active_slot,)), active_slot)
+    service = review_service(repository)
+
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            service.approve(
+                JOB_ID,
+                RUN_ID,
+                expected_version=3,
+                marking_confirmed=False,
+                note=None,
+                principal=principal(),
+            )
+        )
+
+    missing_candidate = review_slot_source(validation_status="pass", candidate=False)
+
+    async def source_without_candidate(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return missing_candidate
+
+    monkeypatch.setattr(service, "_review_source", source_without_candidate)
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            service.approve(
+                JOB_ID,
+                RUN_ID,
+                expected_version=3,
+                marking_confirmed=True,
+                note=None,
+                principal=principal(),
+            )
+        )
+
+    stale_candidate = review_slot_source(validation_status="pass")
+    assert stale_candidate.candidate is not None
+    stale_candidate.candidate.id = active_slot.current_candidate_id
+
+    async def source_with_stale_candidate(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return stale_candidate
+
+    monkeypatch.setattr(service, "_review_source", source_with_stale_candidate)
+    with pytest.raises(TeacherPaperVersionConflictError):
+        asyncio.run(
+            service.approve(
+                JOB_ID,
+                RUN_ID,
+                expected_version=3,
+                marking_confirmed=True,
+                note=None,
+                principal=principal(),
+            )
+        )
+
+    stale_candidate.candidate.version = 3
+    invalid_content: dict[str, object] = {
+        "question_type": "multiple_choice",
+        "stem": "Which response is supported?",
+        "options": [
+            {"option_id": "A", "text": "First"},
+            {"option_id": "B", "text": "Second"},
+        ],
+        "answer": "B",
+        "explanation": "The source supports B.",
+        "marks": 1,
+        "marking_guide": ["Selects B."],
+    }
+    invalid_marking = replace(stale_candidate, content=invalid_content)
+
+    async def source_with_invalid_marking(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return invalid_marking
+
+    monkeypatch.setattr(service, "_review_source", source_with_invalid_marking)
+    with pytest.raises(TeacherPaperStateConflictError):
+        asyncio.run(
+            service.approve(
+                JOB_ID,
+                RUN_ID,
+                expected_version=3,
+                marking_confirmed=True,
+                note=None,
+                principal=principal(),
+            )
+        )
+
+
+def test_approval_is_idempotent_for_an_existing_confirmation_and_approved_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.teacher_papers import service as service_module
+
+    active_job = job(status=PaperJobStatus.READY_FOR_REVIEW.value)
+    active_slot = paper_slot(status=PaperSlotStatus.APPROVED.value)
+    active_slot.current_candidate_id = UUID(int=25_921_030)
+
+    class ExistingConfirmationRepository(ReviewRepository):
+        def __init__(
+            self,
+            record: StoredTeacherPaper,
+            slot: TeacherPaperSlotModel,
+        ) -> None:
+            super().__init__(record, slot)
+            self.confirmed_values: dict[str, object] | None = None
+
+        async def confirm_marking(
+            self,
+            values: dict[str, object],
+        ) -> tuple[TeacherPaperMarkingConfirmationModel, bool]:
+            self.confirmed_values = values
+            confirmation = TeacherPaperMarkingConfirmationModel(**values)
+            confirmation.confirmed_at = NOW
+            return confirmation, False
+
+    repository = ExistingConfirmationRepository(
+        StoredTeacherPaper(active_job, (active_slot,)),
+        active_slot,
+    )
+    dummy = DummySession()
+    service = TeacherPaperReviewService(
+        session(dummy),
+        DeterministicPaperGenerationDispatcher(),
+        DeterministicGenerationDispatcher(),
+        create_generation_runtime(Settings(environment="test")),
+    )
+    service._repository = repository  # type: ignore[assignment]
+
+    approval_source = review_slot_source(validation_status="pass")
+    assert approval_source.candidate is not None
+    approval_source.candidate.id = active_slot.current_candidate_id
+    approval_source.candidate.state = "approved"
+    approval_source.candidate.version = 3
+    approval_source.candidate.current_revision = 1
+
+    async def source_for_slot(_job_id: UUID, _slot_id: UUID) -> ReviewSlotSource:
+        return approval_source
+
+    syncs: list[PaperSlotStatus] = []
+
+    async def sync_slot(
+        _job_id: UUID,
+        _question_id: UUID,
+        status: PaperSlotStatus,
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        syncs.append(status)
+
+    class QuestionMarker:
+        def model_copy(self, *, update: dict[str, object]) -> object:
+            assert update == {"quality_feedback_id": None}
+            return self
+
+    marker = cast(ReviewQuestionResponse, QuestionMarker())
+
+    async def get_question(
+        _job_id: UUID,
+        _question_id: UUID,
+        _principal: Principal,
+    ) -> ReviewQuestionResponse:
+        return marker
+
+    def unexpected_candidate_service(_session: object) -> object:
+        raise AssertionError("an approved candidate must not be approved twice")
+
+    monkeypatch.setattr(service, "_review_source", source_for_slot)
+    monkeypatch.setattr(service, "_sync_slot", sync_slot)
+    monkeypatch.setattr(service, "_get_question", get_question)
+    monkeypatch.setattr(service_module, "ReviewCandidateService", unexpected_candidate_service)
+
+    result = asyncio.run(
+        service.approve(
+            JOB_ID,
+            RUN_ID,
+            expected_version=3,
+            marking_confirmed=True,
+            note="Already confirmed.",
+            principal=principal(),
+        )
+    )
+
+    assert result is marker
+    assert repository.confirmed_values is not None
+    assert syncs == [PaperSlotStatus.APPROVED]
+    assert dummy.added == []

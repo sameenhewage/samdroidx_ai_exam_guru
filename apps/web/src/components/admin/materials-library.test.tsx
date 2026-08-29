@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { MaterialDetails } from "./material-details";
 import { MaterialsLibrary } from "./materials-library";
 
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
@@ -249,6 +250,7 @@ const gradeSummaries: GradeSummary[] = Array.from({ length: 13 }, (_, index) => 
 
 type FixtureOptions = {
   exactDuplicate?: boolean;
+  materialPages?: Record<number, Material[]>;
   restoreConflict?: boolean;
   scopeConflict?: boolean;
   throwOnUpload?: boolean;
@@ -309,6 +311,9 @@ function fixtureApi(options: FixtureOptions = {}) {
       return Response.json(gradeSummaries);
     }
     if (request.method === "GET" && path.endsWith("/materials")) {
+      if (options.materialPages) {
+        return Response.json(options.materialPages[Number(url.searchParams.get("offset") ?? 0)] ?? []);
+      }
       const grade = url.searchParams.get("grade");
       const subjectId = url.searchParams.get("subject_id");
       return Response.json(
@@ -498,6 +503,116 @@ afterEach(() => {
 });
 
 describe("MaterialsLibrary", () => {
+  it("opens the verified original PDF inside the material details view", async () => {
+    const fixture = fixtureApi();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    render(<MaterialDetails documentId={ids.syllabus} role="reviewer" />);
+
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "grade-5-maths-syllabus.pdf",
+    });
+    const preview = screen.getByTitle("Original PDF: grade-5-maths-syllabus.pdf");
+    expect(preview).toHaveAttribute(
+      "src",
+      `/api/v1/admin/source-documents/${ids.syllabus}/content`,
+    );
+    expect(screen.getByRole("link", { name: "Open original PDF in a new tab" })).toHaveAttribute(
+      "href",
+      `/api/v1/admin/source-documents/${ids.syllabus}/content`,
+    );
+  });
+
+  it("uses bounded pagination so every material remains discoverable", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      ...materials[0],
+      id: `00000000-0000-0000-0001-${String(index + 1).padStart(12, "0")}`,
+      title: `Grade 5 material ${index + 1}.pdf`,
+    })) satisfies Material[];
+    const { requests } = await renderLibrary("reviewer", {
+      materialPages: { 0: firstPage, 100: [materials[0]] },
+    });
+
+    const overview = screen.getByRole("region", { name: "Materials by grade" });
+    fireEvent.click(within(overview).getByRole("button", { name: /Grade 5/i }));
+    expect(await screen.findByText("Grade 5 material 1.pdf")).toBeInTheDocument();
+    expect(screen.queryByText(materials[0].title)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next materials page" }));
+    expect(await screen.findByText(materials[0].title)).toBeInTheDocument();
+    const offsets = requests
+      .filter((request) => new URL(request.url).pathname.endsWith("/materials"))
+      .map((request) => new URL(request.url).searchParams.get("offset"));
+    expect(offsets).toEqual(["0", "100"]);
+
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: ids.mathsSubject },
+    });
+    await waitFor(() => {
+      const materialRequests = requests.filter((request) =>
+        new URL(request.url).pathname.endsWith("/materials"),
+      );
+      expect(
+        new URL(materialRequests[materialRequests.length - 1]!.url).searchParams.get("offset"),
+      ).toBe("0");
+    });
+  });
+
+  it("opens directly on the Grade 5 uploaded-material library", async () => {
+    await renderLibrary("reviewer");
+    const list = await screen.findByRole("region", { name: "Uploaded materials" });
+    expect(list).toHaveTextContent("grade-5-maths-syllabus.pdf");
+    expect(
+      screen.getByRole("button", { name: /Grade 5/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("moves focus into dialogs and closes them with Escape", async () => {
+    await renderLibrary("admin");
+    const upload = screen.getByRole("button", { name: "Upload material" });
+    upload.focus();
+    fireEvent.click(upload);
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    await waitFor(() =>
+      expect(dialog).toContainElement(document.activeElement as HTMLElement),
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Upload material" })).not.toBeInTheDocument();
+    expect(upload).toHaveFocus();
+  });
+
+  it("requires explicit buttons instead of advancing or uploading on form submit", async () => {
+    const { requests } = await renderLibrary("admin");
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    let dialog = screen.getByRole("dialog", { name: "Upload material" });
+    const firstForm = dialog.querySelector("form");
+    if (!firstForm) throw new Error("Upload wizard form is required");
+    fireEvent.change(within(dialog).getByLabelText("Grade"), { target: { value: "5" } });
+    fireEvent.submit(firstForm);
+    expect(within(dialog).getByLabelText("Grade")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Medium")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    dialog = await openWizardAtPdfStep();
+    const file = new File(["%PDF-1.7\nexplicit"], "explicit-upload.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), { target: { files: [file] } });
+    await continueWizard(dialog);
+    const finalForm = dialog.querySelector("form");
+    if (!finalForm) throw new Error("Upload review form is required");
+    fireEvent.submit(finalForm);
+    await waitFor(() =>
+      expect(
+        requests.filter(
+          (request) =>
+            request.method === "POST" &&
+            new URL(request.url).pathname.endsWith("/source-documents"),
+        ),
+      ).toHaveLength(0),
+    );
+    expect(within(dialog).getByRole("button", { name: "Upload material" })).toBeEnabled();
+  });
+
   it("shows Grades 1–13 with understandable counts and national-exam badges", async () => {
     await renderLibrary("reviewer");
 
@@ -513,7 +628,7 @@ describe("MaterialsLibrary", () => {
     expect(within(overview).getByRole("button", { name: /Grade 13/i })).toHaveTextContent("A/L");
   });
 
-  it("filters by grade and subject and renders readable cards with teacher statuses", async () => {
+  it("searches and filters server-side while rendering readable teacher statuses", async () => {
     const { requests } = await renderLibrary("reviewer");
     await chooseGradeFiveMaths();
 
@@ -531,6 +646,22 @@ describe("MaterialsLibrary", () => {
     }
     expect(list).not.toHaveTextContent("grade-5-sinhala-teacher-guide.pdf");
 
+    fireEvent.change(within(list).getByLabelText("Search"), {
+      target: { value: "syllabus" },
+    });
+    fireEvent.change(within(list).getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    fireEvent.change(within(list).getByLabelText("Material type"), {
+      target: { value: "syllabus" },
+    });
+    fireEvent.change(within(list).getByLabelText("Status"), {
+      target: { value: "ready_for_ai" },
+    });
+    fireEvent.change(within(list).getByLabelText("Year"), {
+      target: { value: "2026" },
+    });
+
     await waitFor(() => {
       expect(
         requests.some((candidate) => {
@@ -539,7 +670,12 @@ describe("MaterialsLibrary", () => {
             candidate.method === "GET" &&
             url.pathname.endsWith("/materials") &&
             url.searchParams.get("grade") === "5" &&
-            url.searchParams.get("subject_id") === ids.mathsSubject
+            url.searchParams.get("subject_id") === ids.mathsSubject &&
+            url.searchParams.get("medium_id") === ids.medium &&
+            url.searchParams.get("material_type") === "syllabus" &&
+            url.searchParams.get("status") === "ready_for_ai" &&
+            url.searchParams.get("year") === "2026" &&
+            url.searchParams.get("search") === "syllabus"
           );
         }),
       ).toBe(true);
@@ -560,6 +696,17 @@ describe("MaterialsLibrary", () => {
       type: "application/pdf",
     });
     fireEvent.change(within(dialog).getByLabelText("PDF file"), { target: { files: [file] } });
+    const form = dialog.querySelector("form");
+    if (!form) throw new Error("Upload wizard must render a form");
+    fireEvent.submit(form);
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          new URL(request.url).pathname.endsWith("/source-documents"),
+      ),
+    ).toHaveLength(0);
+    expect(within(dialog).getByLabelText("PDF file")).toBeInTheDocument();
     await continueWizard(dialog);
 
     const review = await within(dialog).findByRole("region", { name: "Review upload" });

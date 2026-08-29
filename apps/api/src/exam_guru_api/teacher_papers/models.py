@@ -14,11 +14,13 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from exam_guru_api.infrastructure.database import Base
+from exam_guru_api.papers.domain import MAX_CANDIDATE_REVISIONS, MAX_CANDIDATE_VERSION
 from exam_guru_api.teacher_papers.domain import MAX_SLOT_REGENERATIONS
 
 MAX_TEACHER_INTENT_BYTES = 32_768
@@ -27,6 +29,273 @@ MAX_RESOLUTION_SNAPSHOT_BYTES = 262_144
 MAX_TEACHER_PAPER_COST_MICROUSD = 1_000_000_000_000
 MAX_TEACHER_PAPER_TOKENS = 100_000_000
 _FINGERPRINT_SQL = "^[s][h][a]256:[0-9a-f]{64}$"
+MAX_PROGRAMME_POLICY_SNAPSHOT_BYTES = 1_048_576
+
+
+class AssessmentProgrammePolicyVersionModel(Base):
+    __tablename__ = "assessment_programme_policy_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "code",
+            "version",
+            "medium_id",
+            name="uq_assessment_programme_policy_identity",
+        ),
+        CheckConstraint(
+            "request_fingerprint ~ '^sha256:[0-9a-f]{64}$'",
+            name="ck_assessment_programme_policy_fingerprint",
+        ),
+        CheckConstraint(
+            "code ~ '^[A-Z0-9]+([._-][A-Z0-9]+)*$'",
+            name="ck_assessment_programme_policy_code",
+        ),
+        CheckConstraint(
+            "version = btrim(version) AND char_length(version) BETWEEN 1 AND 128",
+            name="ck_assessment_programme_policy_version",
+        ),
+        CheckConstraint(
+            "title = btrim(title) AND char_length(title) BETWEEN 1 AND 255",
+            name="ck_assessment_programme_policy_title",
+        ),
+        CheckConstraint(
+            "paper_i_profile_version = btrim(paper_i_profile_version) "
+            "AND char_length(paper_i_profile_version) BETWEEN 1 AND 128 "
+            "AND paper_ii_profile_version = btrim(paper_ii_profile_version) "
+            "AND char_length(paper_ii_profile_version) BETWEEN 1 AND 128",
+            name="ck_assessment_programme_policy_profiles",
+        ),
+        CheckConstraint(
+            "paper_i_weight BETWEEN 1 AND 100 AND paper_ii_weight BETWEEN 1 AND 100",
+            name="ck_assessment_programme_policy_weights",
+        ),
+        CheckConstraint(
+            "(state = 'draft' AND lock_version = 0 AND review_snapshot IS NULL "
+            "AND content_hash IS NULL AND reviewed_by IS NULL AND reviewed_at IS NULL) OR "
+            "(state = 'reviewed' AND lock_version = 1 "
+            "AND jsonb_typeof(review_snapshot) = 'object' "
+            f"AND pg_column_size(review_snapshot) <= {MAX_PROGRAMME_POLICY_SNAPSHOT_BYTES} "
+            "AND content_hash ~ '^[0-9a-f]{64}$' AND reviewed_by IS NOT NULL "
+            "AND reviewed_at IS NOT NULL) OR "
+            "(state = 'retired' AND lock_version = 2 "
+            "AND jsonb_typeof(review_snapshot) = 'object' "
+            f"AND pg_column_size(review_snapshot) <= {MAX_PROGRAMME_POLICY_SNAPSHOT_BYTES} "
+            "AND content_hash ~ '^[0-9a-f]{64}$' AND reviewed_by IS NOT NULL "
+            "AND reviewed_at IS NOT NULL)",
+            name="ck_assessment_programme_policy_state",
+        ),
+        Index(
+            "uq_assessment_programme_policy_active",
+            "code",
+            "medium_id",
+            unique=True,
+            postgresql_where=text("state = 'reviewed'"),
+        ),
+        Index(
+            "ix_assessment_programme_policy_lookup",
+            "programme_exam_configuration_id",
+            "medium_id",
+            "state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    programme_exam_configuration_id: Mapped[UUID] = mapped_column(
+        ForeignKey("exam_configurations.id", ondelete="RESTRICT"), nullable=False
+    )
+    medium_id: Mapped[UUID] = mapped_column(
+        ForeignKey("media.id", ondelete="RESTRICT"), nullable=False
+    )
+    anchor_curriculum_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("curriculum_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    request_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    paper_i_profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    paper_ii_profile_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    paper_i_weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    paper_ii_weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    lock_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    review_snapshot: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    reviewed_by: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AssessmentProgrammePolicyScopeModel(Base):
+    __tablename__ = "assessment_programme_policy_scopes"
+    __table_args__ = (
+        UniqueConstraint(
+            "policy_version_id",
+            "part",
+            "ordinal",
+            name="uq_assessment_programme_policy_scope_ordinal",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_unit_id", "anchor_curriculum_version_id"],
+            ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
+            name="fk_programme_scope_anchor_unit",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_lesson_id", "anchor_unit_id", "anchor_curriculum_version_id"],
+            [
+                "curriculum_lessons.id",
+                "curriculum_lessons.unit_id",
+                "curriculum_lessons.curriculum_version_id",
+            ],
+            name="fk_programme_scope_anchor_lesson",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_competency_id", "anchor_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_anchor_competency",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_skill_id", "anchor_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_anchor_skill",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_sub_skill_id", "anchor_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_anchor_sub_skill",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["anchor_learning_concept_id", "anchor_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_anchor_learning_concept",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_unit_id", "source_curriculum_version_id"],
+            ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
+            name="fk_programme_scope_source_unit",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_lesson_id", "source_unit_id", "source_curriculum_version_id"],
+            [
+                "curriculum_lessons.id",
+                "curriculum_lessons.unit_id",
+                "curriculum_lessons.curriculum_version_id",
+            ],
+            name="fk_programme_scope_source_lesson",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_competency_id", "source_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_source_competency",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_skill_id", "source_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_source_skill",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_sub_skill_id", "source_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_source_sub_skill",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_learning_concept_id", "source_curriculum_version_id"],
+            ["taxonomy_nodes.id", "taxonomy_nodes.curriculum_version_id"],
+            name="fk_programme_scope_source_learning_concept",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("part IN ('paper_i', 'paper_ii')", name="ck_programme_scope_part"),
+        CheckConstraint(
+            "ordinal BETWEEN 1 AND 64",
+            name="ck_programme_scope_ordinal",
+        ),
+        CheckConstraint(
+            "source_grade BETWEEN 1 AND 13",
+            name="ck_programme_scope_grade",
+        ),
+        CheckConstraint(
+            "(anchor_skill_id IS NULL AND anchor_sub_skill_id IS NULL "
+            "AND anchor_learning_concept_id IS NULL) OR "
+            "(anchor_skill_id IS NOT NULL AND anchor_sub_skill_id IS NULL "
+            "AND anchor_learning_concept_id IS NULL) OR "
+            "(anchor_skill_id IS NOT NULL AND anchor_sub_skill_id IS NOT NULL) "
+            "AND (anchor_learning_concept_id IS NULL OR anchor_sub_skill_id IS NOT NULL)",
+            name="ck_programme_scope_anchor_taxonomy_shape",
+        ),
+        CheckConstraint(
+            "(source_skill_id IS NULL AND source_sub_skill_id IS NULL "
+            "AND source_learning_concept_id IS NULL) OR "
+            "(source_skill_id IS NOT NULL AND source_sub_skill_id IS NULL "
+            "AND source_learning_concept_id IS NULL) OR "
+            "(source_skill_id IS NOT NULL AND source_sub_skill_id IS NOT NULL) "
+            "AND (source_learning_concept_id IS NULL OR source_sub_skill_id IS NOT NULL)",
+            name="ck_programme_scope_source_taxonomy_shape",
+        ),
+        CheckConstraint(
+            "(source_unit_id IS NULL AND source_lesson_id IS NULL) OR source_unit_id IS NOT NULL",
+            name="ck_programme_scope_source_learning_shape",
+        ),
+        Index(
+            "ix_assessment_programme_policy_scope_source",
+            "policy_version_id",
+            "part",
+            "source_curriculum_version_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    policy_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assessment_programme_policy_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    part: Mapped[str] = mapped_column(String(16), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    anchor_curriculum_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    anchor_unit_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    anchor_lesson_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    anchor_competency_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    anchor_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    anchor_sub_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    anchor_learning_concept_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_grade: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_exam_configuration_id: Mapped[UUID] = mapped_column(
+        ForeignKey("exam_configurations.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_medium_id: Mapped[UUID] = mapped_column(
+        ForeignKey("media.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_subject_id: Mapped[UUID] = mapped_column(
+        ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_curriculum_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("curriculum_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_competency_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    source_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_sub_skill_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_learning_concept_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class TeacherPaperJobModel(Base):
@@ -330,6 +599,65 @@ class TeacherPaperSlotModel(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TeacherPaperMarkingConfirmationModel(Base):
+    __tablename__ = "teacher_paper_marking_confirmations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["slot_id", "paper_job_id"],
+            ["teacher_paper_slots.id", "teacher_paper_slots.paper_job_id"],
+            name="fk_teacher_paper_marking_confirmations_slot_job",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["candidate_id", "curriculum_version_id"],
+            ["question_candidates.id", "question_candidates.curriculum_version_id"],
+            name="fk_teacher_paper_marking_confirmations_candidate_curriculum",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "slot_id",
+            "candidate_id",
+            "candidate_revision",
+            "marking_fingerprint",
+            name="uq_teacher_paper_marking_confirmation_content",
+        ),
+        CheckConstraint(
+            f"candidate_revision BETWEEN 1 AND {MAX_CANDIDATE_REVISIONS} AND "
+            f"review_candidate_version BETWEEN 3 AND {MAX_CANDIDATE_VERSION}",
+            name="ck_teacher_paper_marking_confirmation_revision",
+        ),
+        CheckConstraint(
+            "marking_fingerprint ~ '^sha256:[0-9a-f]{64}$'",
+            name="ck_teacher_paper_marking_confirmation_fingerprint",
+        ),
+        CheckConstraint(
+            "total_marks BETWEEN 1 AND 100 AND criteria_count BETWEEN 1 AND 64",
+            name="ck_teacher_paper_marking_confirmation_summary",
+        ),
+        Index(
+            "ix_teacher_paper_marking_confirmations_slot",
+            "slot_id",
+            "candidate_id",
+            "candidate_revision",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    paper_job_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    slot_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    curriculum_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    candidate_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    candidate_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_candidate_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    marking_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
+    total_marks: Mapped[int] = mapped_column(Integer, nullable=False)
+    criteria_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    confirmed_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 

@@ -269,6 +269,7 @@ async def approve_teacher_review_question(
             paper_job_id,
             question_id,
             expected_version=request.expected_version,
+            marking_confirmed=request.marking_confirmed,
             note=request.note,
             principal=principal,
         ),

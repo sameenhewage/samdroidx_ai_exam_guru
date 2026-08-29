@@ -56,6 +56,7 @@ from exam_guru_api.documents.schemas import (
     MaterialRemoveRequest,
     MaterialRestoreRequest,
     MaterialScopeCorrectionRequest,
+    MaterialStatus,
     ReviewedTextUpdate,
     SourceDocumentResponse,
     SourcePageResponse,
@@ -148,6 +149,11 @@ async def list_materials(
     settings: Annotated[Settings, Depends(get_settings)],
     grade: Annotated[int | None, Query(ge=1, le=13)] = None,
     subject_id: UUID | None = None,
+    medium_id: UUID | None = None,
+    material_type: SourceDocumentType | None = None,
+    year: Annotated[int | None, Query(ge=1900, le=2100)] = None,
+    status: MaterialStatus | None = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
 ) -> list[MaterialListItemResponse]:
@@ -161,6 +167,11 @@ async def list_materials(
         await service.list_materials(
             grade=grade,
             subject_id=subject_id,
+            medium_id=medium_id,
+            material_type=material_type,
+            year=year,
+            status=status,
+            search=search,
             limit=limit,
             offset=offset,
         )

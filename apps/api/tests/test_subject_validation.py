@@ -324,6 +324,53 @@ def test_trusted_scope_rejects_subject_spoof_and_selected_lesson_leak() -> None:
     assert by_code[SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_LESSON].status is FindingStatus.FAIL
 
 
+def test_programme_authorized_context_may_cross_curriculum_but_not_its_snapshot() -> None:
+    scope = trusted_scope(unit_ids=(UNIT_ID,), lesson_ids=(LESSON_ID,))
+    binding = ContextScopeBinding(
+        context_id="programme-context-01",
+        curriculum_version_id=UUID(int=88_001),
+        subject_id=SCIENCE_SUBJECT_ID,
+        unit_id=UUID(int=88_002),
+        lesson_id=UUID(int=88_003),
+        snapshot_unit_id=UUID(int=88_002),
+        snapshot_lesson_id=UUID(int=88_003),
+        programme_authorized=True,
+    )
+    report = build_default_pipeline().validate(
+        subject_input(
+            candidate(
+                stem="What is 2 + 2?",
+                options=(("A", "3"), ("B", "4"), ("C", "5")),
+                correct_option_id="B",
+            ),
+            scope=scope,
+            context_scope_bindings=(binding,),
+        )
+    )
+
+    assert SubjectFindingCode.SCOPE_CURRICULUM_MISMATCH not in findings_by_code(report)
+    assert SubjectFindingCode.SCOPE_SUBJECT_MISMATCH not in findings_by_code(report)
+    assert SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_UNIT not in findings_by_code(report)
+    assert SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_LESSON not in findings_by_code(report)
+
+    tampered = replace(binding, snapshot_lesson_id=UUID(int=88_004))
+    tampered_report = build_default_pipeline().validate(
+        subject_input(
+            candidate(
+                stem="What is 2 + 2?",
+                options=(("A", "3"), ("B", "4"), ("C", "5")),
+                correct_option_id="B",
+            ),
+            scope=scope,
+            context_scope_bindings=(tampered,),
+        )
+    )
+    assert (
+        findings_by_code(tampered_report)[SubjectFindingCode.SCOPE_OUTSIDE_SELECTED_LESSON].status
+        is FindingStatus.FAIL
+    )
+
+
 def test_unknown_subject_routes_to_explicit_warning_not_universal_pass() -> None:
     scope = trusted_scope(subject_id=SCIENCE_SUBJECT_ID, subject_code="UNREGISTERED_SUBJECT")
     report = build_default_pipeline().validate(

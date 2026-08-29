@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -18,6 +19,7 @@ from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
+from exam_guru_api.retrieval.domain import RetrievalScope, TaxonomyScope
 
 from .models import (
     GenerationAttemptModel,
@@ -63,6 +65,8 @@ class GenerationContextRecord:
     source_active_for_ai: bool = True
     unit_id: UUID | None = None
     lesson_id: UUID | None = None
+    retrieval_scope: RetrievalScope | None = None
+    scope_active: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,26 +227,58 @@ class SqlAlchemyGenerationRepository:
         records: list[GenerationContextRecord] = []
         if knowledge_chunk_ids:
             rows = await self._session.execute(
-                select(KnowledgeChunkModel, SourceDocumentModel)
+                select(
+                    KnowledgeChunkModel,
+                    SourceDocumentModel,
+                    CurriculumVersionModel,
+                    ExamConfigurationModel,
+                    MediumModel,
+                    SubjectModel,
+                )
                 .join(
                     SourceDocumentModel,
                     SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
                 )
+                .join(
+                    CurriculumVersionModel,
+                    CurriculumVersionModel.id == KnowledgeChunkModel.curriculum_version_id,
+                )
+                .join(
+                    ExamConfigurationModel,
+                    ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
+                )
+                .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+                .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
                 .where(KnowledgeChunkModel.id.in_(knowledge_chunk_ids))
             )
-            records.extend(self._chunk_context(chunk, source) for chunk, source in rows.all())
+            records.extend(self._chunk_context(*row) for row in rows.all())
         if historical_question_ids:
             rows = await self._session.execute(
-                select(HistoricalQuestionModel, SourceDocumentModel)
+                select(
+                    HistoricalQuestionModel,
+                    SourceDocumentModel,
+                    CurriculumVersionModel,
+                    ExamConfigurationModel,
+                    MediumModel,
+                    SubjectModel,
+                )
                 .join(
                     SourceDocumentModel,
                     SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
                 )
+                .join(
+                    CurriculumVersionModel,
+                    CurriculumVersionModel.id == HistoricalQuestionModel.curriculum_version_id,
+                )
+                .join(
+                    ExamConfigurationModel,
+                    ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
+                )
+                .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+                .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
                 .where(HistoricalQuestionModel.id.in_(historical_question_ids))
             )
-            records.extend(
-                self._question_context(question, source) for question, source in rows.all()
-            )
+            records.extend(self._question_context(*row) for row in rows.all())
         return tuple(records)
 
     async def store_run(
@@ -575,6 +611,10 @@ class SqlAlchemyGenerationRepository:
     def _chunk_context(
         chunk: KnowledgeChunkModel,
         source: SourceDocumentModel,
+        curriculum: CurriculumVersionModel,
+        exam: ExamConfigurationModel,
+        medium: MediumModel,
+        subject: SubjectModel,
     ) -> GenerationContextRecord:
         return GenerationContextRecord(
             record_kind="knowledge_chunk",
@@ -596,12 +636,32 @@ class SqlAlchemyGenerationRepository:
             lesson_id=chunk.lesson_id,
             page_number=chunk.page_number,
             source_block_id=chunk.source_block_id,
+            retrieval_scope=RetrievalScope(
+                grade=exam.grade,
+                exam_id=exam.id,
+                medium_id=medium.id,
+                subject_id=subject.id,
+                curriculum_version_id=curriculum.id,
+                unit_ids=() if chunk.unit_id is None else (chunk.unit_id,),
+                lesson_ids=() if chunk.lesson_id is None else (chunk.lesson_id,),
+                taxonomy=TaxonomyScope(
+                    competency_id=cast(UUID, chunk.competency_id),
+                    skill_id=chunk.skill_id,
+                    sub_skill_id=chunk.sub_skill_id,
+                    learning_concept_id=chunk.learning_concept_id,
+                ),
+            ),
+            scope_active=curriculum.active and exam.active and medium.active and subject.active,
         )
 
     @staticmethod
     def _question_context(
         question: HistoricalQuestionModel,
         source: SourceDocumentModel,
+        curriculum: CurriculumVersionModel,
+        exam: ExamConfigurationModel,
+        medium: MediumModel,
+        subject: SubjectModel,
     ) -> GenerationContextRecord:
         return GenerationContextRecord(
             record_kind="historical_question",
@@ -623,4 +683,20 @@ class SqlAlchemyGenerationRepository:
             lesson_id=question.lesson_id,
             page_number=question.page_number,
             source_block_id=question.source_block_id,
+            retrieval_scope=RetrievalScope(
+                grade=exam.grade,
+                exam_id=exam.id,
+                medium_id=medium.id,
+                subject_id=subject.id,
+                curriculum_version_id=curriculum.id,
+                unit_ids=() if question.unit_id is None else (question.unit_id,),
+                lesson_ids=() if question.lesson_id is None else (question.lesson_id,),
+                taxonomy=TaxonomyScope(
+                    competency_id=cast(UUID, question.competency_id),
+                    skill_id=question.skill_id,
+                    sub_skill_id=question.sub_skill_id,
+                    learning_concept_id=question.learning_concept_id,
+                ),
+            ),
+            scope_active=curriculum.active and exam.active and medium.active and subject.active,
         )

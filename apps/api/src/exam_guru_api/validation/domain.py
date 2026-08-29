@@ -327,6 +327,7 @@ class ContextScopeBinding:
     lesson_id: UUID | None
     snapshot_unit_id: UUID | None
     snapshot_lesson_id: UUID | None
+    programme_authorized: bool = False
 
     def __post_init__(self) -> None:
         _require_machine_value(self.context_id, "context scope context_id", maximum=256)
@@ -341,6 +342,8 @@ class ContextScopeBinding:
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, UUID):
                 raise ValidationContractError(f"context scope {field_name} must be a UUID or null")
+        if not isinstance(self.programme_authorized, bool):
+            raise ValidationContractError("context scope programme_authorized must be a boolean")
         if self.lesson_id is not None and self.unit_id is None:
             raise ValidationContractError("context lesson_id requires unit_id")
         if self.snapshot_lesson_id is not None and self.snapshot_unit_id is None:

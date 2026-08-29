@@ -83,6 +83,24 @@ def content(label: str, *, stem: str | None = None) -> QuestionContent:
     )
 
 
+@pytest.mark.parametrize(
+    ("marking_point_marks", "message"),
+    [
+        ((True,), "marking_point_marks must be a tuple of integers"),
+        ((1,), "marking point allocations must be positive and sum to total marks"),
+    ],
+)
+def test_question_content_rejects_invalid_marking_point_allocations(
+    marking_point_marks: tuple[int, ...],
+    message: str,
+) -> None:
+    with pytest.raises(CandidateInvariantError, match=message):
+        replace(
+            content("invalid marking allocation"),
+            marking_point_marks=marking_point_marks,
+        )
+
+
 def validation(*, passed: bool = True, run_number: int = 1) -> ValidationEvidence:
     return ValidationEvidence(
         validation_run_id=UUID(int=3_000 + run_number),
@@ -282,21 +300,37 @@ def test_reviewer_edit_cannot_be_approved_against_stale_generated_validation() -
         )
 
 
-def test_reviewer_cannot_change_generated_question_type_or_marks() -> None:
+def test_reviewer_cannot_change_generated_question_type_but_can_override_marking() -> None:
     original = in_review_candidate("slot-a")
 
-    for revised_content in (
-        replace(original.content, question_type="short_answer", options=(), answer="42"),
-        replace(original.content, marks=original.content.marks + 1),
-    ):
-        with pytest.raises(CandidateInvariantError, match=r"question_type|marks"):
-            edit_candidate(
-                original,
-                content=revised_content,
-                reviewer_id=OTHER_REVIEWER_ID,
-                reason="Attempt to change an immutable blueprint requirement.",
-                expected_version=original.version,
-            )
+    with pytest.raises(CandidateInvariantError, match="question_type"):
+        edit_candidate(
+            original,
+            content=replace(
+                original.content,
+                question_type="short_answer",
+                options=(),
+                answer="42",
+            ),
+            reviewer_id=OTHER_REVIEWER_ID,
+            reason="Attempt to change an immutable blueprint requirement.",
+            expected_version=original.version,
+        )
+
+    revised = edit_candidate(
+        original,
+        content=replace(
+            original.content,
+            marks=3,
+            marking_guide=("Awards the supported answer.", "Awards the explanation."),
+            marking_point_marks=(1, 2),
+        ),
+        reviewer_id=OTHER_REVIEWER_ID,
+        reason="Teacher corrected the proposed marking.",
+        expected_version=original.version,
+    )
+    assert revised.content.marks == 3
+    assert revised.content.marking_point_marks == (1, 2)
 
 
 def test_candidate_can_be_rejected_only_from_review_and_requires_reason() -> None:

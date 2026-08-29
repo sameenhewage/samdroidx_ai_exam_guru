@@ -1,6 +1,6 @@
 "use client";
 
-import { createApiClient, type ApiClient, type components } from "@exam-guru/api-client";
+import { createApiClient, type components } from "@exam-guru/api-client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -24,8 +24,6 @@ type PublishedRecord = {
 };
 
 const LIST_LIMIT = 100;
-const MAX_ACTIVE_CURRICULA = 100;
-const MAX_PAPERS = 5_000;
 const primaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2";
 const secondaryButton =
@@ -101,35 +99,6 @@ function ErrorPanel({ action, error }: { action?: ReactNode; error: UiError }) {
   );
 }
 
-type PaperDiscovery = {
-  capped: boolean;
-  failure?: ApiOutcome;
-  papers: Paper[];
-};
-
-async function discoverPapers(
-  api: ApiClient,
-  curriculumId: string,
-  maximumRecords: number,
-): Promise<PaperDiscovery> {
-  const papers: Paper[] = [];
-  for (let offset = 0; offset < maximumRecords; ) {
-    const limit = Math.min(LIST_LIMIT, maximumRecords - offset);
-    const outcome = await api.GET("/api/v1/admin/curricula/{curriculum_version_id}/papers", {
-      params: {
-        path: { curriculum_version_id: curriculumId },
-        query: { limit, offset },
-      },
-    });
-    if (outcome.error !== undefined) return { capped: false, failure: outcome, papers };
-    const batch = outcome.data ?? [];
-    papers.push(...batch);
-    if (batch.length < limit) return { capped: false, papers };
-    offset += limit;
-  }
-  return { capped: true, papers };
-}
-
 export function PublishedPapersLibrary({ role }: { role: Role }) {
   const api = useMemo(
     () => createApiClient(globalThis.location?.origin ?? "http://localhost"),
@@ -138,16 +107,16 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
   const [records, setRecords] = useState<PublishedRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<UiError | null>(null);
-  const [partialWarning, setPartialWarning] = useState("");
-  const [capped, setCapped] = useState(false);
+  const [activeCurricula, setActiveCurricula] = useState<Curriculum[]>([]);
+  const [selectedCurriculumId, setSelectedCurriculumId] = useState("");
+  const [paperOffset, setPaperOffset] = useState(0);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const requestId = useRef(0);
 
   const load = useCallback(async () => {
     const currentRequest = ++requestId.current;
     setLoading(true);
     setError(null);
-    setPartialWarning("");
-    setCapped(false);
     try {
       const workspace = await Promise.all([
         api.GET("/api/v1/admin/exam-configurations"),
@@ -174,62 +143,58 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
         const subject = subjectsById.get(curriculum.subject_id);
         return curriculum.active && exam?.active && medium?.active && subject?.active;
       });
-      const boundedCurricula = active.slice(0, MAX_ACTIVE_CURRICULA);
-      const nextRecords: PublishedRecord[] = [];
-      let failedCurricula = 0;
-      let firstPaperFailure: ApiOutcome | undefined;
-      let paperLimitReached = active.length > boundedCurricula.length;
-      for (const curriculum of boundedCurricula) {
-        if (currentRequest !== requestId.current) return;
-        const remaining = MAX_PAPERS - nextRecords.length;
-        if (remaining <= 0) {
-          paperLimitReached = true;
-          break;
-        }
-        const discovery = await discoverPapers(api, curriculum.id, remaining);
-        if (discovery.failure?.error !== undefined) {
-          failedCurricula += 1;
-          firstPaperFailure ??= discovery.failure;
-          continue;
-        }
-        paperLimitReached ||= discovery.capped;
-        for (const paper of discovery.papers) {
-          if (paper.curriculum_version_id !== curriculum.id) continue;
-          nextRecords.push({
-            curriculum,
-            exam: examsById.get(curriculum.exam_configuration_id),
-            medium: mediaById.get(curriculum.medium_id),
-            paper,
-            subject: subjectsById.get(curriculum.subject_id),
-          });
-        }
+      setActiveCurricula(active);
+      const search = new URLSearchParams(globalThis.location?.search ?? "");
+      const requestedCurriculum = search.get("curriculum");
+      const curriculum =
+        active.find((item) => item.id === selectedCurriculumId) ??
+        active.find((item) => item.id === requestedCurriculum) ??
+        active[0];
+      if (!curriculum) {
+        setRecords([]);
+        setHasNextPage(false);
+        return;
       }
+      if (selectedCurriculumId !== curriculum.id) setSelectedCurriculumId(curriculum.id);
+      const paperOutcome = await api.GET(
+        "/api/v1/admin/curricula/{curriculum_version_id}/papers",
+        {
+          params: {
+            path: { curriculum_version_id: curriculum.id },
+            query: { limit: LIST_LIMIT, offset: paperOffset },
+          },
+        },
+      );
       if (currentRequest !== requestId.current) return;
-      setCapped(paperLimitReached || nextRecords.length >= MAX_PAPERS);
-      if (failedCurricula === boundedCurricula.length && boundedCurricula.length) {
-        if (firstPaperFailure?.error !== undefined) {
-          setError(libraryError(firstPaperFailure.error, firstPaperFailure.response));
-          return;
-        }
+      if (paperOutcome.error !== undefined) {
+        setError(libraryError(paperOutcome.error, paperOutcome.response));
+        return;
       }
-      if (failedCurricula) {
-        setPartialWarning(
-          `${failedCurricula} curriculum ${failedCurricula === 1 ? "library" : "libraries"} could not be loaded. The papers shown below are authoritative, but the list may be incomplete.`,
-        );
-      }
-      const requestedPaper = new URLSearchParams(globalThis.location?.search ?? "").get("paper");
-      nextRecords.sort((left, right) => {
-        if (requestedPaper && left.paper.id === requestedPaper) return -1;
-        if (requestedPaper && right.paper.id === requestedPaper) return 1;
-        return right.paper.updated_at.localeCompare(left.paper.updated_at);
+      const requestedPaper = search.get("paper");
+      const papers = (paperOutcome.data ?? []).filter(
+        (paper) => paper.curriculum_version_id === curriculum.id,
+      );
+      papers.sort((left, right) => {
+        if (requestedPaper && left.id === requestedPaper) return -1;
+        if (requestedPaper && right.id === requestedPaper) return 1;
+        return right.updated_at.localeCompare(left.updated_at);
       });
-      setRecords(nextRecords);
+      setHasNextPage(papers.length === LIST_LIMIT);
+      setRecords(
+        papers.map((paper) => ({
+          curriculum,
+          exam: examsById.get(curriculum.exam_configuration_id),
+          medium: mediaById.get(curriculum.medium_id),
+          paper,
+          subject: subjectsById.get(curriculum.subject_id),
+        })),
+      );
     } catch {
       if (currentRequest === requestId.current) setError(networkError());
     } finally {
       if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [api]);
+  }, [api, paperOffset, selectedCurriculumId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void load(), 0);
@@ -281,7 +246,7 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
             <div>
               <h2 className="text-xl font-semibold">Published paper library</h2>
               <p className="mt-1 text-sm text-slate-600">
-                {records.length} publication-stage {records.length === 1 ? "paper" : "papers"}
+                {records.length} publication-stage {records.length === 1 ? "paper" : "papers"} on this page
               </p>
             </div>
             <Link className={secondaryButton} href="/admin/review-approve" prefetch={false}>
@@ -289,15 +254,24 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
             </Link>
           </header>
 
-          {partialWarning ? (
-            <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" role="status">
-              {partialWarning}
-            </p>
-          ) : null}
-          {capped ? (
-            <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" role="status">
-              The curriculum search reached its safe display limit. Use Advanced Paper Studio for a narrower technical search.
-            </p>
+          {activeCurricula.length ? (
+            <label className="mt-4 grid max-w-xl gap-1.5 text-sm font-semibold text-slate-800">
+              Curriculum
+              <select
+                className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-950 outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-200"
+                onChange={(event) => {
+                  setPaperOffset(0);
+                  setSelectedCurriculumId(event.target.value);
+                }}
+                value={selectedCurriculumId || activeCurricula[0]?.id}
+              >
+                {activeCurricula.map((curriculum) => (
+                  <option key={curriculum.id} value={curriculum.id}>
+                    {safeText(curriculum.title)}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
 
           {records.length ? (
@@ -372,6 +346,13 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
                       ))}
                     </dl>
                   </details>
+                  <Link
+                    className={`${secondaryButton} mt-4`}
+                    href={`/admin/papers?curriculum=${curriculum.id}&paper=${paper.id}`}
+                    prefetch={false}
+                  >
+                    Open paper
+                  </Link>
                 </article>
               ))}
             </div>
@@ -386,6 +367,33 @@ export function PublishedPapersLibrary({ role }: { role: Role }) {
               </Link>
             </div>
           )}
+
+          {(records.length > 0 || paperOffset > 0) && activeCurricula.length ? (
+            <nav
+              aria-label="Published paper pages"
+              className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4"
+            >
+              <button
+                className={secondaryButton}
+                disabled={paperOffset === 0}
+                onClick={() => setPaperOffset((current) => Math.max(0, current - LIST_LIMIT))}
+                type="button"
+              >
+                Previous page
+              </button>
+              <p className="text-sm font-semibold text-slate-700">
+                Page {Math.floor(paperOffset / LIST_LIMIT) + 1}
+              </p>
+              <button
+                className={secondaryButton}
+                disabled={!hasNextPage}
+                onClick={() => setPaperOffset((current) => current + LIST_LIMIT)}
+                type="button"
+              >
+                Next page
+              </button>
+            </nav>
+          ) : null}
         </section>
       )}
 

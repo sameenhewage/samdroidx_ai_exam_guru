@@ -2,7 +2,7 @@
 
 import { createApiClient, type components, type paths } from "@exam-guru/api-client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
@@ -337,6 +337,7 @@ export function ExtractionReviewStudio({
   const [document, setDocument] = useState<SourceDocument | null>(null);
   const [pages, setPages] = useState<SourcePage[]>([]);
   const [blocks, setBlocks] = useState<Record<number, ExtractedBlock[]>>({});
+  const blockRequestsInFlight = useRef(new Set<number>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -363,44 +364,11 @@ export function ExtractionReviewStudio({
         return;
       }
       const nextPages = pagesResult.data ?? [];
-      const blockResults = await Promise.all(
-        nextPages.map((page) =>
-          api.GET(
-            "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks",
-            { params: { path: { document_id: documentId, page_number: page.page_number } } },
-          ),
-        ),
-      );
-      const blockError = blockResults.find((result) => result.error)?.error;
-      const hasInvalidBoundingBox = blockResults.some((result) =>
-        result.data?.some(
-          (block) =>
-            block.bbox !== null &&
-            (block.bbox.length !== 4 ||
-              block.bbox.some(
-                (coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate),
-              )),
-        ),
-      );
-      if (blockError || hasInvalidBoundingBox) {
-        setError(blockError ? errorCode(blockError) : "invalid_extracted_block_response");
-      } else {
-        const nextBlocks: Record<number, ExtractedBlock[]> = {};
-        nextPages.forEach((page, index) => {
-          nextBlocks[page.page_number] = (blockResults[index]?.data ?? []).map(
-            (block): ExtractedBlock => ({
-              ...block,
-              bbox:
-                block.bbox === null
-                  ? null
-                  : [block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]],
-            }),
-          );
-        });
-        setDocument(current);
-        setPages(nextPages);
-        setBlocks(nextBlocks);
-      }
+      setDocument(current);
+      setPages(nextPages);
+      setBlocks({});
+      blockRequestsInFlight.current.clear();
+      setSelectedPageIndex((index) => Math.min(index, Math.max(0, nextPages.length - 1)));
     } catch {
       setError("network_error");
     } finally {
@@ -408,10 +376,72 @@ export function ExtractionReviewStudio({
     }
   }, [api, documentId]);
 
+  const loadBlocks = useCallback(
+    async (pageNumber: number) => {
+      if (blockRequestsInFlight.current.has(pageNumber)) return;
+      blockRequestsInFlight.current.add(pageNumber);
+      try {
+        const result = await api.GET(
+          "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks",
+          { params: { path: { document_id: documentId, page_number: pageNumber } } },
+        );
+        if (result.error) {
+          setError(errorCode(result.error));
+          return;
+        }
+        const pageBlocks = result.data ?? [];
+        if (
+          pageBlocks.some(
+            (block) =>
+              block.bbox !== null &&
+              (block.bbox.length !== 4 ||
+                block.bbox.some(
+                  (coordinate) =>
+                    typeof coordinate !== "number" || !Number.isFinite(coordinate),
+                )),
+          )
+        ) {
+          setError("invalid_extracted_block_response");
+          return;
+        }
+        setBlocks((current) => ({
+          ...current,
+          [pageNumber]: pageBlocks.map(
+            (block): ExtractedBlock => ({
+              ...block,
+              bbox:
+                block.bbox === null
+                  ? null
+                  : [block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]],
+            }),
+          ),
+        }));
+      } catch {
+        setError("network_error");
+      } finally {
+        blockRequestsInFlight.current.delete(pageNumber);
+      }
+    },
+    [api, documentId],
+  );
+
   useEffect(() => {
     const timeout = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timeout);
   }, [load]);
+
+  useEffect(() => {
+    const pageNumber = pages[selectedPageIndex]?.page_number;
+    if (
+      experience !== "materials" ||
+      pageNumber === undefined ||
+      Object.hasOwn(blocks, pageNumber)
+    ) {
+      return;
+    }
+    const timeout = window.setTimeout(() => void loadBlocks(pageNumber), 0);
+    return () => window.clearTimeout(timeout);
+  }, [blocks, experience, loadBlocks, pages, selectedPageIndex]);
 
   async function beginReview() {
     const result = await api.POST("/api/v1/admin/source-documents/{document_id}/review", {
@@ -910,9 +940,23 @@ export function ExtractionReviewStudio({
                 </section>
               </div>
 
-              <details className="mt-4">
+              <details
+                className="mt-4"
+                onToggle={(event) => {
+                  if (
+                    event.currentTarget.open &&
+                    !Object.hasOwn(blocks, page.page_number)
+                  ) {
+                    void loadBlocks(page.page_number);
+                  }
+                }}
+              >
                 <summary className="cursor-pointer text-sm font-semibold">
-                  Block provenance ({pageBlocks.length})
+                  Block provenance (
+                  {Object.hasOwn(blocks, page.page_number)
+                    ? pageBlocks.length
+                    : "load on open"}
+                  )
                 </summary>
                 {pageBlocks.length ? (
                   <ol className="mt-3 grid gap-3">

@@ -38,7 +38,7 @@ from exam_guru_api.knowledge.models import (
     KnowledgeEmbeddingModel,
 )
 from exam_guru_api.retrieval.context import ContextLimits, ContextTrust
-from exam_guru_api.retrieval.domain import RetrievalScope, TaxonomyScope
+from exam_guru_api.retrieval.domain import RetrievalScope, RetrievalScopeSet, TaxonomyScope
 from exam_guru_api.retrieval.evaluation import (
     RelevanceJudgment,
     RetrievalEvalCase,
@@ -144,6 +144,20 @@ async def seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ...]:
         competency_id=UUID(int=740_005),
         subject_id=UUID(int=745_005),
     )
+    supporting_grade3 = ScopeSeed(
+        grade=3,
+        exam_id=UUID(int=710_006),
+        medium_id=allowed.medium_id,
+        curriculum_id=UUID(int=730_006),
+        competency_id=UUID(int=740_006),
+    )
+    supporting_grade4 = ScopeSeed(
+        grade=4,
+        exam_id=UUID(int=710_007),
+        medium_id=allowed.medium_id,
+        curriculum_id=UUID(int=730_007),
+        competency_id=UUID(int=740_007),
+    )
 
     session.add_all(
         [
@@ -169,6 +183,24 @@ async def seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ...]:
                 code="G6ADV",
                 name="Adversarial cross-grade fixture",
                 grade=6,
+                active=True,
+                created_by=ACTOR_ID,
+                updated_by=ACTOR_ID,
+            ),
+            ExamConfigurationModel(
+                id=supporting_grade3.exam_id,
+                code="G3SUP",
+                name="Grade 3 Scholarship supporting scope",
+                grade=3,
+                active=True,
+                created_by=ACTOR_ID,
+                updated_by=ACTOR_ID,
+            ),
+            ExamConfigurationModel(
+                id=supporting_grade4.exam_id,
+                code="G4SUP",
+                name="Grade 4 Scholarship supporting scope",
+                grade=4,
                 active=True,
                 created_by=ACTOR_ID,
                 updated_by=ACTOR_ID,
@@ -207,6 +239,8 @@ async def seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ...]:
         forbidden_medium,
         forbidden_curriculum,
         forbidden_subject,
+        supporting_grade3,
+        supporting_grade4,
     )
     session.add_all(
         [
@@ -459,6 +493,8 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 forbidden_medium,
                 forbidden_curriculum,
                 forbidden_subject,
+                supporting_grade3,
+                supporting_grade4,
             ) = await seed_scope_entities(session)
             session.add(
                 EmbeddingConfigurationModel.from_domain(
@@ -546,6 +582,22 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 embedding=(0.80, 0.20, 0.0),
                 unit_id=selected_unit_id,
                 lesson_id=selected_lesson_ids[2],
+            )
+            await seed_chunk(
+                session,
+                scope=supporting_grade3,
+                offset=31,
+                chunk_id=UUID(int=790_101),
+                chunk_text="Grade 3 reviewed square perimeter foundation.",
+                embedding=(0.85, 0.15, 0.0),
+            )
+            await seed_chunk(
+                session,
+                scope=supporting_grade4,
+                offset=32,
+                chunk_id=UUID(int=790_102),
+                chunk_text="Grade 4 reviewed square perimeter application.",
+                embedding=(0.82, 0.18, 0.0),
             )
             stronger_text = " ".join(["square perimeter"] * 20)
             await seed_chunk(
@@ -708,6 +760,65 @@ def test_real_postgres_hybrid_retrieval_records_baseline_without_scope_leakage(
                 item for item in result.context.items if item.text == PROMPT_INJECTION_TEXT
             )
             assert injected_item.trust is ContextTrust.UNTRUSTED_SOURCE_DATA
+
+            programme_filters = RetrievalScopeSet(
+                policy_version="grade5-scholarship-paper-ii.v1",
+                scopes=(
+                    RetrievalScope(
+                        grade=3,
+                        exam_id=supporting_grade3.exam_id,
+                        medium_id=supporting_grade3.medium_id,
+                        subject_id=supporting_grade3.subject_id,
+                        curriculum_version_id=supporting_grade3.curriculum_id,
+                        taxonomy=TaxonomyScope(competency_id=supporting_grade3.competency_id),
+                    ),
+                    RetrievalScope(
+                        grade=4,
+                        exam_id=supporting_grade4.exam_id,
+                        medium_id=supporting_grade4.medium_id,
+                        subject_id=supporting_grade4.subject_id,
+                        curriculum_version_id=supporting_grade4.curriculum_id,
+                        taxonomy=TaxonomyScope(competency_id=supporting_grade4.competency_id),
+                    ),
+                    filters,
+                ),
+            )
+            programme_channels = await repository.retrieve_candidates(
+                query="square perimeter",
+                query_vector=QUERY_VECTOR,
+                filters=programme_filters,
+            )
+            programme_result = await HybridRetrievalService(
+                repository,
+                fusion_config=FusionConfig(
+                    limit=5,
+                    rank_constant=60,
+                    max_candidates_per_channel=10,
+                ),
+                context_limits=ContextLimits(
+                    max_items=5,
+                    max_total_characters=2_000,
+                    max_item_characters=500,
+                ),
+            ).retrieve(
+                query="square perimeter",
+                query_vector=QUERY_VECTOR,
+                filters=programme_filters,
+            )
+            supporting_ids = {UUID(int=790_101), UUID(int=790_102)}
+            assert supporting_ids <= {
+                candidate.record.chunk_id for candidate in programme_channels.lexical_candidates
+            }
+            assert supporting_ids <= {
+                candidate.record.chunk_id for candidate in programme_channels.vector_candidates
+            }
+            assert {
+                candidate.record.scope.grade for candidate in programme_result.ranked_candidates
+            } == {3, 4, 5}
+            assert (
+                not {candidate.record.chunk_id for candidate in programme_result.ranked_candidates}
+                & forbidden_ids
+            )
 
             lexical_scores, vector_scores = await raw_channel_scores(
                 session,

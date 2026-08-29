@@ -9,7 +9,12 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope
+from exam_guru_api.retrieval.domain import (
+    RetrievalContractError,
+    RetrievalFilters,
+    RetrievalScope,
+    RetrievalScopeSet,
+)
 from exam_guru_api.retrieval.fusion import FusedCandidate
 
 MAX_EVALUATION_K = 100
@@ -152,7 +157,7 @@ class RetrievalEvalCase:
 
     name: str
     query: str
-    filters: RetrievalScope
+    filters: RetrievalFilters
     judgments: tuple[RelevanceJudgment, ...]
     forbidden_chunk_ids: frozenset[UUID] = frozenset()
 
@@ -166,8 +171,10 @@ class RetrievalEvalCase:
             raise RetrievalContractError("eval case name must be non-blank and bounded")
         if not isinstance(self.query, str) or not self.query.strip() or len(self.query) > 4_096:
             raise RetrievalContractError("eval query must be non-blank and bounded")
-        if not isinstance(self.filters, RetrievalScope):
-            raise RetrievalContractError("eval filters must be a RetrievalScope")
+        if not isinstance(self.filters, (RetrievalScope, RetrievalScopeSet)):
+            raise RetrievalContractError(
+                "eval filters must be a RetrievalScope or RetrievalScopeSet"
+            )
         if not isinstance(self.judgments, tuple) or any(
             not isinstance(judgment, RelevanceJudgment) for judgment in self.judgments
         ):
@@ -243,7 +250,7 @@ def _validate_ranked_candidates(
 def leakage_rate(
     ranked_candidates: tuple[FusedCandidate, ...],
     *,
-    filters: RetrievalScope,
+    filters: RetrievalFilters,
     forbidden_chunk_ids: frozenset[UUID] = frozenset(),
     k: int,
 ) -> float:
@@ -251,8 +258,10 @@ def leakage_rate(
 
     valid_k = _validate_k(k)
     ranked = _validate_ranked_candidates(ranked_candidates)
-    if not isinstance(filters, RetrievalScope):
-        raise RetrievalContractError("leakage filters must be a RetrievalScope")
+    if not isinstance(filters, (RetrievalScope, RetrievalScopeSet)):
+        raise RetrievalContractError(
+            "leakage filters must be a RetrievalScope or RetrievalScopeSet"
+        )
     forbidden = _relevant_ids(forbidden_chunk_ids)
     top_ranked = ranked[:valid_k]
     if not top_ranked:

@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import Select, and_, func, or_, select, update
@@ -22,7 +22,15 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
     TaxonomyNodeModel,
 )
+from exam_guru_api.documents.domain import ExtractionStatus
+from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.generation.models import GenerationJobModel, GenerationRunModel
+from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.knowledge.models import (
+    HistoricalQuestionModel,
+    KnowledgeChunkModel,
+    KnowledgeEmbeddingModel,
+)
 from exam_guru_api.papers.models import QuestionCandidateModel, QuestionCandidateRevisionModel
 from exam_guru_api.teacher_papers.domain import (
     ResolvedCurriculum,
@@ -30,7 +38,10 @@ from exam_guru_api.teacher_papers.domain import (
     ResolvedTaxonomyTarget,
 )
 from exam_guru_api.teacher_papers.models import (
+    AssessmentProgrammePolicyScopeModel,
+    AssessmentProgrammePolicyVersionModel,
     TeacherPaperJobModel,
+    TeacherPaperMarkingConfirmationModel,
     TeacherPaperSlotModel,
     TeacherPaperSlotRunModel,
 )
@@ -42,6 +53,10 @@ class TeacherPaperJobNotFoundError(LookupError):
 
 
 class TeacherPaperQuestionNotFoundError(LookupError):
+    pass
+
+
+class ProgrammePolicyNotFoundError(LookupError):
     pass
 
 
@@ -67,12 +82,19 @@ class ReviewSlotSource:
     generation: GenerationRunModel
     validation: ValidationRunModel | None
     candidate: QuestionCandidateModel | None
+    marking_confirmation: TeacherPaperMarkingConfirmationModel | None
     content: dict[str, object]
     findings: tuple[ValidationFindingModel, ...]
     filenames: dict[UUID, str]
     unit_title: str
     lesson_title: str
     taxonomy_title: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredProgrammePolicy:
+    policy: AssessmentProgrammePolicyVersionModel
+    scopes: tuple[AssessmentProgrammePolicyScopeModel, ...]
 
 
 class TeacherPaperRepository:
@@ -83,6 +105,228 @@ class TeacherPaperRepository:
     def session(self) -> AsyncSession:
         return self._session
 
+    async def curriculum_identities(
+        self,
+        curriculum_ids: tuple[UUID, ...],
+    ) -> dict[UUID, tuple[int, UUID, UUID, UUID]]:
+        if not curriculum_ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    CurriculumVersionModel.id,
+                    ExamConfigurationModel.grade,
+                    ExamConfigurationModel.id,
+                    MediumModel.id,
+                    SubjectModel.id,
+                )
+                .join(
+                    ExamConfigurationModel,
+                    ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
+                )
+                .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
+                .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+                .where(
+                    CurriculumVersionModel.id.in_(curriculum_ids),
+                    CurriculumVersionModel.active.is_(True),
+                    ExamConfigurationModel.active.is_(True),
+                    MediumModel.active.is_(True),
+                    SubjectModel.active.is_(True),
+                )
+            )
+        ).all()
+        return {
+            curriculum_id: (grade, exam_id, medium_id, subject_id)
+            for curriculum_id, grade, exam_id, medium_id, subject_id in rows
+        }
+
+    async def insert_programme_policy(
+        self,
+        policy: AssessmentProgrammePolicyVersionModel,
+        scopes: tuple[AssessmentProgrammePolicyScopeModel, ...],
+    ) -> StoredProgrammePolicy:
+        self._session.add(policy)
+        await self._session.flush()
+        self._session.add_all(scopes)
+        await self._session.flush()
+        return StoredProgrammePolicy(policy=policy, scopes=scopes)
+
+    async def find_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> StoredProgrammePolicy | None:
+        statement = select(AssessmentProgrammePolicyVersionModel).where(
+            AssessmentProgrammePolicyVersionModel.id == policy_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        policy = await self._session.scalar(statement.execution_options(populate_existing=True))
+        if policy is None:
+            return None
+        scopes = tuple(
+            await self._session.scalars(
+                select(AssessmentProgrammePolicyScopeModel)
+                .where(AssessmentProgrammePolicyScopeModel.policy_version_id == policy_id)
+                .order_by(
+                    AssessmentProgrammePolicyScopeModel.part,
+                    AssessmentProgrammePolicyScopeModel.ordinal,
+                    AssessmentProgrammePolicyScopeModel.id,
+                )
+            )
+        )
+        return StoredProgrammePolicy(policy=policy, scopes=scopes)
+
+    async def get_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> StoredProgrammePolicy:
+        stored = await self.find_programme_policy(policy_id, for_update=for_update)
+        if stored is None:
+            raise ProgrammePolicyNotFoundError(policy_id)
+        return stored
+
+    async def unavailable_programme_policy_scopes(
+        self,
+        scopes: tuple[AssessmentProgrammePolicyScopeModel, ...],
+    ) -> tuple[UUID, ...]:
+        unavailable: list[UUID] = []
+        for scope in scopes:
+            chunk_conditions: list[Any] = [
+                KnowledgeChunkModel.curriculum_version_id == scope.source_curriculum_version_id,
+                KnowledgeChunkModel.review_state == ReviewState.REVIEWED,
+                KnowledgeChunkModel.competency_id == scope.source_competency_id,
+                KnowledgeChunkModel.skill_id.is_(scope.source_skill_id)
+                if scope.source_skill_id is None
+                else KnowledgeChunkModel.skill_id == scope.source_skill_id,
+                KnowledgeChunkModel.sub_skill_id.is_(scope.source_sub_skill_id)
+                if scope.source_sub_skill_id is None
+                else KnowledgeChunkModel.sub_skill_id == scope.source_sub_skill_id,
+                KnowledgeChunkModel.learning_concept_id.is_(scope.source_learning_concept_id)
+                if scope.source_learning_concept_id is None
+                else KnowledgeChunkModel.learning_concept_id == scope.source_learning_concept_id,
+                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
+                SourceDocumentModel.active_for_ai.is_(True),
+                KnowledgeEmbeddingModel.knowledge_chunk_id == KnowledgeChunkModel.id,
+            ]
+            question_conditions: list[Any] = [
+                HistoricalQuestionModel.curriculum_version_id == scope.source_curriculum_version_id,
+                HistoricalQuestionModel.review_state == ReviewState.REVIEWED,
+                HistoricalQuestionModel.competency_id == scope.source_competency_id,
+                HistoricalQuestionModel.skill_id.is_(scope.source_skill_id)
+                if scope.source_skill_id is None
+                else HistoricalQuestionModel.skill_id == scope.source_skill_id,
+                HistoricalQuestionModel.sub_skill_id.is_(scope.source_sub_skill_id)
+                if scope.source_sub_skill_id is None
+                else HistoricalQuestionModel.sub_skill_id == scope.source_sub_skill_id,
+                HistoricalQuestionModel.learning_concept_id.is_(scope.source_learning_concept_id)
+                if scope.source_learning_concept_id is None
+                else HistoricalQuestionModel.learning_concept_id
+                == scope.source_learning_concept_id,
+                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
+                SourceDocumentModel.active_for_ai.is_(True),
+                KnowledgeEmbeddingModel.historical_question_id == HistoricalQuestionModel.id,
+            ]
+            if scope.source_unit_id is not None:
+                chunk_conditions.append(KnowledgeChunkModel.unit_id == scope.source_unit_id)
+                question_conditions.append(HistoricalQuestionModel.unit_id == scope.source_unit_id)
+            if scope.source_lesson_id is not None:
+                chunk_conditions.append(KnowledgeChunkModel.lesson_id == scope.source_lesson_id)
+                question_conditions.append(
+                    HistoricalQuestionModel.lesson_id == scope.source_lesson_id
+                )
+            chunk_available = await self._session.scalar(
+                select(func.count(KnowledgeChunkModel.id) > 0)
+                .select_from(KnowledgeChunkModel)
+                .join(
+                    SourceDocumentModel,
+                    SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
+                )
+                .join(
+                    KnowledgeEmbeddingModel,
+                    KnowledgeEmbeddingModel.knowledge_chunk_id == KnowledgeChunkModel.id,
+                )
+                .where(*chunk_conditions)
+            )
+            question_available = await self._session.scalar(
+                select(func.count(HistoricalQuestionModel.id) > 0)
+                .select_from(HistoricalQuestionModel)
+                .join(
+                    SourceDocumentModel,
+                    SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
+                )
+                .join(
+                    KnowledgeEmbeddingModel,
+                    KnowledgeEmbeddingModel.historical_question_id == HistoricalQuestionModel.id,
+                )
+                .where(*question_conditions)
+            )
+            if not chunk_available and not question_available:
+                unavailable.append(scope.id)
+        return tuple(unavailable)
+
+    async def active_programme_policy(
+        self,
+        *,
+        code: str,
+        grade: int,
+        medium: str,
+    ) -> StoredProgrammePolicy | None:
+        policy_id = await self._session.scalar(
+            select(AssessmentProgrammePolicyVersionModel.id)
+            .join(
+                ExamConfigurationModel,
+                ExamConfigurationModel.id
+                == AssessmentProgrammePolicyVersionModel.programme_exam_configuration_id,
+            )
+            .join(
+                MediumModel,
+                MediumModel.id == AssessmentProgrammePolicyVersionModel.medium_id,
+            )
+            .where(
+                AssessmentProgrammePolicyVersionModel.state == "reviewed",
+                func.upper(AssessmentProgrammePolicyVersionModel.code) == code.upper(),
+                ExamConfigurationModel.grade == grade,
+                ExamConfigurationModel.active.is_(True),
+                func.lower(MediumModel.code) == medium.lower(),
+                MediumModel.active.is_(True),
+            )
+        )
+        if policy_id is None:
+            return None
+        return await self.get_programme_policy(policy_id)
+
+    async def review_programme_policy(
+        self,
+        policy_id: UUID,
+        *,
+        expected_version: int,
+        snapshot: dict[str, object],
+        content_hash: str,
+        reviewed_by: UUID,
+        reviewed_at: datetime,
+    ) -> AssessmentProgrammePolicyVersionModel | None:
+        return await self._session.scalar(
+            update(AssessmentProgrammePolicyVersionModel)
+            .where(
+                AssessmentProgrammePolicyVersionModel.id == policy_id,
+                AssessmentProgrammePolicyVersionModel.state == "draft",
+                AssessmentProgrammePolicyVersionModel.lock_version == expected_version,
+            )
+            .values(
+                state="reviewed",
+                lock_version=AssessmentProgrammePolicyVersionModel.lock_version + 1,
+                review_snapshot=snapshot,
+                content_hash=content_hash,
+                reviewed_by=reviewed_by,
+                reviewed_at=reviewed_at,
+            )
+            .returning(AssessmentProgrammePolicyVersionModel)
+        )
+
     async def list_curricula(
         self,
         *,
@@ -90,6 +334,7 @@ class TeacherPaperRepository:
         medium: str | None = None,
         subject: str | None = None,
         assessment_programme: str | None = None,
+        curriculum_id: UUID | None = None,
     ) -> tuple[ResolvedCurriculum, ...]:
         statement = (
             select(
@@ -119,6 +364,8 @@ class TeacherPaperRepository:
                 CurriculumVersionModel.id,
             )
         )
+        if curriculum_id is not None:
+            statement = statement.where(CurriculumVersionModel.id == curriculum_id)
         if grade is not None:
             statement = statement.where(ExamConfigurationModel.grade == grade)
         if medium is not None:
@@ -254,16 +501,26 @@ class TeacherPaperRepository:
         job = await self._session.scalar(statement.execution_options(populate_existing=True))
         if job is None:
             raise TeacherPaperJobNotFoundError(job_id)
-        return StoredTeacherPaper(job=job, slots=await self.list_slots(job_id))
+        return StoredTeacherPaper(
+            job=job,
+            slots=await self.list_slots(job_id, for_update=for_update),
+        )
 
-    async def list_slots(self, job_id: UUID) -> tuple[TeacherPaperSlotModel, ...]:
+    async def list_slots(
+        self,
+        job_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> tuple[TeacherPaperSlotModel, ...]:
+        statement = (
+            select(TeacherPaperSlotModel)
+            .where(TeacherPaperSlotModel.paper_job_id == job_id)
+            .order_by(TeacherPaperSlotModel.ordinal)
+        )
+        if for_update:
+            statement = statement.with_for_update()
         return tuple(
-            await self._session.scalars(
-                select(TeacherPaperSlotModel)
-                .where(TeacherPaperSlotModel.paper_job_id == job_id)
-                .order_by(TeacherPaperSlotModel.ordinal)
-                .execution_options(populate_existing=True)
-            )
+            await self._session.scalars(statement.execution_options(populate_existing=True))
         )
 
     async def find_slot(
@@ -492,6 +749,56 @@ class TeacherPaperRepository:
             )
         )
 
+    async def confirm_marking(
+        self,
+        values: Mapping[str, object],
+    ) -> tuple[TeacherPaperMarkingConfirmationModel, bool]:
+        statement = (
+            insert(TeacherPaperMarkingConfirmationModel)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="uq_teacher_paper_marking_confirmation_content")
+            .returning(TeacherPaperMarkingConfirmationModel)
+        )
+        created = await self._session.scalar(statement)
+        if created is not None:
+            return created, True
+        existing = await self._session.scalar(
+            select(TeacherPaperMarkingConfirmationModel).where(
+                TeacherPaperMarkingConfirmationModel.slot_id == values["slot_id"],
+                TeacherPaperMarkingConfirmationModel.candidate_id == values["candidate_id"],
+                TeacherPaperMarkingConfirmationModel.candidate_revision
+                == values["candidate_revision"],
+                TeacherPaperMarkingConfirmationModel.marking_fingerprint
+                == values["marking_fingerprint"],
+            )
+        )
+        if existing is None:
+            raise TeacherPaperPersistenceConflictError(
+                "teacher marking confirmation insert conflicted"
+            )
+        return existing, False
+
+    async def marking_confirmation(
+        self,
+        *,
+        slot_id: UUID,
+        candidate_id: UUID,
+        candidate_revision: int,
+    ) -> TeacherPaperMarkingConfirmationModel | None:
+        return cast(
+            TeacherPaperMarkingConfirmationModel | None,
+            await self._session.scalar(
+                select(TeacherPaperMarkingConfirmationModel)
+                .where(
+                    TeacherPaperMarkingConfirmationModel.slot_id == slot_id,
+                    TeacherPaperMarkingConfirmationModel.candidate_id == candidate_id,
+                    TeacherPaperMarkingConfirmationModel.candidate_revision == candidate_revision,
+                )
+                .order_by(TeacherPaperMarkingConfirmationModel.confirmed_at.desc())
+                .limit(1)
+            ),
+        )
+
     async def list_review_jobs(
         self,
         *,
@@ -540,6 +847,15 @@ class TeacherPaperRepository:
                 if revision is None:
                     raise TeacherPaperPersistenceConflictError("candidate revision is missing")
                 content = revision.content
+            marking_confirmation = (
+                None
+                if candidate is None
+                else await self.marking_confirmation(
+                    slot_id=slot.id,
+                    candidate_id=candidate.id,
+                    candidate_revision=candidate.current_revision,
+                )
+            )
             findings: tuple[ValidationFindingModel, ...] = ()
             if validation is not None:
                 findings = tuple(
@@ -599,6 +915,7 @@ class TeacherPaperRepository:
                     generation=generation,
                     validation=validation,
                     candidate=candidate,
+                    marking_confirmation=marking_confirmation,
                     content=content,
                     findings=findings,
                     filenames=filenames,

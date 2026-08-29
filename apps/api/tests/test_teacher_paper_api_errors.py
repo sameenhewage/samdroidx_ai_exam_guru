@@ -28,6 +28,7 @@ from exam_guru_api.subject_quality.service import SubjectQualityFeedbackPersiste
 from exam_guru_api.teacher_papers.domain import PaperScopeError
 from exam_guru_api.teacher_papers.jobs import PaperGenerationDispatcher
 from exam_guru_api.teacher_papers.repository import (
+    ProgrammePolicyNotFoundError,
     TeacherPaperJobNotFoundError,
     TeacherPaperPersistenceConflictError,
     TeacherPaperQuestionNotFoundError,
@@ -43,6 +44,8 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperRetryRequest,
 )
 from exam_guru_api.teacher_papers.service import (
+    ProgrammePolicyScopeError,
+    ProgrammePolicyVersionConflictError,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -108,6 +111,11 @@ def test_generation_route_error_mapping_is_stable_and_bounded() -> None:
                 "paper_generation_persistence_conflict",
             ),
             (
+                ProgrammePolicyNotFoundError(),
+                404,
+                "assessment_programme_policy_not_found",
+            ),
+            (
                 TeacherPaperCurriculumNotFoundError(),
                 404,
                 "paper_generation_curriculum_not_found",
@@ -122,6 +130,11 @@ def test_generation_route_error_mapping_is_stable_and_bounded() -> None:
                 TeacherPaperIdempotencyConflictError(),
                 409,
                 "paper_generation_idempotency_conflict",
+            ),
+            (
+                ProgrammePolicyVersionConflictError(),
+                409,
+                "assessment_programme_policy_version_conflict",
             ),
             (
                 TeacherPaperVersionConflictError(),
@@ -142,6 +155,11 @@ def test_generation_route_error_mapping_is_stable_and_bounded() -> None:
                 TeacherPaperCostLimitError(),
                 409,
                 "paper_generation_cost_limit_exceeded",
+            ),
+            (
+                ProgrammePolicyScopeError(),
+                422,
+                "assessment_programme_policy_scope_invalid",
             ),
             (
                 PaperScopeError("paper_generation_lesson_unmapped", lesson_number=2),
@@ -277,10 +295,18 @@ class FakeJobService:
 def job_request() -> TeacherPaperJobCreateRequest:
     return TeacherPaperJobCreateRequest.model_validate(
         {
-            "target": {"grade": 7, "medium": "en", "subject": "MATHEMATICS"},
+            "target": {
+                "grade": 5,
+                "medium": "si",
+                "paper_type": "subject_practice",
+                "subject": "MATHEMATICS",
+            },
             "scope": {"kind": "full_subject"},
             "settings": {
-                "question_count": 1,
+                "paper_name": "Grade 5 Mathematics practice",
+                "mcq_count": 1,
+                "written_count": 0,
+                "structured_count": 0,
                 "duration_minutes": 45,
                 "difficulty": "balanced",
             },
@@ -407,6 +433,7 @@ def test_review_handlers_delegate_every_expected_version_command(
                     "explanation": "B is supported.",
                     "marks": 1,
                     "marking_guide": ["Selects B."],
+                    "marking_point_marks": [1],
                 },
                 "reason_code": "ambiguous_wording",
                 "note": "Clarify.",
@@ -431,7 +458,9 @@ def test_review_handlers_delegate_every_expected_version_command(
                 JOB_ID, QUESTION_ID, start_request, *common
             )
         )
-        approve_request = ReviewQuestionApproveRequest(expected_version=3, note=None)
+        approve_request = ReviewQuestionApproveRequest(
+            expected_version=3, marking_confirmed=True, note=None
+        )
         assert is_sentinel(
             await review_routes.approve_teacher_review_question(
                 JOB_ID, QUESTION_ID, approve_request, *common

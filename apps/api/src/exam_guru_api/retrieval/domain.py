@@ -7,6 +7,7 @@ parse, execute, or otherwise interpret its contents.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
@@ -141,6 +142,154 @@ class RetrievalScope:
         if not selected:
             return True
         return bool(candidate) and set(candidate).issubset(selected)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalScopeSet:
+    policy_version: str
+    scopes: tuple[RetrievalScope, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.policy_version, str)
+            or not self.policy_version
+            or self.policy_version != self.policy_version.strip()
+            or len(self.policy_version) > 128
+        ):
+            raise RetrievalContractError("policy_version must be non-blank and bounded")
+        if (
+            not isinstance(self.scopes, tuple)
+            or not self.scopes
+            or len(self.scopes) > 64
+            or any(not isinstance(scope, RetrievalScope) for scope in self.scopes)
+        ):
+            raise RetrievalContractError("scopes must contain one to 64 RetrievalScope values")
+        if len(set(self.scopes)) != len(self.scopes):
+            raise RetrievalContractError("scopes must not contain duplicates")
+        if len({scope.medium_id for scope in self.scopes}) != 1:
+            raise RetrievalContractError("all policy scopes must use the same medium")
+
+    def allows(self, candidate: RetrievalScope) -> bool:
+        return isinstance(candidate, RetrievalScope) and any(
+            scope.allows(candidate) for scope in self.scopes
+        )
+
+
+RetrievalFilters = RetrievalScope | RetrievalScopeSet
+
+
+def serialize_retrieval_scope(scope: RetrievalScope) -> dict[str, object]:
+    if not isinstance(scope, RetrievalScope):
+        raise RetrievalContractError("scope must be a RetrievalScope")
+    return {
+        "curriculum_version_id": str(scope.curriculum_version_id),
+        "exam_id": str(scope.exam_id),
+        "grade": scope.grade,
+        "lesson_ids": [str(value) for value in scope.lesson_ids],
+        "medium_id": str(scope.medium_id),
+        "subject_id": str(scope.subject_id),
+        "taxonomy": {
+            "competency_id": str(scope.taxonomy.competency_id),
+            "learning_concept_id": (
+                None
+                if scope.taxonomy.learning_concept_id is None
+                else str(scope.taxonomy.learning_concept_id)
+            ),
+            "skill_id": None if scope.taxonomy.skill_id is None else str(scope.taxonomy.skill_id),
+            "sub_skill_id": (
+                None if scope.taxonomy.sub_skill_id is None else str(scope.taxonomy.sub_skill_id)
+            ),
+        },
+        "unit_ids": [str(value) for value in scope.unit_ids],
+    }
+
+
+def serialize_retrieval_filters(filters: RetrievalFilters) -> dict[str, object]:
+    if isinstance(filters, RetrievalScope):
+        return {"kind": "scope", "scope": serialize_retrieval_scope(filters)}
+    if isinstance(filters, RetrievalScopeSet):
+        return {
+            "kind": "scope_set",
+            "policy_version": filters.policy_version,
+            "scopes": [serialize_retrieval_scope(scope) for scope in filters.scopes],
+        }
+    raise RetrievalContractError("filters must be a RetrievalScope or RetrievalScopeSet")
+
+
+def _snapshot_uuid(value: object, field_name: str) -> UUID:
+    if not isinstance(value, str):
+        raise RetrievalContractError(f"{field_name} must be UUID text")
+    try:
+        return UUID(value)
+    except ValueError as error:
+        raise RetrievalContractError(f"{field_name} must be UUID text") from error
+
+
+def _snapshot_uuid_tuple(value: object, field_name: str) -> tuple[UUID, ...]:
+    if not isinstance(value, list):
+        raise RetrievalContractError(f"{field_name} must be a UUID array")
+    return tuple(_snapshot_uuid(item, field_name) for item in value)
+
+
+def deserialize_retrieval_scope(value: object) -> RetrievalScope:
+    expected_keys = {
+        "curriculum_version_id",
+        "exam_id",
+        "grade",
+        "lesson_ids",
+        "medium_id",
+        "subject_id",
+        "taxonomy",
+        "unit_ids",
+    }
+    if not isinstance(value, Mapping) or set(value) != expected_keys:
+        raise RetrievalContractError("retrieval scope snapshot has an invalid shape")
+    taxonomy = value["taxonomy"]
+    taxonomy_keys = {"competency_id", "learning_concept_id", "skill_id", "sub_skill_id"}
+    if not isinstance(taxonomy, Mapping) or set(taxonomy) != taxonomy_keys:
+        raise RetrievalContractError("retrieval taxonomy snapshot has an invalid shape")
+
+    def optional_uuid(name: str) -> UUID | None:
+        raw = taxonomy[name]
+        return None if raw is None else _snapshot_uuid(raw, name)
+
+    return RetrievalScope(
+        grade=cast(int, value["grade"]),
+        exam_id=_snapshot_uuid(value["exam_id"], "exam_id"),
+        medium_id=_snapshot_uuid(value["medium_id"], "medium_id"),
+        subject_id=_snapshot_uuid(value["subject_id"], "subject_id"),
+        curriculum_version_id=_snapshot_uuid(
+            value["curriculum_version_id"], "curriculum_version_id"
+        ),
+        unit_ids=_snapshot_uuid_tuple(value["unit_ids"], "unit_ids"),
+        lesson_ids=_snapshot_uuid_tuple(value["lesson_ids"], "lesson_ids"),
+        taxonomy=TaxonomyScope(
+            competency_id=_snapshot_uuid(taxonomy["competency_id"], "competency_id"),
+            skill_id=optional_uuid("skill_id"),
+            sub_skill_id=optional_uuid("sub_skill_id"),
+            learning_concept_id=optional_uuid("learning_concept_id"),
+        ),
+    )
+
+
+def deserialize_retrieval_filters(value: object) -> RetrievalFilters:
+    if not isinstance(value, Mapping):
+        raise RetrievalContractError("retrieval filter snapshot must be an object")
+    if value.get("kind") == "scope" and set(value) == {"kind", "scope"}:
+        return deserialize_retrieval_scope(value["scope"])
+    if value.get("kind") == "scope_set" and set(value) == {
+        "kind",
+        "policy_version",
+        "scopes",
+    }:
+        scopes = value["scopes"]
+        if not isinstance(scopes, list):
+            raise RetrievalContractError("retrieval scope set snapshot must contain scopes")
+        return RetrievalScopeSet(
+            policy_version=cast(str, value["policy_version"]),
+            scopes=tuple(deserialize_retrieval_scope(scope) for scope in scopes),
+        )
+    raise RetrievalContractError("retrieval filter snapshot has an invalid shape")
 
 
 @dataclass(frozen=True, slots=True)

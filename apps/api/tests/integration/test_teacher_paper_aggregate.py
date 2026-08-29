@@ -20,6 +20,7 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
 from exam_guru_api.auth.rate_limits import (
     NoOpRateLimiter,
@@ -76,6 +77,8 @@ from exam_guru_api.subject_quality.service import (
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
 from exam_guru_api.teacher_papers.models import (
     TeacherPaperJobModel,
+    TeacherPaperMarkingConfirmationModel,
+    TeacherPaperSlotModel,
     TeacherPaperSlotRunModel,
 )
 from exam_guru_api.teacher_papers.service import (
@@ -175,14 +178,17 @@ def request_payload(
 ) -> dict[str, object]:
     return {
         "target": {
-            "grade": 7,
-            "medium": "en",
+            "grade": 5,
+            "medium": "si",
+            "paper_type": "subject_practice",
             "subject": subject,
-            "assessment_programme": "SCHOOL-G7",
         },
         "scope": scope or {"kind": "lesson_range", "start_lesson": 1, "end_lesson": 3},
         "settings": {
-            "question_count": question_count,
+            "paper_name": "Grade 5 Mathematics practice",
+            "mcq_count": question_count,
+            "written_count": 0,
+            "structured_count": 0,
             "duration_minutes": 45,
             "difficulty": "balanced",
         },
@@ -220,11 +226,15 @@ async def add_reviewed_lesson_source(
     lesson_id: UUID,
     skill_id: UUID,
     chunk_id: UUID,
+    curriculum_id: UUID = CURRICULUM_ID,
+    unit_id: UUID = UNIT_ID,
+    competency_id: UUID = COMPETENCY_ID,
+    grade: int = 5,
 ) -> None:
     document_id = UUID(int=25_110_000 + index)
     page_id = UUID(int=25_111_000 + index)
     block_id = UUID(int=25_112_000 + index)
-    text_value = f"Reviewed Grade 7 mathematics lesson {index} evidence about number {index}."
+    text_value = f"Reviewed Grade {grade} mathematics lesson {index} evidence about number {index}."
     now = datetime.now(UTC)
     document = SourceDocumentModel(
         id=document_id,
@@ -235,8 +245,8 @@ async def add_reviewed_lesson_source(
         size_bytes=1_000,
         document_type=SourceDocumentType.TEACHER_GUIDE,
         extraction_status=ExtractionStatus.EXTRACTION_PENDING,
-        curriculum_version_id=CURRICULUM_ID,
-        unit_id=UNIT_ID,
+        curriculum_version_id=curriculum_id,
+        unit_id=unit_id,
         lesson_id=lesson_id,
         active_for_ai=True,
         metadata_scope_version=0,
@@ -303,18 +313,18 @@ async def add_reviewed_lesson_source(
     session.add(
         KnowledgeChunkModel(
             id=chunk_id,
-            curriculum_version_id=CURRICULUM_ID,
+            curriculum_version_id=curriculum_id,
             chunk_type=ChunkType.EXPLANATION,
             text=text_value,
-            educational_boundary=f"Grade 7 Mathematics Lesson {index}",
+            educational_boundary=f"Grade {grade} Mathematics Lesson {index}",
             sequence=0,
             source_document_id=document_id,
-            unit_id=UNIT_ID,
+            unit_id=unit_id,
             lesson_id=lesson_id,
             page_number=1,
             source_block_id=block_id,
             review_state=ReviewState.REVIEWED,
-            competency_id=COMPETENCY_ID,
+            competency_id=competency_id,
             skill_id=skill_id,
             created_by=ADMIN_ID,
             updated_by=ADMIN_ID,
@@ -359,17 +369,17 @@ async def seed_database(database_url: str) -> None:
                     ),
                     ExamConfigurationModel(
                         id=EXAM_ID,
-                        code="SCHOOL-G7",
-                        name="School Grade 7",
-                        grade=7,
+                        code="SCHOOL-G5",
+                        name="School Grade 5",
+                        grade=5,
                         active=True,
                         created_by=ADMIN_ID,
                         updated_by=ADMIN_ID,
                     ),
                     MediumModel(
                         id=MEDIUM_ID,
-                        code="en",
-                        name="English",
+                        code="si",
+                        name="Sinhala",
                         active=True,
                         created_by=ADMIN_ID,
                         updated_by=ADMIN_ID,
@@ -383,8 +393,8 @@ async def seed_database(database_url: str) -> None:
                     exam_configuration_id=EXAM_ID,
                     medium_id=MEDIUM_ID,
                     subject_id=SUBJECT_ID,
-                    code="G7-MATH-V1",
-                    title="Grade 7 Mathematics",
+                    code="G5-MATH-V1",
+                    title="Grade 5 Mathematics",
                     active=True,
                     created_by=ADMIN_ID,
                     updated_by=ADMIN_ID,
@@ -480,6 +490,136 @@ async def seed_database(database_url: str) -> None:
         await engine.dispose()
 
 
+async def seed_scholarship_supporting_scopes(
+    database_url: str,
+) -> dict[int, tuple[UUID, UUID, UUID, UUID, UUID]]:
+    engine = create_async_engine(database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    seeded: dict[int, tuple[UUID, UUID, UUID, UUID, UUID]] = {}
+    try:
+        async with sessions() as session:
+            for grade in (3, 4):
+                exam_id = UUID(int=25_120_000 + grade)
+                curriculum_id = UUID(int=25_121_000 + grade)
+                unit_id = UUID(int=25_122_000 + grade)
+                lesson_id = UUID(int=25_123_000 + grade)
+                competency_id = UUID(int=25_124_000 + grade)
+                skill_id = UUID(int=25_125_000 + grade)
+                chunk_id = UUID(int=25_126_000 + grade)
+                session.add(
+                    ExamConfigurationModel(
+                        id=exam_id,
+                        code=f"SCHOOL-G{grade}",
+                        name=f"School Grade {grade}",
+                        grade=grade,
+                        active=True,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CurriculumVersionModel(
+                        id=curriculum_id,
+                        exam_configuration_id=exam_id,
+                        medium_id=MEDIUM_ID,
+                        subject_id=SUBJECT_ID,
+                        code=f"G{grade}-MATH-V1",
+                        title=f"Grade {grade} Mathematics",
+                        active=True,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CurriculumUnitModel(
+                        id=unit_id,
+                        curriculum_version_id=curriculum_id,
+                        code="NUMBERS",
+                        title="Numbers",
+                        ordinal=1,
+                        active=True,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                session.add(
+                    TaxonomyNodeModel(
+                        id=competency_id,
+                        curriculum_version_id=curriculum_id,
+                        parent_id=None,
+                        level=TaxonomyLevel.COMPETENCY,
+                        code="C1",
+                        title="Number competency",
+                        active=True,
+                        review_state=TaxonomyReviewState.REVIEWED,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    TaxonomyNodeModel(
+                        id=skill_id,
+                        curriculum_version_id=curriculum_id,
+                        parent_id=competency_id,
+                        level=TaxonomyLevel.SKILL,
+                        code="S1",
+                        title="Number skill",
+                        active=True,
+                        review_state=TaxonomyReviewState.REVIEWED,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                session.add(
+                    CurriculumLessonModel(
+                        id=lesson_id,
+                        curriculum_version_id=curriculum_id,
+                        unit_id=unit_id,
+                        code="LESSON-1",
+                        title="Whole numbers",
+                        ordinal=1,
+                        active=True,
+                        created_by=ADMIN_ID,
+                        updated_by=ADMIN_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CurriculumLessonTaxonomyMappingModel(
+                        lesson_id=lesson_id,
+                        curriculum_version_id=curriculum_id,
+                        unit_id=unit_id,
+                        taxonomy_node_id=skill_id,
+                        created_by=ADMIN_ID,
+                    )
+                )
+                await add_reviewed_lesson_source(
+                    session,
+                    index=100 + grade,
+                    lesson_id=lesson_id,
+                    skill_id=skill_id,
+                    chunk_id=chunk_id,
+                    curriculum_id=curriculum_id,
+                    unit_id=unit_id,
+                    competency_id=competency_id,
+                    grade=grade,
+                )
+                seeded[grade] = (
+                    curriculum_id,
+                    unit_id,
+                    lesson_id,
+                    competency_id,
+                    skill_id,
+                )
+            await session.commit()
+    finally:
+        await engine.dispose()
+    return seeded
+
+
 @pytest.fixture(scope="module")
 def aggregate_seed() -> Iterator[Seed]:
     with (
@@ -561,7 +701,10 @@ async def advance_and_run_slots(
                 actor_lease_seconds=601,
             )
             result = await recovery.recover()
-            assert result.dispatched >= 1
+            if result.dispatched < 1:
+                stalled = await session.get(TeacherPaperJobModel, job_id)
+                assert stalled is not None
+                raise AssertionError((stalled.status, stalled.failure_code, stalled.failure_detail))
         async with sessions() as session:
             worker = TeacherPaperWorkerService(
                 session,
@@ -581,7 +724,7 @@ async def advance_and_run_slots(
 
 
 @pytest.mark.integration
-def test_grade7_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
+def test_grade5_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
     aggregate_seed: Seed,
 ) -> None:
     paper_dispatcher = DeterministicPaperGenerationDispatcher()
@@ -593,37 +736,47 @@ def test_grade7_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
         )
         assert options_response.status_code == 200
         options = options_response.json()
-        assert options["grades"] == list(range(1, 14))
-        assert any(item["code"] == "en" and item["label"] == "English" for item in options["media"])
+        assert options["grades"] == [5]
+        assert any(item["code"] == "si" and item["label"] == "Sinhala" for item in options["media"])
+        assert [item["code"] for item in options["paper_types"]] == [
+            "subject_practice",
+            "term_test",
+            "scholarship_practice",
+        ]
+        assert [item["code"] for item in options["scholarship_modes"]] == [
+            "paper_i",
+            "paper_ii",
+            "full",
+        ]
         maths = next(item for item in options["subjects"] if item["code"] == "MATHEMATICS")
         assert [item["number"] for item in maths["lessons"]] == [1, 2, 3]
         assert "technical_curriculum_id" not in maths
         curricula = client.get(
             "/api/v1/admin/paper-generation/curricula",
             params={
-                "grade": 7,
-                "medium": "en",
+                "grade": 5,
+                "medium": "si",
                 "subject": "MATHEMATICS",
-                "assessment_programme": "SCHOOL-G7",
+                "assessment_programme": "SCHOOL-G5",
             },
             headers={"Authorization": "Bearer reviewer-token"},
         )
         assert curricula.status_code == 200
         assert curricula.json()["items"] == [
             {
-                "assessment_programme": "SCHOOL-G7",
-                "assessment_label": "School Grade 7",
-                "code": "G7-MATH-V1",
-                "label": "Grade 7 Mathematics",
+                "assessment_programme": "SCHOOL-G5",
+                "assessment_label": "School Grade 5",
+                "code": "G5-MATH-V1",
+                "label": "Grade 5 Mathematics",
             }
         ]
         lessons = client.get(
             "/api/v1/admin/paper-generation/lessons",
             params={
-                "grade": 7,
-                "medium": "en",
+                "grade": 5,
+                "medium": "si",
                 "subject": "MATHEMATICS",
-                "assessment_programme": "SCHOOL-G7",
+                "assessment_programme": "SCHOOL-G5",
             },
             headers={"Authorization": "Bearer reviewer-token"},
         )
@@ -717,7 +870,7 @@ def test_grade7_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
         assert detail.status_code == 200
         review = detail.json()
         assert review["paper_reference"] == body["paper_reference"]
-        assert review["grade"] == 7
+        assert review["grade"] == 5
         assert review["subject"] == "Mathematics"
         assert review["scope_summary"] == "Lessons 1\u20133"
         assert len(review["questions"]) == 3
@@ -748,12 +901,115 @@ def test_grade7_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
                 headers=REVIEWER_HEADERS,
             )
             assert started.status_code == 200
+            if question["number"] == 1:
+                started_candidate_id = UUID(started.json()["technical_details"]["candidate_id"])
+
+                async def bypass_marking_confirmation_is_rejected(
+                    candidate_id: UUID = started_candidate_id,
+                ) -> None:
+                    engine = create_async_engine(aggregate_seed.database_url)
+                    try:
+                        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                            with pytest.raises(DBAPIError):
+                                await session.execute(
+                                    text(
+                                        "UPDATE question_candidates SET state = 'approved', "
+                                        "version = version + 1 WHERE id = :candidate_id"
+                                    ),
+                                    {"candidate_id": candidate_id},
+                                )
+                            await session.rollback()
+                    finally:
+                        await engine.dispose()
+
+                asyncio.run(bypass_marking_confirmation_is_rejected())
+                unconfirmed = client.post(
+                    f"/api/v1/admin/review-papers/{job_id}/questions/{question_id}/approve",
+                    json={"expected_version": started.json()["version"], "note": None},
+                    headers=REVIEWER_HEADERS,
+                )
+                assert unconfirmed.status_code == 422
             approved = client.post(
                 f"/api/v1/admin/review-papers/{job_id}/questions/{question_id}/approve",
-                json={"expected_version": started.json()["version"], "note": None},
+                json={
+                    "expected_version": started.json()["version"],
+                    "marking_confirmed": True,
+                    "note": None,
+                },
                 headers=REVIEWER_HEADERS,
             )
             assert approved.status_code == 200
+            assert approved.json()["marking_confirmation"]["confirmed"] is True
+
+        async def confirmation_counts() -> tuple[int, int]:
+            engine = create_async_engine(aggregate_seed.database_url)
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                    confirmations = cast(
+                        int,
+                        await session.scalar(
+                            select(func.count(TeacherPaperMarkingConfirmationModel.id)).where(
+                                TeacherPaperMarkingConfirmationModel.paper_job_id == job_id
+                            )
+                        ),
+                    )
+                    audit_events = cast(
+                        int,
+                        await session.scalar(
+                            select(func.count(AdminAuditEventModel.id)).where(
+                                AdminAuditEventModel.action == "teacher_paper.marking_confirmed",
+                                AdminAuditEventModel.payload["paper_job_id"].as_string()
+                                == str(job_id),
+                            )
+                        ),
+                    )
+                    return confirmations, audit_events
+            finally:
+                await engine.dispose()
+
+        requested = body["counts"]["requested"]
+        assert asyncio.run(confirmation_counts()) == (requested, requested)
+
+        async def marking_confirmation_is_append_only() -> None:
+            engine = create_async_engine(aggregate_seed.database_url)
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                    confirmation_id = await session.scalar(
+                        select(TeacherPaperMarkingConfirmationModel.id).where(
+                            TeacherPaperMarkingConfirmationModel.paper_job_id == job_id
+                        )
+                    )
+                    assert confirmation_id is not None
+                    with pytest.raises(DBAPIError):
+                        await session.execute(
+                            text(
+                                "UPDATE teacher_paper_marking_confirmations "
+                                "SET total_marks = total_marks + 1 WHERE id = :confirmation_id"
+                            ),
+                            {"confirmation_id": confirmation_id},
+                        )
+                    await session.rollback()
+                    with pytest.raises(DBAPIError):
+                        await session.execute(
+                            text(
+                                "INSERT INTO teacher_paper_marking_confirmations ("
+                                "id, paper_job_id, slot_id, curriculum_version_id, "
+                                "candidate_id, candidate_revision, review_candidate_version, "
+                                "marking_fingerprint, total_marks, criteria_count, confirmed_by"
+                                ") SELECT gen_random_uuid(), paper_job_id, slot_id, "
+                                "curriculum_version_id, candidate_id, candidate_revision, "
+                                "review_candidate_version, 'sha256:' || repeat('0', 64), "
+                                "total_marks, criteria_count, confirmed_by "
+                                "FROM teacher_paper_marking_confirmations "
+                                "WHERE id = :confirmation_id"
+                            ),
+                            {"confirmation_id": confirmation_id},
+                        )
+                    await session.rollback()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(marking_confirmation_is_append_only())
 
         draft = client.post(
             f"/api/v1/admin/review-papers/{job_id}/create-draft",
@@ -765,10 +1021,411 @@ def test_grade7_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
             headers=REVIEWER_HEADERS,
         )
         assert draft.status_code == 201
+        assert draft.json()["paper_job_id"] == str(job_id)
+        assert draft.json()["paper_id"] == draft.json()["draft_id"]
         assert draft.json()["paper_reference"] == body["paper_reference"]
         assert draft.json()["publication_path"].endswith(
             f"/{CURRICULUM_ID}/papers/{draft.json()['draft_id']}"
         )
+
+        async def draft_lineage_cannot_race_back_to_generation() -> None:
+            engine = create_async_engine(aggregate_seed.database_url)
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                    with pytest.raises(DBAPIError, match="ready-for-review job"):
+                        await session.execute(
+                            text(
+                                "UPDATE teacher_paper_jobs SET status = 'generating', "
+                                "completed_at = NULL, version = version + 1, updated_at = now() "
+                                "WHERE id = :job_id"
+                            ),
+                            {"job_id": job_id},
+                        )
+                    await session.rollback()
+                    with pytest.raises(DBAPIError, match="immutable after draft creation"):
+                        await session.execute(
+                            text(
+                                "UPDATE teacher_paper_slots SET status = 'generating', "
+                                "current_validation_run_id = NULL, current_candidate_id = NULL, "
+                                "version = version + 1, updated_at = now() "
+                                "WHERE paper_job_id = :job_id"
+                            ),
+                            {"job_id": job_id},
+                        )
+                    await session.rollback()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(draft_lineage_cannot_race_back_to_generation())
+
+
+@pytest.mark.integration
+def test_selected_lessons_preserve_exact_non_contiguous_scope_through_worker(
+    aggregate_seed: Seed,
+) -> None:
+    paper_dispatcher = DeterministicPaperGenerationDispatcher()
+    generation_dispatcher = DeterministicGenerationDispatcher()
+    with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
+        created = client.post(
+            "/api/v1/admin/paper-generation/jobs",
+            json=request_payload(
+                scope={"kind": "selected_lessons", "lesson_numbers": [1, 3]},
+                question_count=2,
+            ),
+            headers={
+                **ADMIN_HEADERS,
+                "Idempotency-Key": "teacher-paper-selected-lessons-exact",
+            },
+        )
+        assert created.status_code == 202
+        assert created.json()["scope_summary"] == "Lessons 1 and 3"
+        job_id = UUID(created.json()["job_id"])
+
+        terminal = asyncio.run(
+            advance_and_run_slots(
+                aggregate_seed,
+                job_id,
+                paper_dispatcher,
+                generation_dispatcher,
+            )
+        )
+        assert terminal.status == "ready_for_review"
+        fetched = client.get(
+            f"/api/v1/admin/paper-generation/jobs/{job_id}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert fetched.status_code == 200
+        assert {slot["lesson"] for slot in fetched.json()["slots"]} == {
+            "Lesson 1 — Whole numbers",
+            "Lesson 3 — Fractions",
+        }
+        assert "Lesson 2" not in str(fetched.json())
+
+
+@pytest.mark.integration
+def test_reviewed_scholarship_policy_generates_each_mode_without_cross_grade_leakage(
+    aggregate_seed: Seed,
+) -> None:
+    supporting = asyncio.run(seed_scholarship_supporting_scopes(aggregate_seed.database_url))
+    grade3 = supporting[3]
+    grade4 = supporting[4]
+    policy_payload = {
+        "programme_exam_configuration_id": str(EXAM_ID),
+        "medium_id": str(MEDIUM_ID),
+        "anchor_curriculum_version_id": str(CURRICULUM_ID),
+        "code": "G5-SCHOLARSHIP",
+        "version": "integration.v1",
+        "title": "Grade 5 Scholarship",
+        "paper_i_profile_version": "ability.integration.v1",
+        "paper_ii_profile_version": "coverage.integration.v1",
+        "paper_i_weight": 1,
+        "paper_ii_weight": 1,
+        "scopes": [
+            {
+                "part": "paper_i",
+                "ordinal": 1,
+                "anchor_unit_id": str(UNIT_ID),
+                "anchor_lesson_id": str(LESSON_IDS[0]),
+                "anchor_competency_id": str(COMPETENCY_ID),
+                "anchor_skill_id": str(SKILL_IDS[0]),
+                "source_curriculum_version_id": str(CURRICULUM_ID),
+                "source_unit_id": str(UNIT_ID),
+                "source_lesson_id": str(LESSON_IDS[0]),
+                "source_competency_id": str(COMPETENCY_ID),
+                "source_skill_id": str(SKILL_IDS[0]),
+            },
+            *(
+                {
+                    "part": "paper_ii",
+                    "ordinal": ordinal,
+                    "anchor_unit_id": str(UNIT_ID),
+                    "anchor_lesson_id": str(LESSON_IDS[1]),
+                    "anchor_competency_id": str(COMPETENCY_ID),
+                    "anchor_skill_id": str(SKILL_IDS[1]),
+                    "source_curriculum_version_id": str(values[0]),
+                    "source_unit_id": str(values[1]),
+                    "source_lesson_id": str(values[2]),
+                    "source_competency_id": str(values[3]),
+                    "source_skill_id": str(values[4]),
+                }
+                for ordinal, values in enumerate(
+                    (
+                        grade3,
+                        grade4,
+                        (
+                            CURRICULUM_ID,
+                            UNIT_ID,
+                            LESSON_IDS[1],
+                            COMPETENCY_ID,
+                            SKILL_IDS[1],
+                        ),
+                    ),
+                    start=1,
+                )
+            ),
+        ],
+    }
+    paper_dispatcher = DeterministicPaperGenerationDispatcher()
+    generation_dispatcher = DeterministicGenerationDispatcher()
+    with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
+        created_policy = client.post(
+            "/api/v1/admin/paper-generation/programme-policies",
+            json=policy_payload,
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert created_policy.status_code == 201, created_policy.text
+        policy = created_policy.json()
+        reviewed_policy = client.post(
+            f"/api/v1/admin/paper-generation/programme-policies/{policy['id']}/review",
+            json={"expected_version": policy["lock_version"]},
+            headers=REVIEWER_HEADERS,
+        )
+        assert reviewed_policy.status_code == 200, reviewed_policy.text
+        assert reviewed_policy.json()["state"] == "reviewed"
+
+        created = client.post(
+            "/api/v1/admin/paper-generation/jobs",
+            json={
+                "target": {
+                    "grade": 5,
+                    "medium": "si",
+                    "paper_type": "scholarship_practice",
+                    "scholarship_mode": "full",
+                },
+                "scope": {"kind": "programme"},
+                "settings": {
+                    "paper_name": "Full Scholarship Practice",
+                    "mcq_count": 2,
+                    "written_count": 0,
+                    "structured_count": 0,
+                    "duration_minutes": 60,
+                    "difficulty": "balanced",
+                },
+            },
+            headers={
+                "Authorization": "Bearer admin-token",
+                "Idempotency-Key": "full-scholarship-integration",
+            },
+        )
+        assert created.status_code == 202, created.text
+        job_id = UUID(created.json()["job_id"])
+        terminal = asyncio.run(
+            advance_and_run_slots(
+                aggregate_seed,
+                job_id,
+                paper_dispatcher,
+                generation_dispatcher,
+            )
+        )
+
+        async def persisted_failures() -> tuple[tuple[str, str], ...]:
+            engine = create_async_engine(aggregate_seed.database_url)
+            try:
+                async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                    return tuple(
+                        (
+                            finding.code,
+                            finding.status,
+                        )
+                        for finding in await session.scalars(
+                            select(ValidationFindingModel).where(
+                                ValidationFindingModel.status == "fail"
+                            )
+                        )
+                    )
+            finally:
+                await engine.dispose()
+
+        assert terminal.status == "ready_for_review", (
+            terminal.failure_code,
+            terminal.failure_detail,
+            asyncio.run(persisted_failures()),
+        )
+        assert terminal.slot_count == 2
+
+        detail = client.get(
+            f"/api/v1/admin/review-papers/{job_id}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert detail.status_code == 200
+        assert detail.json()["scope_summary"] == ("Full Scholarship Practice — Paper I + Paper II")
+        assert all(
+            sum(question["content"]["marking_point_marks"]) == question["content"]["marks"]
+            and question["sources"]
+            and question["validation"]["status"] in {"ready", "needs_attention"}
+            for question in detail.json()["questions"]
+        )
+        mode_job_ids = {"full": job_id}
+        for mode, label in (
+            ("paper_i", "Paper I Scholarship Practice"),
+            ("paper_ii", "Paper II Scholarship Practice"),
+        ):
+            mode_created = client.post(
+                "/api/v1/admin/paper-generation/jobs",
+                json={
+                    "target": {
+                        "grade": 5,
+                        "medium": "si",
+                        "paper_type": "scholarship_practice",
+                        "scholarship_mode": mode,
+                    },
+                    "scope": {"kind": "programme"},
+                    "settings": {
+                        "paper_name": label,
+                        "mcq_count": 2,
+                        "written_count": 0,
+                        "structured_count": 0,
+                        "duration_minutes": 30,
+                        "difficulty": "balanced",
+                    },
+                },
+                headers={
+                    "Authorization": "Bearer admin-token",
+                    "Idempotency-Key": f"{mode}-scholarship-integration",
+                },
+            )
+            assert mode_created.status_code == 202, mode_created.text
+            mode_job_id = UUID(mode_created.json()["job_id"])
+            mode_terminal = asyncio.run(
+                advance_and_run_slots(
+                    aggregate_seed,
+                    mode_job_id,
+                    paper_dispatcher,
+                    generation_dispatcher,
+                )
+            )
+            assert mode_terminal.status == "ready_for_review", (
+                mode,
+                mode_terminal.failure_code,
+                mode_terminal.failure_detail,
+            )
+            assert mode_terminal.slot_count == 2
+            mode_detail = client.get(
+                f"/api/v1/admin/review-papers/{mode_job_id}",
+                headers=REVIEWER_HEADERS,
+            )
+            assert mode_detail.status_code == 200
+            assert len(mode_detail.json()["questions"]) == 2
+            assert all(
+                sum(question["content"]["marking_point_marks"]) == question["content"]["marks"]
+                and question["sources"]
+                for question in mode_detail.json()["questions"]
+            )
+            mode_job_ids[mode] = mode_job_id
+
+    async def generation_scope_snapshots(
+        selected_job_id: UUID,
+    ) -> tuple[dict[str, object], ...]:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                runs = tuple(
+                    await session.scalars(
+                        select(GenerationRunModel)
+                        .join(
+                            TeacherPaperSlotModel,
+                            TeacherPaperSlotModel.current_generation_run_id
+                            == GenerationRunModel.id,
+                        )
+                        .where(TeacherPaperSlotModel.paper_job_id == selected_job_id)
+                        .order_by(TeacherPaperSlotModel.ordinal)
+                    )
+                )
+                return tuple(run.context_snapshot for run in runs)
+        finally:
+            await engine.dispose()
+
+    expected_scope_grades = {
+        "paper_i": {(5,)},
+        "paper_ii": {(3, 4, 5)},
+        "full": {(5,), (3, 4, 5)},
+    }
+    for mode, selected_job_id in mode_job_ids.items():
+        snapshots = asyncio.run(generation_scope_snapshots(selected_job_id))
+        scope_grades = {
+            tuple(
+                scope["grade"]
+                for scope in cast(
+                    list[dict[str, object]],
+                    cast(dict[str, object], snapshot["retrieval_filters"])["scopes"],
+                )
+            )
+            for snapshot in snapshots
+        }
+        assert scope_grades == expected_scope_grades[mode]
+
+    async def mutate_policy(statement: str, identifier: str) -> None:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text(statement), {"identifier": UUID(identifier)})
+        finally:
+            await engine.dispose()
+
+    with pytest.raises(DBAPIError):
+        asyncio.run(
+            mutate_policy(
+                "UPDATE assessment_programme_policy_versions SET title = 'tampered' "
+                "WHERE id = :identifier",
+                policy["id"],
+            )
+        )
+    with pytest.raises(DBAPIError):
+        asyncio.run(
+            mutate_policy(
+                "DELETE FROM assessment_programme_policy_scopes WHERE id = :identifier",
+                policy["scopes"][0]["id"],
+            )
+        )
+
+
+@pytest.mark.integration
+def test_grade_five_term_modes_fail_closed_without_reviewed_coverage_policy(
+    aggregate_seed: Seed,
+) -> None:
+    async def job_count() -> int:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                return cast(int, await session.scalar(select(func.count(TeacherPaperJobModel.id))))
+        finally:
+            await engine.dispose()
+
+    before = asyncio.run(job_count())
+    with api_client(
+        aggregate_seed,
+        DeterministicPaperGenerationDispatcher(),
+        DeterministicGenerationDispatcher(),
+    ) as client:
+        for term in ("term_1", "term_2", "term_3"):
+            response = client.post(
+                "/api/v1/admin/paper-generation/jobs",
+                json={
+                    "target": {
+                        "grade": 5,
+                        "medium": "si",
+                        "paper_type": "term_test",
+                        "subject": "MATHEMATICS",
+                        "term": term,
+                    },
+                    "scope": {"kind": "full_term"},
+                    "settings": {
+                        "paper_name": f"Grade 5 {term} test",
+                        "mcq_count": 2,
+                        "written_count": 1,
+                        "structured_count": 0,
+                        "duration_minutes": 30,
+                        "difficulty": "balanced",
+                    },
+                },
+                headers={
+                    "Authorization": "Bearer admin-token",
+                    "Idempotency-Key": f"unreviewed-{term}-coverage",
+                },
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"]["code"] == ("paper_generation_term_policy_unavailable")
+    assert asyncio.run(job_count()) == before
 
 
 @pytest.mark.integration
@@ -1079,8 +1736,8 @@ def test_ambiguous_unmapped_missing_and_no_context_fail_with_stable_safe_errors(
                         exam_configuration_id=EXAM_ID,
                         medium_id=MEDIUM_ID,
                         subject_id=SUBJECT_ID,
-                        code="G7-MATH-V2",
-                        title="Ambiguous Grade 7 Mathematics",
+                        code="G5-MATH-V2",
+                        title="Ambiguous Grade 5 Mathematics",
                         active=True,
                         created_by=ADMIN_ID,
                         updated_by=ADMIN_ID,
@@ -1245,6 +1902,12 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         current = started.json()
         content = current["content"]
         content["stem"] = "A teacher edit that requires a fresh canonical validation."
+        content["marks"] = 2
+        content["marking_guide"] = [
+            content["marking_guide"][0],
+            "Explains why the selected answer is supported.",
+        ]
+        content["marking_point_marks"] = [1, 1]
         edit_payload = {
             "expected_version": current["version"],
             "reason_code": "ambiguous_wording",
@@ -1282,7 +1945,11 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         assert edit_feedback["scope"]["curriculum_version_id"] == str(CURRICULUM_ID)
         blocked = client.post(
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/approve",
-            json={"expected_version": edited.json()["version"], "note": None},
+            json={
+                "expected_version": edited.json()["version"],
+                "marking_confirmed": True,
+                "note": None,
+            },
             headers=REVIEWER_HEADERS,
         )
         assert blocked.status_code == 409
@@ -1485,6 +2152,7 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
             f"/api/v1/admin/review-papers/{job_id}/questions/{question['id']}/approve",
             json={
                 "expected_version": started.json()["version"],
+                "marking_confirmed": True,
                 "note": "Checked the answer, marking, wording, and reviewed source.",
             },
             headers=REVIEWER_HEADERS,
@@ -1506,8 +2174,8 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
         assert feedback["note"] == "Checked the answer, marking, wording, and reviewed source."
         assert feedback["original_content"] == feedback["current_content"]
         assert feedback["scope"] | {"lesson_id": None, "lesson_number": None} == {
-            "grade": 7,
-            "medium": "en",
+            "grade": 5,
+            "medium": "si",
             "subject_code": "MATHEMATICS",
             "curriculum_version_id": str(CURRICULUM_ID),
             "unit_id": str(UNIT_ID),
@@ -1615,6 +2283,7 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
             f"/api/v1/admin/review-papers/{job_id}/questions/{second_question['id']}/approve",
             json={
                 "expected_version": second_started.json()["version"],
+                "marking_confirmed": True,
                 "note": "Confirmed as a second stable quality-evaluation example.",
             },
             headers=REVIEWER_HEADERS,

@@ -109,6 +109,7 @@ class MaterialSession:
         self.objects: dict[tuple[type[object], UUID], object] = {}
         self.scalar_results: list[object | None] = []
         self.execute_results: list[list[object]] = []
+        self.executed: list[object] = []
         self.added: list[object] = []
         self.commits = 0
 
@@ -127,7 +128,8 @@ class MaterialSession:
     async def scalar(self, _query: object) -> object | None:
         return self.scalar_results.pop(0)
 
-    async def execute(self, _query: object) -> ExecuteRows:
+    async def execute(self, query: object) -> ExecuteRows:
+        self.executed.append(query)
         return ExecuteRows(self.execute_results.pop(0))
 
     def add(self, value: object) -> None:
@@ -684,6 +686,43 @@ def test_material_listing_summary_statuses_and_pagination_are_bounded() -> None:
     assert asyncio.run(material_service.list_materials()) == ()
     with pytest.raises(ValueError, match="pagination"):
         asyncio.run(material_service.list_materials(limit=0))
+
+
+def test_material_listing_applies_teacher_search_and_filters_server_side() -> None:
+    session = MaterialSession()
+    session.execute_results = [[]]
+    service = SourceDocumentService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StubStorage()),
+        max_upload_bytes=1_024,
+    )
+    medium_id = UUID(int=501)
+
+    assert (
+        asyncio.run(
+            service.list_materials(
+                grade=5,
+                subject_id=UUID(int=500),
+                medium_id=medium_id,
+                material_type=SourceDocumentType.PAST_PAPER,
+                year=2025,
+                status=MaterialStatus.REMOVED,
+                search="grade_11%paper",
+            )
+        )
+        == ()
+    )
+    compiled = str(cast(Any, session.executed[-1]).compile(compile_kwargs={"literal_binds": True}))
+    assert "exam_configurations.grade = 5" in compiled
+    assert "media.id =" in compiled
+    assert "source_documents.document_type =" in compiled
+    assert "source_documents.year = 2025" in compiled
+    assert "source_documents.active_for_ai IS false" in compiled
+    assert "ESCAPE '/'" in compiled
+
+    for invalid_search in ("   ", "x" * 201):
+        with pytest.raises(ValueError, match="search"):
+            asyncio.run(service.list_materials(search=invalid_search))
 
 
 def test_material_scope_request_shape_rejects_forged_lesson_relationships() -> None:

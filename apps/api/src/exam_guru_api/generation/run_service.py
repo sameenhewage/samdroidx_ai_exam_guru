@@ -13,7 +13,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
-from exam_guru_api.blueprints.domain import BlueprintSlot, TaxonomyTarget
+from exam_guru_api.blueprints.domain import BlueprintSlot
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.core.config import MIN_GENERATION_WORKER_LEASE_SECONDS
 from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
@@ -47,6 +47,7 @@ from exam_guru_api.generation.repository import (
     GenerationClaimRecord,
     GenerationContextRecord,
     GenerationRunWrite,
+    GenerationScopeRecord,
     SqlAlchemyGenerationRepository,
 )
 from exam_guru_api.generation.runtime import (
@@ -65,6 +66,16 @@ from exam_guru_api.generation.service import (
 )
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
+from exam_guru_api.retrieval.domain import (
+    RetrievalContractError,
+    RetrievalFilters,
+    RetrievalScope,
+    RetrievalScopeSet,
+    TaxonomyScope,
+    deserialize_retrieval_filters,
+    serialize_retrieval_filters,
+    serialize_retrieval_scope,
+)
 
 _GENERATION_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/generation-runs")
 
@@ -102,6 +113,10 @@ class GenerationContextNotReviewedError(ValueError):
 
 
 class GenerationContextSourceUntrustedError(ValueError):
+    pass
+
+
+class GenerationContextScopeInactiveError(ValueError):
     pass
 
 
@@ -201,6 +216,8 @@ class GenerationRunService:
         idempotency_key: str,
         actor_id: UUID,
         retry_of_run_id: UUID | None = None,
+        retrieval_filters: RetrievalFilters | None = None,
+        _persist_retrieval_filters: bool = True,
     ) -> GenerationCreationResult:
         if (
             not idempotency_key
@@ -211,6 +228,8 @@ class GenerationRunService:
             )
         ):
             raise GenerationIdempotencyConflictError("invalid idempotency key")
+        if not isinstance(_persist_retrieval_filters, bool):
+            raise GenerationIdempotencyConflictError("invalid retrieval filter persistence mode")
         config = self._runtime.active_config
         scope = await self._repository.get_scope(curriculum_version_id)
         if scope is None:
@@ -252,6 +271,7 @@ class GenerationRunService:
         slot = next((item for item in blueprint.slots if item.slot_id == slot_id), None)
         if slot is None:
             raise GenerationSlotNotFoundError(slot_id)
+        active_filters = _generation_retrieval_filters(scope, slot, retrieval_filters)
 
         canonical_chunk_ids = tuple(sorted(knowledge_chunk_ids, key=lambda value: value.int))
         canonical_question_ids = tuple(sorted(historical_question_ids, key=lambda value: value.int))
@@ -260,13 +280,15 @@ class GenerationRunService:
             canonical_question_ids,
         )
         canonical_records = self._validate_context_records(
-            curriculum_version_id,
-            slot,
+            active_filters,
             canonical_chunk_ids,
             canonical_question_ids,
             records,
         )
-        context, context_snapshot = _context_snapshot(canonical_records)
+        context, context_snapshot = _context_snapshot(
+            canonical_records,
+            retrieval_filters=(active_filters if _persist_retrieval_filters else None),
+        )
         del context
         slot_snapshot = _slot_snapshot(blueprint_model.blueprint, slot_id)
 
@@ -390,6 +412,8 @@ class GenerationRunService:
             raise GenerationRetryStateError(run_id)
         if original.retry_depth >= MAX_PROVIDER_JOB_RETRY_DEPTH:
             raise GenerationRetryLimitExceededError(run_id)
+        persisted_filters = "retrieval_filters" in original.context_snapshot
+        retrieval_filters = _filters_from_context_snapshot(original.context_snapshot)
         return await self.create(
             curriculum_version_id,
             paper_blueprint_id=original.paper_blueprint_id,
@@ -401,6 +425,8 @@ class GenerationRunService:
             idempotency_key=idempotency_key,
             actor_id=actor_id,
             retry_of_run_id=original.id,
+            retrieval_filters=retrieval_filters,
+            _persist_retrieval_filters=persisted_filters,
         )
 
     async def get_run(
@@ -449,8 +475,7 @@ class GenerationRunService:
 
     @staticmethod
     def _validate_context_records(
-        curriculum_version_id: UUID,
-        slot: BlueprintSlot,
+        filters: RetrievalFilters,
         chunk_ids: tuple[UUID, ...],
         question_ids: tuple[UUID, ...],
         records: tuple[GenerationContextRecord, ...],
@@ -464,11 +489,6 @@ class GenerationRunService:
             raise GenerationContextNotFoundError(requested - found)
         ordered = tuple(sorted(records, key=lambda item: (item.record_kind, item.id.int)))
         for record in ordered:
-            if (
-                record.curriculum_version_id != curriculum_version_id
-                or record.source_curriculum_version_id != curriculum_version_id
-            ):
-                raise GenerationContextCrossCurriculumError(record.id)
             if record.review_state is not ReviewState.REVIEWED:
                 raise GenerationContextNotReviewedError(record.id)
             if (
@@ -477,13 +497,36 @@ class GenerationRunService:
                 or record.source_block_id is None
             ):
                 raise GenerationContextSourceUntrustedError(record.id)
-            selected_scope = slot.generation_constraints.curriculum_scope
-            if selected_scope.unit_ids and record.unit_id not in selected_scope.unit_ids:
+            if not record.scope_active:
+                raise GenerationContextScopeInactiveError(record.id)
+            record_scope = record.retrieval_scope
+            if record_scope is None:
+                if not isinstance(filters, RetrievalScope) or record.competency_id is None:
+                    raise GenerationContextCrossCurriculumError(record.id)
+                record_scope = RetrievalScope(
+                    grade=filters.grade,
+                    exam_id=filters.exam_id,
+                    medium_id=filters.medium_id,
+                    subject_id=filters.subject_id,
+                    curriculum_version_id=record.curriculum_version_id,
+                    unit_ids=() if record.unit_id is None else (record.unit_id,),
+                    lesson_ids=() if record.lesson_id is None else (record.lesson_id,),
+                    taxonomy=TaxonomyScope(
+                        competency_id=record.competency_id,
+                        skill_id=record.skill_id,
+                        sub_skill_id=record.sub_skill_id,
+                        learning_concept_id=record.learning_concept_id,
+                    ),
+                )
+            if (
+                record.curriculum_version_id != record_scope.curriculum_version_id
+                or record.source_curriculum_version_id != record_scope.curriculum_version_id
+            ):
                 raise GenerationContextCrossCurriculumError(record.id)
-            if selected_scope.lesson_ids and record.lesson_id not in selected_scope.lesson_ids:
+            if not filters.allows(record_scope):
+                if _retrieval_boundaries_allow(filters, record_scope):
+                    raise GenerationContextTaxonomyMismatchError(record.id)
                 raise GenerationContextCrossCurriculumError(record.id)
-            if not _taxonomy_matches(record, slot.taxonomy_target):
-                raise GenerationContextTaxonomyMismatchError(record.id)
         return ordered
 
     async def _dispatch_job(
@@ -1137,13 +1180,79 @@ class GenerationWorkerService:
         return True
 
 
+def _generation_retrieval_filters(
+    scope: GenerationScopeRecord,
+    slot: BlueprintSlot,
+    requested: RetrievalFilters | None,
+) -> RetrievalFilters:
+    selected_scope = slot.generation_constraints.curriculum_scope
+    default = RetrievalScope(
+        grade=scope.grade,
+        exam_id=scope.exam_id,
+        medium_id=scope.medium_id,
+        subject_id=scope.subject_id,
+        curriculum_version_id=scope.curriculum_version_id,
+        unit_ids=selected_scope.unit_ids,
+        lesson_ids=selected_scope.lesson_ids,
+        taxonomy=TaxonomyScope(
+            competency_id=slot.taxonomy_target.competency_id,
+            skill_id=slot.taxonomy_target.skill_id,
+            sub_skill_id=slot.taxonomy_target.sub_skill_id,
+            learning_concept_id=slot.taxonomy_target.learning_concept_id,
+        ),
+    )
+    if requested is None:
+        return default
+    if isinstance(requested, RetrievalScope):
+        if not default.allows(requested):
+            raise GenerationBlueprintScopeMismatchError(slot.slot_id)
+        return requested
+    if not isinstance(requested, RetrievalScopeSet) or any(
+        candidate.medium_id != scope.medium_id for candidate in requested.scopes
+    ):
+        raise GenerationBlueprintScopeMismatchError(slot.slot_id)
+    return requested
+
+
+def _filters_from_context_snapshot(snapshot: dict[str, object]) -> RetrievalFilters | None:
+    value = snapshot.get("retrieval_filters")
+    if value is None:
+        return None
+    try:
+        return deserialize_retrieval_filters(value)
+    except RetrievalContractError as error:
+        raise GenerationRetryStateError("persisted retrieval filters are invalid") from error
+
+
+def _retrieval_boundaries_allow(
+    filters: RetrievalFilters,
+    candidate: RetrievalScope,
+) -> bool:
+    scopes = filters.scopes if isinstance(filters, RetrievalScopeSet) else (filters,)
+    return any(
+        selected.grade == candidate.grade
+        and selected.exam_id == candidate.exam_id
+        and selected.medium_id == candidate.medium_id
+        and selected.subject_id == candidate.subject_id
+        and selected.curriculum_version_id == candidate.curriculum_version_id
+        and (not selected.unit_ids or set(candidate.unit_ids).issubset(selected.unit_ids))
+        and (not selected.lesson_ids or set(candidate.lesson_ids).issubset(selected.lesson_ids))
+        for selected in scopes
+    )
+
+
 def _context_snapshot(
     records: tuple[GenerationContextRecord, ...],
+    *,
+    retrieval_filters: RetrievalFilters | None = None,
 ) -> tuple[ProvenanceContext, dict[str, object]]:
     items: list[RetrievedContextItem] = []
     snapshots: list[dict[str, object]] = []
     for record in records:
         context_id = f"{record.record_kind}:{record.id}"
+        record_scope = record.retrieval_scope
+        if record_scope is None and isinstance(retrieval_filters, RetrievalScope):
+            record_scope = retrieval_filters
         provenance = ContextProvenance(
             source_document_id=str(record.source_document_id),
             source_version=f"sha256:{record.source_checksum_sha256}",
@@ -1172,6 +1281,9 @@ def _context_snapshot(
                     "chunk_id": provenance.chunk_id,
                     "source_block_id": str(record.source_block_id),
                 },
+                "retrieval_scope": (
+                    None if record_scope is None else serialize_retrieval_scope(record_scope)
+                ),
                 "learning_scope": {
                     "unit_id": _optional_uuid(record.unit_id),
                     "lesson_id": _optional_uuid(record.lesson_id),
@@ -1188,7 +1300,10 @@ def _context_snapshot(
         context = ProvenanceContext(items=tuple(items))
     except GenerationContractError as error:
         raise GenerationContextLimitError from error
-    return context, {"items": snapshots, "trust": "untrusted_data"}
+    snapshot: dict[str, object] = {"items": snapshots, "trust": "untrusted_data"}
+    if retrieval_filters is not None:
+        snapshot["retrieval_filters"] = serialize_retrieval_filters(retrieval_filters)
+    return context, snapshot
 
 
 def _slot_snapshot(blueprint_snapshot: dict[str, object], slot_id: str) -> dict[str, object]:
@@ -1199,18 +1314,6 @@ def _slot_snapshot(blueprint_snapshot: dict[str, object], slot_id: str) -> dict[
         if isinstance(item, dict) and item.get("slot_id") == slot_id:
             return cast(dict[str, object], item)
     raise GenerationSlotNotFoundError(slot_id)
-
-
-def _taxonomy_matches(record: GenerationContextRecord, target: TaxonomyTarget) -> bool:
-    return (
-        record.competency_id == target.competency_id
-        and (target.skill_id is None or record.skill_id == target.skill_id)
-        and (target.sub_skill_id is None or record.sub_skill_id == target.sub_skill_id)
-        and (
-            target.learning_concept_id is None
-            or record.learning_concept_id == target.learning_concept_id
-        )
-    )
 
 
 def _optional_uuid(value: UUID | None) -> str | None:

@@ -11,6 +11,14 @@ This document records limitations that remain after the implemented Priority 1 e
 - The repository does not contain legally usable representative scanned Sinhala Grade 5 pages with human-adjudicated ground truth.
 - No Sinhala character-error-rate, page-coverage or question-structure quality claim is made until that corpus is obtained and adjudicated.
 
+### Grade 3–5 pilot corpus and Scholarship policy
+
+- A controlled private-runtime inventory covers the available Grade 3, Grade 4 and Grade 5 source corpus. Only the explicitly human-reviewed Grade 4 and Grade 5 sources are active for retrieval.
+- The available Grade 3 Sinhala Maths extraction was removed from active use after visual comparison exposed legacy-font glyph corruption despite non-empty extracted Unicode text. Grade 3 requires a corrected font mapping or human-adjudicated OCR before it can re-enter retrieval.
+- Real Grade 5 Scholarship generation remains fail-closed. No authoritative reviewed Paper I ability/reasoning framework or past-paper evidence is available, and Paper II cannot have complete active Grade 3–5 evidence while Grade 3 remains excluded.
+- Deterministic Paper I, Paper II and full-package fixtures prove orchestration, versioning and cross-grade isolation only. They are not real Scholarship educational-quality evidence.
+- Term-test generation also remains fail-closed until an authoritative reviewed term-coverage policy is configured; the application does not guess term boundaries from filenames or generated text.
+
 ### Representative knowledge and retrieval quality
 
 - Structured questions, curriculum chunks, review, versioned embeddings, hybrid retrieval and leakage-safe scope filtering are implemented.

@@ -48,17 +48,18 @@ async function openUploadAtPdf(page: Page): Promise<Locator> {
   return dialog;
 }
 
-async function chooseGradeSevenMaths(page: Page) {
-  await page.getByLabel("Grade").selectOption("7");
-  await page.getByLabel("Medium").selectOption("en");
-  await page.getByLabel("Subject").selectOption("MATHEMATICS");
-  await page.getByLabel("Paper type").selectOption("SCHOOL-G7");
+async function chooseGradeFiveMaths(page: Page) {
+  await page.getByLabel("Grade").selectOption("5");
+  await page.getByLabel("Medium").selectOption("si");
+  await page.getByRole("radio", { name: "Subject Practice" }).check();
+  await page.getByLabel("Subject", { exact: true }).selectOption("MATHEMATICS");
   await page.getByRole("button", { name: "Continue to scope" }).click();
 }
 
 async function choosePaperSettings(page: Page) {
   await page.getByRole("button", { name: "Continue to paper settings" }).click();
-  await page.getByLabel("Number of questions").fill("12");
+  await page.getByLabel("MCQ questions").fill("12");
+  await page.getByLabel("Written questions").fill("0");
   await page.getByLabel("Duration in minutes").fill("50");
   await page.getByLabel("Difficulty").selectOption("balanced");
   await page.getByRole("button", { name: "Generate paper" }).click();
@@ -86,8 +87,8 @@ test("contract 1: Materials overview shows Grades 1–13 with useful counts", as
   await expect(overview.getByRole("button", { name: /Grade 5/i })).toContainText("1 Needs review");
 });
 
-test("contract 2: Grade 5 opens a readable uploaded-material list", async ({ page }) => {
-  await authenticatedFixture(page, "reviewer");
+test("contract 2: Grade 5 opens a searchable, filtered uploaded-material list", async ({ page }) => {
+  const fixture = await authenticatedFixture(page, "reviewer");
   await openGradeFiveMaths(page);
 
   const list = page.getByRole("region", { name: "Uploaded materials" });
@@ -101,6 +102,42 @@ test("contract 2: Grade 5 opens a readable uploaded-material list", async ({ pag
   await expect(list).toContainText("Processing");
   await expect(list.getByText("grade-5-maths-2025-paper.pdf")).toBeVisible();
   await expect(list).toContainText("Needs review");
+
+  await list.getByLabel("Search").fill("syllabus");
+  await list.getByLabel("Medium").selectOption({ label: "English" });
+  await list.getByLabel("Material type").selectOption("syllabus");
+  await list.getByLabel("Status").selectOption("ready_for_ai");
+  await list.getByLabel("Year").fill("2026");
+  await expect
+    .poll(() =>
+      fixture.requests.some((request) => {
+        if (!request.path.endsWith("/materials")) return false;
+        const search = new URLSearchParams(request.search);
+        return (
+          search.get("search") === "syllabus" &&
+          search.get("material_type") === "syllabus" &&
+          search.get("status") === "ready_for_ai" &&
+          search.get("year") === "2026"
+        );
+      }),
+    )
+    .toBe(true);
+
+  const syllabus = list.locator("article").filter({ hasText: "grade-5-maths-syllabus.pdf" });
+  const previewResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/content") && response.request().method() === "GET",
+  );
+  await syllabus.getByRole("link", { name: "View", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "grade-5-maths-syllabus.pdf" }),
+  ).toBeVisible();
+  await expect(page.getByTitle("Original PDF: grade-5-maths-syllabus.pdf")).toHaveAttribute(
+    "src",
+    /\/api\/v1\/admin\/source-documents\/.+\/content$/,
+  );
+  const response = await previewResponse;
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("application/pdf");
 });
 
 test("contract 3: an exact duplicate upload is stopped and links to the existing item", async ({
@@ -215,28 +252,34 @@ test("contract 5: text correction compares immutable and editable extraction", a
   expect(fixture.corrections).toEqual(["Three equal parts are shaded."]);
 });
 
-test("contract 6: Grade 7 Maths Lessons 1–3 generation uses teacher intent", async ({ page }) => {
+test("contract 6: Grade 5 Maths Lessons 1–3 generation uses teacher intent", async ({ page }) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
   await expect(page.getByRole("heading", { level: 1, name: "Generate Papers" })).toBeVisible();
 
-  await chooseGradeSevenMaths(page);
-  await page.getByRole("radio", { name: "Lesson range" }).check();
+  await chooseGradeFiveMaths(page);
+  await page.getByRole("radio", { name: "Choose specific lessons" }).check();
   await page.getByLabel("First lesson").selectOption("1");
   await page.getByLabel("Last lesson").selectOption("3");
   await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 7 Maths · Lessons 1–3",
+    "Grade 5 Maths · Lessons 1–3",
   );
   await choosePaperSettings(page);
 
   await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
   expect(generationIntent(fixture)).toMatchObject({
     scope: { end_lesson: 3, kind: "lesson_range", start_lesson: 1 },
-    settings: { difficulty: "balanced", duration_minutes: 50, question_count: 12 },
+    settings: {
+      difficulty: "balanced",
+      duration_minutes: 50,
+      mcq_count: 12,
+      structured_count: 0,
+      written_count: 0,
+    },
     target: {
-      assessment_programme: "SCHOOL-G7",
-      grade: 7,
-      medium: "en",
+      grade: 5,
+      medium: "si",
+      paper_type: "subject_practice",
       subject: "MATHEMATICS",
     },
   });
@@ -261,15 +304,33 @@ test("contract 6: Grade 7 Maths Lessons 1–3 generation uses teacher intent", a
   await expect(progress).toContainText("Ready for review");
 });
 
-test("contract 7: Grade 7 Maths supports full-subject generation", async ({ page }) => {
+test("contract 6b: Grade 5 Maths can select non-contiguous lessons", async ({ page }) => {
+  const fixture = await authenticatedFixture(page, "admin");
+  await page.goto("/admin/generate-papers");
+  await chooseGradeFiveMaths(page);
+  await page.getByRole("radio", { name: "Pick individual lessons" }).check();
+  await page.getByRole("checkbox", { name: "Lesson 1 — Whole numbers" }).check();
+  await page.getByRole("checkbox", { name: "Lesson 3 — Fractions" }).check();
+  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
+    "Grade 5 Maths · Lessons 1 and 3",
+  );
+  await choosePaperSettings(page);
+
+  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  expect(generationIntent(fixture)).toMatchObject({
+    scope: { kind: "selected_lessons", lesson_numbers: [1, 3] },
+  });
+});
+
+test("contract 7: Grade 5 Maths supports full-subject generation", async ({ page }) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
   await expect(page.getByRole("heading", { level: 1, name: "Generate Papers" })).toBeVisible();
 
-  await chooseGradeSevenMaths(page);
-  await page.getByRole("radio", { name: "Full syllabus" }).check();
+  await chooseGradeFiveMaths(page);
+  await page.getByRole("radio", { name: "Full subject" }).check();
   await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 7 Maths · Full syllabus",
+    "Grade 5 Maths · Full subject",
   );
   await choosePaperSettings(page);
 
@@ -277,12 +338,44 @@ test("contract 7: Grade 7 Maths supports full-subject generation", async ({ page
   expect(generationIntent(fixture)).toMatchObject({
     scope: { kind: "full_subject" },
     target: {
-      assessment_programme: "SCHOOL-G7",
-      grade: 7,
-      medium: "en",
+      grade: 5,
+      medium: "si",
+      paper_type: "subject_practice",
       subject: "MATHEMATICS",
     },
   });
+});
+
+test("contract 7b: Grade 5 Scholarship modes submit without a subject", async ({ page }) => {
+  const fixture = await authenticatedFixture(page, "admin");
+  await page.goto("/admin/generate-papers");
+  await page.getByLabel("Grade").selectOption("5");
+  await page.getByLabel("Medium").selectOption("si");
+  await page.getByRole("radio", { name: "Grade 5 Scholarship Practice" }).check();
+  await expect(page.getByRole("radio", { name: "Paper I — Ability & Reasoning" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Paper II — Curriculum Knowledge" })).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: "Full Scholarship Practice — Paper I + Paper II" }),
+  ).toBeVisible();
+  await page.getByRole("radio", { name: "Paper II — Curriculum Knowledge" }).check();
+  await expect(page.getByLabel("Subject", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue to scope" }).click();
+  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
+    "Grade 5 Scholarship · Paper II — Curriculum Knowledge",
+  );
+  await choosePaperSettings(page);
+
+  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  expect(generationIntent(fixture)).toMatchObject({
+    scope: { kind: "programme" },
+    target: {
+      grade: 5,
+      medium: "si",
+      paper_type: "scholarship_practice",
+      scholarship_mode: "paper_ii",
+    },
+  });
+  expect(generationIntent(fixture)).not.toHaveProperty("target.subject");
 });
 
 test("contract 8: Review & Approve shows the generated question, answer, and marking together", async ({
@@ -292,6 +385,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   await page.goto("/admin/review-approve");
   await expect(page.getByRole("heading", { level: 1, name: "Review & Approve" })).toBeVisible();
 
+  const overview = page.getByRole("region", { name: "Questions in this paper" });
+  await expect(overview).toContainText("Question 1");
+  await expect(overview).toContainText("Marking not confirmed");
   const question = page.getByRole("region", { name: "Question 1 of 1" });
   await expect(question).toContainText(
     "What fraction of the four equal parts is shaded when three parts are shaded?",
@@ -303,8 +399,11 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
     "Three of the four equal parts are shaded, so the fraction is 3/4.",
   );
   await expect(question).toContainText("2 marks");
-  await expect(question).toContainText("Grade 7 Maths · Lessons 1–3 · Fractions");
-  await expect(question).toContainText("Grade 7 Maths Teacher Guide — page 18");
+  await expect(question).toContainText(
+    "Marks not confirmed — suggested marking requires teacher confirmation",
+  );
+  await expect(question).toContainText("Grade 5 Maths · Lessons 1–3 · Fractions");
+  await expect(question).toContainText("Grade 5 Maths Teacher Guide — page 18");
   await expect(question).toContainText("Ready");
   await expect(question).toContainText("Answer check: Passed");
   await expect(question).toContainText("Calculation check: Passed");
@@ -328,6 +427,10 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   await expect(question.getByRole("button", { name: "Approve" })).toBeDisabled();
   await question.getByRole("button", { name: "Start review" }).click();
   await expect(page.getByText("Review started.")).toBeVisible();
+  await expect(question.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await question
+    .getByRole("checkbox", { name: "I checked these marks and marking guidance" })
+    .check();
   await expect(question.getByRole("button", { name: "Approve" })).toBeEnabled();
   await question.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByText("Question approved.")).toBeVisible();
@@ -343,18 +446,25 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
       request.path.endsWith(`/questions/${fixture.reviewQuestionId}/approve`),
   );
   expect(startRequest?.body).toEqual({ expected_version: 1 });
-  expect(approveRequest?.body).toEqual({ expected_version: 2, note: null });
+  expect(approveRequest?.body).toEqual({
+    expected_version: 2,
+    marking_confirmed: true,
+    note: null,
+  });
 
   const draftReady = page.getByRole("region", { name: "Paper ready for draft" });
   await expect(draftReady).toBeVisible();
   await draftReady.getByRole("button", { name: "Create draft" }).click();
   await expect(page.getByText("Draft created. It is ready in Published Papers.")).toBeVisible();
   const publishedLink = page.getByRole("link", { name: "Go to Published Papers" });
-  await expect(publishedLink).toHaveAttribute("href", /\/admin\/published-papers\?paper=/);
+  await expect(publishedLink).toHaveAttribute(
+    "href",
+    /\/admin\/published-papers\?curriculum=.+&paper=/,
+  );
   await publishedLink.click();
   await expect(page.getByRole("heading", { level: 1, name: "Published Papers" })).toBeVisible();
   await expect(
-    page.getByRole("article", { name: "Grade 7 Maths Lessons 1–3 practice paper" }),
+    page.getByRole("article", { name: "Grade 5 Maths Lessons 1–3 practice paper" }),
   ).toContainText("Grade 7 · Maths · English");
 });
 
@@ -455,8 +565,9 @@ test("contract 10: technical diagnostics stay hidden until Advanced or Technical
 
   await page.goto("/admin/published-papers");
   await expect(page.getByRole("heading", { level: 1, name: "Published Papers" })).toBeVisible();
+  await page.getByLabel("Curriculum").selectOption({ label: "Grade 7 Maths 2026" });
   const published = page.getByRole("article", {
-    name: "Grade 7 Maths Lessons 1–3 practice paper",
+    name: "Grade 5 Maths Lessons 1–3 practice paper",
   });
   await expect(published).toContainText("Published");
   await expect(published).toContainText("Version 2");

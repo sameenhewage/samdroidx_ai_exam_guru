@@ -9,7 +9,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import Float, Text, and_, bindparam, func, literal, or_, select
+from sqlalchemy import Float, Text, and_, bindparam, func, literal, or_, select, union
 from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,8 +43,10 @@ from exam_guru_api.knowledge.models import (
 from exam_guru_api.retrieval.domain import (
     LexicalCandidate,
     RetrievalContractError,
+    RetrievalFilters,
     RetrievalRecord,
     RetrievalScope,
+    RetrievalScopeSet,
     SourceProvenance,
     TaxonomyScope,
     VectorCandidate,
@@ -128,9 +130,9 @@ def _validate_query(query: object) -> str:
     return query
 
 
-def _validate_filters(filters: object) -> RetrievalScope:
-    if not isinstance(filters, RetrievalScope):
-        raise RetrievalContractError("filters must be a RetrievalScope")
+def _validate_filters(filters: object) -> RetrievalFilters:
+    if not isinstance(filters, (RetrievalScope, RetrievalScopeSet)):
+        raise RetrievalContractError("filters must be a RetrievalScope or RetrievalScopeSet")
     return filters
 
 
@@ -502,18 +504,23 @@ class PostgresHybridRetrievalRepository:
             .where(*conditions)
         )
 
-    def _scoped_records(self, filters: RetrievalScope) -> CTE:
-        return (
-            self._chunk_scope_select(filters)
-            .union_all(self._question_scope_select(filters))
-            .cte("reviewed_scoped_records")
+    def _scoped_records(self, filters: RetrievalFilters) -> CTE:
+        scopes = filters.scopes if isinstance(filters, RetrievalScopeSet) else (filters,)
+        statements = tuple(
+            statement
+            for scope in scopes
+            for statement in (
+                self._chunk_scope_select(scope),
+                self._question_scope_select(scope),
+            )
         )
+        return union(*statements).cte("reviewed_scoped_records")
 
     def build_lexical_statement(
         self,
         *,
         query: str,
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> Select[Any]:
         """Build PostgreSQL full-text ranking over already-scoped reviewed rows."""
 
@@ -539,7 +546,7 @@ class PostgresHybridRetrievalRepository:
         self,
         *,
         query_vector: Sequence[object],
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> Select[Any]:
         """Build pgvector cosine ranking in exactly one declared embedding space."""
 
@@ -610,7 +617,7 @@ class PostgresHybridRetrievalRepository:
         *,
         query: str,
         query_vector: Sequence[object],
-        filters: RetrievalScope,
+        filters: RetrievalFilters,
     ) -> RetrievalCandidateSet:
         """Return bounded lexical/vector candidates without committing the session."""
 

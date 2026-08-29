@@ -303,6 +303,7 @@ function publishedQuestion(
     answer: candidateId === ids.candidateA ? "B" : "Four is divisible by two.",
     explanation: candidateId === ids.candidateA ? veryLongExplanation : "Four makes two equal pairs.",
     marking_guide: ["Award marks only for the supported answer.", "Do not award unsupported work."],
+    marking_point_marks: [1, marks - 1],
     marks,
     options:
       candidateId === ids.candidateA

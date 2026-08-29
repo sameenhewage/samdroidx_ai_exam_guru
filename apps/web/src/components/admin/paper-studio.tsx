@@ -381,11 +381,17 @@ function QuestionContentView({ content, heading }: { content: QuestionContent; h
         <div>
           <h6 className="text-sm font-semibold">Marking guide</h6>
           <ol className="mt-2 space-y-2">
-            {content.marking_guide.slice(0, MAX_DISPLAY_ITEMS).map((item, index) => (
-              <li className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm" key={index}>
-                {index + 1}. {safeText(item)}
-              </li>
-            ))}
+            {content.marking_guide.slice(0, MAX_DISPLAY_ITEMS).map((item, index) => {
+              const pointMarks = content.marking_point_marks[index];
+              return (
+                <li className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm" key={index}>
+                  {index + 1}. {safeText(item)} —{" "}
+                  {pointMarks === undefined
+                    ? "Marks not confirmed"
+                    : `${pointMarks} ${pointMarks === 1 ? "mark" : "marks"}`}
+                </li>
+              );
+            })}
           </ol>
         </div>
       </div>

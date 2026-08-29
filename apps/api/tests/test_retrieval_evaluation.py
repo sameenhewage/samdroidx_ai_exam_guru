@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope
+from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope, RetrievalScopeSet
 from exam_guru_api.retrieval.evaluation import (
     RelevanceJudgment,
     RetrievalEvalCase,
@@ -94,6 +94,64 @@ def test_prompt_injection_and_irrelevant_text_are_never_interpreted_as_relevance
     assert metrics.precision_at_k == 0.5
     assert metrics.reciprocal_rank == 1.0
     assert metrics.leakage_rate == 0.0
+
+
+def test_scholarship_paper_two_fixed_eval_flags_out_of_policy_scope_leakage() -> None:
+    base = grade_five_filter()
+    scopes = tuple(
+        replace(
+            base,
+            grade=grade,
+            exam_id=UUID(int=400 + grade),
+            subject_id=UUID(int=500 + grade),
+            curriculum_version_id=UUID(int=600 + grade),
+            unit_ids=(UUID(int=700 + grade),),
+            lesson_ids=(UUID(int=800 + grade),),
+        )
+        for grade in (3, 4, 5)
+    )
+    filters = RetrievalScopeSet(
+        policy_version="grade5-scholarship-paper-ii.v1",
+        scopes=scopes,
+    )
+    relevant = tuple(
+        retrieval_record(400 + index, f"Reviewed Grade {scope.grade} evidence", scope=scope)
+        for index, scope in enumerate(scopes)
+    )
+    out_of_term = retrieval_record(
+        410,
+        "Grade 5 third-term content",
+        scope=replace(scopes[2], lesson_ids=(UUID(int=899),)),
+    )
+    wrong_medium = retrieval_record(
+        411,
+        "Wrong-medium supporting content",
+        scope=replace(scopes[1], medium_id=OTHER_MEDIUM_ID),
+    )
+    case = RetrievalEvalCase(
+        name="grade5-scholarship-paper-ii-policy-scope",
+        query="Build Grade 5 Scholarship Paper II from configured supporting curricula",
+        filters=filters,
+        judgments=tuple(RelevanceJudgment(record.chunk_id) for record in relevant),
+        forbidden_chunk_ids=frozenset({out_of_term.chunk_id, wrong_medium.chunk_id}),
+    )
+
+    clean = evaluate_case(
+        case, tuple(ranked(record, index) for index, record in enumerate(relevant, 1)), k=3
+    )
+    leaked = evaluate_case(
+        case,
+        (
+            ranked(relevant[0], 1),
+            ranked(out_of_term, 2),
+            ranked(wrong_medium, 3),
+        ),
+        k=3,
+    )
+
+    assert clean.recall_at_k == 1.0
+    assert clean.leakage_rate == 0.0
+    assert leaked.leakage_rate == pytest.approx(2 / 3)
 
 
 def test_standalone_metrics_are_deterministic_and_use_standard_at_k_denominators() -> None:

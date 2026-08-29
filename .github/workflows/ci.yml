@@ -108,14 +108,5 @@ jobs:
         run: npm ci && npx playwright install --with-deps chromium
       - name: Validate Compose
         run: docker compose config --quiet
-      - name: Start runtime
-        run: docker compose up --build --detach --wait --wait-timeout 240
-      - name: Verify API, web, and maintenance scheduler
-        run: curl --fail --silent http://localhost:8000/api/v1/health/ready && curl --fail --silent http://localhost:3000/ > /dev/null && docker compose ps --status running --services | grep --fixed-strings --line-regexp maintenance
-      - name: Run admin browser E2E
-        run: npm run test:e2e --prefix apps/web
-      - name: Inspect runtime
-        run: docker compose ps
-      - name: Stop runtime
-        if: always()
-        run: docker compose down --volumes --remove-orphans
+      - name: Run admin browser E2E in an isolated runtime
+        run: npm run test:e2e:isolated

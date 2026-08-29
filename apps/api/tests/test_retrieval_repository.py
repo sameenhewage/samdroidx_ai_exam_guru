@@ -121,7 +121,8 @@ def test_statements_scope_reviewed_records_before_postgres_ranking() -> None:
     )
 
     assert "WITH reviewed_scoped_records AS" in lexical_sql
-    assert "UNION ALL" in lexical_sql
+    assert "UNION" in lexical_sql
+    assert "UNION ALL" not in lexical_sql
     assert "knowledge_chunks.review_state =" in lexical_sql
     assert "historical_questions.review_state =" in lexical_sql
     assert "exam_configurations.grade =" in lexical_sql

@@ -29,6 +29,7 @@ from exam_guru_api.generation.run_service import (
     GenerationContextLimitError,
     GenerationContextNotFoundError,
     GenerationContextNotReviewedError,
+    GenerationContextScopeInactiveError,
     GenerationContextSourceUntrustedError,
     GenerationContextTaxonomyMismatchError,
     GenerationCurriculumInactiveError,
@@ -361,6 +362,11 @@ async def _execute_generation_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "generation_context_source_untrusted"},
+        ) from error
+    except GenerationContextScopeInactiveError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "generation_context_scope_inactive"},
         ) from error
     except GenerationContextTaxonomyMismatchError as error:
         raise HTTPException(

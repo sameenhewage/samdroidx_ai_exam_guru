@@ -93,7 +93,7 @@ class StoredCandidateInsert:
 
 
 def question_content_payload(content: QuestionContent) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "question_type": content.question_type,
         "stem": content.stem,
         "options": [
@@ -104,6 +104,9 @@ def question_content_payload(content: QuestionContent) -> dict[str, object]:
         "marks": content.marks,
         "marking_guide": list(content.marking_guide),
     }
+    if content.marking_point_marks:
+        payload["marking_point_marks"] = list(content.marking_point_marks)
+    return payload
 
 
 def generation_lineage_payload(
@@ -170,19 +173,20 @@ def _integer(value: object, *, label: str) -> int:
 
 
 def question_content_from_payload(value: object) -> QuestionContent:
+    keys = {
+        "question_type",
+        "stem",
+        "options",
+        "answer",
+        "explanation",
+        "marks",
+        "marking_guide",
+    }
+    if isinstance(value, Mapping) and "marking_point_marks" in value:
+        keys.add("marking_point_marks")
     content = _mapping(
         value,
-        keys=frozenset(
-            {
-                "question_type",
-                "stem",
-                "options",
-                "answer",
-                "explanation",
-                "marks",
-                "marking_guide",
-            }
-        ),
+        keys=frozenset(keys),
         label="candidate content",
     )
     options = tuple(
@@ -213,6 +217,12 @@ def question_content_from_payload(value: object) -> QuestionContent:
             _text(item, label="marking guide")
             for item in _sequence(content["marking_guide"], label="marking guide")
         ),
+        marking_point_marks=tuple(
+            _integer(item, label="marking point marks")
+            for item in _sequence(content["marking_point_marks"], label="marking point marks")
+        )
+        if "marking_point_marks" in content
+        else (),
     )
 
 

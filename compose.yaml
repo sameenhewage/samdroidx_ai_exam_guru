@@ -1,7 +1,7 @@
 name: ai-exam-guru
 
 x-api-environment: &api-environment
-  EXAM_GURU_ENVIRONMENT: local
+  EXAM_GURU_ENVIRONMENT: ${EXAM_GURU_ENVIRONMENT:-local}
   EXAM_GURU_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-exam_guru}:${POSTGRES_PASSWORD:-exam-guru-local-db}@postgres:5432/${POSTGRES_DB:-exam_guru}
   EXAM_GURU_VALKEY_URL: redis://valkey:6379/0
   EXAM_GURU_STORAGE_BACKEND: ${EXAM_GURU_STORAGE_BACKEND:-local}
@@ -177,16 +177,16 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         ADMIN_COOKIE_SECURE: "false"
-        APP_BASE_URL: http://localhost:3000
-        APP_ENVIRONMENT: local
+        APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+        APP_ENVIRONMENT: ${APP_ENVIRONMENT:-local}
         WEB_IDENTITY_PROVIDER: deterministic
     depends_on:
       api:
         condition: service_healthy
     environment:
       API_BASE_URL: http://api:8000
-      APP_BASE_URL: http://localhost:3000
-      APP_ENVIRONMENT: local
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-local}
       DETERMINISTIC_ADMIN_TOKEN: ${DETERMINISTIC_ADMIN_TOKEN:-exam-guru-admin-local-token}
       DETERMINISTIC_REVIEWER_TOKEN: ${DETERMINISTIC_REVIEWER_TOKEN:-exam-guru-reviewer-local-token}
       ENABLE_DETERMINISTIC_IDENTITY: "true"

@@ -193,19 +193,8 @@ def _paper_content(result: GenerationResult) -> QuestionContent:
         answer=answer,
         explanation=question.answer.explanation,
         marks=question.marking.total_marks,
-        marking_guide=tuple(
-            json.dumps(
-                {
-                    "criterion_id": criterion.criterion_id,
-                    "description": criterion.description,
-                    "marks": criterion.marks,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            for criterion in question.marking.criteria
-        ),
+        marking_guide=tuple(criterion.description for criterion in question.marking.criteria),
+        marking_point_marks=tuple(criterion.marks for criterion in question.marking.criteria),
     )
 
 

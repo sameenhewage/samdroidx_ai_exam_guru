@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast
+from typing import Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from sqlalchemy import func, select
@@ -28,7 +28,7 @@ from exam_guru_api.papers.review_service import (
 )
 from exam_guru_api.papers.schemas import QuestionContentResponse
 from exam_guru_api.retrieval.context import ContextLimits
-from exam_guru_api.retrieval.domain import RetrievalScope, TaxonomyScope
+from exam_guru_api.retrieval.domain import RetrievalScope, RetrievalScopeSet, TaxonomyScope
 from exam_guru_api.retrieval.embeddings import (
     ActiveEmbeddingConfigUnavailableError,
     EmbeddingProviderRegistry,
@@ -45,6 +45,7 @@ from exam_guru_api.subject_quality.domain import (
 from exam_guru_api.subject_quality.service import SubjectQualityFeedbackService
 from exam_guru_api.teacher_papers.domain import (
     MAX_SLOT_REGENERATIONS,
+    NumberedLesson,
     PaperDifficulty,
     PaperJobStatus,
     PaperScopeError,
@@ -52,6 +53,12 @@ from exam_guru_api.teacher_papers.domain import (
     PaperSlotStatus,
     ResolvedCurriculum,
     ResolvedPaperScope,
+    ResolvedProgrammeMapping,
+    ResolvedProgrammeSelection,
+    ScholarshipPaperMode,
+    SchoolTerm,
+    SlotLessonAssignment,
+    TeacherPaperType,
     TeacherScopeKind,
     TeacherScopeSelection,
     assign_blueprint_lessons,
@@ -60,24 +67,31 @@ from exam_guru_api.teacher_papers.domain import (
 )
 from exam_guru_api.teacher_papers.jobs import PaperGenerationDispatcher
 from exam_guru_api.teacher_papers.models import (
+    AssessmentProgrammePolicyScopeModel,
+    AssessmentProgrammePolicyVersionModel,
     TeacherPaperJobModel,
     TeacherPaperSlotModel,
     TeacherPaperSlotRunModel,
 )
 from exam_guru_api.teacher_papers.repository import (
     ReviewSlotSource,
+    StoredProgrammePolicy,
     StoredTeacherPaper,
     TeacherPaperQuestionNotFoundError,
     TeacherPaperRepository,
 )
 from exam_guru_api.teacher_papers.schemas import (
-    AssessmentProgrammeOption,
     CurriculumLabelResponse,
     CurriculumLabelsResponse,
     FriendlyValidationStatus,
     LessonLabelsResponse,
     LessonOption,
     MediumOption,
+    PaperTypeOption,
+    ProgrammePolicyCreateRequest,
+    ProgrammePolicyResponse,
+    ProgrammePolicyScopeResponse,
+    ReviewMarkingConfirmationResponse,
     ReviewMarkingSchemeResponse,
     ReviewPaperCreateDraftRequest,
     ReviewPaperDetailResponse,
@@ -96,6 +110,7 @@ from exam_guru_api.teacher_papers.schemas import (
     ReviewQuestionTechnicalDetailsResponse,
     ReviewSourceResponse,
     ReviewValidationResponse,
+    ScholarshipModeOption,
     SubjectOption,
     TeacherPaperCountsResponse,
     TeacherPaperFailureResponse,
@@ -105,6 +120,7 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperSlotProgressResponse,
     TeacherPaperStatus,
     TechnicalValidationFindingResponse,
+    TermOption,
     UnitOption,
 )
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
@@ -112,10 +128,20 @@ from exam_guru_api.validation.pipeline import ValidationPipeline
 from exam_guru_api.validation.service import ValidationRunService
 
 _TEACHER_PAPER_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/teacher-paper-aggregate")
+_PROGRAMME_POLICY_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/assessment-programme-policy")
+_GRADE5_SCHOLARSHIP_POLICY_CODE = "G5-SCHOLARSHIP"
 _ACTOR_LEASE_SECONDS = 601
 
 
 class TeacherPaperCurriculumNotFoundError(LookupError):
+    pass
+
+
+class ProgrammePolicyScopeError(ValueError):
+    pass
+
+
+class ProgrammePolicyVersionConflictError(RuntimeError):
     pass
 
 
@@ -192,6 +218,15 @@ def _validate_idempotency_key(value: str) -> None:
 def _selection(request: TeacherPaperJobCreateRequest) -> TeacherScopeSelection:
     if request.scope.kind == "full_subject":
         return TeacherScopeSelection(kind=TeacherScopeKind.FULL_SUBJECT)
+    if request.scope.kind == "full_term":
+        return TeacherScopeSelection(kind=TeacherScopeKind.FULL_TERM)
+    if request.scope.kind == "programme":
+        return TeacherScopeSelection(kind=TeacherScopeKind.PROGRAMME)
+    if request.scope.kind == "selected_lessons":
+        return TeacherScopeSelection(
+            kind=TeacherScopeKind.SELECTED_LESSONS,
+            lesson_numbers=request.scope.lesson_numbers,
+        )
     return TeacherScopeSelection(
         kind=TeacherScopeKind.LESSON_RANGE,
         start_lesson=request.scope.start_lesson,
@@ -211,9 +246,13 @@ def _require_context_ids(
 
 def _settings(request: TeacherPaperJobCreateRequest) -> PaperSettings:
     return PaperSettings(
-        question_count=request.settings.question_count,
+        paper_name=request.settings.paper_name,
+        mcq_count=request.settings.mcq_count,
+        written_count=request.settings.written_count,
+        structured_count=request.settings.structured_count,
         duration_minutes=request.settings.duration_minutes,
         difficulty=request.settings.difficulty,
+        teacher_instruction=request.settings.teacher_instruction,
     )
 
 
@@ -245,23 +284,394 @@ def _lesson_options(curriculum: ResolvedCurriculum) -> tuple[LessonOption, ...]:
     )
 
 
+def _optional_uuid(value: UUID | None) -> str | None:
+    return None if value is None else str(value)
+
+
+def _programme_policy_snapshot(record: StoredProgrammePolicy) -> dict[str, object]:
+    policy = record.policy
+    return {
+        "schema": "assessment-programme-policy.v1",
+        "id": str(policy.id),
+        "code": policy.code,
+        "version": policy.version,
+        "title": policy.title,
+        "programme_exam_configuration_id": str(policy.programme_exam_configuration_id),
+        "medium_id": str(policy.medium_id),
+        "anchor_curriculum_version_id": str(policy.anchor_curriculum_version_id),
+        "parts": {
+            "paper_i": {
+                "profile_version": policy.paper_i_profile_version,
+                "question_weight": policy.paper_i_weight,
+            },
+            "paper_ii": {
+                "profile_version": policy.paper_ii_profile_version,
+                "question_weight": policy.paper_ii_weight,
+            },
+        },
+        "scopes": [
+            {
+                "id": str(scope.id),
+                "part": scope.part,
+                "ordinal": scope.ordinal,
+                "anchor": {
+                    "curriculum_version_id": str(scope.anchor_curriculum_version_id),
+                    "unit_id": str(scope.anchor_unit_id),
+                    "lesson_id": str(scope.anchor_lesson_id),
+                    "competency_id": str(scope.anchor_competency_id),
+                    "skill_id": _optional_uuid(scope.anchor_skill_id),
+                    "sub_skill_id": _optional_uuid(scope.anchor_sub_skill_id),
+                    "learning_concept_id": _optional_uuid(scope.anchor_learning_concept_id),
+                },
+                "source": {
+                    "grade": scope.source_grade,
+                    "exam_configuration_id": str(scope.source_exam_configuration_id),
+                    "medium_id": str(scope.source_medium_id),
+                    "subject_id": str(scope.source_subject_id),
+                    "curriculum_version_id": str(scope.source_curriculum_version_id),
+                    "unit_id": _optional_uuid(scope.source_unit_id),
+                    "lesson_id": _optional_uuid(scope.source_lesson_id),
+                    "competency_id": str(scope.source_competency_id),
+                    "skill_id": _optional_uuid(scope.source_skill_id),
+                    "sub_skill_id": _optional_uuid(scope.source_sub_skill_id),
+                    "learning_concept_id": _optional_uuid(scope.source_learning_concept_id),
+                },
+            }
+            for scope in record.scopes
+        ],
+    }
+
+
+def _programme_policy_response(record: StoredProgrammePolicy) -> ProgrammePolicyResponse:
+    policy = record.policy
+    return ProgrammePolicyResponse(
+        id=policy.id,
+        code=policy.code,
+        version=policy.version,
+        title=policy.title,
+        state=cast(Literal["draft", "reviewed", "retired"], policy.state),
+        lock_version=policy.lock_version,
+        programme_exam_configuration_id=policy.programme_exam_configuration_id,
+        medium_id=policy.medium_id,
+        anchor_curriculum_version_id=policy.anchor_curriculum_version_id,
+        paper_i_profile_version=policy.paper_i_profile_version,
+        paper_ii_profile_version=policy.paper_ii_profile_version,
+        paper_i_weight=policy.paper_i_weight,
+        paper_ii_weight=policy.paper_ii_weight,
+        scopes=tuple(
+            ProgrammePolicyScopeResponse(
+                id=scope.id,
+                part=cast(Literal["paper_i", "paper_ii"], scope.part),
+                ordinal=scope.ordinal,
+                anchor_lesson_id=scope.anchor_lesson_id,
+                source_grade=scope.source_grade,
+                source_curriculum_version_id=scope.source_curriculum_version_id,
+                source_unit_id=scope.source_unit_id,
+                source_lesson_id=scope.source_lesson_id,
+            )
+            for scope in record.scopes
+        ),
+        content_hash=policy.content_hash,
+        created_at=policy.created_at,
+        reviewed_at=policy.reviewed_at,
+    )
+
+
+def _mode_parts(mode: ScholarshipPaperMode) -> frozenset[str]:
+    return {
+        ScholarshipPaperMode.PAPER_I: frozenset({"paper_i"}),
+        ScholarshipPaperMode.PAPER_II: frozenset({"paper_ii"}),
+        ScholarshipPaperMode.FULL: frozenset({"paper_i", "paper_ii"}),
+    }[mode]
+
+
+def _resolve_programme_scope(
+    stored: StoredProgrammePolicy,
+    curriculum: ResolvedCurriculum,
+    mode: ScholarshipPaperMode,
+) -> ResolvedPaperScope:
+    policy = stored.policy
+    if policy.state not in {"reviewed", "retired"} or policy.content_hash is None:
+        raise PaperScopeError("paper_generation_programme_policy_unavailable")
+    included_parts = _mode_parts(mode)
+    ordered_lessons = tuple(
+        sorted(
+            curriculum.lessons,
+            key=lambda lesson: (lesson.unit_ordinal, lesson.ordinal, lesson.id.int),
+        )
+    )
+    lesson_numbers = {lesson.id: index for index, lesson in enumerate(ordered_lessons, start=1)}
+    lessons_by_id = {lesson.id: lesson for lesson in ordered_lessons}
+    mappings: list[ResolvedProgrammeMapping] = []
+    selected_lessons: list[UUID] = []
+    for scope in stored.scopes:
+        if scope.part not in included_parts:
+            continue
+        lesson = lessons_by_id.get(scope.anchor_lesson_id)
+        if lesson is None:
+            raise PaperScopeError("paper_generation_programme_anchor_unavailable")
+        target = next(
+            (
+                candidate
+                for candidate in lesson.taxonomy_targets
+                if candidate.competency_id == scope.anchor_competency_id
+                and candidate.skill_id == scope.anchor_skill_id
+                and candidate.sub_skill_id == scope.anchor_sub_skill_id
+                and candidate.learning_concept_id == scope.anchor_learning_concept_id
+            ),
+            None,
+        )
+        if target is None:
+            raise PaperScopeError("paper_generation_programme_anchor_unavailable")
+        mappings.append(
+            ResolvedProgrammeMapping(
+                scope_id=scope.id,
+                part=(
+                    ScholarshipPaperMode.PAPER_I
+                    if scope.part == "paper_i"
+                    else ScholarshipPaperMode.PAPER_II
+                ),
+                ordinal=scope.ordinal,
+                anchor_lesson_id=scope.anchor_lesson_id,
+                anchor_target=target.domain,
+                retrieval_scope=RetrievalScope(
+                    grade=scope.source_grade,
+                    exam_id=scope.source_exam_configuration_id,
+                    medium_id=scope.source_medium_id,
+                    subject_id=scope.source_subject_id,
+                    curriculum_version_id=scope.source_curriculum_version_id,
+                    unit_ids=(() if scope.source_unit_id is None else (scope.source_unit_id,)),
+                    lesson_ids=(
+                        () if scope.source_lesson_id is None else (scope.source_lesson_id,)
+                    ),
+                    taxonomy=TaxonomyScope(
+                        competency_id=scope.source_competency_id,
+                        skill_id=scope.source_skill_id,
+                        sub_skill_id=scope.source_sub_skill_id,
+                        learning_concept_id=scope.source_learning_concept_id,
+                    ),
+                ),
+            )
+        )
+        if scope.anchor_lesson_id not in selected_lessons:
+            selected_lessons.append(scope.anchor_lesson_id)
+    if not mappings:
+        raise PaperScopeError("paper_generation_programme_policy_unavailable")
+    numbered_lessons = tuple(
+        NumberedLesson(lesson_numbers[lesson_id], lessons_by_id[lesson_id])
+        for lesson_id in selected_lessons
+    )
+    summary = {
+        ScholarshipPaperMode.PAPER_I: "Paper I — Ability & Reasoning",
+        ScholarshipPaperMode.PAPER_II: "Paper II — Curriculum Knowledge",
+        ScholarshipPaperMode.FULL: "Full Scholarship Practice — Paper I + Paper II",
+    }[mode]
+    return ResolvedPaperScope(
+        kind=TeacherScopeKind.PROGRAMME,
+        lessons=numbered_lessons,
+        unit_ids=tuple(dict.fromkeys(item.lesson.unit_id for item in numbered_lessons)),
+        lesson_ids=tuple(item.lesson.id for item in numbered_lessons),
+        summary=summary,
+        programme=ResolvedProgrammeSelection(
+            policy_id=policy.id,
+            policy_code=policy.code,
+            policy_version=policy.version,
+            content_hash=policy.content_hash,
+            mode=mode,
+            paper_i_profile_version=policy.paper_i_profile_version,
+            paper_ii_profile_version=policy.paper_ii_profile_version,
+            paper_i_weight=policy.paper_i_weight,
+            paper_ii_weight=policy.paper_ii_weight,
+            mappings=tuple(mappings),
+        ),
+    )
+
+
+class ScholarshipProgrammePolicyService:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repository = TeacherPaperRepository(session)
+
+    async def create(
+        self,
+        request: ProgrammePolicyCreateRequest,
+        *,
+        principal: Principal,
+    ) -> ProgrammePolicyResponse:
+        authorize(principal, Permission.TAXONOMY_WRITE)
+        payload = request.model_dump(mode="json")
+        request_fingerprint = _fingerprint(payload)
+        policy_id = uuid5(_PROGRAMME_POLICY_NAMESPACE, request_fingerprint)
+        existing = await self._repository.find_programme_policy(policy_id)
+        if existing is not None:
+            if existing.policy.request_fingerprint != request_fingerprint:
+                raise ProgrammePolicyVersionConflictError(policy_id)
+            return _programme_policy_response(existing)
+        curriculum_ids = tuple(
+            dict.fromkeys(
+                (
+                    request.anchor_curriculum_version_id,
+                    *(scope.source_curriculum_version_id for scope in request.scopes),
+                )
+            )
+        )
+        identities = await self._repository.curriculum_identities(curriculum_ids)
+        anchor = identities.get(request.anchor_curriculum_version_id)
+        if (
+            anchor is None
+            or anchor[1] != request.programme_exam_configuration_id
+            or anchor[2] != request.medium_id
+            or len(identities) != len(curriculum_ids)
+        ):
+            raise ProgrammePolicyScopeError("programme policy curriculum scope is unavailable")
+        policy = AssessmentProgrammePolicyVersionModel(
+            id=policy_id,
+            programme_exam_configuration_id=request.programme_exam_configuration_id,
+            medium_id=request.medium_id,
+            anchor_curriculum_version_id=request.anchor_curriculum_version_id,
+            request_fingerprint=request_fingerprint,
+            code=request.code,
+            version=request.version,
+            title=request.title,
+            paper_i_profile_version=request.paper_i_profile_version,
+            paper_ii_profile_version=request.paper_ii_profile_version,
+            paper_i_weight=request.paper_i_weight,
+            paper_ii_weight=request.paper_ii_weight,
+            state="draft",
+            lock_version=0,
+            review_snapshot=None,
+            content_hash=None,
+            created_by=principal.subject_id,
+            reviewed_by=None,
+            reviewed_at=None,
+        )
+        scopes = tuple(
+            AssessmentProgrammePolicyScopeModel(
+                id=uuid5(_PROGRAMME_POLICY_NAMESPACE, f"{policy_id}:{scope.part}:{scope.ordinal}"),
+                policy_version_id=policy_id,
+                part=scope.part,
+                ordinal=scope.ordinal,
+                anchor_curriculum_version_id=request.anchor_curriculum_version_id,
+                anchor_unit_id=scope.anchor_unit_id,
+                anchor_lesson_id=scope.anchor_lesson_id,
+                anchor_competency_id=scope.anchor_competency_id,
+                anchor_skill_id=scope.anchor_skill_id,
+                anchor_sub_skill_id=scope.anchor_sub_skill_id,
+                anchor_learning_concept_id=scope.anchor_learning_concept_id,
+                source_grade=identities[scope.source_curriculum_version_id][0],
+                source_exam_configuration_id=identities[scope.source_curriculum_version_id][1],
+                source_medium_id=identities[scope.source_curriculum_version_id][2],
+                source_subject_id=identities[scope.source_curriculum_version_id][3],
+                source_curriculum_version_id=scope.source_curriculum_version_id,
+                source_unit_id=scope.source_unit_id,
+                source_lesson_id=scope.source_lesson_id,
+                source_competency_id=scope.source_competency_id,
+                source_skill_id=scope.source_skill_id,
+                source_sub_skill_id=scope.source_sub_skill_id,
+                source_learning_concept_id=scope.source_learning_concept_id,
+            )
+            for scope in request.scopes
+        )
+        if any(scope.source_medium_id != request.medium_id for scope in scopes):
+            raise ProgrammePolicyScopeError("programme policy scopes must use one medium")
+        stored = await self._repository.insert_programme_policy(policy, scopes)
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=principal.subject_id,
+                action="assessment_programme_policy.created",
+                resource_type="assessment_programme_policy",
+                resource_id=policy.id,
+                payload={
+                    "code": policy.code,
+                    "version": policy.version,
+                    "request_fingerprint": request_fingerprint,
+                    "scope_count": len(scopes),
+                },
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(policy)
+        return _programme_policy_response(stored)
+
+    async def get(self, policy_id: UUID, *, principal: Principal) -> ProgrammePolicyResponse:
+        authorize(principal, Permission.TAXONOMY_READ)
+        return _programme_policy_response(await self._repository.get_programme_policy(policy_id))
+
+    async def review(
+        self,
+        policy_id: UUID,
+        *,
+        expected_version: int,
+        principal: Principal,
+    ) -> ProgrammePolicyResponse:
+        authorize(principal, Permission.CONTENT_REVIEW)
+        stored = await self._repository.get_programme_policy(policy_id, for_update=True)
+        if stored.policy.lock_version != expected_version or stored.policy.state != "draft":
+            raise ProgrammePolicyVersionConflictError(policy_id)
+        parts = {scope.part for scope in stored.scopes}
+        paper_ii_grades = {
+            scope.source_grade for scope in stored.scopes if scope.part == "paper_ii"
+        }
+        if parts != {"paper_i", "paper_ii"} or not {3, 4, 5}.issubset(paper_ii_grades):
+            raise ProgrammePolicyScopeError(
+                "Scholarship policy requires Paper I and Grade 3, 4, 5 Paper II scopes"
+            )
+        if any(
+            scope.part == "paper_ii" and scope.source_grade == 5 and scope.source_lesson_id is None
+            for scope in stored.scopes
+        ):
+            raise ProgrammePolicyScopeError(
+                "Grade 5 Paper II scopes require explicit eligible lessons"
+            )
+        unavailable = await self._repository.unavailable_programme_policy_scopes(stored.scopes)
+        if unavailable:
+            raise ProgrammePolicyScopeError(
+                "Programme policy scopes require reviewed, trusted, embedded evidence"
+            )
+        snapshot = _programme_policy_snapshot(stored)
+        content_hash = _fingerprint(snapshot).removeprefix("sha256:")
+        reviewed_at = datetime.now(UTC)
+        reviewed = await self._repository.review_programme_policy(
+            policy_id,
+            expected_version=expected_version,
+            snapshot=snapshot,
+            content_hash=content_hash,
+            reviewed_by=principal.subject_id,
+            reviewed_at=reviewed_at,
+        )
+        if reviewed is None:
+            raise ProgrammePolicyVersionConflictError(policy_id)
+        stored = StoredProgrammePolicy(policy=reviewed, scopes=stored.scopes)
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=principal.subject_id,
+                action="assessment_programme_policy.reviewed",
+                resource_type="assessment_programme_policy",
+                resource_id=policy_id,
+                payload={
+                    "content_hash": content_hash,
+                    "scope_count": len(stored.scopes),
+                },
+            )
+        )
+        await self._session.commit()
+        return _programme_policy_response(stored)
+
+
 class TeacherPaperQueryService:
     def __init__(self, session: AsyncSession) -> None:
         self._repository = TeacherPaperRepository(session)
 
     async def options(self) -> TeacherPaperOptionsResponse:
-        curricula = await self._repository.list_curricula()
+        curricula = await self._repository.list_curricula(grade=5)
         media = {curriculum.medium_code: curriculum.medium_label for curriculum in curricula}
-        assessments = {
-            (curriculum.assessment_code, curriculum.grade): curriculum.assessment_label
-            for curriculum in curricula
-        }
         subjects = tuple(
             SubjectOption(
                 code=curriculum.subject_code,
                 grade=curriculum.grade,
                 medium=curriculum.medium_code,
-                assessment_programme=curriculum.assessment_code,
                 label=curriculum.subject_label,
                 units=tuple(
                     UnitOption(code=code, label=label)
@@ -274,15 +684,43 @@ class TeacherPaperQueryService:
             for curriculum in curricula
         )
         return TeacherPaperOptionsResponse(
-            grades=tuple(range(1, 14)),
+            grades=(5,),
             media=tuple(
                 MediumOption(code=code, label=label) for code, label in sorted(media.items())
             ),
-            assessment_programmes=tuple(
-                AssessmentProgrammeOption(code=code, grade=grade, label=label)
-                for (code, grade), label in sorted(assessments.items())
+            paper_types=(
+                PaperTypeOption(
+                    code=TeacherPaperType.SUBJECT_PRACTICE,
+                    grade=5,
+                    label="Subject Practice",
+                ),
+                PaperTypeOption(code=TeacherPaperType.TERM_TEST, grade=5, label="Term Test"),
+                PaperTypeOption(
+                    code=TeacherPaperType.SCHOLARSHIP_PRACTICE,
+                    grade=5,
+                    label="Grade 5 Scholarship Practice",
+                ),
+            ),
+            scholarship_modes=(
+                ScholarshipModeOption(
+                    code=ScholarshipPaperMode.PAPER_I,
+                    label="Paper I — Ability & Reasoning",
+                ),
+                ScholarshipModeOption(
+                    code=ScholarshipPaperMode.PAPER_II,
+                    label="Paper II — Curriculum Knowledge",
+                ),
+                ScholarshipModeOption(
+                    code=ScholarshipPaperMode.FULL,
+                    label="Full Scholarship Practice — Paper I + Paper II",
+                ),
             ),
             subjects=subjects,
+            terms=(
+                TermOption(code=SchoolTerm.TERM_1, label="1st Term"),
+                TermOption(code=SchoolTerm.TERM_2, label="2nd Term"),
+                TermOption(code=SchoolTerm.TERM_3, label="3rd Term"),
+            ),
         )
 
     async def curricula(
@@ -317,8 +755,8 @@ class TeacherPaperQueryService:
         )
         return LessonLabelsResponse(
             grade=curriculum.grade,
-            medium=curriculum.medium_label,
-            subject=curriculum.subject_label,
+            medium=curriculum.medium_code,
+            subject=curriculum.subject_code,
             curriculum=_curriculum_label(curriculum),
             lessons=_lesson_options(curriculum),
         )
@@ -366,35 +804,56 @@ class TeacherPaperJobService:
         authorize(principal, Permission.GENERATION_RUN)
         _validate_idempotency_key(idempotency_key)
         target = request.target
-        curricula = await self._repository.list_curricula(
-            grade=target.grade,
-            medium=target.medium,
-            subject=target.subject,
-            assessment_programme=target.assessment_programme,
-        )
+        programme_policy: StoredProgrammePolicy | None = None
+        if target.paper_type is TeacherPaperType.SCHOLARSHIP_PRACTICE:
+            programme_policy = await self._repository.active_programme_policy(
+                code=_GRADE5_SCHOLARSHIP_POLICY_CODE,
+                grade=target.grade,
+                medium=target.medium,
+            )
+            if programme_policy is None:
+                raise PaperScopeError("paper_generation_programme_policy_unavailable")
+            curricula = await self._repository.list_curricula(
+                curriculum_id=programme_policy.policy.anchor_curriculum_version_id
+            )
+        else:
+            if target.paper_type is TeacherPaperType.TERM_TEST:
+                raise PaperScopeError("paper_generation_term_policy_unavailable")
+            curricula = await self._repository.list_curricula(
+                grade=target.grade,
+                medium=target.medium,
+                subject=cast(str, target.subject),
+            )
         if not curricula:
             raise TeacherPaperCurriculumNotFoundError
         if len(curricula) != 1:
             raise TeacherPaperCurriculumAmbiguousError
         curriculum = curricula[0]
-        scope = translate_teacher_scope(curriculum, _selection(request))
+        scope = (
+            _resolve_programme_scope(
+                programme_policy,
+                curriculum,
+                cast(ScholarshipPaperMode, target.scholarship_mode),
+            )
+            if programme_policy is not None
+            else translate_teacher_scope(curriculum, _selection(request))
+        )
         settings = _settings(request)
         active_generation = self._runtime.active_config
         teacher_intent = {
-            "schema": "teacher-paper-intent.v1",
-            "target": {
-                "grade": curriculum.grade,
-                "medium": curriculum.medium_code,
-                "subject": curriculum.subject_code,
-                "assessment_programme": curriculum.assessment_code,
-            },
+            "schema": "teacher-paper-intent.v2",
+            "target": request.target.model_dump(mode="json", exclude_none=True),
             "scope": request.scope.model_dump(mode="json"),
         }
         paper_settings = {
-            "schema": "teacher-paper-settings.v1",
-            "question_count": settings.question_count,
+            "schema": "teacher-paper-settings.v2",
+            "paper_name": settings.paper_name,
+            "mcq_count": settings.mcq_count,
+            "written_count": settings.written_count,
+            "structured_count": settings.structured_count,
             "duration_minutes": settings.duration_minutes,
             "difficulty": settings.difficulty.value,
+            "teacher_instruction": settings.teacher_instruction,
         }
         resolution = _resolution_snapshot(curriculum, scope)
         request_fingerprint = _fingerprint(
@@ -413,9 +872,9 @@ class TeacherPaperJobService:
         )
         job_id = uuid5(_TEACHER_PAPER_NAMESPACE, idempotency_hash)
         paper_reference = f"EGP-{job_id.hex[:4].upper()}-{job_id.hex[4:12].upper()}"
-        title = f"Grade {curriculum.grade} {curriculum.subject_label} practice paper"
+        title = settings.paper_name
         max_cost = (
-            settings.question_count
+            settings.total_questions
             * active_generation.budgets.max_total_cost_microusd
             * (MAX_SLOT_REGENERATIONS + 1)
         )
@@ -438,7 +897,7 @@ class TeacherPaperJobService:
                 "practice_paper_id": None,
                 "status": PaperJobStatus.PREPARING.value,
                 "version": 0,
-                "slot_count": settings.question_count,
+                "slot_count": settings.total_questions,
                 "generated_count": 0,
                 "validated_count": 0,
                 "candidate_count": 0,
@@ -474,7 +933,7 @@ class TeacherPaperJobService:
                     "paper_reference": paper_reference,
                     "curriculum_version_id": str(curriculum.curriculum_version_id),
                     "request_fingerprint": request_fingerprint,
-                    "slot_count": settings.question_count,
+                    "slot_count": settings.total_questions,
                     "status": winner.status,
                 },
             )
@@ -612,7 +1071,7 @@ def _resolution_snapshot(
     curriculum: ResolvedCurriculum,
     scope: ResolvedPaperScope,
 ) -> dict[str, object]:
-    return {
+    snapshot: dict[str, object] = {
         "schema": "teacher-paper-resolution.v1",
         "assessment": {
             "id": str(curriculum.exam_configuration_id),
@@ -662,13 +1121,28 @@ def _resolution_snapshot(
             for numbered in scope.lessons
         ],
     }
+    if scope.programme is not None:
+        programme = scope.programme
+        snapshot["programme"] = {
+            "policy_id": str(programme.policy_id),
+            "policy_code": programme.policy_code,
+            "policy_version": programme.policy_version,
+            "content_hash": programme.content_hash,
+            "mode": programme.mode.value,
+            "paper_i_profile_version": programme.paper_i_profile_version,
+            "paper_ii_profile_version": programme.paper_ii_profile_version,
+            "paper_i_weight": programme.paper_i_weight,
+            "paper_ii_weight": programme.paper_ii_weight,
+            "mapping_ids": [str(mapping.scope_id) for mapping in programme.mappings],
+        }
+    return snapshot
 
 
 async def _resolved_job_scope(
     repository: TeacherPaperRepository,
     job: TeacherPaperJobModel,
 ) -> tuple[ResolvedCurriculum, ResolvedPaperScope, PaperSettings]:
-    curricula = await repository.list_curricula()
+    curricula = await repository.list_curricula(curriculum_id=job.curriculum_version_id)
     curriculum = next(
         (
             item
@@ -682,20 +1156,97 @@ async def _resolved_job_scope(
     )
     if curriculum is None:
         raise TeacherPaperCurriculumNotFoundError
-    raw_scope = cast(dict[str, object], job.teacher_intent["scope"])
-    kind = TeacherScopeKind(cast(str, raw_scope["kind"]))
-    selection = TeacherScopeSelection(
-        kind=kind,
-        start_lesson=cast(int | None, raw_scope.get("start_lesson")),
-        end_lesson=cast(int | None, raw_scope.get("end_lesson")),
-    )
-    scope = translate_teacher_scope(curriculum, selection)
-    settings = PaperSettings(
-        question_count=cast(int, job.paper_settings["question_count"]),
-        duration_minutes=cast(int, job.paper_settings["duration_minutes"]),
-        difficulty=PaperDifficulty(cast(str, job.paper_settings["difficulty"])),
-    )
+    programme_snapshot = job.resolution_snapshot.get("programme")
+    if isinstance(programme_snapshot, dict):
+        try:
+            policy_id = UUID(cast(str, programme_snapshot["policy_id"]))
+            mode = ScholarshipPaperMode(cast(str, programme_snapshot["mode"]))
+        except (KeyError, ValueError, TypeError) as error:
+            raise PaperScopeError("paper_generation_programme_snapshot_invalid") from error
+        policy = await repository.get_programme_policy(policy_id)
+        expected_mapping_ids = tuple(cast(list[str], programme_snapshot.get("mapping_ids", [])))
+        if (
+            policy.policy.version != programme_snapshot.get("policy_version")
+            or policy.policy.content_hash != programme_snapshot.get("content_hash")
+            or tuple(str(scope.id) for scope in policy.scopes if scope.part in _mode_parts(mode))
+            != expected_mapping_ids
+        ):
+            raise PaperScopeError("paper_generation_programme_snapshot_invalid")
+        scope = _resolve_programme_scope(policy, curriculum, mode)
+    else:
+        raw_scope = cast(dict[str, object], job.teacher_intent["scope"])
+        kind = TeacherScopeKind(cast(str, raw_scope["kind"]))
+        selection = TeacherScopeSelection(
+            kind=kind,
+            start_lesson=cast(int | None, raw_scope.get("start_lesson")),
+            end_lesson=cast(int | None, raw_scope.get("end_lesson")),
+            lesson_numbers=tuple(cast(list[int], raw_scope.get("lesson_numbers", []))),
+        )
+        scope = translate_teacher_scope(curriculum, selection)
+    if job.paper_settings.get("schema") == "teacher-paper-settings.v2":
+        settings = PaperSettings(
+            paper_name=cast(str, job.paper_settings["paper_name"]),
+            mcq_count=cast(int, job.paper_settings["mcq_count"]),
+            written_count=cast(int, job.paper_settings["written_count"]),
+            structured_count=cast(int, job.paper_settings["structured_count"]),
+            duration_minutes=cast(int, job.paper_settings["duration_minutes"]),
+            difficulty=PaperDifficulty(cast(str, job.paper_settings["difficulty"])),
+            teacher_instruction=cast(str | None, job.paper_settings.get("teacher_instruction")),
+        )
+    else:
+        settings = PaperSettings(
+            paper_name=job.title,
+            mcq_count=cast(int, job.paper_settings["question_count"]),
+            written_count=0,
+            structured_count=0,
+            duration_minutes=cast(int, job.paper_settings["duration_minutes"]),
+            difficulty=PaperDifficulty(cast(str, job.paper_settings["difficulty"])),
+        )
     return curriculum, scope, settings
+
+
+def _retrieval_filters_for_assignment(
+    curriculum: ResolvedCurriculum,
+    scope: ResolvedPaperScope,
+    assignment: SlotLessonAssignment,
+) -> RetrievalScope | RetrievalScopeSet:
+    if scope.programme is None:
+        return RetrievalScope(
+            grade=curriculum.grade,
+            exam_id=curriculum.exam_configuration_id,
+            medium_id=curriculum.medium_id,
+            subject_id=curriculum.subject_id,
+            curriculum_version_id=curriculum.curriculum_version_id,
+            unit_ids=(assignment.lesson.unit_id,),
+            lesson_ids=(assignment.lesson.id,),
+            taxonomy=TaxonomyScope(
+                competency_id=assignment.taxonomy_target.competency_id,
+                skill_id=assignment.taxonomy_target.skill_id,
+                sub_skill_id=assignment.taxonomy_target.sub_skill_id,
+                learning_concept_id=assignment.taxonomy_target.learning_concept_id,
+            ),
+        )
+    mappings = tuple(
+        mapping
+        for mapping in scope.programme.mappings
+        if mapping.anchor_lesson_id == assignment.lesson.id
+        and mapping.anchor_target == assignment.taxonomy_target.domain
+    )
+    if not mappings:
+        raise PaperScopeError("paper_generation_programme_slot_mapping_missing")
+    policy_fingerprint = _fingerprint(
+        {
+            "policy_id": str(scope.programme.policy_id),
+            "policy_version": scope.programme.policy_version,
+            "content_hash": scope.programme.content_hash,
+            "part": mappings[0].part.value,
+            "anchor_target": assignment.taxonomy_target.label,
+        }
+    )
+    return RetrievalScopeSet(
+        policy_version=f"programme:{policy_fingerprint.removeprefix('sha256:')}",
+        scopes=tuple(dict.fromkeys(mapping.retrieval_scope for mapping in mappings)),
+    )
 
 
 class TeacherPaperWorkerService:
@@ -831,20 +1382,10 @@ class TeacherPaperWorkerService:
                     *slot.generation_constraints.retrieval_query_hints,
                 )
             )
-            retrieval_scope = RetrievalScope(
-                grade=curriculum.grade,
-                exam_id=curriculum.exam_configuration_id,
-                medium_id=curriculum.medium_id,
-                subject_id=curriculum.subject_id,
-                curriculum_version_id=curriculum.curriculum_version_id,
-                unit_ids=(assignment.lesson.unit_id,),
-                lesson_ids=(assignment.lesson.id,),
-                taxonomy=TaxonomyScope(
-                    competency_id=assignment.taxonomy_target.competency_id,
-                    skill_id=assignment.taxonomy_target.skill_id,
-                    sub_skill_id=assignment.taxonomy_target.sub_skill_id,
-                    learning_concept_id=assignment.taxonomy_target.learning_concept_id,
-                ),
+            retrieval_filters = _retrieval_filters_for_assignment(
+                curriculum,
+                scope,
+                assignment,
             )
             embedding_config = self._embeddings.active_config
             query_vector = self._embeddings.embed_query(query, embedding_config).vector
@@ -860,7 +1401,7 @@ class TeacherPaperWorkerService:
                     max_total_characters=24_000,
                     max_item_characters=8_000,
                 ),
-            ).retrieve(query=query, query_vector=query_vector, filters=retrieval_scope)
+            ).retrieve(query=query, query_vector=query_vector, filters=retrieval_filters)
             if not retrieval.context.items:
                 raise TeacherPaperContextUnavailableError(assignment.slot_id)
             record_ids = tuple(
@@ -886,6 +1427,7 @@ class TeacherPaperWorkerService:
                 historical_question_ids=question_ids,
                 idempotency_key=f"tp-{job.id.hex}-{assignment.ordinal}-1",
                 actor_id=job.created_by,
+                retrieval_filters=retrieval_filters,
             )
             slot_model = TeacherPaperSlotModel(
                 id=uuid5(_TEACHER_PAPER_NAMESPACE, f"{job.id}:{assignment.slot_id}"),
@@ -1379,31 +1921,82 @@ def _content_snapshot(raw: dict[str, object]) -> dict[str, object]:
                 else "Answer requires review"
             )
         explanation = str(answer_value.get("explanation") or "Explanation requires review")
-        marking = marking_value if isinstance(marking_value, dict) else {}
-        criteria_value = marking.get("criteria")
-        criteria = (
-            tuple(
-                str(item.get("description"))
+        if not isinstance(marking_value, dict):
+            raise ValueError("generation marking is missing")
+        total_marks = marking_value.get("total_marks")
+        criteria_value = marking_value.get("criteria")
+        if (
+            not isinstance(total_marks, int)
+            or isinstance(total_marks, bool)
+            or total_marks < 1
+            or not isinstance(criteria_value, list)
+            or not criteria_value
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("description"), str)
+                or not item["description"].strip()
+                or not isinstance(item.get("marks"), int)
+                or isinstance(item.get("marks"), bool)
+                or cast(int, item["marks"]) < 1
                 for item in criteria_value
-                if isinstance(item, dict) and item.get("description")
             )
-            if isinstance(criteria_value, list)
-            else ()
-        )
+        ):
+            raise ValueError("generation marking is incomplete")
+        criteria = tuple(cast(str, item["description"]) for item in criteria_value)
+        point_marks = tuple(cast(int, item["marks"]) for item in criteria_value)
+        if sum(point_marks) != total_marks:
+            raise ValueError("generation marking allocations do not sum to total marks")
         return {
             "question_type": raw["question_type"],
             "stem": raw["stem"],
             "options": raw.get("options", []),
             "answer": str(answer),
             "explanation": explanation,
-            "marks": int(cast(int, marking.get("total_marks", 1))),
-            "marking_guide": list(criteria or ("Review the proposed answer.",)),
+            "marks": total_marks,
+            "marking_guide": list(criteria),
+            "marking_point_marks": list(point_marks),
         }
-    return raw
+    if "marking_point_marks" in raw:
+        return raw
+    guide = raw.get("marking_guide")
+    if not isinstance(guide, list):
+        return raw
+    legacy_descriptions: list[str] = []
+    legacy_point_marks: list[int] = []
+    for value in guide:
+        if not isinstance(value, str):
+            return raw
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return raw
+        if (
+            not isinstance(decoded, dict)
+            or not isinstance(decoded.get("description"), str)
+            or not isinstance(decoded.get("marks"), int)
+            or isinstance(decoded.get("marks"), bool)
+        ):
+            return raw
+        legacy_descriptions.append(decoded["description"])
+        legacy_point_marks.append(decoded["marks"])
+    normalized = dict(raw)
+    normalized["marking_guide"] = legacy_descriptions
+    normalized["marking_point_marks"] = legacy_point_marks
+    return normalized
 
 
 def _question_content(raw: dict[str, object]) -> QuestionContentResponse:
     return QuestionContentResponse.model_validate(_content_snapshot(raw))
+
+
+def _marking_fingerprint(content: QuestionContentResponse) -> str:
+    return _fingerprint(
+        {
+            "marks": content.marks,
+            "marking_guide": list(content.marking_guide),
+            "marking_point_marks": list(content.marking_point_marks),
+        }
+    )
 
 
 def _friendly_validation(source: ReviewSlotSource) -> ReviewValidationResponse:
@@ -1493,6 +2086,14 @@ def _review_question(job: TeacherPaperJobModel, source: ReviewSlotSource) -> Rev
     technical_findings = tuple(
         _technical_validation_finding(finding) for finding in source.findings
     )
+    confirmation = source.marking_confirmation
+    marking_confirmed = (
+        confirmation is not None
+        and confirmation.marking_fingerprint == _marking_fingerprint(content)
+    )
+    marking_confirmed_at = (
+        confirmation.confirmed_at if confirmation is not None and marking_confirmed else None
+    )
     return ReviewQuestionResponse(
         id=source.generation.id,
         number=source.slot.ordinal,
@@ -1510,6 +2111,12 @@ def _review_question(job: TeacherPaperJobModel, source: ReviewSlotSource) -> Rev
         marking_scheme=ReviewMarkingSchemeResponse(
             total_marks=content.marks,
             criteria=content.marking_guide,
+            point_marks=content.marking_point_marks,
+        ),
+        marking_confirmation=ReviewMarkingConfirmationResponse(
+            confirmed=marking_confirmed,
+            status=("teacher_confirmed" if marking_confirmed else "teacher_confirmation_required"),
+            confirmed_at=marking_confirmed_at,
         ),
         content=content,
         scope=ReviewQuestionScopeResponse(
@@ -1693,33 +2300,87 @@ class TeacherPaperReviewService:
         question_id: UUID,
         *,
         expected_version: int,
+        marking_confirmed: bool,
         note: str | None,
         principal: Principal,
     ) -> ReviewQuestionResponse:
         slot = await self._require_candidate_slot(job_id, question_id, principal)
         if slot.requires_revalidation:
             raise TeacherPaperRevalidationRequiredError(question_id)
-        try:
-            await ReviewCandidateService(self._session).approve(
-                slot.curriculum_version_id,
-                cast(UUID, slot.current_candidate_id),
-                expected_version=expected_version,
-                note=note,
-                principal=principal,
-                commit=False,
+        if not marking_confirmed:
+            raise TeacherPaperStateConflictError(question_id)
+        source = await self._review_source(job_id, slot.id)
+        candidate = source.candidate
+        if candidate is None:
+            raise TeacherPaperStateConflictError(question_id)
+        if candidate.version != expected_version:
+            raise TeacherPaperVersionConflictError(question_id)
+        content = _question_content(source.content)
+        if (
+            len(content.marking_point_marks) != len(content.marking_guide)
+            or sum(content.marking_point_marks) != content.marks
+        ):
+            raise TeacherPaperStateConflictError(question_id)
+        already_approved = candidate.state == CandidateState.APPROVED.value
+        marking_fingerprint = _marking_fingerprint(content)
+        confirmation, created = await self._repository.confirm_marking(
+            {
+                "id": uuid5(
+                    _TEACHER_PAPER_NAMESPACE,
+                    f"{slot.id}:marking:{candidate.id}:{candidate.current_revision}:"
+                    f"{marking_fingerprint}",
+                ),
+                "paper_job_id": job_id,
+                "slot_id": slot.id,
+                "curriculum_version_id": slot.curriculum_version_id,
+                "candidate_id": candidate.id,
+                "candidate_revision": candidate.current_revision,
+                "review_candidate_version": candidate.version,
+                "marking_fingerprint": marking_fingerprint,
+                "total_marks": content.marks,
+                "criteria_count": len(content.marking_guide),
+                "confirmed_by": principal.subject_id,
+            }
+        )
+        if created:
+            self._session.add(
+                AdminAuditEventModel(
+                    id=uuid4(),
+                    actor_id=principal.subject_id,
+                    action="teacher_paper.marking_confirmed",
+                    resource_type="teacher_paper_marking_confirmation",
+                    resource_id=confirmation.id,
+                    payload={
+                        "paper_job_id": str(job_id),
+                        "slot_id": str(slot.id),
+                        "candidate_id": str(candidate.id),
+                        "candidate_revision": candidate.current_revision,
+                        "total_marks": content.marks,
+                        "criteria_count": len(content.marking_guide),
+                    },
+                )
             )
-        except (
-            ReviewCandidateRevalidationRequiredError,
-            ValidationNotPassedError,
-        ) as error:
-            raise TeacherPaperRevalidationRequiredError(question_id) from error
-        except ReviewCandidateVersionConflictError as error:
-            raise TeacherPaperVersionConflictError(question_id) from error
-        except ReviewCandidateStateConflictError as error:
-            raise TeacherPaperStateConflictError(question_id) from error
+        if not already_approved:
+            try:
+                await ReviewCandidateService(self._session).approve(
+                    slot.curriculum_version_id,
+                    candidate.id,
+                    expected_version=expected_version,
+                    note=note,
+                    principal=principal,
+                    commit=False,
+                )
+            except (
+                ReviewCandidateRevalidationRequiredError,
+                ValidationNotPassedError,
+            ) as error:
+                raise TeacherPaperRevalidationRequiredError(question_id) from error
+            except ReviewCandidateVersionConflictError as error:
+                raise TeacherPaperVersionConflictError(question_id) from error
+            except ReviewCandidateStateConflictError as error:
+                raise TeacherPaperStateConflictError(question_id) from error
         feedback_id: UUID | None = None
-        if note is not None:
-            source = await self._review_source(job_id, slot.id)
+        if note is not None and not already_approved:
             job = (await self._repository.get(job_id)).job
             feedback = await SubjectQualityFeedbackService(self._session).record_action(
                 job=job,
@@ -1783,8 +2444,10 @@ class TeacherPaperReviewService:
     ) -> ReviewQuestionRegenerationResponse:
         authorize(principal, Permission.CONTENT_REVIEW)
         _validate_idempotency_key(idempotency_key)
-        record = await self._repository.get(job_id)
-        slot = await self._repository.find_slot(job_id, question_id)
+        record = await self._repository.get(job_id, for_update=True)
+        if record.job.practice_paper_id is not None:
+            raise TeacherPaperStateConflictError(job_id)
+        slot = await self._repository.find_slot(job_id, question_id, for_update=True)
         if slot.version != request.expected_version:
             raise TeacherPaperVersionConflictError(question_id)
         source = await self._review_source(job_id, slot.id)
@@ -1860,12 +2523,13 @@ class TeacherPaperReviewService:
         principal: Principal,
     ) -> ReviewPaperDraftCreatedResponse:
         authorize(principal, Permission.CONTENT_REVIEW)
-        record = await self._repository.get(job_id)
+        record = await self._repository.get(job_id, for_update=True)
         job = record.job
         if job.version != request.expected_version:
             raise TeacherPaperVersionConflictError(job_id)
         if (
-            job.practice_paper_id is not None
+            job.status != PaperJobStatus.READY_FOR_REVIEW.value
+            or job.practice_paper_id is not None
             or job.paper_blueprint_id is None
             or len(record.slots) != job.slot_count
             or any(
@@ -1876,6 +2540,15 @@ class TeacherPaperReviewService:
             )
         ):
             raise TeacherPaperStateConflictError(job_id)
+        review_sources = await self._repository.review_sources(job_id)
+        if len(review_sources) != job.slot_count or any(
+            source.candidate is None
+            or source.marking_confirmation is None
+            or source.marking_confirmation.marking_fingerprint
+            != _marking_fingerprint(_question_content(source.content))
+            for source in review_sources
+        ):
+            raise TeacherPaperStateConflictError(job_id)
         result = await PaperPublicationService(self._session).create_draft(
             job.curriculum_version_id,
             paper_blueprint_id=job.paper_blueprint_id,
@@ -1883,17 +2556,21 @@ class TeacherPaperReviewService:
             candidate_ids=tuple(cast(UUID, slot.current_candidate_id) for slot in record.slots),
             idempotency_key=f"teacher-paper-draft-{job.id.hex}",
             principal=principal,
+            commit=False,
         )
-        current = (await self._repository.get(job_id)).job
         await self._repository.cas_job(
             job_id,
             token=None,
-            expected_version=current.version,
-            values={"practice_paper_id": result.record.draft.paper_id},
+            expected_version=job.version,
+            values={
+                "practice_paper_id": result.record.draft.paper_id,
+                "status": PaperJobStatus.READY_FOR_REVIEW.value,
+            },
         )
         await self._session.commit()
         return ReviewPaperDraftCreatedResponse(
-            paper_id=job_id,
+            paper_job_id=job_id,
+            paper_id=result.record.draft.paper_id,
             paper_reference=job.paper_reference,
             draft_id=result.record.draft.paper_id,
             draft_version=result.record.draft.version,
@@ -1910,7 +2587,10 @@ class TeacherPaperReviewService:
         principal: Principal,
     ) -> TeacherPaperSlotModel:
         authorize(principal, Permission.CONTENT_REVIEW)
-        slot = await self._repository.find_slot(job_id, question_id)
+        record = await self._repository.get(job_id, for_update=True)
+        if record.job.practice_paper_id is not None:
+            raise TeacherPaperStateConflictError(job_id)
+        slot = await self._repository.find_slot(job_id, question_id, for_update=True)
         if slot.current_candidate_id is None:
             raise TeacherPaperStateConflictError(question_id)
         return slot

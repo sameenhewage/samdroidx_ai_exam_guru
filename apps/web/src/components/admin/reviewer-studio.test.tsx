@@ -33,6 +33,7 @@ const originalContent = {
   answer: "B",
   explanation: "Four is even, so option B is supported.",
   marking_guide: ["Award two marks for selecting B."],
+  marking_point_marks: [2],
   marks: 2,
   options: [
     { option_id: "A", text: "Three" },
@@ -45,7 +46,8 @@ const originalContent = {
 const editedContent = {
   ...originalContent,
   explanation: "The reviewed source identifies four as even.",
-  marking_guide: ["Award two marks for B.", "Award no marks for A."],
+  marking_guide: ["Award one mark for B.", "Award one mark for the explanation."],
+  marking_point_marks: [1, 1],
   options: [
     { option_id: "A", text: "The number three" },
     { option_id: "B", text: "The number four" },

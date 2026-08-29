@@ -258,6 +258,7 @@ function contentCopy(value: Candidate["current_content"]): QuestionContent {
     answer: value.answer,
     explanation: value.explanation,
     marking_guide: [...value.marking_guide],
+    marking_point_marks: [...value.marking_point_marks],
     marks: value.marks,
     options: value.options.map((option) => ({ ...option })),
     question_type: value.question_type,
@@ -837,6 +838,7 @@ function editableContent(value: QuestionContent): QuestionContent {
   return {
     ...value,
     marking_guide: [...value.marking_guide],
+    marking_point_marks: [...value.marking_point_marks],
     options: value.options.map((option) => ({ ...option })),
   };
 }
@@ -877,6 +879,10 @@ function normalizedContent(value: QuestionContent): { content?: QuestionContent;
       answer,
       explanation,
       marking_guide: markingGuide,
+      marking_point_marks:
+        value.marking_point_marks.length === markingGuide.length
+          ? value.marking_point_marks
+          : [],
       marks: value.marks,
       options,
       question_type: value.question_type,

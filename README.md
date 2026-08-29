@@ -123,7 +123,10 @@ npm run lint --prefix apps/web
 npm run typecheck
 npm run test:coverage --prefix apps/web
 npm run build --prefix apps/web
+npm run test:e2e:isolated
 ```
+
+Browser acceptance always starts a throwaway Compose project on non-Studio ports, uses disposable database, Valkey, and source-storage state, and removes that state after the run. Direct `npm run test:e2e --prefix apps/web` invocation fails closed so acceptance fixtures cannot be written into the long-lived local Studio.
 
 If the host Node version is older than Node 24, use the Docker runtime instead of relaxing the pinned engine requirement.
 

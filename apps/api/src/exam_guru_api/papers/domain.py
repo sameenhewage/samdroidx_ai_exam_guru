@@ -216,6 +216,7 @@ class QuestionContent:
     explanation: str
     marks: int
     marking_guide: tuple[str, ...]
+    marking_point_marks: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         _require_text(self.question_type, "question_type")
@@ -240,6 +241,18 @@ class QuestionContent:
             raise CandidateInvariantError("marking_guide must be a non-empty tuple")
         for criterion in self.marking_guide:
             _require_text(criterion, "marking criterion")
+        if not isinstance(self.marking_point_marks, tuple) or any(
+            not isinstance(mark, int) or isinstance(mark, bool) for mark in self.marking_point_marks
+        ):
+            raise CandidateInvariantError("marking_point_marks must be a tuple of integers")
+        if self.marking_point_marks and (
+            len(self.marking_point_marks) != len(self.marking_guide)
+            or any(mark < 1 or mark > 100 for mark in self.marking_point_marks)
+            or sum(self.marking_point_marks) != self.marks
+        ):
+            raise CandidateInvariantError(
+                "marking point allocations must be positive and sum to total marks"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,8 +527,6 @@ def edit_candidate(
     generated_content = candidate.revisions[0].content
     if content.question_type != generated_content.question_type:
         raise CandidateInvariantError("reviewer cannot change generated question_type")
-    if content.marks != generated_content.marks:
-        raise CandidateInvariantError("reviewer cannot change generated marks")
     version = candidate.version + 1
     revision = CandidateRevision(
         revision=len(candidate.revisions) + 1,
@@ -978,7 +989,7 @@ def _archive_paper(
 
 
 def _question_content_payload(content: QuestionContent) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "answer": content.answer,
         "explanation": content.explanation,
         "marking_guide": list(content.marking_guide),
@@ -989,6 +1000,9 @@ def _question_content_payload(content: QuestionContent) -> dict[str, object]:
         "question_type": content.question_type,
         "stem": content.stem,
     }
+    if content.marking_point_marks:
+        payload["marking_point_marks"] = list(content.marking_point_marks)
+    return payload
 
 
 def _lineage_payload(lineage: GenerationLineage) -> dict[str, object]:

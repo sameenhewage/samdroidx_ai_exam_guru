@@ -14,6 +14,9 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyNode, TaxonomyReviewState
 from exam_guru_api.curriculum.models import (
+    CurriculumLessonModel,
+    CurriculumLessonTaxonomyMappingModel,
+    CurriculumUnitModel,
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
@@ -154,6 +157,8 @@ async def seed_trusted_source(
     curriculum_version_id: UUID,
     document_type: SourceDocumentType,
     finalize_review: bool = True,
+    unit_id: UUID | None = None,
+    lesson_id: UUID | None = None,
 ) -> tuple[UUID, UUID]:
     document_id = UUID(int=150_000 + offset)
     page_id = UUID(int=160_000 + offset)
@@ -169,6 +174,8 @@ async def seed_trusted_source(
         document_type=document_type,
         extraction_status=ExtractionStatus.EXTRACTION_PENDING,
         curriculum_version_id=curriculum_version_id,
+        unit_id=unit_id,
+        lesson_id=lesson_id,
         year=2020 if document_type is SourceDocumentType.PAST_PAPER else None,
         paper_code="P1" if document_type is SourceDocumentType.PAST_PAPER else None,
         extraction_attempt_count=1,
@@ -608,6 +615,90 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
         assert sum(action == "knowledge.chunk.embedded" for action in actions) == 2
         assert sum(action == "knowledge.question.imported" for action in actions) == 1
         assert all(len(embedding.vector) == 3 for embedding in embeddings)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_scoped_source_import_persists_inherited_unit_and_lesson(
+    knowledge_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        engine = create_async_engine(knowledge_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with sessions() as session:
+                curriculum_id, _competency_id, skill_id = await seed_curriculum(session, offset=80)
+                unit_id = UUID(int=280_080)
+                lesson_id = UUID(int=290_080)
+                session.add(
+                    CurriculumUnitModel(
+                        id=unit_id,
+                        curriculum_version_id=curriculum_id,
+                        code="NUMBERS",
+                        title="Numbers",
+                        ordinal=1,
+                        active=True,
+                        created_by=ACTOR_ID,
+                        updated_by=ACTOR_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CurriculumLessonModel(
+                        id=lesson_id,
+                        curriculum_version_id=curriculum_id,
+                        unit_id=unit_id,
+                        code="LESSON-1",
+                        title="Applied numbers",
+                        ordinal=1,
+                        active=True,
+                        created_by=ACTOR_ID,
+                        updated_by=ACTOR_ID,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CurriculumLessonTaxonomyMappingModel(
+                        lesson_id=lesson_id,
+                        curriculum_version_id=curriculum_id,
+                        unit_id=unit_id,
+                        taxonomy_node_id=skill_id,
+                        created_by=ACTOR_ID,
+                    )
+                )
+                source_id, block_id = await seed_trusted_source(
+                    session,
+                    offset=80,
+                    curriculum_version_id=curriculum_id,
+                    document_type=SourceDocumentType.TEACHER_GUIDE,
+                    unit_id=unit_id,
+                    lesson_id=lesson_id,
+                )
+                await session.commit()
+
+            async with sessions() as session:
+                result = await KnowledgePersistenceService(session).import_chunk(
+                    KnowledgeChunk(
+                        id=UUID(int=300_080),
+                        curriculum_version_id=curriculum_id,
+                        chunk_type=ChunkType.EXPLANATION,
+                        text="Reviewed scoped explanation",
+                        educational_boundary="Numbers / applied numbers",
+                        sequence=0,
+                        provenance=Provenance(source_id, 1, block_id),
+                    ),
+                    actor_id=ACTOR_ID,
+                )
+                assert result.record.unit_id == unit_id
+                assert result.record.lesson_id == lesson_id
+                assert result.record.competency_id is None
+                stored = await session.get(KnowledgeChunkModel, result.record.id)
+                assert stored is not None
+                assert stored.unit_id == unit_id
+                assert stored.lesson_id == lesson_id
+        finally:
+            await engine.dispose()
 
     asyncio.run(exercise())
 

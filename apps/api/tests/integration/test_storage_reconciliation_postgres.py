@@ -282,7 +282,7 @@ def test_storage_reconciliation_migration_constraints_transitions_and_clean_down
         "enforce_storage_orphan_finding_mutation_trigger",
     }
     assert singleton_count == 1
-    assert revision == "0027_semantic_claim_evidence"
+    assert revision == "0031_teacher_draft_race_guards"
 
     async def execute(statement: str, values: dict[str, object]) -> None:
         engine = create_async_engine(database_url)
@@ -569,8 +569,9 @@ def test_real_postgres_and_minio_candidate_reference_resolution_and_tag_preserva
                     await connection.scalar(
                         text(
                             "SELECT count(*) FROM storage_orphan_findings "
-                            "WHERE status = 'candidate'"
-                        )
+                            "WHERE status = 'candidate' AND object_key = :key"
+                        ),
+                        {"key": orphan_key},
                     )
                     or 0
                 )

@@ -41,7 +41,7 @@ type ReviewReasonDraft = {
 type EditDraft = ReviewReasonDraft & {
   answer: string;
   explanation: string;
-  markingGuide: string;
+  markingPoints: Array<{ description: string; marks: string }>;
   marks: string;
   options: Array<{ option_id: string; text: string }>;
   questionType: QuestionContent["question_type"];
@@ -373,12 +373,62 @@ function ErrorPanel({ error, action }: { error: UiError; action?: ReactNode }) {
   );
 }
 
-function Modal({ children, labelledBy }: { children: ReactNode; labelledBy: string }) {
+function Modal({
+  children,
+  labelledBy,
+  onClose,
+}: {
+  children: ReactNode;
+  labelledBy: string;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    focusable()[0]?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, []);
+
   return (
     <div
       aria-labelledby={labelledBy}
       aria-modal="true"
       className="fixed inset-0 z-50 grid items-start overflow-y-auto bg-slate-950/70 p-4 sm:items-center sm:p-8"
+      ref={dialogRef}
       role="dialog"
     >
       <div className="mx-auto w-full max-w-3xl rounded-2xl bg-[#f8f8f4] p-5 shadow-2xl sm:p-7">
@@ -461,6 +511,7 @@ function contentFromQuestion(question: ReviewQuestion): QuestionContent {
       answer: question.content.answer,
       explanation: question.content.explanation,
       marking_guide: [...question.content.marking_guide],
+      marking_point_marks: [...(question.content.marking_point_marks ?? [])],
       marks: question.content.marks,
       options: question.content.options.map((option) => ({
         option_id: option.option_id,
@@ -474,6 +525,7 @@ function contentFromQuestion(question: ReviewQuestion): QuestionContent {
     answer: question.answer,
     explanation: question.explanation,
     marking_guide: [...question.marking_scheme.criteria],
+    marking_point_marks: [...question.marking_scheme.point_marks],
     marks: question.marking_scheme.total_marks,
     options: question.options.map((option) => ({ option_id: option.label, text: option.text })),
     question_type: question.options.length ? "multiple_choice" : "structured_response",
@@ -486,7 +538,10 @@ function editDraftFromQuestion(question: ReviewQuestion): EditDraft {
   return {
     answer: content.answer,
     explanation: content.explanation,
-    markingGuide: content.marking_guide.join("\n"),
+    markingPoints: content.marking_guide.map((description, index) => ({
+      description,
+      marks: String(content.marking_point_marks?.[index] ?? ""),
+    })),
     marks: String(content.marks),
     options: content.options.map((option) => ({ ...option })),
     note: "",
@@ -695,6 +750,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
     "start" | "approve" | "edit" | "reject" | "regenerate" | "draft" | "promote" | "approve-example" | ""
   >("");
   const [notice, setNotice] = useState("");
+  const [markingAcknowledgementKey, setMarkingAcknowledgementKey] = useState("");
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [editError, setEditError] = useState<UiError | null>(null);
   const [rejectReason, setRejectReason] = useState<ReviewReasonDraft | null>(null);
@@ -714,8 +770,30 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
   );
 
   const currentQuestion = paper?.questions[questionIndex] ?? null;
+  const currentMarkingKey = currentQuestion
+    ? `${currentQuestion.id}:${currentQuestion.version}`
+    : "";
+  const markingAllocationsComplete = Boolean(
+    currentQuestion &&
+      currentQuestion.marking_scheme.point_marks.length ===
+        currentQuestion.marking_scheme.criteria.length &&
+      currentQuestion.marking_scheme.point_marks.length > 0 &&
+      currentQuestion.marking_scheme.point_marks.reduce(
+        (total, item) => total + item,
+        0,
+      ) === currentQuestion.marking_scheme.total_marks,
+  );
+  const markingAcknowledged =
+    markingAllocationsComplete &&
+    (currentQuestion?.marking_confirmation.confirmed === true ||
+      markingAcknowledgementKey === currentMarkingKey);
   const allApproved = Boolean(
-    paper?.questions.length && paper.questions.every((question) => question.review_state === "approved"),
+    paper?.questions.length &&
+      paper.questions.every(
+        (question) =>
+          question.review_state === "approved" &&
+          question.marking_confirmation.confirmed,
+      ),
   );
 
   const loadQueue = useCallback(async () => {
@@ -873,7 +951,11 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
           : await api.POST(
               "/api/v1/admin/review-papers/{paper_job_id}/questions/{question_id}/approve",
               {
-                body: { expected_version: question.version, note: null },
+                body: {
+                  expected_version: question.version,
+                  marking_confirmed: true,
+                  note: null,
+                },
                 params: { path },
               },
             );
@@ -899,10 +981,8 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
     const marks = Number(editDraft.marks);
     const reasonCode = editDraft.reasonCode;
     const note = editDraft.note.trim() || null;
-    const markingGuide = editDraft.markingGuide
-      .split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean);
+    const markingGuide = editDraft.markingPoints.map((item) => item.description.trim());
+    const markingPointMarks = editDraft.markingPoints.map((item) => Number(item.marks));
     if (!editDraft.stem.trim() || !editDraft.answer.trim() || !editDraft.explanation.trim()) {
       setEditError({
         code: "review_content_incomplete",
@@ -923,6 +1003,21 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       });
       return;
     }
+    if (
+      !markingGuide.length ||
+      markingGuide.some((item) => !item) ||
+      markingPointMarks.some((item) => !Number.isInteger(item) || item < 1) ||
+      markingPointMarks.reduce((total, item) => total + item, 0) !== marks
+    ) {
+      setEditError({
+        code: "review_marking_points_invalid",
+        message: "Add at least one marking point and make the point marks add up to the total.",
+        preserveDraft: true,
+        retryable: false,
+        title: "Check the marking points",
+      });
+      return;
+    }
     if (!reasonCode || (note?.length ?? 0) > MAX_REVIEW_NOTE_LENGTH) {
       setEditError({
         code: "review_reason_invalid",
@@ -937,6 +1032,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       answer: editDraft.answer.trim(),
       explanation: editDraft.explanation.trim(),
       marking_guide: markingGuide,
+      marking_point_marks: markingPointMarks,
       marks,
       options: editDraft.options.map((option) => ({
         option_id: option.option_id,
@@ -1259,10 +1355,13 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
   );
   const approvalAllowed = Boolean(
     currentQuestion &&
-      currentQuestion.review_state === "in_review" &&
+      (currentQuestion.review_state === "in_review" ||
+        (currentQuestion.review_state === "approved" &&
+          !currentQuestion.marking_confirmation.confirmed)) &&
       currentQuestion.validation.status !== "failed_check" &&
       !currentQuestion.requires_revalidation &&
-      currentQuestion.technical_details.candidate_id,
+      currentQuestion.technical_details.candidate_id &&
+      markingAcknowledged,
   );
 
   return (
@@ -1442,6 +1541,71 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
             </section>
           ) : null}
 
+          {paper.questions.length ? (
+            <section
+              aria-label="Questions in this paper"
+              className="rounded-2xl border border-slate-300 bg-white p-5 shadow-sm"
+              role="region"
+            >
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold">Questions in this paper</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    See review and marking status, then jump directly to a question.
+                  </p>
+                </div>
+                <p className="text-sm font-semibold text-slate-700">
+                  {paper.questions.filter((question) => question.review_state === "approved").length}
+                  /{paper.questions.length} approved
+                </p>
+              </div>
+              <ol className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {paper.questions.map((question, index) => {
+                  const selected = index === questionIndex;
+                  const reviewLabel =
+                    question.validation.status === "failed_check"
+                      ? "Failed check"
+                      : titleCase(question.review_state);
+                  return (
+                    <li key={question.id}>
+                      <button
+                        aria-pressed={selected}
+                        className={`w-full rounded-xl border p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-amber-500 ${
+                          selected
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-300 bg-slate-50 text-slate-950 hover:border-slate-500"
+                        }`}
+                        onClick={() => {
+                          setQuestionIndex(index);
+                          setNotice("");
+                          setCommandError(null);
+                          setQualityEvidence(null);
+                          setEvalCase(null);
+                          setQualityNotice("");
+                        }}
+                        type="button"
+                      >
+                        <span className="block font-semibold">Question {question.number}</span>
+                        <span
+                          className={`mt-1 block text-xs ${selected ? "text-slate-200" : "text-slate-600"}`}
+                        >
+                          {reviewLabel}
+                        </span>
+                        <span
+                          className={`mt-1 block text-xs font-semibold ${selected ? "text-amber-300" : "text-amber-800"}`}
+                        >
+                          {question.marking_confirmation.confirmed
+                            ? "Marking confirmed"
+                            : "Marking not confirmed"}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ) : null}
+
           {currentQuestion ? (
             <article
               aria-label={`Question ${questionIndex + 1} of ${paper.questions.length}`}
@@ -1500,15 +1664,52 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                       Marking · {currentQuestion.marking_scheme.total_marks}{" "}
                       {currentQuestion.marking_scheme.total_marks === 1 ? "mark" : "marks"}
                     </h4>
+                    <p
+                      className={`mt-2 text-sm font-semibold ${
+                        currentQuestion.marking_confirmation.confirmed
+                          ? "text-emerald-800"
+                          : "text-amber-800"
+                      }`}
+                    >
+                      {currentQuestion.marking_confirmation.confirmed
+                        ? "Teacher-confirmed marking"
+                        : markingAllocationsComplete
+                          ? "Marks not confirmed — suggested marking requires teacher confirmation"
+                          : "Marks not confirmed — allocate each marking point in Edit"}
+                    </p>
                     {currentQuestion.marking_scheme.criteria.length ? (
                       <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">
-                        {currentQuestion.marking_scheme.criteria.map((criterion, index) => (
-                          <li key={index}>{safeText(criterion)}</li>
-                        ))}
+                        {currentQuestion.marking_scheme.criteria.map((criterion, index) => {
+                          const pointMarks = currentQuestion.marking_scheme.point_marks[index];
+                          return (
+                            <li key={index}>
+                              {safeText(criterion)} —{" "}
+                              {pointMarks === undefined
+                                ? "Marks not allocated"
+                                : `${pointMarks} ${pointMarks === 1 ? "mark" : "marks"}`}
+                            </li>
+                          );
+                        })}
                       </ul>
                     ) : (
                       <p className="mt-2 text-sm text-slate-600">No marking criteria were supplied.</p>
                     )}
+                    {!currentQuestion.marking_confirmation.confirmed ? (
+                      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-950">
+                        <input
+                          checked={markingAcknowledgementKey === currentMarkingKey}
+                          className="mt-0.5 h-4 w-4 accent-amber-700"
+                          disabled={!markingAllocationsComplete}
+                          onChange={(event) =>
+                            setMarkingAcknowledgementKey(
+                              event.currentTarget.checked ? currentMarkingKey : "",
+                            )
+                          }
+                          type="checkbox"
+                        />
+                        <span>I checked these marks and marking guidance</span>
+                      </label>
+                    ) : null}
                   </section>
 
                   <section className="rounded-xl border border-slate-200 p-4">
@@ -1702,7 +1903,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                 <div className="mt-4 space-y-3">
                   <Link
                     className={primaryButton}
-                    href={`/admin/published-papers?paper=${draftCreated?.draft_id ?? paper.draft?.draft_id}`}
+                    href={`/admin/published-papers?curriculum=${paper.technical_details.curriculum_version_id}&paper=${draftCreated?.draft_id ?? paper.draft?.draft_id}`}
                   >
                     Go to Published Papers
                   </Link>
@@ -1729,7 +1930,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       ) : null}
 
       {editDraft && currentQuestion ? (
-        <Modal labelledBy="edit-question-heading">
+        <Modal
+          labelledBy="edit-question-heading"
+          onClose={() => {
+            if (!busy) setEditDraft(null);
+          }}
+        >
           <form className="space-y-4" onSubmit={(event) => void saveEdit(event)}>
             <div>
               <p className="text-xs font-semibold tracking-wide text-amber-800 uppercase">Teacher edit</p>
@@ -1818,7 +2024,7 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
             </div>
             <div className="grid gap-4 md:grid-cols-[10rem_minmax(0,1fr)]">
               <label className={fieldClass}>
-                Marks
+                Total marks
                 <input
                   className={inputClass}
                   min={1}
@@ -1828,15 +2034,90 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
                   value={editDraft.marks}
                 />
               </label>
-              <label className={fieldClass}>
-                Marking guide (one criterion per line)
-                <textarea
-                  className={`${inputClass} min-h-24`}
-                  maxLength={MAX_TEXT_LENGTH}
-                  onChange={(event) => setEditDraft({ ...editDraft, markingGuide: event.target.value })}
-                  value={editDraft.markingGuide}
-                />
-              </label>
+              <fieldset className="rounded-xl border border-slate-300 p-4">
+                <legend className="px-1 text-sm font-semibold text-slate-800">Marking points</legend>
+                <div className="space-y-3">
+                  {editDraft.markingPoints.map((point, index) => (
+                    <div
+                      className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto]"
+                      key={index}
+                    >
+                      <label className={fieldClass}>
+                        Point {index + 1}
+                        <textarea
+                          className={`${inputClass} min-h-16`}
+                          maxLength={MAX_TEXT_LENGTH}
+                          onChange={(event) =>
+                            setEditDraft({
+                              ...editDraft,
+                              markingPoints: editDraft.markingPoints.map(
+                                (candidate, candidateIndex) =>
+                                  candidateIndex === index
+                                    ? { ...candidate, description: event.target.value }
+                                    : candidate,
+                              ),
+                            })
+                          }
+                          required
+                          value={point.description}
+                        />
+                      </label>
+                      <label className={fieldClass}>
+                        Point marks
+                        <input
+                          className={inputClass}
+                          min={1}
+                          onChange={(event) =>
+                            setEditDraft({
+                              ...editDraft,
+                              markingPoints: editDraft.markingPoints.map(
+                                (candidate, candidateIndex) =>
+                                  candidateIndex === index
+                                    ? { ...candidate, marks: event.target.value }
+                                    : candidate,
+                              ),
+                            })
+                          }
+                          required
+                          type="number"
+                          value={point.marks}
+                        />
+                      </label>
+                      <button
+                        className={`${secondaryButton} self-end`}
+                        disabled={editDraft.markingPoints.length === 1}
+                        onClick={() =>
+                          setEditDraft({
+                            ...editDraft,
+                            markingPoints: editDraft.markingPoints.filter(
+                              (_, candidateIndex) => candidateIndex !== index,
+                            ),
+                          })
+                        }
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className={`${secondaryButton} mt-3`}
+                  disabled={editDraft.markingPoints.length >= 64}
+                  onClick={() =>
+                    setEditDraft({
+                      ...editDraft,
+                      markingPoints: [
+                        ...editDraft.markingPoints,
+                        { description: "", marks: "" },
+                      ],
+                    })
+                  }
+                  type="button"
+                >
+                  Add marking point
+                </button>
+              </fieldset>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <label className={fieldClass}>
@@ -1891,7 +2172,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       ) : null}
 
       {rejectReason !== null && currentQuestion ? (
-        <Modal labelledBy="reject-question-heading">
+        <Modal
+          labelledBy="reject-question-heading"
+          onClose={() => {
+            if (!busy) setRejectReason(null);
+          }}
+        >
           <form className="space-y-4" onSubmit={(event) => void rejectQuestion(event)}>
             <h2 className="text-2xl font-semibold" id="reject-question-heading">
               Reject question {questionIndex + 1}
@@ -1949,7 +2235,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       ) : null}
 
       {regenerateReason !== null && currentQuestion ? (
-        <Modal labelledBy="regenerate-question-heading">
+        <Modal
+          labelledBy="regenerate-question-heading"
+          onClose={() => {
+            if (!busy) setRegenerateReason(null);
+          }}
+        >
           <form className="space-y-4" onSubmit={(event) => void regenerateQuestion(event)}>
             <h2 className="text-2xl font-semibold" id="regenerate-question-heading">
               Regenerate question {questionIndex + 1}
@@ -2010,7 +2301,12 @@ export function ReviewApproveStudio({ role }: { role: Role }) {
       ) : null}
 
       {promotionDraft ? (
-        <Modal labelledBy="promote-quality-heading">
+        <Modal
+          labelledBy="promote-quality-heading"
+          onClose={() => {
+            if (!busy) setPromotionDraft(null);
+          }}
+        >
           <form className="space-y-4" onSubmit={(event) => void promoteQualityEvidence(event)}>
             <div>
               <p className="text-xs font-semibold tracking-wide text-blue-800 uppercase">

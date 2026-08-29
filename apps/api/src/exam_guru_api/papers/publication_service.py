@@ -141,6 +141,7 @@ class PaperPublicationService:
         candidate_ids: tuple[UUID, ...],
         idempotency_key: str,
         principal: Principal,
+        commit: bool = True,
     ) -> PaperDraftCreationResult:
         authorize(principal, Permission.CONTENT_REVIEW)
         self._validate_idempotency_key(idempotency_key)
@@ -221,7 +222,8 @@ class PaperPublicationService:
                     actor_id=principal.subject_id,
                     request_fingerprint=request_fingerprint,
                 )
-                await self._session.commit()
+                if commit:
+                    await self._session.commit()
                 return PaperDraftCreationResult(
                     await self._repository.get_draft(
                         curriculum_version_id,
@@ -246,7 +248,10 @@ class PaperPublicationService:
                     "version": 1,
                 },
             )
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
+            else:
+                await self._session.flush()
             return PaperDraftCreationResult(
                 await self._repository.get_draft(curriculum_version_id, paper_id, 1),
                 deduplicated=False,

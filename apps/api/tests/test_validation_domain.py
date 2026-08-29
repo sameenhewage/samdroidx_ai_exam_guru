@@ -1,12 +1,14 @@
 from collections.abc import Callable
 from dataclasses import replace
 from typing import cast
+from uuid import UUID
 
 import pytest
 
 from exam_guru_api.validation.domain import (
     REPORT_LIMITATIONS,
     BlueprintRequirements,
+    ContextScopeBinding,
     DuplicateReference,
     FindingCode,
     FindingEvidence,
@@ -155,6 +157,23 @@ def test_blueprint_requirements_support_grade_thirteen_age_bounds() -> None:
     )
 
     assert (requirements.minimum_age, requirements.maximum_age) == (17, 19)
+
+
+def test_context_scope_binding_requires_boolean_programme_authorization() -> None:
+    with pytest.raises(
+        ValidationContractError,
+        match=r"^context scope programme_authorized must be a boolean$",
+    ):
+        ContextScopeBinding(
+            context_id="knowledge_chunk:fixture",
+            curriculum_version_id=UUID(int=1),
+            subject_id=UUID(int=2),
+            unit_id=None,
+            lesson_id=None,
+            snapshot_unit_id=None,
+            snapshot_lesson_id=None,
+            programme_authorized=cast(bool, 1),
+        )
 
 
 @pytest.mark.parametrize(

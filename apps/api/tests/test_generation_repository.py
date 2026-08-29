@@ -8,6 +8,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.blueprints.models import PaperBlueprintModel
+from exam_guru_api.curriculum.models import (
+    CurriculumVersionModel,
+    ExamConfigurationModel,
+    MediumModel,
+    SubjectModel,
+)
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.generation.models import (
@@ -179,6 +185,51 @@ def source_model() -> SourceDocumentModel:
     )
 
 
+def scope_models() -> tuple[
+    CurriculumVersionModel,
+    ExamConfigurationModel,
+    MediumModel,
+    SubjectModel,
+]:
+    exam = ExamConfigurationModel(
+        id=UUID(int=960_020),
+        code="G5",
+        name="Grade 5",
+        grade=5,
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    medium = MediumModel(
+        id=UUID(int=960_021),
+        code="en",
+        name="English",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    subject = SubjectModel(
+        id=UUID(int=960_022),
+        code="MATHEMATICS",
+        name="Mathematics",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    curriculum = CurriculumVersionModel(
+        id=CURRICULUM_ID,
+        exam_configuration_id=exam.id,
+        medium_id=medium.id,
+        subject_id=subject.id,
+        code="G5-MATH",
+        title="Grade 5 Mathematics",
+        active=True,
+        created_by=ACTOR_ID,
+        updated_by=ACTOR_ID,
+    )
+    return curriculum, exam, medium, subject
+
+
 def chunk_model() -> KnowledgeChunkModel:
     return KnowledgeChunkModel(
         id=CHUNK_ID,
@@ -259,13 +310,18 @@ def test_repository_loads_scope_blueprint_and_both_context_kinds() -> None:
         assert fetched is blueprint
 
         source = source_model()
+        curriculum, exam, medium, subject = scope_models()
         records = await SqlAlchemyGenerationRepository(
             cast(
                 AsyncSession,
                 ScriptedSession(
                     execute_results=(
-                        ExecuteResult(rows=((chunk_model(), source),)),
-                        ExecuteResult(rows=((question_model(), source),)),
+                        ExecuteResult(
+                            rows=((chunk_model(), source, curriculum, exam, medium, subject),)
+                        ),
+                        ExecuteResult(
+                            rows=((question_model(), source, curriculum, exam, medium, subject),)
+                        ),
                     )
                 ),
             )

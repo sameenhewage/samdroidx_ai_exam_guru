@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints import generate_blueprint
+from exam_guru_api.blueprints.domain import BlueprintSlot
 from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.core.config import Settings
@@ -28,6 +29,7 @@ from exam_guru_api.generation.run_service import (
     GenerationContextLimitError,
     GenerationContextNotFoundError,
     GenerationContextNotReviewedError,
+    GenerationContextScopeInactiveError,
     GenerationContextSourceUntrustedError,
     GenerationContextTaxonomyMismatchError,
     GenerationCreationResult,
@@ -45,6 +47,7 @@ from exam_guru_api.generation.run_service import (
 )
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
 from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.retrieval.domain import RetrievalScope, RetrievalScopeSet, TaxonomyScope
 from tests.test_blueprint_domain import (
     COMPETENCY_A,
     CURRICULUM_VERSION_ID,
@@ -107,7 +110,7 @@ class FakeGenerationRepository:
             created_by=ACTOR_ID,
             created_at=NOW,
         )
-        self.records = (
+        self.records: tuple[GenerationContextRecord, ...] = (
             context_record("knowledge_chunk", CHUNK_ID),
             context_record("historical_question", QUESTION_ID),
         )
@@ -247,6 +250,26 @@ def context_record(kind: str, record_id: UUID) -> GenerationContextRecord:
     )
 
 
+def retrieval_filters(slot: BlueprintSlot = PAPER.slots[0]) -> RetrievalScope:
+    scope = cast(GenerationScopeRecord, FakeGenerationRepository().scope)
+    selected = slot.generation_constraints.curriculum_scope
+    return RetrievalScope(
+        grade=scope.grade,
+        exam_id=scope.exam_id,
+        medium_id=scope.medium_id,
+        subject_id=scope.subject_id,
+        curriculum_version_id=scope.curriculum_version_id,
+        unit_ids=selected.unit_ids,
+        lesson_ids=selected.lesson_ids,
+        taxonomy=TaxonomyScope(
+            competency_id=slot.taxonomy_target.competency_id,
+            skill_id=slot.taxonomy_target.skill_id,
+            sub_skill_id=slot.taxonomy_target.sub_skill_id,
+            learning_concept_id=slot.taxonomy_target.learning_concept_id,
+        ),
+    )
+
+
 def build_service(
     repository: FakeGenerationRepository,
     dispatcher: object | None = None,
@@ -335,6 +358,86 @@ def test_service_resolves_snapshots_audits_dispatches_and_deduplicates() -> None
         assert retried.run.request_fingerprint == created.run.request_fingerprint
         retry_audit = cast(AdminAuditEventModel, session.added[-1])
         assert retry_audit.action == "generation_run.retry_created"
+
+    asyncio.run(exercise())
+
+
+def test_programme_generation_accepts_only_context_in_immutable_cross_grade_scope_set() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        source_scope = RetrievalScope(
+            grade=3,
+            exam_id=UUID(int=951_010),
+            medium_id=cast(GenerationScopeRecord, repository.scope).medium_id,
+            subject_id=UUID(int=951_011),
+            curriculum_version_id=UUID(int=951_012),
+            taxonomy=TaxonomyScope(competency_id=UUID(int=951_013)),
+        )
+        repository.records = (
+            replace(
+                context_record("knowledge_chunk", CHUNK_ID),
+                competency_id=source_scope.taxonomy.competency_id,
+                skill_id=None,
+                curriculum_version_id=source_scope.curriculum_version_id,
+                source_curriculum_version_id=source_scope.curriculum_version_id,
+                retrieval_scope=source_scope,
+            ),
+        )
+        filters = RetrievalScopeSet(
+            policy_version="grade5-scholarship-paper-ii.v1",
+            scopes=(source_scope,),
+        )
+        service, _, _ = build_service(repository)
+
+        created = await service.create(
+            CURRICULUM_VERSION_ID,
+            paper_blueprint_id=BLUEPRINT_DB_ID,
+            slot_id=PAPER.slots[0].slot_id,
+            knowledge_chunk_ids=(CHUNK_ID,),
+            historical_question_ids=(),
+            idempotency_key="programme-generation",
+            actor_id=ACTOR_ID,
+            retrieval_filters=filters,
+        )
+
+        assert created.run.context_snapshot["retrieval_filters"] == {
+            "kind": "scope_set",
+            "policy_version": "grade5-scholarship-paper-ii.v1",
+            "scopes": [
+                {
+                    "curriculum_version_id": str(source_scope.curriculum_version_id),
+                    "exam_id": str(source_scope.exam_id),
+                    "grade": 3,
+                    "lesson_ids": [],
+                    "medium_id": str(source_scope.medium_id),
+                    "subject_id": str(source_scope.subject_id),
+                    "taxonomy": {
+                        "competency_id": str(source_scope.taxonomy.competency_id),
+                        "learning_concept_id": None,
+                        "skill_id": None,
+                        "sub_skill_id": None,
+                    },
+                    "unit_ids": [],
+                }
+            ],
+        }
+        items = cast(list[dict[str, object]], created.run.context_snapshot["items"])
+        assert cast(dict[str, object], items[0]["retrieval_scope"])["curriculum_version_id"] == str(
+            source_scope.curriculum_version_id
+        )
+
+        created.run.status = "failed"
+        retried = await service.retry(
+            CURRICULUM_VERSION_ID,
+            created.run.id,
+            idempotency_key="programme-generation-retry",
+            actor_id=ACTOR_ID,
+        )
+        assert retried.run.request_fingerprint == created.run.request_fingerprint
+        assert (
+            retried.run.context_snapshot["retrieval_filters"]
+            == created.run.context_snapshot["retrieval_filters"]
+        )
 
     asyncio.run(exercise())
 
@@ -543,6 +646,133 @@ def test_service_rejects_request_scope_blueprint_and_idempotency_violations() ->
     asyncio.run(exercise())
 
 
+def test_create_rejects_non_boolean_retrieval_filter_persistence_mode() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, _ = build_service(repository)
+
+        with pytest.raises(
+            GenerationIdempotencyConflictError,
+            match="invalid retrieval filter persistence mode",
+        ):
+            await service.create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=BLUEPRINT_DB_ID,
+                slot_id=PAPER.slots[0].slot_id,
+                knowledge_chunk_ids=(CHUNK_ID,),
+                historical_question_ids=(QUESTION_ID,),
+                idempotency_key="invalid-filter-persistence",
+                actor_id=ACTOR_ID,
+                _persist_retrieval_filters=cast(bool, 1),
+            )
+
+        assert repository.by_hash == {}
+
+    asyncio.run(exercise())
+
+
+def test_create_rejects_filters_outside_blueprint_or_active_medium() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, _ = build_service(repository)
+        filters = retrieval_filters()
+        invalid_filters: tuple[RetrievalScope | RetrievalScopeSet, ...] = (
+            replace(filters, grade=4),
+            RetrievalScopeSet(
+                policy_version="wrong-medium-policy.v1",
+                scopes=(replace(filters, medium_id=UUID(int=960_003)),),
+            ),
+        )
+
+        for index, requested in enumerate(invalid_filters):
+            with pytest.raises(GenerationBlueprintScopeMismatchError):
+                await service.create(
+                    CURRICULUM_VERSION_ID,
+                    paper_blueprint_id=BLUEPRINT_DB_ID,
+                    slot_id=PAPER.slots[0].slot_id,
+                    knowledge_chunk_ids=(CHUNK_ID,),
+                    historical_question_ids=(QUESTION_ID,),
+                    idempotency_key=f"invalid-retrieval-scope-{index}",
+                    actor_id=ACTOR_ID,
+                    retrieval_filters=requested,
+                )
+
+        assert repository.by_hash == {}
+
+    asyncio.run(exercise())
+
+
+def test_retry_preserves_legacy_context_snapshots_without_retrieval_filters() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, dispatcher = build_service(repository)
+        original = await service.create(
+            CURRICULUM_VERSION_ID,
+            paper_blueprint_id=BLUEPRINT_DB_ID,
+            slot_id=PAPER.slots[0].slot_id,
+            knowledge_chunk_ids=(CHUNK_ID,),
+            historical_question_ids=(QUESTION_ID,),
+            idempotency_key="legacy-filter-snapshot",
+            actor_id=ACTOR_ID,
+            _persist_retrieval_filters=False,
+        )
+        assert "retrieval_filters" not in original.run.context_snapshot
+
+        original.run.status = "failed"
+        retried = await service.retry(
+            CURRICULUM_VERSION_ID,
+            original.run.id,
+            idempotency_key="legacy-filter-snapshot-retry",
+            actor_id=ACTOR_ID,
+        )
+
+        assert retried.run.request_fingerprint == original.run.request_fingerprint
+        assert "retrieval_filters" not in retried.run.context_snapshot
+        assert len(dispatcher.dispatched) == 2
+
+    asyncio.run(exercise())
+
+
+def test_retry_rejects_malformed_persisted_retrieval_filters() -> None:
+    async def exercise() -> None:
+        repository = FakeGenerationRepository()
+        service, _, dispatcher = build_service(repository)
+        original = await create(service, key="malformed-filter-snapshot")
+        original.run.status = "failed"
+        original.run.context_snapshot["retrieval_filters"] = {"kind": "scope"}
+
+        with pytest.raises(
+            GenerationRetryStateError,
+            match="persisted retrieval filters are invalid",
+        ):
+            await service.retry(
+                CURRICULUM_VERSION_ID,
+                original.run.id,
+                idempotency_key="malformed-filter-snapshot-retry",
+                actor_id=ACTOR_ID,
+            )
+
+        assert len(repository.by_hash) == 1
+        assert len(dispatcher.dispatched) == 1
+
+    asyncio.run(exercise())
+
+
+def test_context_validation_rejects_unscoped_legacy_record_without_competency() -> None:
+    record = replace(
+        context_record("knowledge_chunk", CHUNK_ID),
+        competency_id=None,
+    )
+
+    with pytest.raises(GenerationContextCrossCurriculumError):
+        GenerationRunService._validate_context_records(
+            retrieval_filters(),
+            (CHUNK_ID,),
+            (),
+            (record,),
+        )
+
+
 def test_context_validation_rejects_cross_unit_and_lesson_records_before_generation() -> None:
     selected_unit = UUID(int=960_001)
     selected_lesson = UUID(int=960_002)
@@ -559,16 +789,14 @@ def test_context_validation_rejects_cross_unit_and_lesson_records_before_generat
     )
     with pytest.raises(GenerationContextCrossCurriculumError):
         GenerationRunService._validate_context_records(
-            CURRICULUM_VERSION_ID,
-            slot,
+            retrieval_filters(slot),
             (CHUNK_ID,),
             (),
             (replace(context_record("knowledge_chunk", CHUNK_ID), unit_id=UUID(int=1)),),
         )
     with pytest.raises(GenerationContextCrossCurriculumError):
         GenerationRunService._validate_context_records(
-            CURRICULUM_VERSION_ID,
-            slot,
+            retrieval_filters(slot),
             (CHUNK_ID,),
             (),
             (
@@ -608,6 +836,10 @@ def test_context_validation_rejects_cross_unit_and_lesson_records_before_generat
             GenerationContextSourceUntrustedError,
         ),
         (
+            (replace(context_record("knowledge_chunk", CHUNK_ID), scope_active=False),),
+            GenerationContextScopeInactiveError,
+        ),
+        (
             (replace(context_record("knowledge_chunk", CHUNK_ID), skill_id=UUID(int=2)),),
             GenerationContextTaxonomyMismatchError,
         ),
@@ -619,8 +851,7 @@ def test_context_validation_rejects_missing_unreviewed_untrusted_or_spoofed_reco
 ) -> None:
     with pytest.raises(error):
         GenerationRunService._validate_context_records(
-            CURRICULUM_VERSION_ID,
-            PAPER.slots[0],
+            retrieval_filters(),
             (CHUNK_ID,),
             (),
             records,

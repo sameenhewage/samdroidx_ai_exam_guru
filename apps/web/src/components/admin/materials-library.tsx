@@ -92,6 +92,14 @@ const secondaryButton =
 const dangerButton =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-red-800 px-5 py-2.5 text-sm font-semibold text-white outline-none hover:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
+const MATERIAL_PAGE_LIMIT = 100;
+
+type MaterialDiscovery = {
+  error?: UiError;
+  hasNext: boolean;
+  items: Material[];
+};
+
 const errorMessages: Record<string, string> = {
   authentication_required: "Your session has expired. Sign in again before retrying.",
   concurrent_material_scope_modification:
@@ -223,15 +231,59 @@ function uploadFormData(body: UploadBody, file: File): FormData {
 function Modal({
   children,
   labelledBy,
+  onClose,
 }: {
   children: ReactNode;
   labelledBy: string;
+  onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    focusable()[0]?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, []);
+
   return (
     <div
       aria-labelledby={labelledBy}
       aria-modal="true"
       className="fixed inset-0 z-50 grid items-start overflow-y-auto bg-slate-950/65 p-4 sm:items-center sm:p-8"
+      ref={dialogRef}
       role="dialog"
     >
       <div className="mx-auto w-full max-w-3xl rounded-2xl bg-[#f8f8f4] p-5 shadow-2xl sm:p-7">
@@ -262,12 +314,19 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
   const [sources, setSources] = useState<SourceDocument[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [selectedGrade, setSelectedGrade] = useState<number | null>(null);
+  const [selectedGrade, setSelectedGrade] = useState<number | null>(5);
   const [selectedSubject, setSelectedSubject] = useState("");
+  const [materialSearch, setMaterialSearch] = useState("");
+  const [selectedMedium, setSelectedMedium] = useState("");
+  const [selectedMaterialType, setSelectedMaterialType] = useState<MaterialType | "">("");
+  const [selectedMaterialStatus, setSelectedMaterialStatus] = useState<MaterialStatus | "">("");
+  const [selectedYear, setSelectedYear] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<UiError | null>(null);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialsError, setMaterialsError] = useState<UiError | null>(null);
+  const [materialsOffset, setMaterialsOffset] = useState(0);
+  const [materialsHasNext, setMaterialsHasNext] = useState(false);
   const materialsRequestId = useRef(0);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState<UiError | null>(null);
@@ -363,26 +422,64 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     }
   }, [api]);
 
+  const discoverMaterials = useCallback(
+    async (
+      grade: number,
+      subjectId: string,
+      offset: number,
+    ): Promise<MaterialDiscovery> => {
+      const result = await api.GET("/api/v1/admin/materials", {
+        params: {
+          query: {
+            grade,
+            limit: MATERIAL_PAGE_LIMIT,
+            material_type: selectedMaterialType || null,
+            medium_id: selectedMedium || null,
+            offset,
+            search: materialSearch.trim() || null,
+            status: selectedMaterialStatus || null,
+            subject_id: subjectId || null,
+            year:
+              Number(selectedYear) >= 1900 && Number(selectedYear) <= 2100
+                ? Number(selectedYear)
+                : null,
+          },
+        },
+      });
+      if (result.error) {
+        return {
+          error: uiError(result.error, result.response.status),
+          hasNext: false,
+          items: [],
+        };
+      }
+      const items = result.data ?? [];
+      return { hasNext: items.length === MATERIAL_PAGE_LIMIT, items };
+    },
+    [
+      api,
+      materialSearch,
+      selectedMaterialStatus,
+      selectedMaterialType,
+      selectedMedium,
+      selectedYear,
+    ],
+  );
+
   const loadMaterials = useCallback(
-    async (grade: number, subjectId: string) => {
+    async (grade: number, subjectId: string, offset = 0) => {
       const requestId = ++materialsRequestId.current;
       setMaterialsLoading(true);
       setMaterialsError(null);
       try {
-        const result = await api.GET("/api/v1/admin/materials", {
-          params: {
-            query: {
-              grade,
-              limit: 100,
-              subject_id: subjectId || null,
-            },
-          },
-        });
+        const result = await discoverMaterials(grade, subjectId, offset);
         if (requestId !== materialsRequestId.current) return;
         if (result.error) {
-          setMaterialsError(uiError(result.error, result.response.status));
+          setMaterialsError(result.error);
         } else {
-          setMaterials(result.data ?? []);
+          setMaterials(result.items);
+          setMaterialsOffset(offset);
+          setMaterialsHasNext(result.hasNext);
         }
       } catch {
         if (requestId === materialsRequestId.current) setMaterialsError(networkError());
@@ -390,7 +487,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         if (requestId === materialsRequestId.current) setMaterialsLoading(false);
       }
     },
-    [api],
+    [discoverMaterials],
   );
 
   const refreshCatalog = useCallback(async (
@@ -403,23 +500,19 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         api.GET("/api/v1/admin/source-documents"),
         grade === null
           ? Promise.resolve(null)
-          : api.GET("/api/v1/admin/materials", {
-              params: {
-                query: {
-                  grade,
-                  limit: 100,
-                  subject_id: subjectId || null,
-                },
-              },
-            }),
+          : discoverMaterials(grade, subjectId, 0),
       ]);
       if (!summaryResult.error) setSummaries(completeGradeSummaries(summaryResult.data ?? []));
       if (!sourceResult.error) setSources(sourceResult.data ?? []);
-      if (materialResult && !materialResult.error) setMaterials(materialResult.data ?? []);
+      if (materialResult && !materialResult.error) {
+        setMaterials(materialResult.items);
+        setMaterialsOffset(0);
+        setMaterialsHasNext(materialResult.hasNext);
+      }
     } catch {
       // The completed mutation remains authoritative. A later manual retry can refresh the catalog.
     }
-  }, [api, selectedGrade, selectedSubject]);
+  }, [api, discoverMaterials, selectedGrade, selectedSubject]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadWorkspace(), 0);
@@ -622,8 +715,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setWizardStep(Math.max(0, wizardStep - 1) as WizardStep);
   }
 
-  async function uploadMaterial(event: FormEvent<HTMLFormElement>) {
+  function submitUploadWizard(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+  }
+
+  async function uploadMaterial() {
     const file = wizardFile;
     const fileError = validatePdf(file);
     if (fileError) {
@@ -971,14 +1067,29 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
           {selectedGrade !== null && (
             <section aria-label="Uploaded materials" className="mt-10 border-t border-slate-300 pt-8">
-              <div className="flex flex-wrap items-end justify-between gap-5">
-                <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500 uppercase">
-                    Grade {selectedGrade}
-                  </p>
-                  <h2 className="mt-1 text-2xl font-semibold">Uploaded materials</h2>
-                </div>
-                <label className={`${fieldClass} w-full sm:w-72`} htmlFor="materials-subject-filter">
+              <div>
+                <p className="text-xs font-semibold tracking-wider text-slate-500 uppercase">
+                  Grade {selectedGrade}
+                </p>
+                <h2 className="mt-1 text-2xl font-semibold">Uploaded materials</h2>
+              </div>
+              <section
+                aria-label="Material filters"
+                className="mt-5 grid gap-4 rounded-xl border border-slate-300 bg-white p-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                <label className={fieldClass} htmlFor="materials-search">
+                  Search
+                  <input
+                    className={inputClass}
+                    id="materials-search"
+                    maxLength={200}
+                    onChange={(event) => setMaterialSearch(event.currentTarget.value)}
+                    placeholder="Search filenames"
+                    type="search"
+                    value={materialSearch}
+                  />
+                </label>
+                <label className={fieldClass} htmlFor="materials-subject-filter">
                   Subject
                   <select
                     className={inputClass}
@@ -996,7 +1107,88 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                       ))}
                   </select>
                 </label>
-              </div>
+                <label className={fieldClass} htmlFor="materials-medium-filter">
+                  Medium
+                  <select
+                    className={inputClass}
+                    id="materials-medium-filter"
+                    onChange={(event) => setSelectedMedium(event.currentTarget.value)}
+                    value={selectedMedium}
+                  >
+                    <option value="">All media</option>
+                    {media
+                      .filter((item) => item.active)
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="materials-type-filter">
+                  Material type
+                  <select
+                    className={inputClass}
+                    id="materials-type-filter"
+                    onChange={(event) =>
+                      setSelectedMaterialType(event.currentTarget.value as MaterialType | "")
+                    }
+                    value={selectedMaterialType}
+                  >
+                    <option value="">All types</option>
+                    {materialTypes.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="materials-status-filter">
+                  Status
+                  <select
+                    className={inputClass}
+                    id="materials-status-filter"
+                    onChange={(event) =>
+                      setSelectedMaterialStatus(event.currentTarget.value as MaterialStatus | "")
+                    }
+                    value={selectedMaterialStatus}
+                  >
+                    <option value="">All statuses</option>
+                    <option value="processing">Processing</option>
+                    <option value="needs_review">Needs review</option>
+                    <option value="ready_for_ai">Ready for AI</option>
+                    <option value="removed">Removed</option>
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="materials-year-filter">
+                  Year
+                  <input
+                    className={inputClass}
+                    id="materials-year-filter"
+                    inputMode="numeric"
+                    max="2100"
+                    min="1900"
+                    onChange={(event) => setSelectedYear(event.currentTarget.value)}
+                    placeholder="All years"
+                    type="number"
+                    value={selectedYear}
+                  />
+                </label>
+                <button
+                  className={`${secondaryButton} sm:col-span-2 lg:col-span-3 lg:justify-self-start`}
+                  onClick={() => {
+                    setMaterialSearch("");
+                    setSelectedSubject("");
+                    setSelectedMedium("");
+                    setSelectedMaterialType("");
+                    setSelectedMaterialStatus("");
+                    setSelectedYear("");
+                  }}
+                  type="button"
+                >
+                  Clear filters
+                </button>
+              </section>
 
               {materialsLoading && (
                 <p className="mt-5 rounded-lg border border-slate-300 bg-white p-4 text-slate-600" role="status">
@@ -1020,7 +1212,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   No materials match this grade and subject.
                 </p>
               )}
-              {!materialsLoading && !materialsError && visibleMaterials.length > 0 && (
+              {!materialsLoading &&
+                !materialsError &&
+                (visibleMaterials.length > 0 || materialsOffset > 0) && (
                 <div className="mt-5 grid gap-4">
                   {visibleMaterials.map((material) => {
                     const source = sourceById.get(material.id);
@@ -1154,6 +1348,44 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                       </article>
                     );
                   })}
+                  <nav
+                    aria-label="Materials pages"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white p-4"
+                  >
+                    <p className="text-sm font-semibold text-slate-700">
+                      Page {Math.floor(materialsOffset / MATERIAL_PAGE_LIMIT) + 1}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        className={secondaryButton}
+                        disabled={materialsOffset === 0 || materialsLoading}
+                        onClick={() =>
+                          void loadMaterials(
+                            selectedGrade,
+                            selectedSubject,
+                            Math.max(0, materialsOffset - MATERIAL_PAGE_LIMIT),
+                          )
+                        }
+                        type="button"
+                      >
+                        Previous materials page
+                      </button>
+                      <button
+                        className={secondaryButton}
+                        disabled={!materialsHasNext || materialsLoading}
+                        onClick={() =>
+                          void loadMaterials(
+                            selectedGrade,
+                            selectedSubject,
+                            materialsOffset + MATERIAL_PAGE_LIMIT,
+                          )
+                        }
+                        type="button"
+                      >
+                        Next materials page
+                      </button>
+                    </div>
+                  </nav>
                 </div>
               )}
             </section>
@@ -1162,7 +1394,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       )}
 
       {wizardOpen && (
-        <Modal labelledBy="upload-material-heading">
+        <Modal labelledBy="upload-material-heading" onClose={closeWizard}>
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold tracking-wider text-amber-800 uppercase">
@@ -1195,7 +1427,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             ))}
           </ol>
 
-          <form className="mt-6 grid gap-5" onSubmit={uploadMaterial}>
+          <form className="mt-6 grid gap-5" onSubmit={submitUploadWizard}>
             {wizardStep === 0 && (
               <label className={fieldClass} htmlFor="upload-grade">
                 Grade
@@ -1487,7 +1719,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   Continue
                 </button>
               ) : !duplicate ? (
-                <button className={primaryButton} disabled={uploading} type="submit">
+                <button
+                  className={primaryButton}
+                  disabled={uploading}
+                  onClick={() => void uploadMaterial()}
+                  type="button"
+                >
                   {uploading ? "Uploading…" : "Upload material"}
                 </button>
               ) : null}
@@ -1497,7 +1734,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       )}
 
       {removeTarget && (
-        <Modal labelledBy="remove-material-heading">
+        <Modal
+          labelledBy="remove-material-heading"
+          onClose={() => {
+            if (!removing) setRemoveTarget(null);
+          }}
+        >
           <h2 className="text-2xl font-semibold" id="remove-material-heading">
             Remove {removeTarget.title} from use
           </h2>
@@ -1542,7 +1784,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       )}
 
       {scopeTarget && (
-        <Modal labelledBy="scope-material-heading">
+        <Modal
+          labelledBy="scope-material-heading"
+          onClose={() => {
+            if (!scopeSaving) setScopeTarget(null);
+          }}
+        >
           <h2 className="text-2xl font-semibold" id="scope-material-heading">
             Edit {scopeTarget.title}
           </h2>

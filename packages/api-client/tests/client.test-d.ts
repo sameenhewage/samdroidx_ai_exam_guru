@@ -19,13 +19,20 @@ const taxonomyRequest = client.POST(
 const paperJob = client.POST("/api/v1/admin/paper-generation/jobs", {
   body: {
     target: {
-      assessment_programme: "SCHOOL-G7",
-      grade: 7,
-      medium: "en",
+      grade: 5,
+      medium: "si",
+      paper_type: "subject_practice",
       subject: "MATHEMATICS",
     },
     scope: { end_lesson: 3, kind: "lesson_range", start_lesson: 1 },
-    settings: { difficulty: "balanced", duration_minutes: 50, question_count: 12 },
+    settings: {
+      difficulty: "balanced",
+      duration_minutes: 50,
+      mcq_count: 5,
+      paper_name: "Grade 5 Mathematics practice",
+      structured_count: 0,
+      written_count: 7,
+    },
   },
   params: { header: { "Idempotency-Key": "teacher-paper-request-1" } },
 });
@@ -67,9 +74,21 @@ const promoteFeedback = client.POST(
   },
 );
 const intent: components["schemas"]["TeacherPaperJobCreateRequest"] = {
-  target: { grade: 7, medium: "en", subject: "MATHEMATICS" },
+  target: {
+    grade: 5,
+    medium: "si",
+    paper_type: "subject_practice",
+    subject: "MATHEMATICS",
+  },
   scope: { kind: "full_subject" },
-  settings: { difficulty: "challenging", duration_minutes: 60, question_count: 20 },
+  settings: {
+    difficulty: "challenging",
+    duration_minutes: 60,
+    mcq_count: 10,
+    paper_name: "Grade 5 Mathematics challenge",
+    structured_count: 2,
+    written_count: 8,
+  },
 };
 const health: components["schemas"]["HealthResponse"] = { status: "ok" };
 const session: components["schemas"]["AuthSessionResponse"] = {
