@@ -1,5 +1,21 @@
 # Teacher Studio V1 — UX Reference
 
+## V1 teacher-pilot scope
+
+The current teacher-facing release target is **Grade 5 only**, with **Sinhala Medium first** and **Grade 5 Scholarship** as the primary national-exam workflow.
+
+The underlying architecture remains extensible for Grades 1–13, but this reference must not be interpreted as a requirement to expose or implement O/L, A/L, Grade 7, or other future-grade product flows in the V1 teacher pilot.
+
+For Grade 5 Scholarship:
+
+- Paper I is an Ability / Reasoning paper and must use a versioned programme-specific ability framework.
+- Paper II is Curriculum Knowledge and may require multiple supporting curriculum scopes.
+- The current programme policy must be able to use reviewed Grade 3 + Grade 4 + eligible Grade 5 Terms 1–2 material where required.
+- Grade 3/4 supporting source material does not make Grade 3/4 teacher-facing products part of this V1 release.
+- The ordinary single Subject selector is hidden for Scholarship.
+- The teacher-facing Scholarship choice should distinguish Paper I, Paper II, and Full Scholarship Practice.
+
+
 This folder is the product-facing UX reference for the Exam Guru private Teacher Studio.
 
 ## Files
