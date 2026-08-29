@@ -198,6 +198,42 @@ Do not reduce thresholds to pass.
 
 ---
 
+## Gate K — Sample-paper engineering validation
+
+Before teacher handoff, engineering must generate and audit real sample papers from reviewed local sources.
+
+Required sample families:
+
+- Scholarship Paper I — multiple samples using the ability/reasoning framework
+- Scholarship Paper II — multiple samples using the configured multi-scope Grade 3/4/eligible Grade 5 coverage
+- Full Scholarship Practice — at least one complete teacher-reviewable package
+- Grade 5 Term Test/Subject Practice regression sample only if those remain in V1
+
+For every sample, record:
+
+- blueprint/programme version
+- source scope/provenance
+- expected vs actual question structure
+- validation findings
+- duplicate findings
+- answer correctness findings
+- marking completeness
+- unresolved review state
+
+Any engineering-fixable defect found during sample generation must be fixed and the affected sample regenerated/revalidated.
+
+## Gate L — Final clean-system validation
+
+After development is complete, perform one fresh final validation in a clean isolated runtime:
+
+`fresh DB -> migrations -> real source ingestion -> review/trust -> embedding/index -> Paper I/Paper II/full generation -> validation -> teacher correction -> marking -> approval -> publication -> published readback`
+
+This final pass must use the real backend and browser flow.
+
+If the clean-system validation finds a defect, return to engineering, fix it, then rerun the affected final validation.
+
+Do not declare teacher readiness from incremental tests alone.
+
 # What teachers should test AFTER engineering marks the build ready
 
 Do not ask teachers to test architecture, RAG, embeddings or API behavior.
