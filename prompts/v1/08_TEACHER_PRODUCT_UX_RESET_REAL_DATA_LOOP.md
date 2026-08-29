@@ -10,6 +10,58 @@ Work like a senior cross-functional software team: product engineer + frontend e
 
 Do not stop after fixing one screenshot. Continue the engineering loop until the complete teacher workflow is coherent, runtime-proven and regression-protected.
 
+
+---
+
+## V1 SCOPE LOCK — GRADE 5 ONLY FOR TEACHER PILOT
+
+This instruction overrides broader demo/architecture examples elsewhere in the repo for this execution.
+
+**Do not spend this delivery implementing Grade 6-13 teacher product flows, O/L, A/L, Grade 7 acceptance journeys, or broad multi-grade UI polish.**
+
+The V1 teacher-facing runtime and teacher acceptance target is:
+
+- **Grade 5 only**
+- **Sinhala Medium first**
+- **Grade 5 Scholarship is the primary national-exam target**
+- Grade 5 Subject Practice and Grade 5 Term Test may remain supported where already useful, but they are secondary to making the Scholarship workflow genuinely usable.
+
+The architecture must remain extensible for Grades 1-13. Do not reintroduce Grade-5-only database constraints or irreversible schema assumptions. Future grades should be addable through configuration/domain extensions rather than a rewrite.
+
+However, **future extensibility is not permission to implement and test every grade now**.
+
+### Critical distinction: product target vs source curriculum scope
+
+The product target is Grade 5 Scholarship.
+
+That does **not** mean every supporting source record has grade=5.
+
+For a government-aligned Grade 5 Scholarship model, support the programme as a first-class assessment programme with at least:
+
+- **Paper I — Ability / reasoning framework**
+- **Paper II — Curriculum knowledge coverage**
+
+Paper II must be able to draw from the officially configured supporting curriculum scopes required by the Scholarship programme, including where applicable:
+
+- Grade 3 reviewed curriculum/material;
+- Grade 4 reviewed curriculum/material;
+- Grade 5 reviewed curriculum/material limited to the configured eligible term coverage (for the current policy, Terms 1-2).
+
+Those Grade 3/4 records are supporting source scope for the **Grade 5 Scholarship product**. They do not make Grade 3/4 teacher-facing products part of this V1 release.
+
+Do not model Scholarship Paper II as one ordinary `Grade 5 + Subject + CurriculumVersion` retrieval request if official programme coverage spans multiple curriculum scopes.
+
+Paper I must not be faked as a normal subject syllabus. Represent its ability/reasoning profile through a programme-specific ability/taxonomy model that can be versioned and validated.
+
+### Teacher-pilot release gate
+
+Do not hand this build to teachers merely because architecture, unit tests, or isolated components are green.
+
+The build is **TEACHER-PILOT READY** only when the complete Grade 5 acceptance flow described later in this prompt passes end to end in a clean runtime with real representative data.
+
+If required Grade 3/4/Grade 5 source material or human-reviewed extraction/eval evidence is missing, report that as a concrete pilot blocker. Do not label the system teacher-ready.
+
+
 ---
 
 ## 0. Repository safety and working mode
@@ -312,53 +364,28 @@ Medium means the educational/language medium, e.g. Sinhala, Tamil, English.
 
 Use canonical server-owned codes internally and human-readable labels in UI.
 
-## 7.2 Grade-aware paper types
+## 7.2 Grade 5 pilot paper types
 
 Paper type is mutually exclusive and must be rendered as an accessible radio-card group, not raw browser buttons and not an invalid global dropdown.
 
-Only valid paper types for the selected grade may be shown.
-
-Required domain behavior:
-
-### Normal grades
+For the **V1 Grade 5 teacher pilot**, expose only teacher-usable Grade 5 choices:
 
 - Subject Practice
 - Term Test
-
-### Grade 5
-
-Additionally:
-
 - Grade 5 Scholarship Practice
 
-### Grade 11
+Do not show O/L, A/L, Grade 6-13 paper types, or other future-grade programme options in the V1 teacher runtime.
 
-Additionally:
+The reusable domain/schema must remain extensible for future grades, but broad future-grade product implementation is out of scope for this delivery.
 
-- O/L Practice
-
-### Grade 13
-
-Additionally:
-
-- A/L Practice
-
-Never show:
-
-- O/L Practice for Grade 5;
-- A/L Practice for Grade 5;
-- Grade 5 Scholarship Practice for Grade 11/13;
-- invalid combinations merely because an enum contains them.
-
-The backend options/domain contract must also enforce validity. Do not rely only on hiding options in React.
+The backend options/domain contract must enforce the same allowed Grade 5 combinations. Do not rely only on hiding options in React.
 
 ## 7.3 Subject rules
 
 - Subject Practice = subject-specific.
 - Term Test = subject-specific.
-- O/L Practice = subject-specific.
-- A/L Practice = subject-specific.
-- Grade 5 Scholarship Practice = integrated; hide the single-subject selector and use the configured reviewed Grade 5 Scholarship scope.
+- Grade 5 Scholarship Practice = programme-specific; hide the ordinary single-subject selector.
+- Scholarship then resolves to a programme/paper mode and its configured coverage policy rather than one normal subject curriculum.
 
 Do not represent Grade 5 Scholarship Practice as:
 
@@ -436,7 +463,22 @@ When specific lessons are selected:
 
 Do not show a single-subject lesson picker.
 
-Show a concise explanation that the system uses the configured reviewed integrated Scholarship coverage across the appropriate Grade 5 subject/skill areas.
+After Scholarship is selected, expose a simple teacher-facing Scholarship paper choice such as:
+
+- **Paper I — Ability & Reasoning**
+- **Paper II — Curriculum Knowledge**
+- **Full Scholarship Practice — Paper I + Paper II**
+
+Use accessible radio semantics.
+
+Behind the scenes:
+
+- Paper I resolves to the versioned Scholarship ability/reasoning profile.
+- Paper II resolves to a **multi-scope programme coverage policy**, not one ordinary Grade 5 subject curriculum.
+- The current policy must be able to combine reviewed Grade 3 + Grade 4 + eligible Grade 5 term coverage (Terms 1-2 where that is the configured official policy).
+- Full Scholarship Practice composes both paper profiles without weakening their independent rules.
+
+The teacher should see a short human explanation such as `Uses the reviewed Grade 5 Scholarship coverage configured for this exam`; the UI does not need to expose internal retrieval scope IDs.
 
 ---
 
@@ -488,20 +530,22 @@ The deterministic blueprint must adapt to the requested composition without expo
 
 ---
 
-# 10. Review & Approve — multi-grade
+# 10. Review & Approve — Grade 5 pilot
 
-Review & Approve is not Grade-5-only.
+The V1 teacher pilot reviews **Grade 5 papers only**.
 
-Support all configured grades.
+Do not spend this delivery building Grade 6-13 review journeys.
 
-Top-level filters must include at minimum:
+Keep the data/domain design extensible so future grades can appear later without a rewrite.
 
-- Grade
-- Subject
+For the Grade 5 pilot, top-level filters should include as useful:
+
+- Paper type / Scholarship paper mode
+- Subject where the paper is subject-specific
 - Medium
 - Status
 
-Do not omit Grade.
+A Grade filter may remain if already implemented generically, but it must not create fake Grade 6-13 pilot data or distract from Grade 5 acceptance.
 
 Paper queue entries must use teacher-readable titles and scope summaries.
 
@@ -678,6 +722,19 @@ This directory contains syllabus, teacher guides and papers.
 
 Treat this as important real-data input for this implementation loop.
 
+
+For **teacher-pilot readiness**, inventory whether the local corpus contains sufficient official/reviewable material for the Grade 5 Scholarship programme:
+
+- Grade 3 supporting syllabus/teacher-guide material needed by Paper II;
+- Grade 4 supporting syllabus/teacher-guide material needed by Paper II;
+- Grade 5 supporting syllabus/teacher-guide material with enough metadata to enforce eligible term coverage;
+- Grade 5 Scholarship past Paper I;
+- Grade 5 Scholarship past Paper II;
+- available official answers/marking/evaluation material;
+- any authoritative programme/specification material used to define Paper I abilities or Paper II coverage.
+
+Do not silently substitute synthetic content when an official/reviewable input is missing. Record the missing input as a **teacher-pilot blocker**.
+
 ## 16.1 Inspect safely
 
 Do not modify or delete source files.
@@ -825,13 +882,13 @@ At minimum add/maintain tests for:
 
 ## Generate target
 
+- V1 runtime exposes only Grade 5 teacher-product choices;
 - Grade 5 does not expose O/L/A/L;
 - Grade 5 exposes Scholarship;
-- Grade 11 exposes O/L but not Grade 5 Scholarship/A/L;
-- Grade 13 exposes A/L but not Grade 5 Scholarship/O/L where invalid;
-- normal grades expose only valid common options;
-- Scholarship hides Subject;
-- Scholarship uses integrated configured scope;
+- Scholarship hides the ordinary Subject selector;
+- Scholarship Paper I resolves to a versioned ability/reasoning profile;
+- Scholarship Paper II resolves to the configured multi-curriculum coverage policy;
+- a client cannot force Scholarship into one arbitrary subject/curriculum scope;
 - Term Test shows Subject + Term;
 - subject-specific choices remain consistent across options/curricula/lessons/generation.
 
@@ -854,8 +911,7 @@ At minimum add/maintain tests for:
 
 ## Review
 
-- Grade filter exists;
-- multi-grade queue;
+- Grade 5 pilot queue is coherent and contains no synthetic future-grade records;
 - all questions list visible/navigation works;
 - question detail loads correct question;
 - unconfirmed marks are not rendered as final;
@@ -911,27 +967,39 @@ Required browser journeys include:
 - resulting paper has the requested question-type composition;
 - review queue receives it.
 
-### Journey C — Grade 5 Scholarship
+### Journey C — Grade 5 Scholarship Paper I
 
 - Grade 5;
+- Sinhala Medium;
 - Scholarship Practice;
-- Subject field hidden;
-- integrated coverage explanation;
+- ordinary Subject field hidden;
+- choose Paper I — Ability & Reasoning;
+- no subject lesson picker;
+- generation uses the configured Scholarship ability profile;
+- generated paper reaches Review & Approve with correct programme/paper metadata.
+
+### Journey D — Grade 5 Scholarship Paper II
+
+- Grade 5;
+- Sinhala Medium;
+- Scholarship Practice;
+- choose Paper II — Curriculum Knowledge;
+- ordinary Subject field hidden;
 - no single-subject lesson picker;
-- generation scope is server-valid.
+- server resolves the versioned multi-scope programme coverage;
+- retrieval can use reviewed Grade 3, Grade 4 and eligible Grade 5 Terms 1-2 sources according to the configured policy;
+- no cross-medium or out-of-policy source leakage;
+- provenance in Review identifies the real source/page used.
 
-### Journey D — Grade 11
+### Journey E — Full Grade 5 Scholarship Practice
 
-- Grade 11;
-- O/L Practice available;
-- Grade 5 Scholarship and A/L not available;
-- subject remains required.
-
-### Journey E — Grade 13
-
-- Grade 13;
-- A/L Practice available;
-- invalid Grade 5/O/L combinations not shown/accepted.
+- Grade 5;
+- Sinhala Medium;
+- Scholarship Practice;
+- choose Full Scholarship Practice;
+- compose Paper I + Paper II according to versioned programme rules;
+- do not flatten both into one generic subject blueprint;
+- resulting draft is reviewable end to end.
 
 ### Journey F — Review
 
@@ -982,8 +1050,11 @@ Add adversarial tests for:
 - marking points not summing to explicit total;
 - negative/excessive marks;
 - client attempting Grade 5 + A/L/O/L even if UI hides it;
-- client attempting Scholarship + arbitrary Subject;
-- cross-grade/cross-medium RAG leakage.
+- client attempting Scholarship + arbitrary ordinary Subject/curriculum;
+- Paper II accidentally retrieving Grade 5-only when the programme policy requires multiple curriculum scopes;
+- Paper II retrieving Grade 3/4/5 content outside the configured programme coverage;
+- Paper I accidentally using ordinary subject-syllabus retrieval as its ability model;
+- cross-medium and out-of-policy RAG leakage.
 
 Server must reject invalid combinations.
 
@@ -1158,14 +1229,15 @@ Do not say the system is fully correct merely because automated tests are green.
 
 ## Final acceptance definition
 
-This task is complete only when a normal teacher can use the real application as a coherent product:
+This task is complete only when a normal teacher can use the **Grade 5 pilot** as a coherent product:
 
-`Upload real source -> review extracted text -> Ready for AI -> generate correctly scoped paper -> inspect every generated question -> edit question-specific marking -> approve -> publish immutable version`
+`Upload/review real Scholarship-supporting sources -> Ready for AI -> generate Grade 5 Scholarship Paper I / Paper II / full practice according to programme rules -> inspect every generated question -> edit question-specific marking -> approve -> publish immutable version`
 
 with:
 
 - no synthetic/internal labels in normal teacher UI;
-- no invalid Grade/Paper Type combinations;
+- no non-Grade-5 future product clutter in the V1 teacher workflow;
+- no invalid Grade 5 / Paper Type / Scholarship paper-mode combinations;
 - no endless Materials scrolling;
 - no technical Blueprint/RAG complexity forced on the teacher;
 - real scoped RAG evidence;
