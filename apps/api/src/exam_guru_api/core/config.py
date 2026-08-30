@@ -283,6 +283,7 @@ class Settings(BaseSettings):
         ge=0,
         le=100_000_000_000,
     )
+    generation_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     generation_timeout_ms: int | None = Field(default=None, ge=1, le=120_000)
     semantic_verifier_provider: Literal["openai"] | None = None
     semantic_verifier_openai_api_key: SecretStr | None = None
@@ -635,6 +636,7 @@ class Settings(BaseSettings):
             self.generation_pricing_version,
             self.generation_input_microusd_per_million_tokens,
             self.generation_output_microusd_per_million_tokens,
+            self.generation_temperature,
             self.generation_timeout_ms,
         )
         if self.generation_provider == "openai":

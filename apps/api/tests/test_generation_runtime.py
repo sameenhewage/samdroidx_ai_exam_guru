@@ -270,6 +270,7 @@ def test_non_test_openai_requires_every_explicit_registered_secret_route_and_pri
         generation_pricing_version="openai-price-2026-08",
         generation_input_microusd_per_million_tokens=250_000,
         generation_output_microusd_per_million_tokens=1_000_000,
+        generation_temperature=1.0,
         generation_timeout_ms=20_000,
     )
 
@@ -281,6 +282,7 @@ def test_non_test_openai_requires_every_explicit_registered_secret_route_and_pri
     assert registered.model == "gpt-generation"
     assert registered.model_version == "gpt-generation-2026-08-01"
     assert registered.pricing.pricing_version == "openai-price-2026-08"
+    assert registered.parameters.temperature == 1.0
     assert isinstance(provider, OpenAIGenerationAdapter)
     assert "provider-secret-key" not in repr(settings)
     assert "provider-secret-key" not in repr(runtime)
@@ -296,6 +298,7 @@ def test_non_test_openai_requires_every_explicit_registered_secret_route_and_pri
             generation_openai_api_key=SecretStr("provider-secret-key"),
         ),
         lambda: secure_settings(generation_model="unowned-model-override"),
+        lambda: secure_settings(generation_temperature=1.0),
         lambda: secure_settings(
             generation_provider="openai",
             generation_openai_api_key=SecretStr(" "),
@@ -304,6 +307,7 @@ def test_non_test_openai_requires_every_explicit_registered_secret_route_and_pri
             generation_pricing_version="openai-price-2026-08",
             generation_input_microusd_per_million_tokens=250_000,
             generation_output_microusd_per_million_tokens=1_000_000,
+            generation_temperature=1.0,
             generation_timeout_ms=20_000,
         ),
     ],

@@ -238,7 +238,12 @@ def create_generation_runtime(settings: Settings) -> GenerationRuntimeRegistry:
         return GenerationRuntimeRegistry(None)
 
     prompt = _prompt()
-    parameters = GenerationParameters(temperature=0.0, max_output_tokens=1_000, seed=17)
+    temperature = (
+        0.0
+        if selected_provider == "deterministic"
+        else cast(float, settings.generation_temperature)
+    )
+    parameters = GenerationParameters(temperature=temperature, max_output_tokens=1_000, seed=17)
     budgets = _budgets()
     if selected_provider == "deterministic":
         pricing = OpenAIModelPricing(

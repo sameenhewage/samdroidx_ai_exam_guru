@@ -38,9 +38,10 @@ This document records limitations that remain after the implemented Priority 1 e
 
 ### Live generation and validation baseline scope
 
-- The opt-in OpenAI generation-to-validation baseline has been executed for the versioned English `gpt-4o-mini-2024-07-18` configuration, with tokens, latency, integer-microusd cost, fingerprints and validation finding codes recorded in the phase tracker.
+- Opt-in OpenAI generation-to-validation baselines have been executed for the versioned English `gpt-4o-mini-2024-07-18` configuration and the currently configured `gpt-5.6-luna` Studio model, with tokens, latency, integer-microusd cost, fingerprints and validation finding codes recorded in the phase tracker.
+- `gpt-5.6-luna` rejects temperature `0.0`; generation temperature is therefore explicit server-owned versioned input and is configured as `1.0` for this model rather than silently inferred from its name.
 - Normal CI intentionally does not call a paid model.
-- This single non-failing English structured-contract run closes P8's baseline-execution gate; it is not a statistical quality study or evidence of Sinhala fluency, factual correctness, age appropriateness or semantic uniqueness.
+- These non-failing English structured-contract runs close P8's baseline-execution gate; they are not a statistical quality study or evidence of Sinhala fluency, factual correctness, age appropriateness or semantic uniqueness.
 - Every generated result remains untrusted, requires canonical validation and cannot publish without human approval.
 
 ### Multi-grade and subject-quality evidence
@@ -50,7 +51,7 @@ This document records limitations that remain after the implemented Priority 1 e
 - The Maths checker deliberately supports only bounded exact arithmetic, fractions, decimals and percentages. Symbolic algebra, word problems and unit conversion return an explicit warning for human review rather than a false pass.
 - Factual/language subjects now have an optional strict OpenAI semantic-verifier adapter. Versioned deterministic decomposition separates each selected/accepted answer, sentence-bounded explanation unit and marking criterion, then verifies the bounded claim set in one provider call with exact claim identity/order, aggregate-status and source/page-reference checks. Immutable findings retain claim outcomes, provider/model/prompt/pricing lineage and exact token/cost/latency accounting; admin Operations aggregates those records without exposing source text. This is a verification aid, not proof by model agreement.
 - `deterministic-factual-claims.v1` uses stable punctuation/newline boundaries rather than a linguistic proposition parser. Abbreviations, unusual punctuation and compound sentences can over- or under-segment an explanation; unsupported or unavailable checks remain WARN and every claim remains subject to human review.
-- No real semantic-verifier credential/configuration or opt-in live quality/cost baseline is available in this environment. The adapter therefore remains disabled by default; missing, failed or insufficient verification remains WARN and requires human judgement. The committed live benchmark uses small synthetic reviewed English Science fixtures and cannot establish Sinhala fluency or production factual quality when it is eventually executed.
+- The opt-in `gpt-5.6-terra` semantic-verifier baseline is now configured and executed: all three small synthetic reviewed English Science cases matched the expected supported, contradicted and insufficient-evidence outcomes with complete claim identity/evidence accounting. The fixed model-compatible temperature `1.0` is lineage-bound by semantic verifier version `2.1.0`. This 3/3 contract result is not a statistical quality study and cannot establish Sinhala fluency or production factual quality; missing, failed or insufficient verification remains WARN and requires human judgement.
 - Reviewer revisions are audited and stale validation cannot approve edited content. Structured correction feedback, explicit promotion to immutable draft quality examples, second-reviewer approval, bounded export and deterministic replay are implemented. Promotion never trains a model or changes prompts, validators or thresholds automatically.
 
 ### Live production identity provider
@@ -94,7 +95,7 @@ This document records limitations that remain after the implemented Priority 1 e
 ### Production configuration
 
 - Production settings reject deterministic identity, deterministic generation/embeddings, local credentials, insecure service connections and disabled application cost controls.
-- A deployment still needs real TLS endpoints, database/Valkey credentials, a private writable local storage root (or optional S3 credentials), OIDC configuration, OpenTelemetry/Sentry destinations and explicit credentials/versioning/pricing for the implemented non-deterministic embedding provider.
+- A deployment still needs real TLS endpoints, database/Valkey credentials, a private writable local storage root (or optional S3 credentials), OIDC configuration, OpenTelemetry/Sentry destinations and explicit credentials/versioning/pricing for every enabled live AI provider.
 
 ## Product boundaries
 

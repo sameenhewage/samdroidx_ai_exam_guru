@@ -36,6 +36,8 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert api["environment"] == worker["environment"]
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
+    assert api["environment"]["EXAM_GURU_GENERATION_PROVIDER"] == ""
+    assert api["environment"]["EXAM_GURU_GENERATION_TEMPERATURE"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_MODEL"] == (
         "grade5-deterministic-shake256"
@@ -46,6 +48,7 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
         api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_INPUT_MICROUSD_PER_MILLION_TOKENS"] == ""
     )
     for secret_name in (
+        "EXAM_GURU_GENERATION_OPENAI_API_KEY",
         "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY",
         "EXAM_GURU_RETRIEVAL_EMBEDDING_OPENAI_API_KEY",
     ):

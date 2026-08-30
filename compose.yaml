@@ -28,6 +28,17 @@ x-api-environment: &api-environment
   EXAM_GURU_RATE_LIMIT_VALIDATION_RUN: ${EXAM_GURU_RATE_LIMIT_VALIDATION_RUN:-60}
   EXAM_GURU_RATE_LIMIT_PAPER_PUBLISH_ARCHIVE: ${EXAM_GURU_RATE_LIMIT_PAPER_PUBLISH_ARCHIVE:-30}
 
+x-generation-provider-environment: &generation-provider-environment
+  EXAM_GURU_GENERATION_PROVIDER: ${EXAM_GURU_GENERATION_PROVIDER:-}
+  EXAM_GURU_GENERATION_OPENAI_API_KEY: ${EXAM_GURU_GENERATION_OPENAI_API_KEY:-}
+  EXAM_GURU_GENERATION_MODEL: ${EXAM_GURU_GENERATION_MODEL:-}
+  EXAM_GURU_GENERATION_MODEL_VERSION: ${EXAM_GURU_GENERATION_MODEL_VERSION:-}
+  EXAM_GURU_GENERATION_PRICING_VERSION: ${EXAM_GURU_GENERATION_PRICING_VERSION:-}
+  EXAM_GURU_GENERATION_INPUT_MICROUSD_PER_MILLION_TOKENS: ${EXAM_GURU_GENERATION_INPUT_MICROUSD_PER_MILLION_TOKENS:-}
+  EXAM_GURU_GENERATION_OUTPUT_MICROUSD_PER_MILLION_TOKENS: ${EXAM_GURU_GENERATION_OUTPUT_MICROUSD_PER_MILLION_TOKENS:-}
+  EXAM_GURU_GENERATION_TEMPERATURE: ${EXAM_GURU_GENERATION_TEMPERATURE:-}
+  EXAM_GURU_GENERATION_TIMEOUT_MS: ${EXAM_GURU_GENERATION_TIMEOUT_MS:-}
+
 x-semantic-verifier-environment: &semantic-verifier-environment
   EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER: ${EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER:-}
   EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY: ${EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY:-}
@@ -139,7 +150,7 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      <<: [*api-environment, *semantic-verifier-environment, *embedding-provider-environment]
+      <<: [*api-environment, *generation-provider-environment, *semantic-verifier-environment, *embedding-provider-environment]
     volumes: *studio-storage
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
@@ -161,7 +172,7 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      <<: [*api-environment, *semantic-verifier-environment, *embedding-provider-environment]
+      <<: [*api-environment, *generation-provider-environment, *semantic-verifier-environment, *embedding-provider-environment]
     volumes: *studio-storage
 
   maintenance:

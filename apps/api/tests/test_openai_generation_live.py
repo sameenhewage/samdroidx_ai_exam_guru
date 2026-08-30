@@ -36,6 +36,7 @@ _REQUIRED_LIVE_ENV = (
     "EXAM_GURU_OPENAI_LIVE_PRICING_VERSION",
     "EXAM_GURU_OPENAI_LIVE_INPUT_MICROUSD_PER_MILLION_TOKENS",
     "EXAM_GURU_OPENAI_LIVE_OUTPUT_MICROUSD_PER_MILLION_TOKENS",
+    "EXAM_GURU_OPENAI_LIVE_TEMPERATURE",
     "EXAM_GURU_OPENAI_LIVE_TIMEOUT_MS",
 )
 _LIVE_OPT_IN = os.getenv("EXAM_GURU_RUN_OPENAI_LIVE") == "1"
@@ -110,6 +111,10 @@ def test_live_openai_result_runs_canonical_p8_non_fail_baseline(
             model=model,
             model_version=model_version,
             retrieval_version="live-fixture-retrieval-v1",
+        ),
+        parameters=replace(
+            base_request.parameters,
+            temperature=float(_required_env("EXAM_GURU_OPENAI_LIVE_TEMPERATURE")),
         ),
     )
     adapter = OpenAIGenerationAdapter(

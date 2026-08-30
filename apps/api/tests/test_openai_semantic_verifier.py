@@ -11,6 +11,8 @@ import exam_guru_api.validation.openai_semantic_verifier as semantic_adapter
 from exam_guru_api.validation.openai_semantic_verifier import (
     OPENAI_SEMANTIC_PROVIDER,
     OPENAI_SEMANTIC_PROVIDER_VERSION,
+    OPENAI_SEMANTIC_TEMPERATURE,
+    OPENAI_SEMANTIC_VERIFIER_VERSION,
     OpenAISemanticVerifier,
     OpenAISemanticVerifierConfig,
     SemanticVerifierBudget,
@@ -254,7 +256,7 @@ def test_adapter_uses_strict_schema_bounded_untrusted_context_and_exact_accounti
     assert len(completions.calls) == 1
     call = completions.calls[0]
     assert call["model"] == MODEL_VERSION
-    assert call["temperature"] == 0.0
+    assert call["temperature"] == OPENAI_SEMANTIC_TEMPERATURE
     assert call["max_completion_tokens"] == SemanticVerifierBudget().max_output_tokens
     assert call["seed"] == 23
     assert call["n"] == 1
@@ -293,6 +295,17 @@ def test_adapter_uses_strict_schema_bounded_untrusted_context_and_exact_accounti
     ]
     assert object_schemas
     assert all(node.get("additionalProperties") is False for node in object_schemas)
+
+
+def test_adapter_uses_versioned_model_compatible_temperature() -> None:
+    completions = StubCompletions()
+    adapter = build_adapter(completions)
+
+    adapter.verify(request())
+
+    assert OPENAI_SEMANTIC_TEMPERATURE == 1.0
+    assert adapter.verifier_version == OPENAI_SEMANTIC_VERIFIER_VERSION == "2.1.0"
+    assert completions.calls[0]["temperature"] == OPENAI_SEMANTIC_TEMPERATURE
 
 
 def test_adapter_lineage_and_accounting_survive_the_canonical_validation_finding() -> None:

@@ -35,8 +35,9 @@ from exam_guru_api.validation.subject import (
 OPENAI_SEMANTIC_PROVIDER = "openai"
 OPENAI_SEMANTIC_PROVIDER_VERSION = "3.1.0"
 OPENAI_SEMANTIC_VERIFIER_ID = "openai-grounded-factual"
-OPENAI_SEMANTIC_VERIFIER_VERSION = "2.0.0"
+OPENAI_SEMANTIC_VERIFIER_VERSION = "2.1.0"
 OPENAI_SEMANTIC_SDK_MAX_RETRIES = 0
+OPENAI_SEMANTIC_TEMPERATURE = 1.0
 
 _MAX_IDENTIFIER_CHARACTERS = 128
 _MAX_API_KEY_CHARACTERS = 4_096
@@ -329,7 +330,7 @@ class OpenAISemanticVerifier:
                 model=self.model_version,
                 messages=self._messages(serialized),
                 response_format=_SemanticVerificationPayload,
-                temperature=0.0,
+                temperature=OPENAI_SEMANTIC_TEMPERATURE,
                 max_completion_tokens=self._budget.max_output_tokens,
                 seed=23,
                 n=1,
