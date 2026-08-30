@@ -33,7 +33,12 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
 
     assert maintenance["command"] == ["exam-guru-maintenance"]
     assert maintenance["build"] == worker["build"]
-    assert api["environment"] == worker["environment"]
+    assert api["environment"].items() <= worker["environment"].items()
+    assert worker["environment"]["EXAM_GURU_OCR_PROVIDER"] == ""
+    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_LANGUAGE"] == "sin+eng"
+    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_PAGES"] == "16"
+    for service in (api, maintenance, services["migrate"]):
+        assert "EXAM_GURU_OCR_PROVIDER" not in service["environment"]
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
     assert api["environment"]["EXAM_GURU_GENERATION_PROVIDER"] == ""
@@ -73,6 +78,10 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
         assert "minio-init" not in service.get("depends_on", {})
     assert {"minio", "minio-init"}.isdisjoint(services)
     assert {"api", "worker", "maintenance", "web", "postgres", "valkey"} <= services.keys()
+    dockerfile = (repository_root / "apps" / "api" / "Dockerfile").read_text(encoding="utf-8")
+    assert "--no-install-recommends" in dockerfile
+    for package in ("tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-sin"):
+        assert package in dockerfile
 
     profile_completed = subprocess.run(  # noqa: S603
         [

@@ -31,6 +31,7 @@ export APP_BASE_URL="http://127.0.0.1:$WEB_PORT"
 export APP_ENVIRONMENT="test"
 export EXAM_GURU_ENVIRONMENT="test"
 export EXAM_GURU_STORAGE_BACKEND="local"
+export EXAM_GURU_OCR_PROVIDER=""
 export EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER=""
 export EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY=""
 export EXAM_GURU_SEMANTIC_VERIFIER_MODEL=""
@@ -53,6 +54,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 docker compose --project-name "$project_name" up --build --detach --wait --wait-timeout 240
+ocr_languages="$(docker compose --project-name "$project_name" exec -T worker tesseract --list-langs 2>/dev/null)"
+for language in eng sin; do
+  if ! grep --fixed-strings --line-regexp --quiet "$language" <<<"$ocr_languages"; then
+    printf 'Worker image is missing required Tesseract language: %s\n' "$language" >&2
+    exit 1
+  fi
+done
 curl --fail --silent "http://127.0.0.1:$API_PORT/api/v1/health/ready" >/dev/null
 curl --fail --silent "$APP_BASE_URL/" >/dev/null
 E2E_RUNTIME_ISOLATED=true E2E_COMPOSE_PROJECT_NAME="$project_name" E2E_BASE_URL="$APP_BASE_URL" npm run test:e2e --prefix apps/web -- "$@"

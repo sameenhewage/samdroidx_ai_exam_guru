@@ -6,15 +6,15 @@ This document records limitations that remain after the implemented Priority 1 e
 
 ### Sinhala OCR quality
 
-- The native-first extraction worker, provider-independent OCR port, Tesseract adapter, persisted provenance and human correction workflow are implemented.
-- This host does not have a Sinhala-capable Tesseract runtime/traineddata installation.
+- The native-first extraction worker, provider-independent OCR port, persisted provenance and human correction workflow are implemented. The Compose worker now contains Tesseract `5.3.0` with `sin`/`eng` traineddata and receives OCR configuration only in the worker process.
+- The exact high-priority 3-page Grade 5 Parisaraya scan (`e694977...d325`) completed through the durable runtime with all pages OCR-routed, 30 provenance blocks and 2,010 characters. Content-free inspection found no private-use/replacement characters, but page 1's visible decorative cover text was missed and page 2 matched only two of four visually checked headings. PSM 6/11/12 recovered noisier cover text while reducing confidence/layout quality on content pages, so production remains on PSM 3 rather than tuning to one cover.
 - The repository does not contain legally usable representative scanned Sinhala Grade 5 pages with human-adjudicated ground truth.
-- No Sinhala character-error-rate, page-coverage or question-structure quality claim is made until that corpus is obtained and adjudicated.
+- No Sinhala character-error-rate, page-coverage or question-structure quality claim is made until that corpus is obtained and adjudicated; the real source remains untrusted.
 
 ### Grade 3–5 pilot corpus and Scholarship policy
 
 - A controlled private-runtime inventory covers the available Grade 3, Grade 4 and Grade 5 source corpus. Only the explicitly human-reviewed Grade 4 and Grade 5 sources are active for retrieval.
-- The available Grade 3 Sinhala Maths extraction was removed from active use after visual comparison exposed legacy-font glyph corruption despite non-empty extracted Unicode text. Grade 3 requires a corrected font mapping or human-adjudicated OCR before it can re-enter retrieval.
+- The available Grade 3 Sinhala Maths extraction was removed from active use after visual comparison exposed legacy-font glyph corruption despite non-empty extracted Unicode text. Reprocessing the exact 7-page source (`a5678c4...c6058`) in the current runtime reproduced 4,917 native characters with `needs_ocr=false` and zero OCR pages, so installing Tesseract alone does not repair this case. Grade 3 requires a corrected font mapping or an explicit human-adjudicated OCR/correction path before it can re-enter retrieval.
 - Real Grade 5 Scholarship generation remains fail-closed. No authoritative reviewed Paper I ability/reasoning framework or past-paper evidence is available, and Paper II cannot have complete active Grade 3–5 evidence while Grade 3 remains excluded.
 - Deterministic Paper I, Paper II and full-package fixtures prove orchestration, versioning and cross-grade isolation only. They are not real Scholarship educational-quality evidence.
 - Term-test generation also remains fail-closed until an authoritative reviewed term-coverage policy is configured; the application does not guess term boundaries from filenames or generated text.

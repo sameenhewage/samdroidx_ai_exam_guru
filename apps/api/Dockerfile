@@ -12,6 +12,13 @@ COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-sin \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/.python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
