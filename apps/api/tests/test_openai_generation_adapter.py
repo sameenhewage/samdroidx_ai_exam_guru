@@ -26,6 +26,9 @@ from exam_guru_api.generation.openai_adapter import (
 )
 from exam_guru_api.generation.ports import ProviderError, ProviderFailureCode
 from exam_guru_api.generation.prompt_registry import PromptRegistry, PromptTemplate
+from exam_guru_api.retrieval import (
+    openai_embedding_adapter as openai_retrieval_embedding_adapter,
+)
 from exam_guru_api.validation import openai_semantic_verifier
 from tests.test_generation_provider import request as provider_request
 from tests.test_generation_provider import retry_identity
@@ -1047,8 +1050,10 @@ def test_usage_exceeding_request_limit_is_accounted_but_candidate_is_rejected() 
 
 def test_only_the_openai_adapters_import_the_provider_sdk() -> None:
     assert openai_adapter.__file__ is not None
+    assert openai_retrieval_embedding_adapter.__file__ is not None
     assert openai_semantic_verifier.__file__ is not None
     adapter_path = Path(openai_adapter.__file__).resolve()
+    embedding_adapter_path = Path(openai_retrieval_embedding_adapter.__file__).resolve()
     semantic_adapter_path = Path(openai_semantic_verifier.__file__).resolve()
     source_root = adapter_path.parents[1]
     sdk_importers: set[Path] = set()
@@ -1061,4 +1066,4 @@ def test_only_the_openai_adapters_import_the_provider_sdk() -> None:
             if isinstance(node, ast.ImportFrom) and node.module == "openai":
                 sdk_importers.add(source_path.resolve())
 
-    assert sdk_importers == {adapter_path, semantic_adapter_path}
+    assert sdk_importers == {adapter_path, embedding_adapter_path, semantic_adapter_path}

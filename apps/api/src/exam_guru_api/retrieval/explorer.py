@@ -248,7 +248,10 @@ class RetrievalExplorerService:
                     raise RetrievalScopeNotFoundError
                 validation_finished = self._clock()
 
-                embedding_result = self._embedding_providers.embed_query(query, persisted_config)
+                embedding_result = await self._embedding_providers.embed_query_async(
+                    query,
+                    persisted_config,
+                )
                 embedding_finished = self._clock()
 
                 repository = self._repository_factory(

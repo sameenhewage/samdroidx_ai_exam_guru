@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Protocol
+from typing import Literal, Protocol, cast
+
+from pydantic import SecretStr
 
 from exam_guru_api.core.config import Settings
 from exam_guru_api.knowledge.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingConfig,
+    EmbeddingContractError,
     EmbeddingResult,
+)
+from exam_guru_api.observability import get_operational_telemetry
+from exam_guru_api.retrieval.openai_embedding_adapter import (
+    OPENAI_EMBEDDING_PROVIDER,
+    OpenAIEmbeddingAdapter,
+    OpenAIEmbeddingAdapterConfig,
+    OpenAIEmbeddingPricing,
 )
 from exam_guru_api.retrieval.repository import validate_embedding_config, validate_query_vector
 
 MAX_EMBEDDING_QUERY_CHARACTERS = 4_096
 MAX_EMBEDDING_SOURCE_CHARACTERS = 1_000_000
-DETERMINISTIC_PROVIDER_NAME = "deterministic"
+DETERMINISTIC_PROVIDER_NAME: Literal["deterministic"] = "deterministic"
 DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG = EmbeddingConfig(
     provider=DETERMINISTIC_PROVIDER_NAME,
     model="grade5-deterministic-shake256",
@@ -124,6 +135,16 @@ class EmbeddingProviderRegistry:
             maximum_characters=MAX_EMBEDDING_SOURCE_CHARACTERS,
         )
 
+    async def embed_query_async(self, query: str, config: EmbeddingConfig) -> EmbeddingResult:
+        return await asyncio.to_thread(self.embed_query, query, config)
+
+    async def embed_source_async(
+        self,
+        source_text: str,
+        config: EmbeddingConfig,
+    ) -> EmbeddingResult:
+        return await asyncio.to_thread(self.embed_source, source_text, config)
+
     def _embed_text(
         self,
         value: str,
@@ -142,7 +163,21 @@ class EmbeddingProviderRegistry:
             if not isinstance(result, EmbeddingResult) or result.config != valid_config:
                 raise ValueError("provider returned mismatched metadata")
             validate_query_vector(result.vector, expected_dimension=valid_config.dimension)
+            accounting = result.accounting
+            if accounting is not None:
+                get_operational_telemetry().embedding_provider_completed(
+                    provider=valid_config.provider,
+                    model=valid_config.model,
+                    dimension=valid_config.dimension,
+                    embedding_version=valid_config.version,
+                    input_tokens=accounting.input_tokens,
+                    total_tokens=accounting.total_tokens,
+                    cost_microusd=accounting.cost_microusd,
+                    latency_ms=accounting.latency_ms,
+                )
             return result
+        except EmbeddingContractError:
+            raise
         except Exception as error:
             raise EmbeddingProviderUnavailableError from error
 
@@ -175,11 +210,31 @@ def create_active_embedding_config(settings: Settings) -> EmbeddingConfig:
 
 
 def create_embedding_provider_registry(settings: Settings) -> EmbeddingProviderRegistry:
-    """Register deterministic embeddings only in explicitly non-production environments."""
-
-    if settings.environment in {"local", "test"}:
-        return EmbeddingProviderRegistry(
-            {DETERMINISTIC_PROVIDER_NAME: DeterministicEmbeddingProvider()},
-            active_config=create_active_embedding_config(settings),
+    selected_provider = settings.retrieval_embedding_provider
+    if selected_provider is None and settings.environment in {"local", "test"}:
+        selected_provider = DETERMINISTIC_PROVIDER_NAME
+    if selected_provider == DETERMINISTIC_PROVIDER_NAME:
+        if settings.environment not in {"local", "test"}:
+            return EmbeddingProviderRegistry({})
+        provider: EmbeddingProvider = DeterministicEmbeddingProvider()
+    elif selected_provider == OPENAI_EMBEDDING_PROVIDER:
+        provider = OpenAIEmbeddingAdapter(
+            OpenAIEmbeddingAdapterConfig(
+                api_key=cast(SecretStr, settings.retrieval_embedding_openai_api_key),
+                timeout_ms=cast(int, settings.retrieval_embedding_timeout_ms),
+            ),
+            pricing=OpenAIEmbeddingPricing(
+                pricing_version=cast(str, settings.retrieval_embedding_pricing_version),
+                model=settings.retrieval_embedding_model,
+                input_microusd_per_million_tokens=cast(
+                    int,
+                    settings.retrieval_embedding_input_microusd_per_million_tokens,
+                ),
+            ),
         )
-    return EmbeddingProviderRegistry({})
+    else:
+        return EmbeddingProviderRegistry({})
+    return EmbeddingProviderRegistry(
+        {selected_provider: provider},
+        active_config=create_active_embedding_config(settings),
+    )

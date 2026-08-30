@@ -35,6 +35,10 @@ from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
     EmbeddingProviderUnavailableError,
 )
+from exam_guru_api.retrieval.openai_embedding_adapter import (
+    OPENAI_EMBEDDING_MAX_JOB_RECORDS,
+    OPENAI_EMBEDDING_PROVIDER,
+)
 
 _EMBEDDING_JOB_NAMESPACE = uuid5(NAMESPACE_URL, "exam-guru/embedding-jobs")
 
@@ -68,6 +72,10 @@ class EmbeddingIdempotencyConflictError(RuntimeError):
 
 
 class EmbeddingQueueUnavailableError(RuntimeError):
+    pass
+
+
+class EmbeddingProviderBatchLimitError(ValueError):
     pass
 
 
@@ -170,6 +178,12 @@ class EmbeddingJobService:
         actor_id: UUID,
     ) -> EmbeddingJobCreationResult:
         self._validate_idempotency_key(idempotency_key)
+        requested_count = len(historical_question_ids) + len(knowledge_chunk_ids)
+        if (
+            self._active_config.provider == OPENAI_EMBEDDING_PROVIDER
+            and requested_count > OPENAI_EMBEDDING_MAX_JOB_RECORDS
+        ):
+            raise EmbeddingProviderBatchLimitError
         self._providers.ensure_provider(self._active_config)
         if not await self._repository.curriculum_exists(curriculum_version_id):
             raise EmbeddingCurriculumNotFoundError(curriculum_version_id)
@@ -530,7 +544,10 @@ class EmbeddingWorkerService:
 
         embedded = False
         if not exists:
-            result = self._providers.embed_source(record.text, job.embedding_config)
+            result = await self._providers.embed_source_async(
+                record.text,
+                job.embedding_config,
+            )
             if record.kind == "historical_question":
                 stored = await persistence.store_curriculum_question_embedding(
                     job.curriculum_version_id,

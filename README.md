@@ -97,6 +97,8 @@ The container startup makes the storage root private and runs backend processes 
 
 MinIO remains available only when explicitly selected and configured, for example with `EXAM_GURU_STORAGE_BACKEND=s3 docker compose --profile s3 up --build --wait`. Existing objects in the retained `minio-data` volume are **not** silently copied into local storage: migration requires an explicit checksum-preserving export/import process before switching the database's storage backend. Never remove the MinIO volume until that migration and its backup have been verified.
 
+Local/test deployments keep deterministic embeddings when no provider is selected. A real `text-embedding-3-small` adapter can be enabled explicitly with the `EXAM_GURU_RETRIEVAL_EMBEDDING_*` settings in `.env.example`; keep the API key in an ignored local env file or external secret store. Compose forwards that secret only to the API and worker, never migration or maintenance containers. Live calls use no hidden SDK retries, retain exact model/dimension/config identity, emit content-free token/cost/latency telemetry, and remain bounded by input, timeout, job-size and authenticated retrieval-rate controls. Normal CI never invokes the paid provider.
+
 Stop services without intentionally deleting durable data using:
 
 ```bash

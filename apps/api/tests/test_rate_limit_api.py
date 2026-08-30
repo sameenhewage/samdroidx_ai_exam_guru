@@ -108,6 +108,36 @@ def cost_control_client(
     return TestClient(application), resources, storage, dispatcher
 
 
+def retrieval_request() -> dict[str, object]:
+    return {
+        "query": "square perimeter",
+        "scope": {
+            "grade": 5,
+            "exam_id": str(RESOURCE_ID),
+            "medium_id": str(OTHER_ID),
+            "subject_id": str(UUID(int=5)),
+            "curriculum_version_id": str(UUID(int=6)),
+            "unit_ids": [str(UUID(int=7))],
+            "lesson_ids": [str(UUID(int=8))],
+            "taxonomy": {"competency_id": str(UUID(int=9))},
+        },
+        "embedding_config": {
+            "provider": "deterministic",
+            "model": "fixture",
+            "dimension": 3,
+            "version": "v1",
+            "config_fingerprint": "fixture-v1",
+        },
+        "limits": {
+            "candidate_limit": 5,
+            "top_k": 3,
+            "max_context_items": 3,
+            "max_context_characters": 1_000,
+            "max_context_item_characters": 500,
+        },
+    }
+
+
 def costly_requests(client: TestClient) -> Iterator[tuple[Response, RateLimitScope]]:
     admin_curriculum = f"/api/v1/admin/curricula/{RESOURCE_ID}"
     yield (
@@ -133,6 +163,14 @@ def costly_requests(client: TestClient) -> Iterator[tuple[Response, RateLimitSco
             headers={**ADMIN_HEADERS, "Idempotency-Key": "same-request"},
         ),
         RateLimitScope.EMBEDDING_JOB_CREATE,
+    )
+    yield (
+        client.post(
+            "/api/v1/admin/retrieval/explore",
+            json=retrieval_request(),
+            headers=ADMIN_HEADERS,
+        ),
+        RateLimitScope.RETRIEVAL_EXPLORE,
     )
     yield (
         client.post(
@@ -265,6 +303,7 @@ def test_openapi_documents_cost_controls_only_for_allowlisted_mutations() -> Non
             "/api/v1/admin/curricula/{curriculum_version_id}/embedding-jobs",
             "post",
         ),
+        ("/api/v1/admin/retrieval/explore", "post"),
         (
             "/api/v1/admin/curricula/{curriculum_version_id}/generation-runs",
             "post",

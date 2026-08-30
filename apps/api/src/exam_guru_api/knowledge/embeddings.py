@@ -16,9 +16,34 @@ class EmbeddingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingAccounting:
+    input_tokens: int
+    total_tokens: int
+    cost_microusd: int
+    latency_ms: int
+
+    def __post_init__(self) -> None:
+        bounded_values = (
+            (self.input_tokens, 10_000_000),
+            (self.total_tokens, 10_000_000),
+            (self.cost_microusd, 100_000_000_000),
+            (self.latency_ms, 86_400_000),
+        )
+        if (
+            any(
+                not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= maximum
+                for value, maximum in bounded_values
+            )
+            or self.total_tokens != self.input_tokens
+        ):
+            raise EmbeddingContractError("embedding accounting is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class EmbeddingResult:
     vector: tuple[float, ...]
     config: EmbeddingConfig
+    accounting: EmbeddingAccounting | None = None
 
 
 class DeterministicEmbeddingProvider:

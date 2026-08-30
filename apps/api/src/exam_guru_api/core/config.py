@@ -158,6 +158,7 @@ class Settings(BaseSettings):
     rate_limit_source_upload: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_extraction_trigger: int = Field(default=60, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_embedding_job_create: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_retrieval_explore: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_generation_create_retry: int = Field(
         default=20,
         ge=1,
@@ -212,7 +213,7 @@ class Settings(BaseSettings):
         ge=1,
         le=64 * 1024 * 1024,
     )
-    retrieval_embedding_provider: Literal["deterministic"] | None = None
+    retrieval_embedding_provider: Literal["deterministic", "openai"] | None = None
     retrieval_embedding_model: str = Field(
         default="grade5-deterministic-shake256",
         min_length=1,
@@ -232,6 +233,19 @@ class Settings(BaseSettings):
         max_length=128,
         pattern=r"^\S+$",
     )
+    retrieval_embedding_openai_api_key: SecretStr | None = None
+    retrieval_embedding_pricing_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^\S+$",
+    )
+    retrieval_embedding_input_microusd_per_million_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000_000,
+    )
+    retrieval_embedding_timeout_ms: int | None = Field(default=None, ge=1, le=5_000)
     embedding_recovery_batch_size: int = Field(default=50, ge=1, le=100)
     embedding_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
     embedding_worker_lease_seconds: int = Field(
@@ -562,6 +576,53 @@ class Settings(BaseSettings):
             and self.retrieval_embedding_provider == "deterministic"
         ):
             raise ValueError("staging and production cannot use deterministic retrieval embeddings")
+        openai_embedding_values = (
+            self.retrieval_embedding_openai_api_key,
+            self.retrieval_embedding_pricing_version,
+            self.retrieval_embedding_input_microusd_per_million_tokens,
+            self.retrieval_embedding_timeout_ms,
+        )
+        if self.retrieval_embedding_provider == "openai":
+            if self.environment == "test":
+                raise ValueError("test configuration cannot use the paid OpenAI embedding provider")
+            if any(value is None for value in openai_embedding_values):
+                raise ValueError("OpenAI embeddings require explicit key, pricing, and timeout")
+            embedding_key = cast(
+                SecretStr,
+                self.retrieval_embedding_openai_api_key,
+            ).get_secret_value()
+            if (
+                not embedding_key
+                or embedding_key != embedding_key.strip()
+                or len(embedding_key) > MAX_STORAGE_SECRET_LENGTH
+                or any(
+                    character.isspace() or not character.isprintable()
+                    for character in embedding_key
+                )
+            ):
+                raise ValueError("OpenAI embedding API key must be bounded secret text")
+            pricing_version = cast(str, self.retrieval_embedding_pricing_version)
+            if (
+                pricing_version != pricing_version.strip()
+                or not pricing_version.isprintable()
+                or any(character.isspace() for character in pricing_version)
+            ):
+                raise ValueError("OpenAI embedding pricing version must be a bounded token")
+            if self.retrieval_embedding_model != "text-embedding-3-small":
+                raise ValueError("OpenAI embedding model must be text-embedding-3-small")
+            if self.retrieval_embedding_dimension > 1_536:
+                raise ValueError("OpenAI embedding dimension cannot exceed 1536")
+            fingerprint = self.retrieval_embedding_config_fingerprint
+            if (
+                len(fingerprint) != 71
+                or not fingerprint.startswith("sha256:")
+                or any(character not in "0123456789abcdef" for character in fingerprint[7:])
+            ):
+                raise ValueError("OpenAI embedding fingerprint must be a lowercase SHA-256 value")
+        elif any(value is not None for value in openai_embedding_values):
+            raise ValueError(
+                "OpenAI embedding settings require retrieval_embedding_provider=openai"
+            )
         if (
             self.environment in {"staging", "production"}
             and self.generation_provider == "deterministic"

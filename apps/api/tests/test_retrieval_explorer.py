@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import math
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exam_guru_api.knowledge.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingConfig,
+    EmbeddingResult,
 )
 from exam_guru_api.knowledge.models import EmbeddingConfigurationModel
 from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalFilters, RetrievalScope
@@ -101,6 +103,15 @@ def _registry() -> EmbeddingProviderRegistry:
     return EmbeddingProviderRegistry(
         {"deterministic": cast(EmbeddingProvider, DeterministicEmbeddingProvider())}
     )
+
+
+class ThreadRecordingProvider:
+    def __init__(self) -> None:
+        self.thread_ids: list[int] = []
+
+    def embed(self, text: str, config: EmbeddingConfig) -> EmbeddingResult:
+        self.thread_ids.append(threading.get_ident())
+        return DeterministicEmbeddingProvider().embed(text, config)
 
 
 def _empty_retrieval_result() -> HybridRetrievalResult:
@@ -263,6 +274,30 @@ def test_explorer_resolves_metadata_embeds_server_side_and_returns_inspectable_p
     assert str(forbidden.chunk_id) not in str(body)
     assert "query_vector" not in str(body)
     assert "embedding_values" not in str(body)
+
+
+def test_explorer_offloads_synchronous_embedding_provider_from_event_loop_thread() -> None:
+    provider = ThreadRecordingProvider()
+    repository = FakeRepository(RetrievalCandidateSet((), ()))
+    session = ScalarSession((_configuration_model(), UUID(int=700)))
+    service = RetrievalExplorerService(
+        cast(AsyncSession, session),
+        EmbeddingProviderRegistry({"deterministic": provider}),
+        repository_factory=lambda *_args, **_kwargs: repository,
+    )
+    caller_thread = threading.get_ident()
+
+    asyncio.run(
+        service.explore(
+            query="square perimeter",
+            scope=grade_five_filter(),
+            embedding_config=CONFIG,
+            limits=LIMITS,
+        )
+    )
+
+    assert len(provider.thread_ids) == 1
+    assert provider.thread_ids[0] != caller_thread
 
 
 def test_scope_validation_accepts_a_complete_active_taxonomy_chain() -> None:

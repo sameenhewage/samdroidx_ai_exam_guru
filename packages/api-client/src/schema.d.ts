@@ -4879,7 +4879,7 @@ export interface components {
          * RateLimitScope
          * @enum {string}
          */
-        RateLimitScope: "source_upload" | "extraction_trigger" | "embedding_job_create" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
+        RateLimitScope: "source_upload" | "extraction_trigger" | "embedding_job_create" | "retrieval_explore" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
         /** RateLimiterUnavailableDetail */
         RateLimiterUnavailableDetail: {
             /**
@@ -7653,7 +7653,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Selected source is not reviewed */
+            /** @description Selected source is not reviewed or provider batch limit is exceeded */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7717,7 +7717,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Selected source is not reviewed */
+            /** @description Selected source is not reviewed or provider batch limit is exceeded */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7787,7 +7787,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Selected source is not reviewed */
+            /** @description Selected source is not reviewed or provider batch limit is exceeded */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -11519,7 +11519,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Configured embedding provider is unavailable */
+            /** @description Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds. */
+            429: {
+                headers: {
+                    /** @description Integer seconds until this principal/scope window resets */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitExceededResponse"];
+                };
+            };
+            /** @description Embedding provider or cost limiter is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

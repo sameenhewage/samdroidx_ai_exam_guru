@@ -146,6 +146,12 @@ function apiError(error: unknown, status: number, phase: "create" | "load" | "po
         "The configured server-side embedding provider is temporarily unavailable. No browser vector or provider override was accepted.",
       title: "Embedding provider unavailable",
     },
+    embedding_provider_batch_limit_exceeded: {
+      code,
+      message:
+        "The active embedding service accepts up to 40 reviewed records in one job. Select 40 or fewer records and try again.",
+      title: "Reduce the record selection",
+    },
     embedding_queue_unavailable: {
       code,
       message:

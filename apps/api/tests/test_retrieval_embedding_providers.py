@@ -6,10 +6,13 @@ from pydantic import SecretStr, ValidationError
 from exam_guru_api.core.config import Settings
 from exam_guru_api.knowledge.embeddings import (
     DeterministicEmbeddingProvider,
+    EmbeddingAccounting,
     EmbeddingConfig,
+    EmbeddingContractError,
     EmbeddingResult,
 )
 from exam_guru_api.main import create_app
+from exam_guru_api.retrieval import embeddings as embedding_module
 from exam_guru_api.retrieval.embeddings import (
     DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG,
     ActiveEmbeddingConfigUnavailableError,
@@ -19,6 +22,12 @@ from exam_guru_api.retrieval.embeddings import (
     create_active_embedding_config,
     create_embedding_provider_registry,
 )
+from exam_guru_api.retrieval.openai_embedding_adapter import (
+    MAX_OPENAI_EMBEDDING_TIMEOUT_MS,
+    OPENAI_EMBEDDING_MODEL,
+    OPENAI_EMBEDDING_PROVIDER,
+)
+from tests.test_operational_telemetry import telemetry
 
 CONFIG = EmbeddingConfig(
     provider="deterministic",
@@ -50,6 +59,22 @@ class FailingProvider:
     def embed(self, text: str, config: EmbeddingConfig) -> EmbeddingResult:
         del text, config
         raise RuntimeError("secret provider detail")
+
+
+class ContractFailingProvider:
+    def embed(self, text: str, config: EmbeddingConfig) -> EmbeddingResult:
+        del text, config
+        raise EmbeddingContractError("safe contract failure")
+
+
+class AccountingProvider:
+    def embed(self, text: str, config: EmbeddingConfig) -> EmbeddingResult:
+        del text
+        return EmbeddingResult(
+            vector=(1.0, 0.0, 0.0),
+            config=config,
+            accounting=EmbeddingAccounting(7, 7, 2, 19),
+        )
 
 
 class InvalidProvider:
@@ -137,6 +162,52 @@ def test_registry_routes_exact_provider_and_normalizes_adapter_failures() -> Non
         unavailable.embed_query("square perimeter", other_config)
 
 
+def test_registry_preserves_embedding_contract_failures_for_worker_classification() -> None:
+    registry = EmbeddingProviderRegistry(
+        {"deterministic": cast(EmbeddingProvider, ContractFailingProvider())}
+    )
+
+    with pytest.raises(EmbeddingContractError, match="safe contract failure"):
+        registry.embed_source("reviewed source", CONFIG)
+
+
+def test_registry_emits_content_free_accounting_for_paid_provider_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operational, telemetry_logger, _tracer = telemetry()
+    monkeypatch.setattr(
+        embedding_module,
+        "get_operational_telemetry",
+        lambda: operational,
+    )
+    registry = EmbeddingProviderRegistry(
+        {"deterministic": cast(EmbeddingProvider, AccountingProvider())}
+    )
+
+    result = registry.embed_query("private query text", CONFIG)
+
+    assert result.accounting == EmbeddingAccounting(7, 7, 2, 19)
+    assert telemetry_logger.records == [
+        (
+            "Operational event",
+            {
+                "event_name": "embedding.provider_completed",
+                "outcome": "succeeded",
+                "provider": CONFIG.provider,
+                "model": CONFIG.model,
+                "dimension": CONFIG.dimension,
+                "embedding_version": CONFIG.version,
+                "input_tokens": 7,
+                "total_tokens": 7,
+                "cost_microusd": 2,
+                "latency_ms": 19,
+            },
+        )
+    ]
+    assert "private query text" not in str(telemetry_logger.records)
+    assert "1.0" not in str(telemetry_logger.records)
+
+
 def test_registry_rejects_malformed_registration_and_inputs() -> None:
     with pytest.raises(ValueError, match="provider name"):
         EmbeddingProviderRegistry({" ": cast(EmbeddingProvider, DeterministicEmbeddingProvider())})
@@ -214,6 +285,15 @@ def test_nonproduction_embedding_setting_is_explicit_and_production_rejects_fake
             object_storage_endpoint_url="https://storage.internal",
             valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
         )
+
+
+def test_registry_rejects_deterministic_provider_if_settings_validation_is_bypassed() -> None:
+    for environment in ("staging", "production"):
+        settings = Settings.model_construct(
+            environment=environment,
+            retrieval_embedding_provider="deterministic",
+        )
+        assert create_embedding_provider_registry(settings).registered_provider_names == ()
 
 
 def test_server_owned_active_config_uses_documented_nonproduction_default() -> None:
@@ -295,3 +375,102 @@ def test_server_owned_active_config_fails_closed_without_real_provider(
 def test_embedding_config_settings_are_bounded(override: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         Settings(environment="test", **override)  # type: ignore[arg-type]
+
+
+def openai_embedding_values(environment: str = "local") -> dict[str, object]:
+    values: dict[str, object] = {
+        "environment": environment,
+        "retrieval_embedding_provider": OPENAI_EMBEDDING_PROVIDER,
+        "retrieval_embedding_model": OPENAI_EMBEDDING_MODEL,
+        "retrieval_embedding_dimension": 1_536,
+        "retrieval_embedding_version": "2026-08",
+        "retrieval_embedding_config_fingerprint": "sha256:" + "b" * 64,
+        "retrieval_embedding_openai_api_key": SecretStr("unit-test-placeholder-not-a-credential"),
+        "retrieval_embedding_pricing_version": "openai-2026-08-30",
+        "retrieval_embedding_input_microusd_per_million_tokens": 20_000,
+        "retrieval_embedding_timeout_ms": MAX_OPENAI_EMBEDDING_TIMEOUT_MS,
+    }
+    if environment == "production":
+        values.update(
+            database_url=SecretStr(
+                "postgresql+asyncpg://service:" + "database-credential" + "@db/app?ssl=require"
+            ),
+            valkey_url=SecretStr("rediss://:" + "cache-credential" + "@valkey:6379/0"),
+            **production_oidc_config(),
+        )
+    return values
+
+
+def openai_embedding_settings(environment: str = "local") -> Settings:
+    return Settings(**openai_embedding_values(environment))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("environment", ["local", "staging", "production"])
+def test_configured_openai_registry_is_active_in_non_test_environments(environment: str) -> None:
+    settings = openai_embedding_settings(environment)
+
+    registry = create_embedding_provider_registry(settings)
+
+    assert registry.registered_provider_names == (OPENAI_EMBEDDING_PROVIDER,)
+    assert registry.active_config == EmbeddingConfig(
+        provider=OPENAI_EMBEDDING_PROVIDER,
+        model=OPENAI_EMBEDDING_MODEL,
+        dimension=1_536,
+        version="2026-08",
+        config_fingerprint="sha256:" + "b" * 64,
+    )
+    assert "unit-test-placeholder-not-a-credential" not in repr(settings)
+    app = create_app(settings=settings, embedding_provider_registry=registry)
+    assert app.state.embedding_provider_registry.registered_provider_names == (
+        OPENAI_EMBEDDING_PROVIDER,
+    )
+
+
+def test_paid_openai_embedding_provider_is_rejected_in_test_environment() -> None:
+    with pytest.raises(ValidationError, match="test configuration"):
+        openai_embedding_settings("test")
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"retrieval_embedding_openai_api_key": None},
+        {"retrieval_embedding_openai_api_key": SecretStr(" leading")},
+        {"retrieval_embedding_openai_api_key": SecretStr("x" * 4_097)},
+        {"retrieval_embedding_pricing_version": None},
+        {"retrieval_embedding_pricing_version": "pricing with spaces"},
+        {"retrieval_embedding_pricing_version": "pricing\x00"},
+        {"retrieval_embedding_input_microusd_per_million_tokens": None},
+        {"retrieval_embedding_input_microusd_per_million_tokens": -1},
+        {"retrieval_embedding_timeout_ms": None},
+        {"retrieval_embedding_timeout_ms": 0},
+        {"retrieval_embedding_timeout_ms": MAX_OPENAI_EMBEDDING_TIMEOUT_MS + 1},
+        {"retrieval_embedding_model": "other-model"},
+        {"retrieval_embedding_dimension": 1_537},
+        {"retrieval_embedding_config_fingerprint": "not-a-sha256-fingerprint"},
+    ],
+)
+def test_openai_embedding_settings_require_complete_bounded_exact_configuration(
+    override: dict[str, object],
+) -> None:
+    values = openai_embedding_values()
+    values.update(override)
+
+    with pytest.raises(ValidationError):
+        Settings(**cast(Any, values))
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"retrieval_embedding_openai_api_key": SecretStr("unexpected-key")},
+        {"retrieval_embedding_pricing_version": "unexpected-pricing"},
+        {"retrieval_embedding_input_microusd_per_million_tokens": 20_000},
+        {"retrieval_embedding_timeout_ms": 1},
+    ],
+)
+def test_openai_embedding_transport_settings_require_openai_provider(
+    override: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="require retrieval_embedding_provider=openai"):
+        Settings(environment="local", **override)  # type: ignore[arg-type]

@@ -7958,6 +7958,7 @@
           "source_upload",
           "extraction_trigger",
           "embedding_job_create",
+          "retrieval_explore",
           "generation_create_retry",
           "validation_run",
           "paper_publish_archive"
@@ -14870,7 +14871,7 @@
                 }
               }
             },
-            "description": "Selected source is not reviewed"
+            "description": "Selected source is not reviewed or provider batch limit is exceeded"
           },
           "503": {
             "content": {
@@ -14968,7 +14969,7 @@
                 }
               }
             },
-            "description": "Selected source is not reviewed"
+            "description": "Selected source is not reviewed or provider batch limit is exceeded"
           },
           "429": {
             "content": {
@@ -15075,7 +15076,7 @@
                 }
               }
             },
-            "description": "Selected source is not reviewed"
+            "description": "Selected source is not reviewed or provider batch limit is exceeded"
           },
           "503": {
             "content": {
@@ -21529,6 +21530,25 @@
             },
             "description": "Malformed or internally inconsistent retrieval request"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitExceededResponse"
+                }
+              }
+            },
+            "description": "Authenticated principal cost limit exceeded. Idempotent duplicate attempts consume one unit. Retry-After is an integer number of seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Integer seconds until this principal/scope window resets",
+                "schema": {
+                  "minimum": 1.0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {
@@ -21537,7 +21557,7 @@
                 }
               }
             },
-            "description": "Configured embedding provider is unavailable"
+            "description": "Embedding provider or cost limiter is unavailable"
           }
         },
         "security": [

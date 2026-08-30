@@ -1388,7 +1388,9 @@ class TeacherPaperWorkerService:
                 assignment,
             )
             embedding_config = self._embeddings.active_config
-            query_vector = self._embeddings.embed_query(query, embedding_config).vector
+            query_vector = (
+                await self._embeddings.embed_query_async(query, embedding_config)
+            ).vector
             retrieval = await HybridRetrievalService(
                 PostgresHybridRetrievalRepository(
                     self._session,

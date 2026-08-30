@@ -5,9 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from exam_guru_api.api.dependencies import get_retrieval_explorer_service
-from exam_guru_api.api.schemas import ApiErrorResponse
-from exam_guru_api.auth.api import require_permission
+from exam_guru_api.api.schemas import RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE, ApiErrorResponse
+from exam_guru_api.auth.api import require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
+from exam_guru_api.auth.rate_limits import RateLimitScope
+from exam_guru_api.knowledge.embeddings import EmbeddingContractError
 from exam_guru_api.retrieval.domain import RetrievalContractError
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderUnavailableError
 from exam_guru_api.retrieval.explorer import (
@@ -20,7 +22,12 @@ from exam_guru_api.retrieval.schemas import RetrievalExploreRequest, RetrievalEx
 router = APIRouter()
 RetrievalPrincipal = Annotated[
     Principal,
-    Depends(require_permission(Permission.RETRIEVAL_READ)),
+    Depends(
+        require_rate_limit(
+            Permission.RETRIEVAL_READ,
+            RateLimitScope.RETRIEVAL_EXPLORE,
+        )
+    ),
 ]
 RetrievalExplorer = Annotated[
     RetrievalExplorerService,
@@ -41,8 +48,9 @@ RetrievalExplorer = Annotated[
             "description": "Malformed or internally inconsistent retrieval request",
             "model": ApiErrorResponse,
         },
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_EXCEEDED_OPENAPI_RESPONSE,
         status.HTTP_503_SERVICE_UNAVAILABLE: {
-            "description": "Configured embedding provider is unavailable",
+            "description": "Embedding provider or cost limiter is unavailable",
             "model": ApiErrorResponse,
         },
     },
@@ -76,7 +84,7 @@ async def explore_retrieval(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "embedding_provider_unavailable"},
         ) from error
-    except RetrievalContractError as error:
+    except (EmbeddingContractError, RetrievalContractError) as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "invalid_retrieval_request"},

@@ -36,8 +36,22 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert api["environment"] == worker["environment"]
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
-    assert "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY" not in maintenance["environment"]
-    assert "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY" not in services["migrate"]["environment"]
+    assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_PROVIDER"] == ""
+    assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_MODEL"] == (
+        "grade5-deterministic-shake256"
+    )
+    assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_DIMENSION"] == "32"
+    assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_PRICING_VERSION"] == ""
+    assert (
+        api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_INPUT_MICROUSD_PER_MILLION_TOKENS"] == ""
+    )
+    for secret_name in (
+        "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY",
+        "EXAM_GURU_RETRIEVAL_EMBEDDING_OPENAI_API_KEY",
+    ):
+        assert secret_name in api["environment"]
+        assert secret_name not in maintenance["environment"]
+        assert secret_name not in services["migrate"]["environment"]
     assert maintenance["environment"]["EXAM_GURU_STORAGE_BACKEND"] == "local"
     assert maintenance["environment"]["EXAM_GURU_STORAGE_ROOT"] == "/data"
     assert maintenance["environment"]["EXAM_GURU_STORAGE_RECONCILIATION_INTERVAL_SECONDS"] == "3600"

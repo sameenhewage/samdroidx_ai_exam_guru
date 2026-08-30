@@ -23,6 +23,9 @@ This document records limitations that remain after the implemented Priority 1 e
 
 - Structured questions, curriculum chunks, review, versioned embeddings, hybrid retrieval and leakage-safe scope filtering are implemented.
 - Current deterministic fixtures prove mechanics and isolation, not production relevance on a representative human-reviewed Grade 5 corpus.
+- A bounded OpenAI `text-embedding-3-small` adapter is implemented and the final synthetic English/Sinhala live contract call passed at 1,536 dimensions, 67 input tokens, 2 microUSD and 2,142 ms. This proves transport, shape and accounting only; it is not a retrieval-quality result.
+- The adapter conservatively limits each input to 8,192 UTF-8 bytes so it cannot exceed the model's documented 8,192-token input bound without introducing a runtime tokenizer dependency. Larger reviewed records fail explicitly and require meaningful educational re-chunking; they are never silently truncated.
+- Successful paid calls emit content-free per-call token, integer-microUSD and latency telemetry. These values are not yet persisted as cumulative embedding-job accounting in the Operations database aggregate; provider billing remains the durable external cost source.
 - P3 remains open for representative data-quality evidence.
 - P4 remains open until a documented threshold is met on the agreed human-reviewed embedded fixture set.
 
@@ -91,7 +94,7 @@ This document records limitations that remain after the implemented Priority 1 e
 ### Production configuration
 
 - Production settings reject deterministic identity, deterministic generation/embeddings, local credentials, insecure service connections and disabled application cost controls.
-- A deployment still needs real TLS endpoints, database/Valkey credentials, a private writable local storage root (or optional S3 credentials), OIDC configuration, OpenTelemetry/Sentry destinations and a non-deterministic embedding provider.
+- A deployment still needs real TLS endpoints, database/Valkey credentials, a private writable local storage root (or optional S3 credentials), OIDC configuration, OpenTelemetry/Sentry destinations and explicit credentials/versioning/pricing for the implemented non-deterministic embedding provider.
 
 ## Product boundaries
 

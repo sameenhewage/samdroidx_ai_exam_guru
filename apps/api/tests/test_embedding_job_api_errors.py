@@ -23,6 +23,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingCurriculumNotFoundError,
     EmbeddingIdempotencyConflictError,
     EmbeddingJobCreationResult,
+    EmbeddingProviderBatchLimitError,
     EmbeddingQueueUnavailableError,
     EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
@@ -69,6 +70,11 @@ class RollbackSession:
             "embedding_source_not_found",
         ),
         (EmbeddingSourceNotReviewedError(), 422, "embedding_source_not_reviewed"),
+        (
+            EmbeddingProviderBatchLimitError(),
+            422,
+            "embedding_provider_batch_limit_exceeded",
+        ),
         (EmbeddingSourceRemovedError(), 409, "embedding_source_removed_from_use"),
         (
             EmbeddingRequiresReviewedRecordError(RESOURCE_ID, ReviewState.DRAFT),

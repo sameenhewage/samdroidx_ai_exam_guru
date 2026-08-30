@@ -255,6 +255,33 @@ class OperationalTelemetry:
             },
         )
 
+    def embedding_provider_completed(
+        self,
+        *,
+        provider: str,
+        model: str,
+        dimension: int,
+        embedding_version: str,
+        input_tokens: int,
+        total_tokens: int,
+        cost_microusd: int,
+        latency_ms: int,
+    ) -> None:
+        self._emit(
+            "embedding.provider_completed",
+            {
+                "outcome": "succeeded",
+                "provider": provider,
+                "model": model,
+                "dimension": dimension,
+                "embedding_version": embedding_version,
+                "input_tokens": input_tokens,
+                "total_tokens": total_tokens,
+                "cost_microusd": cost_microusd,
+                "latency_ms": latency_ms,
+            },
+        )
+
     def storage_reconciliation_terminal(
         self,
         *,

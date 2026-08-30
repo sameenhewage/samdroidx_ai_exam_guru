@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -10,7 +11,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
-from exam_guru_api.core.config import MIN_EMBEDDING_WORKER_LEASE_SECONDS
+from exam_guru_api.core.config import (
+    EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS,
+    MIN_EMBEDDING_WORKER_LEASE_SECONDS,
+)
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingSourceRecord,
@@ -21,6 +25,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingIdempotencyConflictError,
     EmbeddingJobReadService,
     EmbeddingJobService,
+    EmbeddingProviderBatchLimitError,
     EmbeddingQueueUnavailableError,
     EmbeddingRecoveryPolicy,
     EmbeddingRecoveryService,
@@ -39,6 +44,7 @@ from exam_guru_api.knowledge.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingConfig,
     EmbeddingContractError,
+    EmbeddingResult,
 )
 from exam_guru_api.knowledge.models import (
     EmbeddingConfigurationModel,
@@ -61,6 +67,12 @@ from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
     EmbeddingProviderUnavailableError,
 )
+from exam_guru_api.retrieval.openai_embedding_adapter import (
+    MAX_OPENAI_EMBEDDING_TIMEOUT_MS,
+    OPENAI_EMBEDDING_MAX_JOB_RECORDS,
+    OPENAI_EMBEDDING_MODEL,
+    OPENAI_EMBEDDING_PROVIDER,
+)
 from tests.test_operational_telemetry import telemetry
 
 CURRICULUM_ID = UUID(int=1_832_001)
@@ -77,6 +89,13 @@ CONFIG = EmbeddingConfig(
     dimension=3,
     version="v1",
     config_fingerprint="embedding-service-fixture-v1",
+)
+OPENAI_CONFIG = EmbeddingConfig(
+    provider=OPENAI_EMBEDDING_PROVIDER,
+    model=OPENAI_EMBEDDING_MODEL,
+    dimension=1_536,
+    version="2026-08",
+    config_fingerprint="sha256:" + "a" * 64,
 )
 
 
@@ -160,6 +179,40 @@ def _job(
 
 def _providers() -> EmbeddingProviderRegistry:
     return EmbeddingProviderRegistry({"deterministic": DeterministicEmbeddingProvider()})
+
+
+def test_openai_job_size_is_bounded_by_provider_timeout_and_actor_budget() -> None:
+    assert (
+        OPENAI_EMBEDDING_MAX_JOB_RECORDS * MAX_OPENAI_EMBEDDING_TIMEOUT_MS
+        < EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS * 1_000
+    )
+    session = FakeSession()
+    providers = EmbeddingProviderRegistry(
+        {OPENAI_EMBEDDING_PROVIDER: DeterministicEmbeddingProvider()}
+    )
+    service = EmbeddingJobService(
+        cast(AsyncSession, session),
+        providers,
+        DeterministicEmbeddingDispatcher(),
+        OPENAI_CONFIG,
+    )
+    question_ids = tuple(
+        UUID(int=2_000_000 + index) for index in range(OPENAI_EMBEDDING_MAX_JOB_RECORDS + 1)
+    )
+
+    with pytest.raises(EmbeddingProviderBatchLimitError):
+        asyncio.run(
+            service.create(
+                CURRICULUM_ID,
+                historical_question_ids=question_ids,
+                knowledge_chunk_ids=(),
+                idempotency_key="openai-batch-limit",
+                actor_id=ACTOR_ID,
+            )
+        )
+
+    assert session.commits == 0
+    assert session.added == []
 
 
 def test_creation_canonicalizes_snapshots_prevalidates_sources_audits_and_dispatches(
@@ -974,13 +1027,21 @@ def test_worker_record_paths_are_scoped_deduplicated_and_progress_cas_guarded(
                 deduplicated=deduplicated,
             )
 
+        thread_ids: list[int] = []
+
+        class ThreadRecordingProvider:
+            def embed(self, text: str, config: EmbeddingConfig) -> EmbeddingResult:
+                thread_ids.append(threading.get_ident())
+                return DeterministicEmbeddingProvider().embed(text, config)
+
         monkeypatch.setattr(service_module, "KnowledgePersistenceService", FakePersistence)
         repository = ProgressRepository()
         worker = EmbeddingWorkerService(
             cast(object, session),  # type: ignore[arg-type]
-            _providers(),
+            EmbeddingProviderRegistry({"deterministic": ThreadRecordingProvider()}),
             CONFIG,
         )
+        event_loop_thread = threading.get_ident()
         worker._repository = cast(object, repository)  # type: ignore[assignment]
 
         assert await worker._process_record(job, question) is job
@@ -990,6 +1051,8 @@ def test_worker_record_paths_are_scoped_deduplicated_and_progress_cas_guarded(
         stored_deduplicated = True
         assert await worker._process_record(job, chunk) is job
         assert repository.embedded_values == [False, True, False]
+        assert len(thread_ids) == 2
+        assert all(thread_id != event_loop_thread for thread_id in thread_ids)
 
         repository.result = None
         with pytest.raises(RuntimeError, match="progress"):

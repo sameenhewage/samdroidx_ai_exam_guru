@@ -580,6 +580,7 @@ describe("EmbeddingIngestion", () => {
     const replies: Array<{ code: string; status: number } | "network"> = [
       { code: "embedding_config_unavailable", status: 503 },
       { code: "embedding_provider_unavailable", status: 503 },
+      { code: "embedding_provider_batch_limit_exceeded", status: 422 },
       { code: "embedding_queue_unavailable", status: 503 },
       { code: "embedding_source_not_reviewed", status: 422 },
       { code: "embedding_source_conflict", status: 409 },
@@ -602,6 +603,7 @@ describe("EmbeddingIngestion", () => {
     const expectedHeadings = [
       "Embedding configuration unavailable",
       "Embedding provider unavailable",
+      "Reduce the record selection",
       "Embedding queue unavailable",
       "Selection is no longer reviewed",
       "Embedding source conflict",

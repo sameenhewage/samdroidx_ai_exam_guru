@@ -30,6 +30,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingIdempotencyConflictError,
     EmbeddingJobReadService,
     EmbeddingJobService,
+    EmbeddingProviderBatchLimitError,
     EmbeddingQueueUnavailableError,
     EmbeddingRetryLimitExceededError,
     EmbeddingSourceNotFoundError,
@@ -86,7 +87,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "model": ApiErrorResponse,
     },
     status.HTTP_422_UNPROCESSABLE_CONTENT: {
-        "description": "Selected source is not reviewed",
+        "description": "Selected source is not reviewed or provider batch limit is exceeded",
         "model": ApiErrorResponse,
     },
     status.HTTP_503_SERVICE_UNAVAILABLE: {
@@ -223,6 +224,11 @@ async def _execute_embedding_operation[OperationResultT](
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "embedding_source_not_reviewed"},
+        ) from error
+    except EmbeddingProviderBatchLimitError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "embedding_provider_batch_limit_exceeded"},
         ) from error
     except EmbeddingSourceRemovedError as error:
         raise HTTPException(

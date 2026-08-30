@@ -11,7 +11,8 @@ from exam_guru_api.api.dependencies import get_retrieval_explorer_service
 from exam_guru_api.api.routes.retrieval import explore_retrieval
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
-from exam_guru_api.knowledge.embeddings import EmbeddingConfig
+from exam_guru_api.auth.rate_limits import NoOpRateLimiter
+from exam_guru_api.knowledge.embeddings import EmbeddingConfig, EmbeddingContractError
 from exam_guru_api.main import create_app
 from exam_guru_api.retrieval.domain import RetrievalContractError, RetrievalScope
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderUnavailableError
@@ -117,6 +118,7 @@ def _client(explorer: FailingExplorer) -> Iterator[TestClient]:
     app = create_app(
         identity_provider=StaticIdentityProvider(),
         resource_factory=lambda _: StubResources(),
+        rate_limiter=NoOpRateLimiter(),
     )
     app.dependency_overrides[get_retrieval_explorer_service] = lambda: cast(
         RetrievalExplorerService, explorer
@@ -170,6 +172,7 @@ def test_retrieval_route_converts_successful_domain_result(
         ),
         (RetrievalScopeNotFoundError(), 404, "retrieval_scope_not_found"),
         (RetrievalContractError("unsafe internal detail"), 422, "invalid_retrieval_request"),
+        (EmbeddingContractError("unsafe source detail"), 422, "invalid_retrieval_request"),
         (
             EmbeddingProviderUnavailableError(),
             503,
@@ -188,7 +191,7 @@ def test_retrieval_api_returns_stable_leakage_safe_failures(
 
     assert response.status_code == status_code
     assert response.json() == {"detail": {"code": code}}
-    assert "unsafe internal detail" not in response.text
+    assert "unsafe" not in response.text
     assert len(explorer.calls) == 1
 
 

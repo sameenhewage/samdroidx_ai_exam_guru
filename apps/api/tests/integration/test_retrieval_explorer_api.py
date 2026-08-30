@@ -15,6 +15,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
+from exam_guru_api.auth.rate_limits import NoOpRateLimiter
 from exam_guru_api.core.config import Settings
 from exam_guru_api.curriculum.domain import (
     LEGACY_UNCLASSIFIED_SUBJECT_ID,
@@ -120,6 +121,7 @@ def api_client(
             settings=settings,
             identity_provider=StaticIdentityProvider(),
             resource_factory=lambda _: DatabaseTestResources(database_url),
+            rate_limiter=NoOpRateLimiter(),
         )
     ) as client:
         yield client

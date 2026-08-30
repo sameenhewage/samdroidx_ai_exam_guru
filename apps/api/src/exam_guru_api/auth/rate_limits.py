@@ -61,6 +61,7 @@ class RateLimitScope(StrEnum):
     SOURCE_UPLOAD = "source_upload"
     EXTRACTION_TRIGGER = "extraction_trigger"
     EMBEDDING_JOB_CREATE = "embedding_job_create"
+    RETRIEVAL_EXPLORE = "retrieval_explore"
     GENERATION_CREATE_RETRY = "generation_create_retry"
     VALIDATION_RUN = "validation_run"
     PAPER_PUBLISH_ARCHIVE = "paper_publish_archive"
@@ -134,6 +135,7 @@ def create_rate_limiter(settings: Settings, resources: object) -> RateLimiter:
         RateLimitScope.SOURCE_UPLOAD: settings.rate_limit_source_upload,
         RateLimitScope.EXTRACTION_TRIGGER: settings.rate_limit_extraction_trigger,
         RateLimitScope.EMBEDDING_JOB_CREATE: settings.rate_limit_embedding_job_create,
+        RateLimitScope.RETRIEVAL_EXPLORE: settings.rate_limit_retrieval_explore,
         RateLimitScope.GENERATION_CREATE_RETRY: settings.rate_limit_generation_create_retry,
         RateLimitScope.VALIDATION_RUN: settings.rate_limit_validation_run,
         RateLimitScope.PAPER_PUBLISH_ARCHIVE: settings.rate_limit_paper_publish_archive,
