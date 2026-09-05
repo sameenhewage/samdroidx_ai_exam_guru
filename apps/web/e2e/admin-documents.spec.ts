@@ -134,3 +134,92 @@ test("admin uploads, extracts, corrects, trusts, and reuses an immutable source"
   const denied = await page.request.post(`/api/v1/admin/source-documents/${source.id}/extract`);
   expect(denied.status()).toBe(403);
 });
+
+test("intake year remains visible through assignment and explicit metadata confirmation", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  const unique = Date.now().toString();
+  const examResponse = await page.request.post("/api/v1/admin/exam-configurations", {
+    data: { code: `YEAR-G7-${unique}`, name: "Year review Grade 7", grade: 7 },
+  });
+  expect(examResponse.ok()).toBe(true);
+  const subjectResponse = await page.request.post("/api/v1/admin/subjects", {
+    data: { code: `YEAR-MATH-${unique}`, name: "Year review mathematics" },
+  });
+  expect(subjectResponse.ok()).toBe(true);
+  const mediumResponse = await page.request.post("/api/v1/admin/media", {
+    data: { code: `yr-${unique.slice(-10)}`, name: "Year review English" },
+  });
+  expect(mediumResponse.ok()).toBe(true);
+  const curriculumResponse = await page.request.post("/api/v1/admin/curriculum-versions", {
+    data: {
+      code: `YEAR-V1-${unique}`,
+      title: "Reviewed year scope",
+      exam_configuration_id: (await examResponse.json()).id,
+      subject_id: (await subjectResponse.json()).id,
+      medium_id: (await mediumResponse.json()).id,
+    },
+  });
+  expect(curriculumResponse.ok()).toBe(true);
+  const curriculum = await curriculumResponse.json();
+  const sourceResponse = await page.request.post("/api/v1/admin/source-documents", {
+    multipart: {
+      document_type: "past_paper",
+      intake_metadata: JSON.stringify({ candidate_grade: 7, year: 2024 }),
+      file: {
+        name: `year-review-${unique}.pdf`,
+        mimeType: "application/pdf",
+        buffer: Buffer.concat([
+          Buffer.from(pdfBase64, "base64"),
+          Buffer.from(`\n% year-review-${unique}\n`),
+        ]),
+      },
+    },
+  });
+  expect(sourceResponse.status()).toBe(201);
+  const source = await sourceResponse.json();
+  expect(source.year).toBeNull();
+  await page.goto(`/admin/materials/${source.id}`);
+  await expect(
+    page.getByRole("region", { name: "Material details" })
+      .getByText("Year", { exact: true }).locator("..").locator("dd"),
+  ).toHaveText("2024");
+
+  const scopeUrl = `/api/v1/admin/materials/${source.id}/scope`;
+  const assigned = await page.request.patch(scopeUrl, {
+    data: { curriculum_version_id: curriculum.id, expected_version: 0 },
+  });
+  expect(assigned.ok()).toBe(true);
+  expect(await assigned.json()).toMatchObject({ year: null, metadata_review_required: true });
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Material details" })
+      .getByText("Year", { exact: true }).locator("..").locator("dd"),
+  ).toHaveText("2024");
+
+  const confirmed = await page.request.patch(scopeUrl, {
+    data: {
+      curriculum_version_id: curriculum.id,
+      expected_version: 1,
+      confirm_intake_metadata: true,
+    },
+  });
+  expect(confirmed.ok()).toBe(true);
+  expect(await confirmed.json()).toMatchObject({
+    year: 2024,
+    metadata_review_required: false,
+    extraction_status: "uploaded",
+    intake_metadata: { year: 2024 },
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Material details" })
+      .getByText("Year", { exact: true }).locator("..").locator("dd"),
+  ).toHaveText("2024");
+  const filtered = await page.request.get("/api/v1/admin/materials", {
+    params: { document_id: source.id, year: 2024 },
+  });
+  expect(filtered.ok()).toBe(true);
+  expect(await filtered.json()).toEqual([expect.objectContaining({ id: source.id, year: 2024 })]);
+});

@@ -677,6 +677,14 @@ def test_unassigned_intake_display_confirmation_and_database_guards(
         assigned = client.patch(scope_url, json=request, headers=headers)
         assert assigned.status_code == 200, assigned.text
         assert assigned.json()["metadata_review_required"] is True
+        assert assigned.json()["year"] is None
+        pending_items = client.get(
+            "/api/v1/admin/materials",
+            params={"document_id": document_id, "year": 2024},
+            headers=headers,
+        ).json()
+        assert [item["id"] for item in pending_items] == [document_id]
+        assert pending_items[0]["year"] == 2024
         asyncio.run(database_guards(version=1))
         confirmed = client.patch(
             scope_url,
@@ -691,7 +699,23 @@ def test_unassigned_intake_display_confirmation_and_database_guards(
         assert confirmed.json()["metadata_review_required"] is False
         assert confirmed.json()["metadata_scope_version"] == 2
         assert confirmed.json()["intake_metadata"] == metadata
+        assert confirmed.json()["year"] == 2024
         assert confirmed.json()["extraction_status"] == "uploaded"
+        confirmed_items = client.get(
+            "/api/v1/admin/materials",
+            params={"document_id": document_id, "year": 2024},
+            headers=headers,
+        ).json()
+        assert [item["id"] for item in confirmed_items] == [document_id]
+        assert confirmed_items[0]["year"] == 2024
+        assert (
+            client.get(
+                "/api/v1/admin/materials",
+                params={"document_id": document_id, "year": 2023},
+                headers=headers,
+            ).json()
+            == []
+        )
         stale = client.patch(
             scope_url,
             json={

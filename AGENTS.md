@@ -178,4 +178,5 @@ Until then, do not implement student-facing product functionality beyond minimal
 
 ## Local verification environment
 - The workstation's default shell can resolve obsolete Node 10. Before npm gates, select the repository-pinned Node 24.19.0 runtime; the installed path is `/home/sameen/.nvm/versions/node/v24.19.0/bin`. Do not relax the engine requirement to accommodate the shell default.
+- Local Playwright runs use `PLAYWRIGHT_BROWSERS_PATH=/tmp/exam-guru-browser-cache`; verify that cache exists before reuse, or install the repository-pinned browser. A missing default-cache executable is an environment setup failure, not a failed product journey.
 - `docker compose exec` does not run the container entrypoint that selects the application UID. Run storage diagnostics as the actual API process owner (inspect `docker compose top api`; currently `10001:10001`), not the default root exec user. The local storage adapter intentionally rejects owner mismatches; do not change source-directory permissions to bypass that protection.

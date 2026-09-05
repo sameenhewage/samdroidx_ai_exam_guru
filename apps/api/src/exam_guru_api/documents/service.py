@@ -455,10 +455,13 @@ class SourceDocumentService:
         if confirm_intake_metadata:
             await self._validate_confirmation_scope(cast(UUID, curriculum_version_id))
         previous_version = document.metadata_scope_version
+        previous_year = document.year
         document.curriculum_version_id = curriculum_version_id
         document.unit_id = unit_id
         document.lesson_id = lesson_id
         if document.intake_metadata is not None:
+            if confirming and document.year is None:
+                document.year = SourceIntakeMetadata.model_validate(document.intake_metadata).year
             document.metadata_review_required = not confirm_intake_metadata
         document.metadata_scope_version += 1
         document.updated_by = actor_id
@@ -478,6 +481,8 @@ class SourceDocumentService:
                     "to": self._scope_payload(*updated),
                     "intake_metadata": document.intake_metadata,
                     "metadata_review_required": bool(document.metadata_review_required),
+                    "previous_year": previous_year,
+                    "year": document.year,
                     "previous_version": previous_version,
                     "version": document.metadata_scope_version,
                 },
@@ -590,7 +595,6 @@ class SourceDocumentService:
                 or_(
                     SourceDocumentModel.year == year,
                     and_(
-                        SourceDocumentModel.curriculum_version_id.is_(None),
                         SourceDocumentModel.year.is_(None),
                         SourceDocumentModel.intake_metadata["year"].as_integer() == year,
                     ),
@@ -619,7 +623,13 @@ class SourceDocumentService:
                 lesson=lesson_title,
                 material_type=document.document_type,
                 status=self._material_status(document),
-                year=document.year if document.year is not None else candidate.year,
+                year=(
+                    document.year
+                    if document.year is not None
+                    else intake.year
+                    if intake is not None
+                    else None
+                ),
                 intake_metadata=intake,
                 metadata_review_required=bool(document.metadata_review_required),
                 page_count=document.extracted_page_count,

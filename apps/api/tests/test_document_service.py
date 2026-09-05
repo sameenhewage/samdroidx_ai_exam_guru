@@ -739,6 +739,8 @@ def test_material_listing_applies_teacher_search_and_filters_server_side() -> No
         '{"candidate_grade":5,"candidate_grade":6}',
         '{"year":2025.5}',
         '{"subject_label":" "}',
+        '{"subject_label":"\u00a0Maths\u00a0"}',
+        '{"evidence":["\u200bhidden"]}',
         '{"evidence":[true]}',
         '{"warnings":null}',
         '{"publisher":"bad\\nvalue"}',
@@ -842,7 +844,10 @@ def test_metadata_confirmation_requires_explicit_valid_curriculum_and_preserves_
         )
 
 
-def test_confirmation_validates_active_scope_and_requires_review_again_after_reassignment() -> None:
+@pytest.mark.parametrize(("source_year", "intake_year"), [(None, None), (None, 2024), (2023, 2024)])
+def test_confirmation_validates_active_scope_and_requires_review_again_after_reassignment(
+    source_year: int | None, intake_year: int | None
+) -> None:
     from exam_guru_api.curriculum.models import ExamConfigurationModel, MediumModel
 
     session = MaterialSession()
@@ -879,7 +884,12 @@ def test_confirmation_validates_active_scope_and_requires_review_again_after_rea
             asyncio.run(material_service._validate_confirmation_scope(curriculum.id))
         scope.active = True
     document = existing_document()
-    document.intake_metadata = {"candidate_grade": None, "evidence": ["Unresolved source"]}
+    document.year = source_year
+    document.intake_metadata = {
+        "candidate_grade": None,
+        "evidence": ["Unresolved source"],
+        "year": intake_year,
+    }
     document.metadata_review_required = True
     session.put(document)
     session.scalar_results = [False, False]
@@ -895,6 +905,8 @@ def test_confirmation_validates_active_scope_and_requires_review_again_after_rea
             confirm_intake_metadata=True,
         )
     )
+    expected_year = source_year if source_year is not None else intake_year
+    assert confirmed.year == expected_year
     assert confirmed.metadata_review_required is False
     assert confirmed.metadata_scope_version == 1
     assert confirmed.intake_metadata == evidence
@@ -910,6 +922,7 @@ def test_confirmation_validates_active_scope_and_requires_review_again_after_rea
             confirm_intake_metadata=True,
         )
     )
+    assert replay.year == expected_year
     assert replay.metadata_scope_version == 1
     corrected = asyncio.run(
         material_service.correct_scope(
@@ -921,13 +934,44 @@ def test_confirmation_validates_active_scope_and_requires_review_again_after_rea
             actor_id=ACTOR_ID,
         )
     )
+    assert corrected.year == expected_year
     assert corrected.metadata_review_required is True
     assert corrected.intake_metadata == evidence
     assert session.commits == 2
     audits = [item for item in session.added if isinstance(item, AdminAuditEventModel)]
     assert audits[0].action == "source_document.intake_metadata_confirmed"
     assert audits[0].payload["intake_metadata"] == evidence
+    assert audits[0].payload["previous_year"] == source_year
+    assert audits[0].payload["year"] == expected_year
     assert audits[1].action == "source_document.scope_corrected"
+
+
+@pytest.mark.parametrize("metadata_review_required", [True, False])
+@pytest.mark.parametrize(
+    ("source_year", "intake_year", "expected_year"),
+    [(None, None, None), (None, 2024, 2024), (2023, 2024, 2023)],
+)
+def test_assigned_material_year_keeps_intake_fallback_without_overwriting_source_year(
+    metadata_review_required: bool,
+    source_year: int | None,
+    intake_year: int | None,
+    expected_year: int | None,
+) -> None:
+    document = existing_document()
+    document.curriculum_version_id = UUID(int=1001)
+    document.metadata_review_required = metadata_review_required
+    document.intake_metadata = {"year": intake_year}
+    document.year = source_year
+    session = MaterialSession()
+    session.execute_results = [[(document, 7, UUID(int=500), "Maths", "English", "V1", None, None)]]
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    listed = asyncio.run(material_service.list_materials())
+    assert listed[0].year == expected_year
+    assert listed[0].metadata_review_required is metadata_review_required
+    assert document.year == source_year
+    assert session.commits == 0
 
 
 def test_intake_json_deep_nesting_is_rejected_without_recursion_failure(
