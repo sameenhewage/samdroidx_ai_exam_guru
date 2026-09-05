@@ -11,6 +11,30 @@
 ## Priority rule
 **Priority 1 must reach 100% DONE before any Priority 2 product feature begins.**
 
+## Change log
+This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
+
+### 2026-09-05 — Require change logging and post-commit pushes
+- **Change / reason:** Record the repository owner's instruction to log every completed fix, feature, refactor, test, configuration, infrastructure, documentation and skill change, then commit and push verified work to the configured upstream. Include log entries in the same commit and verify the remote result without forcing or rewriting history.
+- **Affected paths:** `AGENTS.md`, `.agents/skills/loop-engineering/SKILL.md`, `docs/v1/01_ENGINEERING_WORKFLOW.md`, and this change log.
+- **Verification:** `git diff --check`; reloading the `loop-engineering` skill validates its existing frontmatter/discovery and the updated workflow. Documentation-only follow-up; application tests were not rerun for these instruction changes.
+- **Limitations:** Respect later no-push instructions and higher-priority restrictions. Authentication, permissions, missing upstream configuration, branch protection and non-fast-forward failures must be reported rather than bypassed. Push success is verified after the commit and does not establish CI success.
+
+### 2026-09-05 — Fix React development CSP eval compatibility (`3fb7f8d`)
+- **Change / reason:** React's development debugging requires `eval`, but the same restrictive CSP was applied to every runtime. Pass `NODE_ENV` into the security-header builder and permit `'unsafe-eval'` only for `NODE_ENV=development` with application environment `local` or `test`.
+- **Security boundaries:** Production/staging and the default policy still forbid eval. Source-PDF sandbox headers and other security headers remain unchanged. The security E2E now asserts zero console errors instead of ignoring the eval warning.
+- **Affected paths:** `apps/web/next.config.ts`, `apps/web/src/lib/security-headers.ts`, `apps/web/src/lib/security-headers.test.ts`, `apps/web/e2e/security.spec.ts`.
+- **Regression evidence:** The added tests first failed on the missing development permission; the fixed focused suite passed 22/22, including the application/runtime environment matrix and no policy mutation between development and production calls.
+- **Verification commands / results:** Run in disposable Linux containers where needed to preserve the shared checkout's platform-specific dependencies:
+  - `npm run test -- --run src/lib/security-headers.test.ts` from `apps/web`: 22 passed.
+  - `npm run lint --prefix apps/web`: passed.
+  - `npm run typecheck --prefix apps/web -- --incremental false` and `npm run typecheck --prefix packages/api-client -- --incremental false`: passed.
+  - `npm run test:coverage -- --coverage.reportsDirectory=/tmp/exam-guru-csp-coverage` from `apps/web`: 412 passed with configured 100% statements/branches/functions/lines.
+  - `docker build --file apps/web/Dockerfile --tag exam-guru-csp-check:production .`: production build passed.
+  - `npm run test:e2e:isolated -- e2e/security.spec.ts`: 1 Chromium security journey passed; disposable containers/volumes cleaned up.
+  - Browser probes with the debugger's CSP bypass disabled confirmed eval is allowed in the development response and blocked in production; both retained the source-PDF sandbox policy.
+- **Limitations:** Windows `localhost:3000` and `127.0.0.1:3000` were reaching different servers during verification; the fixed native development server was checked via IPv4. No port/network configuration, backend behavior, private corpus, or acceptance gate was changed.
+
 ---
 
 # PRIORITY 1 — ADMIN + EXAM INTELLIGENCE + RAG + LLM

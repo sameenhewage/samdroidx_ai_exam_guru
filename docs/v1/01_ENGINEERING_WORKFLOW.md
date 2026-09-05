@@ -32,10 +32,16 @@ Repeat this loop until the active priority gate is fully satisfied:
 9. **Run the gate suite**
    - run the broadest practical test/eval/quality gates before calling an acceptance item complete.
 10. **Document evidence**
+   - add a dated entry for every completed cohesive change to the [Change log](PHASE_TRACKER.md#change-log), including fixes, features, tests, configuration, infrastructure, docs and skills;
+   - record what changed and why, affected paths, exact verification commands/results, limitations/skips and known commit references; never copy secrets or private source content;
+   - include the log entry in the same commit as the change; backfill an already-committed change with its existing commit reference, without creating self-referential commit-hash update loops;
    - update docs/ADRs only when decisions changed;
-   - update `PHASE_TRACKER.md` with evidence and mark a phase DONE only when all its exit criteria pass.
-11. **Commit cohesive work**
-   - commit tested, coherent changes;
+   - update acceptance statuses in `PHASE_TRACKER.md` only with evidence and mark a phase DONE only when all its exit criteria pass.
+11. **Commit and push cohesive work**
+   - inspect the diff and commit only tested, related changes together with their change-log entry;
+   - the repository owner's standing authorization (2026-09-05) requires a normal push after each verified commit to the current branch's configured upstream, unless a later no-push instruction or higher-priority restriction applies;
+   - verify the remote branch contains the commit and report the result separately from remote CI status;
+   - if authentication, permissions, missing upstream configuration, branch protection or a non-fast-forward rejection prevents pushing, preserve the local commit and report the blocker; never force-push, change Git configuration, rewrite history or bypass hooks/security controls;
    - continue the loop without waiting for a new implementation prompt unless blocked by a genuinely external/human requirement.
 
 ## Priority discipline

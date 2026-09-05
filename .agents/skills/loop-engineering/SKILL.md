@@ -1,6 +1,6 @@
 ---
 name: loop-engineering
-description: Mandatory continuous engineering loop for AI Exam Guru. Use for every implementation, refactor, defect fix, integration, or acceptance task. Keeps work moving across tracker gates without stopping after one phase.
+description: Mandatory continuous engineering loop for AI Exam Guru. Use for every implementation, refactor, defect fix, integration, acceptance, or documentation task. Requires verified change-log entries, cohesive commits, and authorized post-commit pushes while preserving the priority gates.
 ---
 
 # Loop Engineering
@@ -21,9 +21,24 @@ Repeat until full V1 acceptance is complete or a genuine external blocker preven
 8. Perform an adversarial/self-review of the change.
 9. Convert every valid finding into a regression test/eval before fixing it.
 10. Re-run the broad gate.
-11. Update `docs/v1/PHASE_TRACKER.md` only with evidence.
-12. Commit a cohesive change with a meaningful message and push when the repository workflow permits.
-13. Immediately continue with the next highest-value non-blocked item. Do not wait for another phase prompt.
+11. Add a dated entry for every completed cohesive change to the **Change log** section of `docs/v1/PHASE_TRACKER.md`; update acceptance statuses only when their evidence justifies it.
+12. Review the diff and stage only the related implementation, tests and change-log entry, then commit with a meaningful message.
+13. Push the verified commit to the current branch's configured upstream under the repository owner's standing authorization, then verify the remote branch contains it.
+14. Immediately continue with the next highest-value non-blocked item. Do not wait for another phase prompt.
+
+## Mandatory change log
+- The canonical change log is `docs/v1/PHASE_TRACKER.md#change-log`. Keep newest entries first and preserve prior evidence.
+- Record every completed fix, feature, refactor, test/eval change, configuration/infrastructure change, and documentation/skill update. Record one entry per cohesive change, not one entry per editor operation.
+- Each entry includes the date, what changed and why, affected paths, exact verification commands and outcomes, relevant limitations/skips, and existing commit references when known.
+- Include the entry in the same commit as the change. Never invent the hash of the commit being created or create another commit solely to record its own hash; Git history supplies that link. If an earlier change was committed without a log, add a backfill entry referencing that existing commit.
+- For documentation-only changes, record documentation/skill validation rather than claiming application tests were rerun. Never log secrets, credentials, private source text, or raw provider payloads.
+- A change-log entry does not close an acceptance gate, prove remote CI success, or authorize publication to students.
+
+## Mandatory post-commit push
+- The repository owner explicitly requested automatic pushes after commits on 2026-09-05. Treat this as standing authorization for ordinary pushes of verified work to the current branch's configured upstream; a later no-push instruction or higher-priority restriction takes precedence.
+- Before pushing, inspect branch/upstream status and the outgoing commits. Never include unrelated uncommitted work, create a remote, change Git configuration, or choose an unknown destination silently.
+- After each verified cohesive commit, perform a normal push and verify the remote ref contains the commit. Report the branch and result; do not equate a successful push with a passing remote CI run.
+- If authentication, permissions, missing upstream configuration, branch protection, or a non-fast-forward rejection blocks the push, preserve the local commit and report the exact blocker. Never force-push, rewrite history, or bypass hooks/security controls to make the push succeed.
 
 ## Acceptance phases are not sequential development locks
 - P0-P15 are status/evidence gates, not a waterfall implementation schedule.
@@ -54,4 +69,4 @@ Do not voluntarily stop merely to report that a phase completed. Stop only when 
 - the execution environment/session itself ends.
 
 ## Completion discipline
-Never equate compilation, a green unit test, or a partially working screen with acceptance. A tracker gate is DONE only when every exit criterion and required runtime/eval evidence passes.
+Never equate compilation, a green unit test, or a partially working screen with acceptance. A tracker gate is DONE only when every exit criterion and required runtime/eval evidence passes. Do not finish a completed change without its change-log entry and verified commit/push outcome, or an explicit reported push blocker or no-push instruction.

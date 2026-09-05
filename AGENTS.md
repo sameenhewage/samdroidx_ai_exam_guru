@@ -38,7 +38,7 @@ For P1 admin acceptance, preserve the authentication port, role/permission enfor
 ## Execution model
 This project is **not developed by feeding one implementation prompt per phase**. Work as a continuous engineering loop:
 
-`inspect -> plan -> write failing tests -> implement -> run tests -> inspect failures -> fix -> refactor -> re-run full gates -> update tracker -> continue`
+`inspect -> plan -> write failing tests -> implement -> run tests -> inspect failures -> fix -> refactor -> re-run full gates -> update change log/tracker -> commit -> push -> verify remote -> continue`
 
 Phases in `docs/v1/PHASE_TRACKER.md` are acceptance/status gates, not isolated prompt-driven implementation units.
 
@@ -59,7 +59,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 
 ### Available repository skills
 - **loop-engineering** — `.agents/skills/loop-engineering/SKILL.md`  
-  Always use for implementation, refactors, bug fixes, integration work and acceptance work. Drives the continuous loop and Priority 1 lock.
+  Always use for implementation, refactors, bug fixes, integration, acceptance and documentation work. Drives the continuous loop, mandatory change logging, authorized post-commit pushes and Priority 1 lock.
 - **tdd-eval-engineering** — `.agents/skills/tdd-eval-engineering/SKILL.md`  
   Always use when behavior changes. Enforces RED→GREEN→REFACTOR and eval-first AI/RAG work.
 - **fastapi-domain-engineering** — `.agents/skills/fastapi-domain-engineering/SKILL.md`  
@@ -166,8 +166,10 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 - Update `docs/v1/PHASE_TRACKER.md` only when evidence exists.
 - A phase can be marked `DONE` only when all listed acceptance criteria, tests, evals, docs, and runtime verification pass.
 - Never mark partial work as DONE.
-- Keep changes cohesive and committed with meaningful messages.
-- Keep the default branch green.
+- Record every completed cohesive change in `docs/v1/PHASE_TRACKER.md#change-log`, including code, tests, configuration, infrastructure, documentation and skills. Include the date, reason, affected paths, exact verification/results and limitations in the same commit as the change; backfill already-committed work with its known commit reference.
+- Keep changes cohesive and committed with meaningful messages; stage only related files and preserve other work.
+- The repository owner's standing instruction (2026-09-05) is to push each verified commit to the current branch's configured upstream and verify the remote ref afterward. Respect later no-push instructions and higher-priority restrictions. If the push is blocked, report it without force-pushing, changing Git configuration, rewriting history or bypassing hooks/security controls.
+- Keep the default branch green; a successful push is not evidence that remote CI passed.
 
 ## Definition of Priority 1 complete
 Priority 1 is complete only when an admin can ingest real Grade 5 source content, review extraction, produce a structured knowledge base, retrieve grounded context, run historical analysis/backtests, generate a complete paper from a deterministic blueprint, validate every question including applicable subject-specific correctness/grounding checks, review/edit/approve it, publish it, and reproduce the process with automated tests/evals and documented evidence.
