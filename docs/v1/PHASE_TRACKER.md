@@ -14,6 +14,12 @@
 ## Change log
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-05 — Restore the frontend dependency security gate
+- **Change / reason:** Update the transitive `qs` lockfile resolution from `6.15.3` to `6.16.0`, fixing GHSA-x5fp-wj9c-mxmx and GHSA-4mjr-xmp4-gh2g without changing dependency ranges, audit thresholds, or script approvals. CI run `33944043299` failed on these advisories; its backend passed.
+- **Affected paths:** `package-lock.json` and this change log.
+- **Verification:** In a disposable checkout with Node `24.19.0` / npm `11.17.0`, `npm ci`, `npm audit --audit-level=moderate --json` (zero vulnerabilities), `npm ls qs` (both paths use `6.16.0`), `npm run lint --prefix apps/web`, `npm run typecheck`, generated-client reproducibility, `npm run test:coverage --prefix apps/web` (412 tests, configured 100% coverage), `npm run build --prefix apps/web`, and `git diff --check` passed. After installing the pinned Playwright browser, `npm run test:e2e:isolated` passed all 20 Chromium journeys against disposable PostgreSQL/Valkey/storage, without touching the current Studio.
+- **Limitations:** `6.16.0` was the first release fixing both advisories and was approximately 6 days 14 hours old at selection; no older fixed compatible release existed. This narrowly justified security update falls short of the preferred seven-day age. Remote CI is checked after pushing; this entry does not assume its result.
+
 ### 2026-09-05 — Require change logging and post-commit pushes
 - **Change / reason:** Record the repository owner's instruction to log every completed fix, feature, refactor, test, configuration, infrastructure, documentation and skill change, then commit and push verified work to the configured upstream. Include log entries in the same commit and verify the remote result without forcing or rewriting history.
 - **Affected paths:** `AGENTS.md`, `.agents/skills/loop-engineering/SKILL.md`, `docs/v1/01_ENGINEERING_WORKFLOW.md`, and this change log.
