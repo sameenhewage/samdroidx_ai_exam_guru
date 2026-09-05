@@ -175,3 +175,7 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 Priority 1 is complete only when an admin can ingest real Grade 5 source content, review extraction, produce a structured knowledge base, retrieve grounded context, run historical analysis/backtests, generate a complete paper from a deterministic blueprint, validate every question including applicable subject-specific correctness/grounding checks, review/edit/approve it, publish it, and reproduce the process with automated tests/evals and documented evidence.
 
 Until then, do not implement student-facing product functionality beyond minimal technical scaffolding required to support Priority 1.
+
+## Local verification environment
+- The workstation's default shell can resolve obsolete Node 10. Before npm gates, select the repository-pinned Node 24.19.0 runtime; the installed path is `/home/sameen/.nvm/versions/node/v24.19.0/bin`. Do not relax the engine requirement to accommodate the shell default.
+- `docker compose exec` does not run the container entrypoint that selects the application UID. Run storage diagnostics as the actual API process owner (inspect `docker compose top api`; currently `10001:10001`), not the default root exec user. The local storage adapter intentionally rejects owner mismatches; do not change source-directory permissions to bypass that protection.

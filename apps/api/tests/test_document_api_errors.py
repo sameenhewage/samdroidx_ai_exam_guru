@@ -6,7 +6,7 @@ from typing import cast
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException, Response, UploadFile
+from fastapi import HTTPException, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
 
@@ -40,6 +40,7 @@ from exam_guru_api.documents.extraction_service import (
     ExtractedBlockNotFoundError,
     ExtractionDocumentNotFoundError,
     ExtractionPersistenceResult,
+    ExtractionTrustBlockedError,
     ReviewNotActiveError,
     SourcePageNotFoundError,
 )
@@ -188,6 +189,7 @@ class UploadArguments:
 
 async def call_upload(values: UploadArguments) -> SourceDocumentResponse:
     return await upload_source_document(
+        request=Request({"type": "http", "headers": []}),
         response=values.response,
         file=values.file,
         document_type=values.document_type,
@@ -547,12 +549,17 @@ def test_review_routes_reject_disappeared_document_after_transition(
         asyncio.run(trust_source_document(document.id, principal, session, object_storage))
 
 
+@pytest.mark.parametrize("requested_id", [None, UUID(int=1)])
 def test_list_documents_route_returns_typed_responses(
     monkeypatch: pytest.MonkeyPatch,
+    requested_id: UUID | None,
 ) -> None:
     async def return_documents(
         _service: SourceDocumentService,
+        *,
+        document_id: UUID | None = None,
     ) -> list[SourceDocumentModel]:
+        assert document_id == requested_id
         return [source_document()]
 
     monkeypatch.setattr(SourceDocumentService, "list_documents", return_documents)
@@ -563,9 +570,12 @@ def test_list_documents_route_returns_typed_responses(
             values.session,
             values.object_storage,
             values.settings,
+            document_id=requested_id,
         )
     )
 
+    assert responses[0].intake_metadata is None
+    assert responses[0].metadata_review_required is False
     assert responses[0].original_filename == "source.pdf"
 
 
@@ -630,6 +640,7 @@ def test_extraction_trigger_rejects_missing_and_non_dispatchable_documents() -> 
             "concurrent_review_modification",
         ),
         (ReviewNotActiveError(), 409, "invalid_extraction_transition"),
+        (ExtractionTrustBlockedError("font_risk"), 409, "extraction_trust_blocked"),
         (
             InvalidExtractionTransitionError(
                 ExtractionStatus.UPLOADED,

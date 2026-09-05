@@ -725,6 +725,227 @@ def test_material_listing_applies_teacher_search_and_filters_server_side() -> No
             asyncio.run(service.list_materials(search=invalid_search))
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{",
+        "null",
+        "[]",
+        '{"trusted":true}',
+        '{"candidate_grade":true}',
+        '{"candidate_grade":"5"}',
+        '{"candidate_grade":14}',
+        '{"candidate_grade":[5,6]}',
+        '{"candidate_grade":5,"candidate_grade":6}',
+        '{"year":2025.5}',
+        '{"subject_label":" "}',
+        '{"evidence":[true]}',
+        '{"warnings":null}',
+        '{"publisher":"bad\\nvalue"}',
+    ],
+)
+def test_intake_metadata_rejects_malformed_forged_or_ambiguous_values(payload: str) -> None:
+    from exam_guru_api.documents.schemas import SourceIntakeMetadata
+
+    with pytest.raises(ValueError, match=r".+"):
+        SourceIntakeMetadata.from_json(payload)
+
+
+def test_intake_metadata_is_bounded_and_preserves_unknown_scope() -> None:
+    from exam_guru_api.documents.schemas import SourceIntakeMetadata
+
+    metadata = SourceIntakeMetadata.from_json(
+        '{"candidate_grade":null,"subject_label":"Mathematics",'
+        '"evidence":["Folder says grades 5 and 6"],"warnings":["Ambiguous grade"]}'
+    )
+    assert metadata.candidate_grade is None
+    assert metadata.subject_label == "Mathematics"
+    assert metadata.warnings == ["Ambiguous grade"]
+    for payload in (
+        {"subject_label": "x" * 201},
+        {"evidence": ["x"] * 33},
+        {"warnings": ["x" * 1025]},
+        {"evidence": ["x" * 1024] * 32},
+    ):
+        with pytest.raises(ValidationError):
+            SourceIntakeMetadata.model_validate(payload)
+    with pytest.raises(ValueError, match="size"):
+        SourceIntakeMetadata.from_json(" " * 16_385)
+
+
+def test_upload_intake_metadata_is_preserved_unverified_and_audited() -> None:
+    from exam_guru_api.documents.schemas import SourceIntakeMetadata
+
+    session = StubSession()
+    session.scalar_results = [None, None]
+    metadata = SourceIntakeMetadata(candidate_grade=7, subject_label="Mathematics")
+    created = asyncio.run(
+        service(session, StubStorage()).upload_pdf(
+            filename="unassigned.pdf",
+            content_type="application/pdf",
+            data=VALID_PDF,
+            document_type=SourceDocumentType.OTHER_APPROVED,
+            actor_id=ACTOR_ID,
+            intake_metadata=metadata,
+        )
+    )
+    assert created.document.curriculum_version_id is None
+    assert created.document.metadata_review_required is True
+    assert created.document.intake_metadata == metadata.model_dump(mode="json")
+    audit = next(item for item in session.added if isinstance(item, AdminAuditEventModel))
+    assert audit.payload["intake_metadata"] == created.document.intake_metadata
+    assert audit.payload["metadata_review_required"] is True
+    session.scalar_results = [created.document]
+    replay = asyncio.run(
+        service(session, StubStorage()).upload_pdf(
+            filename="renamed.pdf",
+            content_type="application/pdf",
+            data=VALID_PDF,
+            document_type=SourceDocumentType.OTHER_APPROVED,
+            actor_id=ACTOR_ID,
+            intake_metadata=SourceIntakeMetadata(candidate_grade=5),
+        )
+    )
+    assert replay.deduplicated
+    assert replay.document.intake_metadata == metadata.model_dump(mode="json")
+    assert replay.document.metadata_review_required is True
+
+
+def test_metadata_confirmation_requires_explicit_valid_curriculum_and_preserves_evidence() -> None:
+    document = existing_document()
+    document.intake_metadata = {"candidate_grade": None, "warnings": ["Unknown grade"]}
+    document.metadata_review_required = True
+    session = MaterialSession()
+    session.put(document)
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StubStorage()),
+        max_upload_bytes=1024,
+    )
+    with pytest.raises(SourceLearningScopeMismatchError):
+        asyncio.run(
+            material_service.correct_scope(
+                document.id,
+                curriculum_version_id=None,
+                unit_id=None,
+                lesson_id=None,
+                expected_version=0,
+                actor_id=ACTOR_ID,
+                confirm_intake_metadata=True,
+            )
+        )
+    with pytest.raises(ValidationError):
+        MaterialScopeCorrectionRequest(
+            curriculum_version_id=None,
+            expected_version=0,
+            confirm_intake_metadata=True,
+        )
+
+
+def test_confirmation_validates_active_scope_and_requires_review_again_after_reassignment() -> None:
+    from exam_guru_api.curriculum.models import ExamConfigurationModel, MediumModel
+
+    session = MaterialSession()
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StubStorage()),
+        max_upload_bytes=1024,
+    )
+    curriculum = CurriculumVersionModel(
+        id=UUID(int=1001),
+        subject_id=UUID(int=1002),
+        medium_id=UUID(int=1003),
+        exam_configuration_id=UUID(int=1004),
+        active=False,
+    )
+    with pytest.raises(SourceCurriculumNotFoundError):
+        asyncio.run(material_service._validate_confirmation_scope(curriculum.id))
+    session.put(curriculum)
+    with pytest.raises(SourceCurriculumInactiveError):
+        asyncio.run(material_service._validate_confirmation_scope(curriculum.id))
+    curriculum.active = True
+    with pytest.raises(SourceCurriculumInactiveError):
+        asyncio.run(material_service._validate_confirmation_scope(curriculum.id))
+    scope_objects: tuple[SubjectModel | MediumModel | ExamConfigurationModel, ...] = (
+        SubjectModel(id=curriculum.subject_id, active=True),
+        MediumModel(id=curriculum.medium_id, active=True),
+        ExamConfigurationModel(id=curriculum.exam_configuration_id, active=True),
+    )
+    for scope in scope_objects:
+        session.put(scope)
+    for scope in scope_objects:
+        scope.active = False
+        with pytest.raises(SourceCurriculumInactiveError):
+            asyncio.run(material_service._validate_confirmation_scope(curriculum.id))
+        scope.active = True
+    document = existing_document()
+    document.intake_metadata = {"candidate_grade": None, "evidence": ["Unresolved source"]}
+    document.metadata_review_required = True
+    session.put(document)
+    session.scalar_results = [False, False]
+    evidence = dict(document.intake_metadata)
+    confirmed = asyncio.run(
+        material_service.correct_scope(
+            document.id,
+            curriculum_version_id=curriculum.id,
+            unit_id=None,
+            lesson_id=None,
+            expected_version=0,
+            actor_id=ACTOR_ID,
+            confirm_intake_metadata=True,
+        )
+    )
+    assert confirmed.metadata_review_required is False
+    assert confirmed.metadata_scope_version == 1
+    assert confirmed.intake_metadata == evidence
+    assert confirmed.extraction_status is ExtractionStatus.UPLOADED
+    replay = asyncio.run(
+        material_service.correct_scope(
+            document.id,
+            curriculum_version_id=curriculum.id,
+            unit_id=None,
+            lesson_id=None,
+            expected_version=1,
+            actor_id=ACTOR_ID,
+            confirm_intake_metadata=True,
+        )
+    )
+    assert replay.metadata_scope_version == 1
+    corrected = asyncio.run(
+        material_service.correct_scope(
+            document.id,
+            curriculum_version_id=None,
+            unit_id=None,
+            lesson_id=None,
+            expected_version=1,
+            actor_id=ACTOR_ID,
+        )
+    )
+    assert corrected.metadata_review_required is True
+    assert corrected.intake_metadata == evidence
+    assert session.commits == 2
+    audits = [item for item in session.added if isinstance(item, AdminAuditEventModel)]
+    assert audits[0].action == "source_document.intake_metadata_confirmed"
+    assert audits[0].payload["intake_metadata"] == evidence
+    assert audits[1].action == "source_document.scope_corrected"
+
+
+def test_intake_json_deep_nesting_is_rejected_without_recursion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exam_guru_api.documents.schemas import SourceIntakeMetadata
+
+    with pytest.raises(ValueError, match=r"bounded object|valid dictionary"):
+        SourceIntakeMetadata.from_json("[" * 2000 + "]" * 2000)
+
+    def exceeded_nesting_limit(_value: str, **_kwargs: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr("exam_guru_api.documents.schemas.json.loads", exceeded_nesting_limit)
+    with pytest.raises(ValueError, match="bounded object"):
+        SourceIntakeMetadata.from_json("[" * 2000 + "]" * 2000)
+
+
 def test_material_scope_request_shape_rejects_forged_lesson_relationships() -> None:
     with pytest.raises(ValidationError, match="unit_id requires curriculum_version_id"):
         MaterialScopeCorrectionRequest(

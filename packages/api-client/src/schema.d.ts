@@ -1554,6 +1554,23 @@ export interface paths {
         patch: operations["correct_source_document_block"];
         trace?: never;
     };
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Source Page Preview */
+        get: operations["get_source_page_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/source-documents/{document_id}/review": {
         parameters: {
             query?: never;
@@ -2213,6 +2230,8 @@ export interface components {
             document_type: components["schemas"]["SourceDocumentType"];
             /** File */
             file: string;
+            /** Intake Metadata */
+            intake_metadata?: string | null;
             /** Lesson Id */
             lesson_id?: string | null;
             /** Paper Code */
@@ -3705,7 +3724,7 @@ export interface components {
         /** MaterialGradeSummaryResponse */
         MaterialGradeSummaryResponse: {
             /** Grade */
-            grade: number;
+            grade: number | null;
             /** Material Count */
             material_count: number;
             /** Needs Review Count */
@@ -3730,11 +3749,17 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            intake_metadata?: components["schemas"]["SourceIntakeMetadata"] | null;
             /** Lesson */
             lesson: string | null;
             material_type: components["schemas"]["SourceDocumentType"];
             /** Medium */
             medium: string | null;
+            /**
+             * Metadata Review Required
+             * @default false
+             */
+            metadata_review_required: boolean;
             /** Metadata Scope Version */
             metadata_scope_version: number;
             /** Page Count */
@@ -3770,6 +3795,11 @@ export interface components {
         };
         /** MaterialScopeCorrectionRequest */
         MaterialScopeCorrectionRequest: {
+            /**
+             * Confirm Intake Metadata
+             * @default false
+             */
+            confirm_intake_metadata: boolean;
             /** Curriculum Version Id */
             curriculum_version_id: string | null;
             /** Expected Version */
@@ -6022,10 +6052,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            intake_metadata?: components["schemas"]["SourceIntakeMetadata"] | null;
             /** Lesson Id */
             lesson_id: string | null;
             /** Likely Metadata Duplicate Of Id */
             likely_metadata_duplicate_of_id?: string | null;
+            /**
+             * Metadata Review Required
+             * @default false
+             */
+            metadata_review_required: boolean;
             /** Metadata Scope Version */
             metadata_scope_version: number;
             /** Native Text Page Ratio */
@@ -6059,6 +6095,31 @@ export interface components {
          * @enum {string}
          */
         SourceDocumentType: "syllabus" | "teacher_guide" | "past_paper" | "marking_scheme" | "evaluation_report" | "other_approved";
+        /** SourceIntakeMetadata */
+        SourceIntakeMetadata: {
+            /** Candidate Grade */
+            candidate_grade?: number | null;
+            /** Curriculum Label */
+            curriculum_label?: string | null;
+            /** Document Type Label */
+            document_type_label?: string | null;
+            /** Evidence */
+            evidence?: string[];
+            /** Medium Label */
+            medium_label?: string | null;
+            /** Publisher */
+            publisher?: string | null;
+            /** Source Reference */
+            source_reference?: string | null;
+            /** Subject Label */
+            subject_label?: string | null;
+            /** Term */
+            term?: string | null;
+            /** Warnings */
+            warnings?: string[];
+            /** Year */
+            year?: number | null;
+        };
         /** SourcePageResponse */
         SourcePageResponse: {
             /** Block Count */
@@ -10526,6 +10587,8 @@ export interface operations {
                 year?: number | null;
                 status?: components["schemas"]["MaterialStatus"] | null;
                 search?: string | null;
+                unassigned_only?: boolean;
+                document_id?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -11987,7 +12050,9 @@ export interface operations {
     };
     list_source_documents: {
         parameters: {
-            query?: never;
+            query?: {
+                document_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -12001,6 +12066,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceDocumentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12313,6 +12387,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_source_page_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded page image rendered from the verified original PDF */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Source read permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Source document or page not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Source page preview unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

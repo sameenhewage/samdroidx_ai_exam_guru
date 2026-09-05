@@ -33,6 +33,7 @@ from exam_guru_api.documents.extraction_service import (
     ConcurrentReviewVersionError,
     DocumentExtractionService,
     ExtractionPersistenceResult,
+    ExtractionTrustBlockedError,
     OCRPipelineError,
 )
 from exam_guru_api.documents.models import (
@@ -267,6 +268,78 @@ async def add_uploaded_document(
     session.add(document)
     await session.commit()
     return document
+
+
+@pytest.mark.integration
+def test_bounded_ocr_persists_native_remainder_risk_and_pending_review_in_postgres(
+    extraction_database_url: str,
+) -> None:
+    async def exercise() -> None:
+        pdf = pymupdf.open(stream=pdf_bytes(*([""] * 40), "native tail"), filetype="pdf")
+        font_xref = pdf[40].get_fonts(full=True)[0][0]
+        pdf.xref_set_key(font_xref, "BaseFont", "/ABCDEF+FMAbhaya")
+        data = pdf.tobytes()
+        pdf.close()
+        document_id = UUID(int=81_901)
+        engine = create_async_engine(extraction_database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        ocr = RecordingFakeOCR(
+            OCRResult(
+                engine="fixture-ocr",
+                engine_version="1",
+                config={"language": "sin+eng"},
+                pages=tuple(
+                    OCRPage(page_number=number, text=f"OCR {number}") for number in range(1, 17)
+                ),
+            )
+        )
+        try:
+            async with sessions() as session:
+                document = await add_uploaded_document(
+                    session,
+                    document_id=document_id,
+                    filename="bounded-risk.pdf",
+                    data=data,
+                )
+                service = DocumentExtractionService(
+                    session,
+                    MemoryObjectStorage({document.object_key: data}),
+                    PyMuPdfExtractor(max_pages=1_000),
+                    ocr_port=ocr,
+                )
+                result = await service.extract_native(document_id, actor_id=EXTRACTION_ACTOR_ID)
+                assert result.page_count == 41
+                assert ocr.requests[0].page_numbers == tuple(range(1, 17))
+                await service.begin_review(document_id, actor_id=REVIEW_ACTOR_ID)
+                with pytest.raises(ExtractionTrustBlockedError, match="needs_ocr"):
+                    await service.trust_document(document_id, actor_id=REVIEW_ACTOR_ID)
+            async with sessions() as session:
+                persisted_document = await session.get(SourceDocumentModel, document_id)
+                assert persisted_document is not None
+                assert persisted_document.extraction_status is ExtractionStatus.IN_REVIEW
+                assert persisted_document.needs_ocr is True
+                manifest = cast(dict[str, object], persisted_document.extraction_config)
+                config = cast(
+                    dict[str, object], cast(dict[str, object], manifest["native"])["config"]
+                )
+                assert config["font_risk"] is True
+                assert config["font_risk_page_numbers"] == "41"
+                assert config["ocr_pending_page_count"] == 24
+                pages = list(
+                    await session.scalars(
+                        select(SourcePageModel)
+                        .where(SourcePageModel.source_document_id == document_id)
+                        .order_by(SourcePageModel.page_number)
+                    )
+                )
+                assert len(pages) == 41
+                assert pages[16].raw_text == ""
+                assert pages[40].raw_text == "native tail"
+                assert pages[40].extraction_config["font_risk"] is True
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.integration

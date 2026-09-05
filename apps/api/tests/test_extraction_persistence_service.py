@@ -391,6 +391,40 @@ def test_begin_review_retry_is_idempotent() -> None:
     assert session.commits == 0
 
 
+@pytest.mark.parametrize("status", [ExtractionStatus.IN_REVIEW, ExtractionStatus.TRUSTED])
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("needs_ocr", True, "needs_ocr"),
+        ("active_for_ai", False, "inactive_source"),
+        ("metadata_review_required", True, "metadata_review_required"),
+        ("extraction_config", {"native": {"config": {"font_risk": True}}}, "font_risk"),
+        ("extraction_config", {"font_risk": True}, "font_risk"),
+        ("extracted_character_count", 0, "empty_extraction"),
+    ],
+)
+def test_trust_fails_closed_for_unresolved_source_risks(
+    status: ExtractionStatus,
+    field: str,
+    value: object,
+    reason: str,
+) -> None:
+    from exam_guru_api.documents import extraction_service
+
+    model = document(status)
+    setattr(model, field, value)
+    session = StubSession(model)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(service(session).trust_document(DOCUMENT_ID, actor_id=ACTOR_ID))
+    assert type(raised.value).__name__ == "ExtractionTrustBlockedError"
+    assert isinstance(raised.value, extraction_service.ExtractionTrustBlockedError)
+    assert raised.value.reason_code == reason
+    assert str(raised.value) == reason
+    assert model.extraction_status is status
+    assert session.added == []
+    assert session.commits == 0
+
+
 def test_trust_reviewed_document_is_forward_only_and_idempotent() -> None:
     model = document(ExtractionStatus.IN_REVIEW)
     session = StubSession(model)

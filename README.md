@@ -82,7 +82,7 @@ The storage-provider abstraction follows [`docs/SYSTEM_ARCHITECTURE.md`](docs/SY
 Typical local startup is:
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 docker compose up --build --wait
 ```
 
@@ -104,6 +104,22 @@ Stop services without intentionally deleting durable data using:
 ```bash
 docker compose down
 ```
+
+## Real local corpus intake
+
+Files under `RAG DATA` are not automatically imported, moved, or committed. The operator import tool `scripts/import_studio_corpus.py` consumes a checksum-audited manifest with a `pdfs` array. Each record carries `relative_path`, `storage_grade`, `size_bytes`, `sha256`, and separately evidenced `candidate_metadata`; it must not treat folder labels as approved curriculum metadata. Keep the manifest and import ledger outside Git.
+
+```bash
+uv run --project apps/api python scripts/import_studio_corpus.py \
+  --root "RAG DATA" --manifest /path/to/audited-manifest.json \
+  --ledger /path/to/private-import-ledger.json
+```
+
+This defaults to a read-only checksum/metadata preflight. To import, supply `--execute --base-url http://localhost:8000 --token-env EXAM_GURU_IMPORT_TOKEN` with an authorized token in that environment variable. The importer only calls source listing, upload and extraction APIs; respects rate limits; preserves an idempotent ledger; and never trusts, embeds, or publishes documents. Mount the corpus read-only if running the tool in a container.
+
+The local Compose runtime accepts bounded originals up to 256 MiB and enables worker-only Sinhala/English Tesseract with at most 40 routed pages and five seconds per OCR command under the existing actor deadline. Browser uploads retain their smaller UI/proxy limit; the operator importer uses the API directly for large originals. Existing environment overrides still apply and must keep upload/OCR byte bounds consistent. Explicit `EXAM_GURU_OCR_PROVIDER=` disables OCR for isolated deterministic acceptance.
+
+Imported candidate metadata is labeled **Metadata needs review**; unresolved grades appear under **Unassigned materials**. Original PDFs remain accessible, and Materials text review uses authenticated bounded page-image previews. Metadata confirmation requires an explicit approved curriculum assignment and does not trust extraction. Pending OCR, font/glyph warnings and unsafe extracted text remain blocked; there is no automatic legacy-font conversion or bulk trust. Transient OCR failures retain the supported failed-to-retry lifecycle. Finalized pending-page and font-risk adjudication still require an explicit reviewed correction/resolution workflow rather than destructive re-extraction.
 
 ## Backend development
 

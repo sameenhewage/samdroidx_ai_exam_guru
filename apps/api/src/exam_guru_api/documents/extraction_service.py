@@ -1,5 +1,7 @@
 import hashlib
 import json
+import math
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -11,14 +13,22 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.core.config import (
+    EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS,
+    EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS,
+    OCR_PROVIDER_MAX_EXECUTION_SECONDS,
+    TESSERACT_PROBE_COMMAND_COUNT,
+)
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.documents.extraction import (
+    KNOWN_CORRUPT_SOURCE_FINGERPRINT,
     ExtractedBlock,
     ExtractedPage,
     ExtractionError,
     ExtractionMode,
     InvalidExtractionTransitionError,
     NativeExtractionResult,
+    native_review_config,
     ocr_page_numbers,
     transition_extraction_status,
 )
@@ -75,6 +85,12 @@ class OCRPipelineError(RuntimeError):
         super().__init__(failure_code)
 
 
+class ExtractionTrustBlockedError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
 class ReviewNotActiveError(RuntimeError):
     pass
 
@@ -129,7 +145,35 @@ class DocumentExtractionService:
         *,
         ocr_port: OCRPort | None = None,
         telemetry: OperationalTelemetry | None = None,
+        ocr_max_pages: int = 16,
+        ocr_timeout_seconds: float = 10.0,
+        execution_deadline: float | None = None,
     ) -> None:
+        if (
+            isinstance(ocr_max_pages, bool)
+            or not isinstance(ocr_max_pages, int)
+            or not 1 <= ocr_max_pages <= 1_000
+            or isinstance(ocr_timeout_seconds, bool)
+            or not isinstance(ocr_timeout_seconds, (int, float))
+            or not math.isfinite(ocr_timeout_seconds)
+            or not 0 < ocr_timeout_seconds <= 300
+            or (
+                ocr_port is not None
+                and (ocr_max_pages + TESSERACT_PROBE_COMMAND_COUNT) * ocr_timeout_seconds
+                > OCR_PROVIDER_MAX_EXECUTION_SECONDS
+            )
+        ):
+            raise ValueError("OCR batch exceeds the execution budget")
+        if execution_deadline is not None and not math.isfinite(execution_deadline):
+            raise ValueError("execution deadline must be finite")
+        self._ocr_max_pages = ocr_max_pages
+        self._ocr_timeout_seconds = ocr_timeout_seconds
+        actor_deadline = time.monotonic() + EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS
+        self._execution_deadline = (
+            min(execution_deadline, actor_deadline)
+            if execution_deadline is not None
+            else actor_deadline
+        )
         self._session = session
         self._object_storage = object_storage
         self._extractor = extractor
@@ -274,6 +318,13 @@ class DocumentExtractionService:
         data: bytes,
         native: NativeExtractionResult,
     ) -> NativeExtractionResult:
+        native = replace(
+            native,
+            config={
+                **native.config,
+                **native_review_config(native.pages, checksum_sha256),
+            },
+        )
         selected_pages = ocr_page_numbers(native.pages)
         native_pages = tuple(self._with_native_provenance(page, native) for page in native.pages)
         native_manifest = self._bounded_extraction_config(
@@ -297,16 +348,51 @@ class DocumentExtractionService:
             ocr_page_numbers=(),
             extraction_config=native_manifest,
         )
-        if not selected_pages or self._ocr_port is None:
+        if not selected_pages:
             return native_result
-
+        if self._ocr_port is None:
+            return self._with_pending_ocr(
+                native_result,
+                pending=selected_pages,
+                deferred=selected_pages,
+                reason="ocr_unconfigured",
+            )
+        remaining_seconds = min(
+            OCR_PROVIDER_MAX_EXECUTION_SECONDS,
+            self._execution_deadline
+            - time.monotonic()
+            - EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS,
+        )
+        full_batch_seconds = (
+            self._ocr_max_pages + TESSERACT_PROBE_COMMAND_COUNT
+        ) * self._ocr_timeout_seconds
+        if remaining_seconds <= 0:
+            deadline_page_limit = 0
+        elif remaining_seconds >= full_batch_seconds:
+            deadline_page_limit = self._ocr_max_pages
+        else:
+            deadline_page_limit = max(
+                0,
+                math.floor(remaining_seconds / self._ocr_timeout_seconds)
+                - TESSERACT_PROBE_COMMAND_COUNT,
+            )
+        page_limit = deadline_page_limit
+        if page_limit == 0:
+            return self._with_pending_ocr(
+                native_result,
+                pending=selected_pages,
+                deferred=selected_pages,
+                reason="actor_deadline",
+            )
+        requested_pages = selected_pages[:page_limit]
+        deferred_pages = selected_pages[page_limit:]
         try:
             request = OCRRequest(
                 source_document_id=str(document_id),
                 source_checksum_sha256=checksum_sha256,
                 content=data,
                 media_type="application/pdf",
-                page_numbers=selected_pages,
+                page_numbers=requested_pages,
             )
             raw_result = await to_thread.run_sync(self._ocr_port.extract, request)
         except Exception as error:
@@ -314,9 +400,54 @@ class DocumentExtractionService:
 
         result = self._validated_ocr_result(raw_result)
         result_page_numbers = tuple(page.page_number for page in result.pages)
-        if result_page_numbers != selected_pages:
+        if result_page_numbers != requested_pages:
             raise OCRPipelineError("ocr_result_mismatch")
-        return self._merge_ocr_result(native_result, result)
+        merged = self._merge_ocr_result(native_result, result)
+        missing = tuple(page.page_number for page in result.pages if not page.text.strip())
+        pending = tuple(sorted((*deferred_pages, *missing)))
+        if not pending:
+            return merged
+        return self._with_pending_ocr(
+            merged,
+            pending=pending,
+            deferred=deferred_pages,
+            missing=missing,
+            reason=(
+                "actor_deadline"
+                if deadline_page_limit < self._ocr_max_pages
+                else "page_budget_exceeded"
+            )
+            if deferred_pages
+            else "ocr_empty_pages",
+        )
+
+    @classmethod
+    def _with_pending_ocr(
+        cls,
+        result: NativeExtractionResult,
+        *,
+        pending: tuple[int, ...],
+        deferred: tuple[int, ...] = (),
+        missing: tuple[int, ...] = (),
+        reason: str,
+    ) -> NativeExtractionResult:
+        manifest = dict(result.extraction_config or {})
+        native_manifest = dict(cast(Mapping[str, object], manifest["native"]))
+        config = dict(cast(Mapping[str, object], native_manifest["config"]))
+        config.update(
+            {
+                "ocr_pending_page_numbers": ",".join(map(str, pending)),
+                "ocr_pending_page_count": len(pending),
+                "ocr_deferred_page_numbers": ",".join(map(str, deferred)),
+                "ocr_missing_page_numbers": ",".join(map(str, missing)),
+                "ocr_pending_reason": reason,
+            }
+        )
+        native_manifest["config"] = config
+        manifest["native"] = native_manifest
+        return replace(
+            result, needs_ocr=True, extraction_config=cls._bounded_extraction_config(manifest)
+        )
 
     @staticmethod
     def _with_native_provenance(
@@ -371,6 +502,16 @@ class DocumentExtractionService:
                 )
                 for block in ocr_page.blocks
             )
+            page_config = dict(ocr.config)
+            if native_page.text:
+                page_config.update(
+                    {
+                        "native_text": native_page.text,
+                        "native_engine": native_page.extractor or native.engine,
+                        "native_engine_version": native_page.extractor_version
+                        or native.engine_version,
+                    }
+                )
             merged_pages.append(
                 ExtractedPage(
                     page_number=ocr_page.page_number,
@@ -379,7 +520,7 @@ class DocumentExtractionService:
                     largest_image_coverage=native_page.largest_image_coverage,
                     extractor=ocr.engine,
                     extractor_version=ocr.engine_version,
-                    extraction_config=ocr.config,
+                    extraction_config=page_config,
                     confidence=ocr_page.confidence,
                 )
             )
@@ -415,7 +556,8 @@ class DocumentExtractionService:
             page_count=native.page_count,
             character_count=sum(len(page.text) for page in merged_page_tuple),
             native_text_page_ratio=native.native_text_page_ratio,
-            needs_ocr=any(not ocr_by_page[page_number].text for page_number in selected_pages),
+            needs_ocr=bool(set(ocr_page_numbers(native.pages)) - selected_page_set)
+            or any(not ocr_by_page[page_number].text.strip() for page_number in selected_pages),
             image_dominant_page_ratio=native.image_dominant_page_ratio,
             config=ocr.config if mode is ExtractionMode.OCR else {},
             mode=mode,
@@ -642,6 +784,34 @@ class DocumentExtractionService:
         actor_id: UUID,
     ) -> ExtractionPersistenceResult:
         document = await self._get_locked_document(document_id)
+        transition_extraction_status(document.extraction_status, ExtractionStatus.TRUSTED)
+        if document.active_for_ai is False:
+            raise ExtractionTrustBlockedError("inactive_source")
+        if getattr(document, "metadata_review_required", False):
+            raise ExtractionTrustBlockedError("metadata_review_required")
+        config = document.extraction_config or {}
+        native = config.get("native", {})
+        native_config = native.get("config", {}) if isinstance(native, Mapping) else {}
+        risk_configs = (config, native_config) if isinstance(native_config, Mapping) else (config,)
+        if document.needs_ocr is not False or any(
+            item.get("ocr_pending_page_count") for item in risk_configs
+        ):
+            raise ExtractionTrustBlockedError("needs_ocr")
+        if f"sha256:{document.checksum_sha256}" == KNOWN_CORRUPT_SOURCE_FINGERPRINT or any(
+            item.get(key)
+            for item in risk_configs
+            for key in (
+                "font_risk",
+                "font_risk_page_count",
+                "risky_font_names",
+                "known_review_warning",
+                "private_use_glyph_count",
+                "replacement_glyph_count",
+            )
+        ):
+            raise ExtractionTrustBlockedError("font_risk")
+        if not document.extracted_page_count or not document.extracted_character_count:
+            raise ExtractionTrustBlockedError("empty_extraction")
         if document.extraction_status is ExtractionStatus.TRUSTED:
             return self._result_from_document(document, deduplicated=True)
 

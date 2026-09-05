@@ -1,15 +1,69 @@
+import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from exam_guru_api.documents.domain import (
     ExtractionStatus,
     MaterialUseState,
     SourceDocumentType,
 )
+
+MAX_INTAKE_METADATA_BYTES = 16_384
+IntakeLabel = Annotated[str, Field(strict=True, min_length=1, max_length=200)]
+IntakeEvidence = Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+
+
+class SourceIntakeMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid", strict=True, frozen=True, revalidate_instances="always"
+    )
+
+    candidate_grade: int | None = Field(default=None, ge=1, le=13)
+    subject_label: IntakeLabel | None = None
+    medium_label: IntakeLabel | None = None
+    curriculum_label: IntakeLabel | None = None
+    document_type_label: IntakeLabel | None = None
+    year: int | None = Field(default=None, ge=1900, le=2100)
+    term: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    publisher: IntakeLabel | None = None
+    source_reference: IntakeEvidence | None = None
+    evidence: list[IntakeEvidence] = Field(default_factory=list, max_length=32)
+    warnings: list[IntakeEvidence] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        payload = self.model_dump(mode="json")
+        for value in payload.values():
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if isinstance(item, str) and (item != item.strip() or not item.isprintable()):
+                    raise ValueError("intake text must be trimmed and printable")
+        if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_INTAKE_METADATA_BYTES:
+            raise ValueError("intake metadata exceeds JSON size limit")
+        return self
+
+    @classmethod
+    def from_json(cls, value: str) -> Self:
+        if len(value.encode("utf-8")) > MAX_INTAKE_METADATA_BYTES:
+            raise ValueError("intake metadata exceeds JSON size limit")
+
+        def unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise ValueError("duplicate intake metadata key")
+                result[key] = item
+            return result
+
+        try:
+            payload = json.loads(value, object_pairs_hook=unique_keys)
+        except RecursionError:
+            raise ValueError("intake metadata must be a bounded object") from None
+        return cls.model_validate(payload)
 
 
 class ExtractionJobResponse(BaseModel):
@@ -45,9 +99,12 @@ class MaterialScopeCorrectionRequest(BaseModel):
     unit_id: UUID | None = None
     lesson_id: UUID | None = None
     expected_version: int = Field(strict=True, ge=0)
+    confirm_intake_metadata: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def validate_scope_shape(self) -> Self:
+        if self.confirm_intake_metadata and self.curriculum_version_id is None:
+            raise ValueError("intake metadata confirmation requires curriculum_version_id")
         if self.unit_id is not None and self.curriculum_version_id is None:
             raise ValueError("unit_id requires curriculum_version_id")
         if self.lesson_id is not None and self.unit_id is None:
@@ -115,6 +172,8 @@ class SourceDocumentResponse(BaseModel):
     removed_by: UUID | None
     removed_at: datetime | None
     metadata_scope_version: int
+    intake_metadata: SourceIntakeMetadata | None = None
+    metadata_review_required: bool = False
     year: int | None
     paper_code: str | None
     extraction_attempt_count: int
@@ -134,6 +193,11 @@ class SourceDocumentResponse(BaseModel):
     created_at: datetime
     deduplicated: bool = False
     likely_metadata_duplicate_of_id: UUID | None = None
+
+    @field_validator("metadata_review_required", mode="before")
+    @classmethod
+    def legacy_metadata_review_default(cls, value: object) -> object:
+        return False if value is None else value
 
 
 class MaterialStatus(StrEnum):
@@ -161,12 +225,14 @@ class MaterialListItemResponse(BaseModel):
     page_count: int | None
     uploaded_at: datetime
     metadata_scope_version: int
+    intake_metadata: SourceIntakeMetadata | None = None
+    metadata_review_required: bool = False
 
 
 class MaterialGradeSummaryResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    grade: int = Field(ge=1, le=13)
+    grade: int | None = Field(ge=1, le=13)
     material_count: int = Field(ge=0)
     subject_count: int = Field(ge=0)
     ready_count: int = Field(ge=0)

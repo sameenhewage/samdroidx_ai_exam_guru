@@ -34,9 +34,13 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert maintenance["command"] == ["exam-guru-maintenance"]
     assert maintenance["build"] == worker["build"]
     assert api["environment"].items() <= worker["environment"].items()
-    assert worker["environment"]["EXAM_GURU_OCR_PROVIDER"] == ""
+    assert worker["environment"]["EXAM_GURU_OCR_PROVIDER"] == "tesseract"
     assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_LANGUAGE"] == "sin+eng"
-    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_PAGES"] == "16"
+    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_PAGES"] == "40"
+    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_TIMEOUT_SECONDS"] == "5"
+    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_SOURCE_BYTES"] == "268435456"
+    assert api["environment"]["EXAM_GURU_MAX_UPLOAD_BYTES"] == "268435456"
+    assert api["environment"]["EXAM_GURU_RATE_LIMIT_SOURCE_UPLOAD"] == "30"
     for service in (api, maintenance, services["migrate"]):
         assert "EXAM_GURU_OCR_PROVIDER" not in service["environment"]
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""

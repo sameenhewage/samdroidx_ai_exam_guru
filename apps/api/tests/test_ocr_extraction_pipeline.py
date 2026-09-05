@@ -314,6 +314,8 @@ def service(
     native: NativeExtractionResult,
     *,
     ocr: RecordingOCR | None,
+    ocr_max_pages: int = 16,
+    ocr_timeout_seconds: float = 10.0,
 ) -> tuple[DocumentExtractionService, StubSession, StaticNativeExtractor]:
     session = StubSession(uploaded_document())
     extractor = StaticNativeExtractor(native)
@@ -323,6 +325,8 @@ def service(
             cast(ObjectStorage, StaticStorage()),
             extractor,
             ocr_port=ocr,
+            ocr_max_pages=ocr_max_pages,
+            ocr_timeout_seconds=ocr_timeout_seconds,
         ),
         session,
         extractor,
@@ -334,6 +338,190 @@ def persisted(session: StubSession) -> tuple[list[SourcePageModel], list[Extract
         [item for item in session.added if isinstance(item, SourcePageModel)],
         [item for item in session.added if isinstance(item, ExtractedBlockModel)],
     )
+
+
+@pytest.mark.parametrize("timeout_seconds", [10.0, 1e-320])
+def test_forty_scan_pages_are_bounded_and_native_remainder_is_reviewable(
+    timeout_seconds: float,
+) -> None:
+    native = native_result(*(page(number, "") for number in range(1, 41)), page(41, "native tail"))
+    ocr = RecordingOCR(
+        OCRResult(
+            engine="fixture-ocr",
+            engine_version="1",
+            config=OCR_CONFIG,
+            pages=tuple(
+                OCRPage(page_number=number, text=f"OCR {number}") for number in range(1, 17)
+            ),
+        )
+    )
+    extraction_service, session, _ = service(native, ocr=ocr, ocr_timeout_seconds=timeout_seconds)
+    result = asyncio.run(extraction_service.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+    assert ocr.requests[0].page_numbers == tuple(range(1, 17))
+    assert result.status is ExtractionStatus.EXTRACTED
+    assert result.page_count == 41
+    pages, blocks = persisted(session)
+    assert pages[16].raw_text == ""
+    assert pages[-1].raw_text == blocks[-1].raw_text == "native tail"
+    assert pages[-1].extractor == "pymupdf"
+    assert session.document.needs_ocr is True
+    assert session.document.ocr_page_count == 16
+    manifest = cast(dict[str, object], session.document.extraction_config)
+    config = cast(dict[str, object], cast(dict[str, object], manifest["native"])["config"])
+    assert config["ocr_deferred_page_numbers"] == ",".join(str(n) for n in range(17, 41))
+    assert config["ocr_pending_page_count"] == 24
+    assert config["ocr_pending_reason"] == "page_budget_exceeded"
+
+
+def test_lower_configured_ocr_batch_keeps_deferred_and_empty_pages_distinct() -> None:
+    ocr = RecordingOCR(
+        OCRResult(
+            engine="fixture-ocr",
+            engine_version="1",
+            config=OCR_CONFIG,
+            pages=(OCRPage(page_number=1, text="one"), OCRPage(page_number=2, text="")),
+        )
+    )
+    extraction_service, session, _ = service(
+        native_result(page(1, ""), page(2, ""), page(3, "")),
+        ocr=ocr,
+        ocr_max_pages=2,
+    )
+    asyncio.run(extraction_service.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+    assert ocr.requests[0].page_numbers == (1, 2)
+    manifest = cast(dict[str, object], session.document.extraction_config)
+    config = cast(dict[str, object], cast(dict[str, object], manifest["native"])["config"])
+    assert config["ocr_deferred_page_numbers"] == "3"
+    assert config["ocr_missing_page_numbers"] == "2"
+    assert config["ocr_pending_page_numbers"] == "2,3"
+    assert config["ocr_pending_page_count"] == 2
+
+
+def test_ocr_overlay_replacement_preserves_original_native_text() -> None:
+    original = "Original Sinhala overlay සිංහල"
+    extraction_service, session, _ = service(
+        native_result(page(1, original, image_coverage=1.0)),
+        ocr=RecordingOCR(
+            OCRResult(
+                engine="fixture-ocr",
+                engine_version="1",
+                config=OCR_CONFIG,
+                pages=(OCRPage(page_number=1, text="different OCR text"),),
+            )
+        ),
+    )
+    asyncio.run(extraction_service.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+    pages, _ = persisted(session)
+    assert pages[0].raw_text == "different OCR text"
+    assert pages[0].extraction_config["native_text"] == original
+    assert pages[0].extraction_config["native_engine"] == "pymupdf"
+
+
+@pytest.mark.parametrize(
+    ("error", "failure_code"),
+    [
+        (TesseractTimeoutError(operation="OCR", timeout_seconds=10), "ocr_timeout"),
+        (TesseractUnavailableError(), "ocr_unavailable"),
+    ],
+)
+def test_transient_ocr_failure_is_sanitized_without_persisting_a_final_result(
+    error: Exception,
+    failure_code: str,
+) -> None:
+    extraction_service, session, _ = service(
+        native_result(page(1, "readable native"), page(2, "")),
+        ocr=RecordingOCR(error),
+    )
+    with pytest.raises(OCRPipelineError) as raised:
+        asyncio.run(extraction_service.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+
+    assert str(raised.value) == raised.value.failure_code == failure_code
+    assert session.document.extraction_status is ExtractionStatus.FAILED
+    assert session.document.extraction_failure_code == failure_code
+    assert session.document.extraction_config is None
+    assert session.document.extracted_page_count is None
+    assert persisted(session) == ([], [])
+    assert session.rollbacks == 1
+    failure_events = [
+        item
+        for item in session.added
+        if isinstance(item, AdminAuditEventModel)
+        and item.action == "source_document.extraction_failed"
+    ]
+    assert len(failure_events) == 1
+    assert failure_events[0].payload == {"attempt": 1, "failure_code": failure_code}
+
+
+def test_known_corrupt_checksum_is_review_required_without_font_name_heuristics() -> None:
+    extraction_service, _, _ = service(native_result(page(1, "apparently usable")), ocr=None)
+    result = asyncio.run(
+        extraction_service._complete_with_ocr(
+            document_id=DOCUMENT_ID,
+            checksum_sha256=(
+                "sha256:a5678c45e0f2f8aced55359ad9d805d30aca136b66e2a8d713199b90800c6058"
+            ).removeprefix("sha256:"),
+            data=PDF_BYTES,
+            native=native_result(page(1, "apparently usable")),
+        )
+    )
+    assert result.config["font_risk"] is True
+    assert result.config["known_review_warning"] == "confirmed_text_corruption"
+    assert result.pages[0].text == "apparently usable"
+
+
+@pytest.mark.parametrize("deadline", [float("nan"), float("inf"), float("-inf")])
+def test_extraction_service_rejects_non_finite_deadlines_before_work(deadline: float) -> None:
+    session = StubSession(uploaded_document())
+    extractor = StaticNativeExtractor(native_result(page(1, "")))
+    ocr = RecordingOCR(object())
+
+    with pytest.raises(ValueError, match=r"^execution deadline must be finite$"):
+        DocumentExtractionService(
+            cast(AsyncSession, session),
+            cast(ObjectStorage, StaticStorage()),
+            extractor,
+            ocr_port=ocr,
+            execution_deadline=deadline,
+        )
+
+    assert extractor.calls == []
+    assert ocr.requests == []
+    assert session.commits == 0
+    assert session.added == []
+
+
+@pytest.mark.parametrize("elapsed_seconds", [235.0, 240.0, 241.0])
+def test_elapsed_actor_budget_defers_ocr_before_provider_work(
+    monkeypatch: pytest.MonkeyPatch,
+    elapsed_seconds: float,
+) -> None:
+    monkeypatch.setattr(
+        "exam_guru_api.documents.extraction_service.time.monotonic",
+        lambda: elapsed_seconds,
+    )
+    ocr = RecordingOCR(object())
+    session = StubSession(uploaded_document())
+    extraction_service = DocumentExtractionService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StaticStorage()),
+        StaticNativeExtractor(native_result(page(1, ""))),
+        ocr_port=ocr,
+        execution_deadline=300.0,
+    )
+    result = asyncio.run(extraction_service.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+    assert result.page_count == 1
+    assert result.status is ExtractionStatus.EXTRACTED
+    assert ocr.requests == []
+    manifest = cast(dict[str, object], session.document.extraction_config)
+    config = cast(dict[str, object], cast(dict[str, object], manifest["native"])["config"])
+    assert config["ocr_pending_reason"] == "actor_deadline"
+    assert config["ocr_pending_page_numbers"] == "1"
+    assert config["ocr_pending_page_count"] == 1
+    assert config["ocr_deferred_page_numbers"] == "1"
+    assert config["ocr_missing_page_numbers"] == ""
+    assert session.document.needs_ocr is True
+    assert session.document.ocr_page_count == 0
+    assert persisted(session)[0][0].raw_text == ""
 
 
 def test_mixed_document_calls_ocr_once_with_exact_identity_and_merges_provenance() -> None:
@@ -450,10 +638,21 @@ def test_native_only_and_unconfigured_scan_preserve_native_result_without_ocr_fa
         assert session.document.extractor == "pymupdf"
         assert session.document.ocr_page_count == 0
         assert session.document.needs_ocr is native.needs_ocr
+        pending_config: dict[str, OCRConfigValue] = (
+            {
+                "ocr_pending_page_numbers": "1",
+                "ocr_pending_page_count": 1,
+                "ocr_deferred_page_numbers": "1",
+                "ocr_missing_page_numbers": "",
+                "ocr_pending_reason": "ocr_unconfigured",
+            }
+            if native.needs_ocr
+            else {}
+        )
         assert session.document.extraction_config == {
             "mode": "native",
             "native": {
-                "config": NATIVE_CONFIG,
+                "config": {**NATIVE_CONFIG, **pending_config},
                 "engine": "pymupdf",
                 "version": "1.28.2",
             },

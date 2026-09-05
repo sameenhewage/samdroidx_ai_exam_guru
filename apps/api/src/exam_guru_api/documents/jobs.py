@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Protocol, cast
 from uuid import UUID
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 
-from exam_guru_api.core.config import EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS, Settings
+from exam_guru_api.core.config import (
+    EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS,
+    EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS,
+    Settings,
+)
 from exam_guru_api.documents.extraction import PyMuPdfExtractor
 from exam_guru_api.documents.extraction_service import DocumentExtractionService
 from exam_guru_api.documents.ocr import OCRPort
@@ -37,11 +42,16 @@ class _ExtractionActor(Protocol):
     def send(self, document_id: str, actor_id: str) -> _QueuedMessage: ...
 
 
-def create_ocr_port(settings: Settings) -> OCRPort | None:
+def create_ocr_port(
+    settings: Settings,
+    *,
+    execution_deadline: float | None = None,
+) -> OCRPort | None:
     if settings.ocr_provider is None:
         return None
     selected_languages = tuple(settings.ocr_tesseract_language.split("+"))
     return TesseractCliOCRAdapter(
+        execution_deadline=execution_deadline,
         config=TesseractOCRConfig(
             executable=settings.ocr_tesseract_executable,
             language=settings.ocr_tesseract_language,
@@ -54,24 +64,31 @@ def create_ocr_port(settings: Settings) -> OCRPort | None:
             page_segmentation_mode=settings.ocr_tesseract_page_segmentation_mode,
             max_pixels_per_page=settings.ocr_tesseract_max_pixels_per_page,
             max_command_output_bytes=settings.ocr_tesseract_max_command_output_bytes,
-        )
+        ),
     )
 
 
 async def _extract_document(document_id: UUID, *, actor_id: UUID) -> None:
+    execution_deadline = time.monotonic() + EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS
     settings = Settings()
     resources = create_resources(settings)
     object_storage = None
     try:
         object_storage = create_object_storage(settings)
         extractor = PyMuPdfExtractor(max_pages=NATIVE_EXTRACTION_MAX_PAGES)
-        ocr_port = create_ocr_port(settings)
+        ocr_port = create_ocr_port(
+            settings,
+            execution_deadline=execution_deadline - EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS,
+        )
         async with resources.session_factory() as session:
             await DocumentExtractionService(
                 session,
                 object_storage,
                 extractor,
                 ocr_port=ocr_port,
+                ocr_max_pages=settings.ocr_tesseract_max_pages,
+                ocr_timeout_seconds=settings.ocr_tesseract_timeout_seconds,
+                execution_deadline=execution_deadline,
             ).extract_native(document_id, actor_id=actor_id, preclaimed=True)
     finally:
         try:

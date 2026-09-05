@@ -845,9 +845,11 @@ describe("PaperStudio", () => {
         "Fixture corrected immutable publication",
       ),
     );
-    expect(
-      requestsEnding(requests, "GET", `/papers/${ids.paper}/publication-versions/2`),
-    ).not.toHaveLength(0);
+    await waitFor(() =>
+      expect(
+        requestsEnding(requests, "GET", `/papers/${ids.paper}/publication-versions/2`),
+      ).not.toHaveLength(0),
+    );
   });
 
   it("renders the complete verified snapshot, version chain, content, lineage, provenance, revision evidence, and untrusted text as bounded plain text", async () => {

@@ -1063,6 +1063,18 @@
             "title": "File",
             "type": "string"
           },
+          "intake_metadata": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Metadata"
+          },
           "lesson_id": {
             "anyOf": [
               {
@@ -5057,10 +5069,17 @@
       "MaterialGradeSummaryResponse": {
         "properties": {
           "grade": {
-            "maximum": 13.0,
-            "minimum": 1.0,
-            "title": "Grade",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 13.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
           },
           "material_count": {
             "minimum": 0.0,
@@ -5134,6 +5153,16 @@
             "title": "Id",
             "type": "string"
           },
+          "intake_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceIntakeMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lesson": {
             "anyOf": [
               {
@@ -5158,6 +5187,11 @@
               }
             ],
             "title": "Medium"
+          },
+          "metadata_review_required": {
+            "default": false,
+            "title": "Metadata Review Required",
+            "type": "boolean"
           },
           "metadata_scope_version": {
             "title": "Metadata Scope Version",
@@ -5292,6 +5326,11 @@
       "MaterialScopeCorrectionRequest": {
         "additionalProperties": false,
         "properties": {
+          "confirm_intake_metadata": {
+            "default": false,
+            "title": "Confirm Intake Metadata",
+            "type": "boolean"
+          },
           "curriculum_version_id": {
             "anyOf": [
               {
@@ -10952,6 +10991,16 @@
             "title": "Id",
             "type": "string"
           },
+          "intake_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceIntakeMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lesson_id": {
             "anyOf": [
               {
@@ -10975,6 +11024,11 @@
               }
             ],
             "title": "Likely Metadata Duplicate Of Id"
+          },
+          "metadata_review_required": {
+            "default": false,
+            "title": "Metadata Review Required",
+            "type": "boolean"
           },
           "metadata_scope_version": {
             "title": "Metadata Scope Version",
@@ -11154,6 +11208,150 @@
         ],
         "title": "SourceDocumentType",
         "type": "string"
+      },
+      "SourceIntakeMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_grade": {
+            "anyOf": [
+              {
+                "maximum": 13.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Grade"
+          },
+          "curriculum_label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Label"
+          },
+          "document_type_label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Type Label"
+          },
+          "evidence": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "medium_label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Medium Label"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "source_reference": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Reference"
+          },
+          "subject_label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Label"
+          },
+          "term": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Term"
+          },
+          "warnings": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Warnings",
+            "type": "array"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1900.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "title": "SourceIntakeMetadata",
+        "type": "object"
       },
       "SourcePageResponse": {
         "properties": {
@@ -19996,6 +20194,33 @@
           },
           {
             "in": "query",
+            "name": "unassigned_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unassigned Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "document_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -22283,6 +22508,25 @@
     "/api/v1/admin/source-documents": {
       "get": {
         "operationId": "list_source_documents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "document_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -22297,6 +22541,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -22351,7 +22605,7 @@
               "Retry-After": {
                 "description": "Integer seconds until this principal/scope window resets",
                 "schema": {
-                  "minimum": 1.0,
+                  "minimum": 1,
                   "type": "integer"
                 }
               }
@@ -22796,6 +23050,106 @@
           }
         ],
         "summary": "Correct Source Document Block",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/preview": {
+      "get": {
+        "operationId": "get_source_page_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Page Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Bounded page image rendered from the verified original PDF"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Source read permission required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Source document or page not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Source page preview unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Source Page Preview",
         "tags": [
           "admin-documents"
         ]

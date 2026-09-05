@@ -1,14 +1,18 @@
 import hashlib
 import hmac
+import math
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
+from time import monotonic
 from typing import cast
 from uuid import UUID, uuid4
 
-from anyio import to_thread
-from sqlalchemy import and_, func, or_, select
+import pymupdf
+from anyio import fail_after, to_thread
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +35,7 @@ from exam_guru_api.documents.schemas import (
     MaterialGradeSummaryResponse,
     MaterialListItemResponse,
     MaterialStatus,
+    SourceIntakeMetadata,
 )
 from exam_guru_api.infrastructure.object_storage import (
     InvalidObjectKeyError,
@@ -67,6 +72,66 @@ class SourceDocumentNotFoundError(LookupError):
 
 class SourceDocumentContentUnavailableError(RuntimeError):
     pass
+
+
+class SourceDocumentPageNotFoundError(LookupError):
+    pass
+
+
+_MAX_PREVIEW_INPUT_BYTES = 256 * 1024 * 1024
+_MAX_PREVIEW_PIXELS = 4_000_000
+_MAX_PREVIEW_DIMENSION = 4096
+_MAX_PREVIEW_PNG_BYTES = 8 * 1024 * 1024
+_PREVIEW_TIMEOUT_SECONDS = 5.0
+_PREVIEW_RENDER_LOCK = threading.Lock()
+
+
+def _render_original_page(data: bytes, page_number: int, deadline: float) -> bytes:
+    if not _PREVIEW_RENDER_LOCK.acquire(blocking=False):
+        raise SourceDocumentContentUnavailableError
+    try:
+        if monotonic() >= deadline or len(data) > _MAX_PREVIEW_INPUT_BYTES:
+            raise SourceDocumentContentUnavailableError
+        with pymupdf.open(stream=data, filetype="pdf") as pdf:
+            if pdf.needs_pass or not pdf.is_pdf:
+                raise SourceDocumentContentUnavailableError
+            if page_number > pdf.page_count:
+                raise SourceDocumentPageNotFoundError
+            page = pdf.load_page(page_number - 1)
+            rect = page.rect
+            if any(not math.isfinite(value) or value <= 0 for value in (rect.width, rect.height)):
+                raise SourceDocumentContentUnavailableError
+            scale = min(
+                1.5,
+                math.sqrt(_MAX_PREVIEW_PIXELS / (rect.width * rect.height)) * 0.99,
+                (_MAX_PREVIEW_DIMENSION - 1) / rect.width,
+                (_MAX_PREVIEW_DIMENSION - 1) / rect.height,
+            )
+            matrix = pymupdf.Matrix(scale, scale)
+            bounds = (rect * matrix).irect
+            if (
+                not 0 < bounds.width * bounds.height <= _MAX_PREVIEW_PIXELS
+                or max(bounds.width, bounds.height) > _MAX_PREVIEW_DIMENSION
+                or monotonic() >= deadline
+            ):
+                raise SourceDocumentContentUnavailableError
+            pixmap = page.get_pixmap(matrix=matrix, colorspace=pymupdf.csRGB, alpha=False)
+            if (
+                not 0 < pixmap.width * pixmap.height <= _MAX_PREVIEW_PIXELS
+                or max(pixmap.width, pixmap.height) > _MAX_PREVIEW_DIMENSION
+                or monotonic() >= deadline
+            ):
+                raise SourceDocumentContentUnavailableError
+            png = cast(bytes, pixmap.tobytes("png"))
+            if len(png) > _MAX_PREVIEW_PNG_BYTES or monotonic() >= deadline:
+                raise SourceDocumentContentUnavailableError
+            return png
+    except SourceDocumentPageNotFoundError:
+        raise
+    except Exception:
+        raise SourceDocumentContentUnavailableError from None
+    finally:
+        _PREVIEW_RENDER_LOCK.release()
 
 
 class ConcurrentMaterialScopeVersionError(RuntimeError):
@@ -109,21 +174,30 @@ class SourceDocumentService:
         self._object_storage = object_storage
         self._max_upload_bytes = max_upload_bytes
 
-    async def list_documents(self) -> Sequence[SourceDocumentModel]:
-        return (
-            await self._session.scalars(
-                select(SourceDocumentModel).order_by(SourceDocumentModel.created_at.desc())
-            )
-        ).all()
+    async def list_documents(
+        self,
+        *,
+        document_id: UUID | None = None,
+    ) -> Sequence[SourceDocumentModel]:
+        statement = select(SourceDocumentModel).order_by(SourceDocumentModel.created_at.desc())
+        if document_id is not None:
+            statement = statement.where(SourceDocumentModel.id == document_id)
+        return (await self._session.scalars(statement)).all()
 
-    async def read_original(self, document_id: UUID) -> SourceDocumentContent:
+    async def read_original(
+        self, document_id: UUID, *, max_bytes: int | None = None
+    ) -> SourceDocumentContent:
+        limit = (
+            self._max_upload_bytes if max_bytes is None else min(max_bytes, self._max_upload_bytes)
+        )
         document = await self._session.get(SourceDocumentModel, document_id)
         if document is None:
             raise SourceDocumentNotFoundError
         if (
             document.content_type != "application/pdf"
-            or not 1 <= document.size_bytes <= self._max_upload_bytes
+            or not 1 <= document.size_bytes <= limit
             or len(document.checksum_sha256) != 64
+            or not document.checksum_sha256.isascii()
         ):
             raise SourceDocumentContentUnavailableError
         try:
@@ -137,17 +211,28 @@ class SourceDocumentService:
             raise SourceDocumentContentUnavailableError from None
         except Exception:
             raise SourceDocumentContentUnavailableError from None
-        if (
-            not isinstance(data, bytes)
-            or len(data) != document.size_bytes
-            or len(data) > self._max_upload_bytes
-            or not hmac.compare_digest(
-                hashlib.sha256(data).hexdigest(),
-                document.checksum_sha256,
-            )
-        ):
+        if not isinstance(data, bytes) or len(data) != document.size_bytes or len(data) > limit:
+            raise SourceDocumentContentUnavailableError
+        checksum = await to_thread.run_sync(hashlib.sha256, data)
+        if not hmac.compare_digest(checksum.hexdigest(), document.checksum_sha256):
             raise SourceDocumentContentUnavailableError
         return SourceDocumentContent(filename=document.original_filename, data=data)
+
+    async def read_page_preview(self, document_id: UUID, *, page_number: int) -> bytes:
+        if not 1 <= page_number <= 1000:
+            raise SourceDocumentPageNotFoundError
+        content = await self.read_original(document_id, max_bytes=_MAX_PREVIEW_INPUT_BYTES)
+        try:
+            with fail_after(_PREVIEW_TIMEOUT_SECONDS):
+                return await to_thread.run_sync(
+                    _render_original_page,
+                    content.data,
+                    page_number,
+                    monotonic() + _PREVIEW_TIMEOUT_SECONDS,
+                    abandon_on_cancel=True,
+                )
+        except TimeoutError:
+            raise SourceDocumentContentUnavailableError from None
 
     async def upload_pdf(
         self,
@@ -162,7 +247,13 @@ class SourceDocumentService:
         lesson_id: UUID | None = None,
         year: int | None = None,
         paper_code: str | None = None,
+        intake_metadata: SourceIntakeMetadata | None = None,
     ) -> SourceUploadResult:
+        intake = (
+            None
+            if intake_metadata is None
+            else SourceIntakeMetadata.model_validate(intake_metadata).model_dump(mode="json")
+        )
         upload = validate_pdf_upload(
             filename=filename,
             content_type=content_type,
@@ -211,6 +302,8 @@ class SourceDocumentService:
             removed_by=None,
             removed_at=None,
             metadata_scope_version=0,
+            intake_metadata=intake,
+            metadata_review_required=intake is not None,
             year=year,
             paper_code=paper_code,
             created_by=actor_id,
@@ -229,6 +322,8 @@ class SourceDocumentService:
                     "document_type": document_type.value,
                     "original_filename": upload.filename,
                     "size_bytes": upload.size_bytes,
+                    "intake_metadata": intake,
+                    "metadata_review_required": intake is not None,
                     "curriculum_version_id": self._optional_uuid(curriculum_version_id),
                     "unit_id": self._optional_uuid(unit_id),
                     "lesson_id": self._optional_uuid(lesson_id),
@@ -338,37 +433,51 @@ class SourceDocumentService:
         lesson_id: UUID | None,
         expected_version: int,
         actor_id: UUID,
+        confirm_intake_metadata: bool = False,
     ) -> SourceDocumentModel:
         document = await self._get_for_update(document_id)
         self._require_version(document, expected_version)
+        if confirm_intake_metadata and curriculum_version_id is None:
+            raise SourceLearningScopeMismatchError
         previous = (
             document.curriculum_version_id,
             document.unit_id,
             document.lesson_id,
         )
         updated = (curriculum_version_id, unit_id, lesson_id)
-        if previous == updated:
+        confirming = confirm_intake_metadata and document.metadata_review_required
+        if previous == updated and not confirming:
             return document
         source_has_knowledge = await self._source_has_knowledge(document.id)
         if document.extraction_status is ExtractionStatus.TRUSTED or source_has_knowledge:
             raise MaterialScopeImmutableError(document.id)
         await self._validate_learning_scope(curriculum_version_id, unit_id, lesson_id)
+        if confirm_intake_metadata:
+            await self._validate_confirmation_scope(cast(UUID, curriculum_version_id))
         previous_version = document.metadata_scope_version
         document.curriculum_version_id = curriculum_version_id
         document.unit_id = unit_id
         document.lesson_id = lesson_id
+        if document.intake_metadata is not None:
+            document.metadata_review_required = not confirm_intake_metadata
         document.metadata_scope_version += 1
         document.updated_by = actor_id
         self._session.add(
             AdminAuditEventModel(
                 id=uuid4(),
                 actor_id=actor_id,
-                action="source_document.scope_corrected",
+                action=(
+                    "source_document.intake_metadata_confirmed"
+                    if confirm_intake_metadata
+                    else "source_document.scope_corrected"
+                ),
                 resource_type="source_document",
                 resource_id=document.id,
                 payload={
                     "from": self._scope_payload(*previous),
                     "to": self._scope_payload(*updated),
+                    "intake_metadata": document.intake_metadata,
+                    "metadata_review_required": bool(document.metadata_review_required),
                     "previous_version": previous_version,
                     "version": document.metadata_scope_version,
                 },
@@ -388,6 +497,8 @@ class SourceDocumentService:
         year: int | None = None,
         status: MaterialStatus | None = None,
         search: str | None = None,
+        unassigned_only: bool = False,
+        document_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[MaterialListItemResponse, ...]:
@@ -400,19 +511,24 @@ class SourceDocumentService:
             MaterialStatus.READY_FOR_AI: and_(
                 SourceDocumentModel.active_for_ai.is_(True),
                 SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
+                SourceDocumentModel.metadata_review_required.is_(False),
             ),
             MaterialStatus.NEEDS_REVIEW: and_(
                 SourceDocumentModel.active_for_ai.is_(True),
-                SourceDocumentModel.extraction_status.in_(
-                    (
-                        ExtractionStatus.EXTRACTED,
-                        ExtractionStatus.IN_REVIEW,
-                        ExtractionStatus.FAILED,
-                    )
+                or_(
+                    SourceDocumentModel.metadata_review_required.is_(True),
+                    SourceDocumentModel.extraction_status.in_(
+                        (
+                            ExtractionStatus.EXTRACTED,
+                            ExtractionStatus.IN_REVIEW,
+                            ExtractionStatus.FAILED,
+                        )
+                    ),
                 ),
             ),
             MaterialStatus.PROCESSING: and_(
                 SourceDocumentModel.active_for_ai.is_(True),
+                SourceDocumentModel.metadata_review_required.is_(False),
                 SourceDocumentModel.extraction_status.in_(
                     (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING)
                 ),
@@ -448,8 +564,21 @@ class SourceDocumentService:
             )
             .order_by(SourceDocumentModel.created_at.desc(), SourceDocumentModel.id.desc())
         )
+        if unassigned_only:
+            statement = statement.where(SourceDocumentModel.curriculum_version_id.is_(None))
+        if document_id is not None:
+            statement = statement.where(SourceDocumentModel.id == document_id)
         if grade is not None:
-            statement = statement.where(ExamConfigurationModel.grade == grade)
+            statement = statement.where(
+                or_(
+                    ExamConfigurationModel.grade == grade,
+                    and_(
+                        SourceDocumentModel.curriculum_version_id.is_(None),
+                        SourceDocumentModel.intake_metadata["candidate_grade"].as_integer()
+                        == grade,
+                    ),
+                )
+            )
         if subject_id is not None:
             statement = statement.where(SubjectModel.id == subject_id)
         if medium_id is not None:
@@ -457,7 +586,16 @@ class SourceDocumentService:
         if material_type is not None:
             statement = statement.where(SourceDocumentModel.document_type == material_type)
         if year is not None:
-            statement = statement.where(SourceDocumentModel.year == year)
+            statement = statement.where(
+                or_(
+                    SourceDocumentModel.year == year,
+                    and_(
+                        SourceDocumentModel.curriculum_version_id.is_(None),
+                        SourceDocumentModel.year.is_(None),
+                        SourceDocumentModel.intake_metadata["year"].as_integer() == year,
+                    ),
+                )
+            )
         if status is not None:
             statement = statement.where(status_conditions[status])
         if normalized_search is not None:
@@ -470,16 +608,20 @@ class SourceDocumentService:
             MaterialListItemResponse(
                 id=document.id,
                 title=document.original_filename,
-                grade=row_grade,
+                grade=row_grade if row_grade is not None else candidate.candidate_grade,
                 subject_id=row_subject_id,
-                subject=subject_name,
-                medium=medium_name,
-                curriculum=curriculum_title,
+                subject=subject_name if subject_name is not None else candidate.subject_label,
+                medium=medium_name if medium_name is not None else candidate.medium_label,
+                curriculum=(
+                    curriculum_title if curriculum_title is not None else candidate.curriculum_label
+                ),
                 unit=unit_title,
                 lesson=lesson_title,
                 material_type=document.document_type,
                 status=self._material_status(document),
-                year=document.year,
+                year=document.year if document.year is not None else candidate.year,
+                intake_metadata=intake,
+                metadata_review_required=bool(document.metadata_review_required),
                 page_count=document.extracted_page_count,
                 uploaded_at=document.created_at,
                 metadata_scope_version=document.metadata_scope_version,
@@ -494,35 +636,64 @@ class SourceDocumentService:
                 unit_title,
                 lesson_title,
             ) in rows
+            for intake in (
+                None
+                if document.intake_metadata is None
+                else SourceIntakeMetadata.model_validate(document.intake_metadata),
+            )
+            for candidate in (
+                intake
+                if intake is not None and document.curriculum_version_id is None
+                else SourceIntakeMetadata(),
+            )
         )
 
     async def grade_summary(self) -> tuple[MaterialGradeSummaryResponse, ...]:
         ready = and_(
             SourceDocumentModel.active_for_ai.is_(True),
+            SourceDocumentModel.metadata_review_required.is_(False),
             SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
         )
         needs_review = and_(
             SourceDocumentModel.active_for_ai.is_(True),
-            SourceDocumentModel.extraction_status.in_(
-                (
-                    ExtractionStatus.EXTRACTED,
-                    ExtractionStatus.IN_REVIEW,
-                    ExtractionStatus.FAILED,
-                )
+            or_(
+                SourceDocumentModel.metadata_review_required.is_(True),
+                SourceDocumentModel.extraction_status.in_(
+                    (
+                        ExtractionStatus.EXTRACTED,
+                        ExtractionStatus.IN_REVIEW,
+                        ExtractionStatus.FAILED,
+                    )
+                ),
             ),
         )
         processing = and_(
             SourceDocumentModel.active_for_ai.is_(True),
+            SourceDocumentModel.metadata_review_required.is_(False),
             SourceDocumentModel.extraction_status.in_(
                 (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING)
             ),
         )
+        display_grade = case(
+            (
+                SourceDocumentModel.curriculum_version_id.is_(None),
+                SourceDocumentModel.intake_metadata["candidate_grade"].as_integer(),
+            ),
+            else_=ExamConfigurationModel.grade,
+        )
+        display_subject = case(
+            (
+                SourceDocumentModel.curriculum_version_id.is_(None),
+                SourceDocumentModel.intake_metadata["subject_label"].as_string(),
+            ),
+            else_=SubjectModel.name,
+        )
         rows = (
             await self._session.execute(
                 select(
-                    ExamConfigurationModel.grade,
+                    display_grade,
                     func.count(SourceDocumentModel.id),
-                    func.count(func.distinct(CurriculumVersionModel.subject_id)),
+                    func.count(func.distinct(func.lower(display_subject))),
                     func.count(SourceDocumentModel.id).filter(ready),
                     func.count(SourceDocumentModel.id).filter(needs_review),
                     func.count(SourceDocumentModel.id).filter(processing),
@@ -531,15 +702,16 @@ class SourceDocumentService:
                     ),
                 )
                 .select_from(SourceDocumentModel)
-                .join(
+                .outerjoin(
                     CurriculumVersionModel,
                     CurriculumVersionModel.id == SourceDocumentModel.curriculum_version_id,
                 )
-                .join(
+                .outerjoin(
                     ExamConfigurationModel,
                     ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
                 )
-                .group_by(ExamConfigurationModel.grade)
+                .outerjoin(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+                .group_by(display_grade)
             )
         ).all()
         by_grade = {row[0]: row[1:] for row in rows}
@@ -553,9 +725,37 @@ class SourceDocumentService:
                 processing_count=counts[4],
                 removed_count=counts[5],
             )
-            for grade in range(1, 14)
+            for grade in (*range(1, 14), *((None,) if None in by_grade else ()))
             for counts in (by_grade.get(grade, (0, 0, 0, 0, 0, 0)),)
         )
+
+    async def _validate_confirmation_scope(self, curriculum_version_id: UUID) -> None:
+        curriculum = await self._session.get(
+            CurriculumVersionModel,
+            curriculum_version_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if curriculum is None:
+            raise SourceCurriculumNotFoundError
+        if not curriculum.active:
+            raise SourceCurriculumInactiveError
+        for model, identifier in (
+            (SubjectModel, curriculum.subject_id),
+            (MediumModel, curriculum.medium_id),
+            (ExamConfigurationModel, curriculum.exam_configuration_id),
+        ):
+            scope = cast(
+                SubjectModel | MediumModel | ExamConfigurationModel | None,
+                await self._session.get(
+                    model,
+                    identifier,
+                    with_for_update=True,
+                    populate_existing=True,
+                ),
+            )
+            if scope is None or not scope.active:
+                raise SourceCurriculumInactiveError
 
     async def _validate_learning_scope(
         self,
@@ -697,6 +897,8 @@ class SourceDocumentService:
     def _material_status(document: SourceDocumentModel) -> MaterialStatus:
         if not document.active_for_ai:
             return MaterialStatus.REMOVED
+        if document.metadata_review_required:
+            return MaterialStatus.NEEDS_REVIEW
         if document.extraction_status is ExtractionStatus.TRUSTED:
             return MaterialStatus.READY_FOR_AI
         if document.extraction_status in {

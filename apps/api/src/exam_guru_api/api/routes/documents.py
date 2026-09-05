@@ -10,7 +10,9 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Path,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
@@ -43,12 +45,14 @@ from exam_guru_api.documents.extraction_service import (
     DocumentExtractionService,
     ExtractedBlockNotFoundError,
     ExtractionDocumentNotFoundError,
+    ExtractionTrustBlockedError,
     ReviewNotActiveError,
     SourcePageNotFoundError,
 )
 from exam_guru_api.documents.jobs import ExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.documents.schemas import (
+    MAX_INTAKE_METADATA_BYTES,
     ExtractedBlockResponse,
     ExtractionJobResponse,
     MaterialGradeSummaryResponse,
@@ -59,6 +63,7 @@ from exam_guru_api.documents.schemas import (
     MaterialStatus,
     ReviewedTextUpdate,
     SourceDocumentResponse,
+    SourceIntakeMetadata,
     SourcePageResponse,
 )
 from exam_guru_api.documents.service import (
@@ -69,6 +74,7 @@ from exam_guru_api.documents.service import (
     SourceCurriculumNotFoundError,
     SourceDocumentContentUnavailableError,
     SourceDocumentNotFoundError,
+    SourceDocumentPageNotFoundError,
     SourceDocumentService,
     SourceLearningScopeInactiveError,
     SourceLearningScopeMismatchError,
@@ -154,6 +160,8 @@ async def list_materials(
     year: Annotated[int | None, Query(ge=1900, le=2100)] = None,
     status: MaterialStatus | None = None,
     search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+    unassigned_only: bool = False,
+    document_id: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
 ) -> list[MaterialListItemResponse]:
@@ -172,6 +180,8 @@ async def list_materials(
             year=year,
             status=status,
             search=search,
+            unassigned_only=unassigned_only,
+            document_id=document_id,
             limit=limit,
             offset=offset,
         )
@@ -271,6 +281,7 @@ async def correct_material_scope(
             unit_id=request.unit_id,
             lesson_id=request.lesson_id,
             expected_version=request.expected_version,
+            confirm_intake_metadata=request.confirm_intake_metadata,
             actor_id=principal.subject_id,
         )
     except (
@@ -300,13 +311,14 @@ async def list_source_documents(
     session: Annotated[AsyncSession, Depends(get_database_session)],
     object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
     settings: Annotated[Settings, Depends(get_settings)],
+    document_id: UUID | None = None,
 ) -> list[SourceDocumentResponse]:
     del principal
     documents = await SourceDocumentService(
         session,
         object_storage,
         max_upload_bytes=settings.max_upload_bytes,
-    ).list_documents()
+    ).list_documents(document_id=document_id)
     return [await _source_document_response(session, document) for document in documents]
 
 
@@ -373,6 +385,73 @@ async def get_source_document_content(
             "X-Frame-Options": "SAMEORIGIN",
         },
     )
+
+
+@router.get(
+    "/source-documents/{document_id}/pages/{page_number}/preview",
+    operation_id="get_source_page_preview",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {
+            "description": "Bounded page image rendered from the verified original PDF",
+            "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}},
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Authentication required",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Source read permission required",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Source document or page not found",
+            "model": ApiErrorResponse,
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Source page preview unavailable",
+            "model": ApiErrorResponse,
+        },
+    },
+)
+async def get_source_page_preview(
+    document_id: UUID,
+    page_number: Annotated[int, Path(ge=1, le=1000)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    del principal
+    headers = {
+        "Cache-Control": "private, no-store",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN",
+    }
+    try:
+        png = await SourceDocumentService(
+            session, object_storage, max_upload_bytes=settings.max_upload_bytes
+        ).read_page_preview(document_id, page_number=page_number)
+    except (SourceDocumentNotFoundError, SourceDocumentPageNotFoundError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": (
+                    "source_document_not_found"
+                    if isinstance(error, SourceDocumentNotFoundError)
+                    else "source_page_not_found"
+                )
+            },
+            headers=headers,
+        ) from None
+    except SourceDocumentContentUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "source_page_preview_unavailable"},
+            headers=headers,
+        ) from None
+    return Response(content=png, media_type="image/png", headers=headers)
 
 
 @router.post(
@@ -596,7 +675,11 @@ async def trust_source_document(
     service = _extraction_service(session, object_storage)
     try:
         result = await service.trust_document(document_id, actor_id=principal.subject_id)
-    except (ExtractionDocumentNotFoundError, InvalidExtractionTransitionError) as error:
+    except (
+        ExtractionDocumentNotFoundError,
+        InvalidExtractionTransitionError,
+        ExtractionTrustBlockedError,
+    ) as error:
         raise _extraction_http_exception(error) from error
     document = await session.get(SourceDocumentModel, result.document_id)
     if document is None:
@@ -620,6 +703,11 @@ def _extraction_service(
 
 
 def _extraction_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, ExtractionTrustBlockedError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": "extraction_trust_blocked", "reason_code": error.reason_code},
+        )
     if isinstance(
         error,
         (
@@ -655,6 +743,7 @@ def _extraction_http_exception(error: Exception) -> HTTPException:
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_source_document(
+    request: Request,
     response: Response,
     file: Annotated[UploadFile, File()],
     document_type: Annotated[SourceDocumentType, Form()],
@@ -667,7 +756,21 @@ async def upload_source_document(
     lesson_id: Annotated[UUID | None, Form()] = None,
     year: Annotated[int | None, Form(ge=1900, le=2100)] = None,
     paper_code: Annotated[str | None, Form(max_length=64)] = None,
+    intake_metadata: Annotated[str | None, Form(max_length=MAX_INTAKE_METADATA_BYTES)] = None,
 ) -> SourceDocumentResponse:
+    try:
+        supplied = (await request.form()).getlist("intake_metadata")
+        if supplied and (len(supplied) != 1 or intake_metadata is None):
+            raise ValueError("exactly one nonempty intake metadata field is required")
+        intake = (
+            None if intake_metadata is None else SourceIntakeMetadata.from_json(intake_metadata)
+        )
+    except ValueError:
+        await file.close()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "invalid_intake_metadata"},
+        ) from None
     data = await file.read(settings.max_upload_bytes + 1)
     await file.close()
     try:
@@ -686,6 +789,7 @@ async def upload_source_document(
             lesson_id=lesson_id,
             year=year,
             paper_code=paper_code,
+            intake_metadata=intake,
         )
     except UploadValidationError as error:
         raise HTTPException(

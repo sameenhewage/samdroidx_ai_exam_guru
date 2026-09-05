@@ -6,9 +6,11 @@ This document defines when Exam Guru is ready to be handed to real teachers for 
 
 The teacher pilot is **not** an architecture test. Teachers should receive a coherent product they can actually use to prepare, review and approve Grade 5 papers.
 
-## Current verdict — NOT READY (30 August 2026)
+## Current verdict — NOT READY (5 September 2026)
 
-The engineering mechanics and isolated deterministic acceptance are substantially complete, but teachers must not be invited yet. Gates C, E, I, K and L remain blocked by evidence that cannot be replaced with synthetic fixtures:
+The current Studio now contains all 587 unique originals from the 696 Grade 3/4/5 PDF paths. Materials, original PDF access, page-image/text comparison and representative correction/navigation are verified against that real intake. All imported sources remain untrusted: 13 have unsafe-text extraction failures, 64 retain OCR/empty-page warnings, and candidate metadata requires explicit review. This completes source intake and review access, not educational approval or the Scholarship paper-generation acceptance.
+
+The engineering mechanics and isolated deterministic acceptance are substantially complete, but teachers must not be invited for the full paper-generation pilot yet. Gates C, E, I, K and L remain blocked by evidence that cannot be replaced with synthetic fixtures:
 
 - the available Grade 3 Sinhala Maths extraction was removed from active retrieval after visual review exposed legacy-font glyph corruption;
 - no authoritative reviewed Scholarship Paper I ability/reasoning framework or sufficient Paper I past-paper evidence is available;

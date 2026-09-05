@@ -1,8 +1,20 @@
 "use client";
 
-import { createApiClient, type components, type paths } from "@exam-guru/api-client";
+import {
+  createApiClient,
+  type components,
+  type paths,
+} from "@exam-guru/api-client";
+import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
@@ -10,6 +22,11 @@ type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
 type Role = "admin" | "reviewer";
 type ReviewExperience = "advanced" | "materials";
 type ExtractionMode = "native" | "ocr" | "hybrid";
+
+type PageDraft = {
+  reviewedText: string;
+  expectedVersion: number;
+};
 
 type BoundedExtractorIdentity = {
   engine: string | null;
@@ -55,7 +72,13 @@ const MAX_SOURCE_PAGE_NUMBER = 1_000;
 const SOURCE_CONTENT_ROUTE: keyof paths =
   "/api/v1/admin/source-documents/{document_id}/content";
 const unsafeTextControls = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
-const secretConfigSegments = new Set(["apikey", "credential", "password", "secret", "token"]);
+const secretConfigSegments = new Set([
+  "apikey",
+  "credential",
+  "password",
+  "secret",
+  "token",
+]);
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -70,11 +93,54 @@ function plainText(value: string): string {
 }
 
 function sourceContentUrl(documentId: string, pageNumber: number): string {
-  const path = SOURCE_CONTENT_ROUTE.replace("{document_id}", encodeURIComponent(documentId));
+  const path = SOURCE_CONTENT_ROUTE.replace(
+    "{document_id}",
+    encodeURIComponent(documentId),
+  );
   return `${path}#page=${pageNumber}&view=FitH`;
 }
 
-function boundedIdentity(value: unknown, maximumCharacters: number): string | null {
+function OriginalPagePreview({
+  documentId,
+  pageNumber,
+}: {
+  documentId: string;
+  pageNumber: number;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  return (
+    <div className="mt-4">
+      {state === "loading" && <p role="status">Loading original page…</p>}
+      {state === "error" && (
+        <p
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+          role="alert"
+        >
+          Page preview could not be loaded. Use Open original PDF or try this
+          page again.
+        </p>
+      )}
+      <Image
+        alt={`Original PDF page ${pageNumber}`}
+        className="h-auto w-full rounded-md border border-slate-300 bg-white"
+        height={1414}
+        loading="eager"
+        onError={() => setState("error")}
+        onLoad={() => setState("ready")}
+        referrerPolicy="no-referrer"
+        src={`/api/v1/admin/source-documents/${encodeURIComponent(documentId)}/pages/${pageNumber}/preview`}
+        title="Original PDF preview"
+        unoptimized
+        width={1000}
+      />
+    </div>
+  );
+}
+
+function boundedIdentity(
+  value: unknown,
+  maximumCharacters: number,
+): string | null {
   if (
     typeof value !== "string" ||
     !value ||
@@ -105,8 +171,12 @@ function isSecretBearingConfigKey(key: string): boolean {
 function scalarConfigValue(value: unknown): string | null {
   if (value === null) return "null";
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  if (typeof value !== "string" || characterCount(value) > MAX_CONFIG_VALUE_CHARACTERS) {
+  if (typeof value === "number")
+    return Number.isFinite(value) ? String(value) : null;
+  if (
+    typeof value !== "string" ||
+    characterCount(value) > MAX_CONFIG_VALUE_CHARACTERS
+  ) {
     return null;
   }
   if (!value) return "(empty string)";
@@ -114,7 +184,8 @@ function scalarConfigValue(value: unknown): string | null {
 }
 
 function scalarConfigDisplay(config: unknown): ScalarConfigDisplay {
-  if (!isObjectRecord(config)) return { empty: false, entries: [], omitted: true };
+  if (!isObjectRecord(config))
+    return { empty: false, entries: [], omitted: true };
   const keys = Object.keys(config);
   if (!keys.length) return { empty: true, entries: [], omitted: false };
 
@@ -147,7 +218,9 @@ function extractorIdentity(value: unknown): BoundedExtractorIdentity {
 }
 
 function extractionMode(value: unknown): ExtractionMode | null {
-  return value === "native" || value === "ocr" || value === "hybrid" ? value : null;
+  return value === "native" || value === "ocr" || value === "hybrid"
+    ? value
+    : null;
 }
 
 function safePageNumbers(value: unknown): SafePageNumbers {
@@ -172,14 +245,20 @@ function safePageNumbers(value: unknown): SafePageNumbers {
     values.push(candidate);
   }
 
-  const display = values.length ? values.join(", ") : "No valid page numbers recorded";
+  const display = values.length
+    ? values.join(", ")
+    : "No valid page numbers recorded";
   return {
-    display: omitted ? `${display} (additional or invalid values not displayed)` : display,
+    display: omitted
+      ? `${display} (additional or invalid values not displayed)`
+      : display,
     values,
   };
 }
 
-function documentExtractionManifest(config: unknown): DocumentExtractionManifest {
+function documentExtractionManifest(
+  config: unknown,
+): DocumentExtractionManifest {
   if (config === null || config === undefined) {
     return {
       configState: "Not recorded.",
@@ -243,7 +322,10 @@ function displayNeedsOcr(value: unknown): string {
 }
 
 function displayConfidence(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
     ? String(value)
     : "Not recorded";
 }
@@ -253,24 +335,40 @@ function displayBoundingBox(bbox: ExtractedBlock["bbox"]): string {
     bbox === null ||
     !Array.isArray(bbox) ||
     bbox.length !== 4 ||
-    bbox.some((coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate))
+    bbox.some(
+      (coordinate) =>
+        typeof coordinate !== "number" || !Number.isFinite(coordinate),
+    )
   ) {
     return "Not recorded";
   }
   return bbox.join(", ");
 }
 
-function pageUsesOcr(page: SourcePage, manifest: DocumentExtractionManifest): boolean {
+function pageUsesOcr(
+  page: SourcePage,
+  manifest: DocumentExtractionManifest,
+): boolean {
   if (manifest.mode === "ocr") return true;
   if (manifest.ocrPageNumbers.values.includes(page.page_number)) return true;
   const pageExtractor = boundedIdentity(page.extractor, MAX_ENGINE_CHARACTERS);
-  return pageExtractor !== null && pageExtractor === manifest.ocrIdentity.engine;
+  return (
+    pageExtractor !== null && pageExtractor === manifest.ocrIdentity.engine
+  );
 }
 
-function ProvenanceDefinition({ label, value }: { label: string; value: string }) {
+function ProvenanceDefinition({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   return (
     <div className="rounded-md border border-slate-200 bg-white p-3">
-      <dt className="text-xs font-semibold uppercase text-slate-500">{label}</dt>
+      <dt className="text-xs font-semibold uppercase text-slate-500">
+        {label}
+      </dt>
       <dd className="mt-1 break-words text-sm text-slate-900"> {value}</dd>
     </div>
   );
@@ -285,9 +383,17 @@ function ScalarConfig({ config }: { config: unknown }) {
       {display.entries.length ? (
         <dl className="grid gap-2 sm:grid-cols-2">
           {display.entries.map((entry) => (
-            <div className="rounded border border-slate-200 bg-slate-50 p-2" key={entry.key}>
-              <dt className="break-all font-mono text-xs text-slate-600">{entry.key}</dt>
-              <dd className="mt-1 break-words text-sm text-slate-900"> {entry.value}</dd>
+            <div
+              className="rounded border border-slate-200 bg-slate-50 p-2"
+              key={entry.key}
+            >
+              <dt className="break-all font-mono text-xs text-slate-600">
+                {entry.key}
+              </dt>
+              <dd className="mt-1 break-words text-sm text-slate-900">
+                {" "}
+                {entry.value}
+              </dd>
             </div>
           ))}
         </dl>
@@ -296,7 +402,8 @@ function ScalarConfig({ config }: { config: unknown }) {
       )}
       {display.omitted && (
         <p className="text-xs text-slate-600">
-          Additional, non-scalar, or oversized configuration values are not displayed.
+          Additional, non-scalar, or oversized configuration values are not
+          displayed.
         </p>
       )}
     </div>
@@ -313,10 +420,136 @@ function errorCode(error: unknown): string {
   return "request_failed";
 }
 
+function hasRiskFlag(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (isObjectRecord(value)) return Object.keys(value).length > 0;
+  return Boolean(value);
+}
+
+function sourceReviewRisks(document: SourceDocument) {
+  const warnings: string[] = [];
+  let blocksTrust = false;
+  if (document.metadata_review_required) {
+    blocksTrust = true;
+    warnings.push(
+      "Verify the intake metadata and choose an approved curriculum before trusting this source.",
+    );
+  }
+  if (!document.active_for_ai) {
+    blocksTrust = true;
+    warnings.push(
+      "This source is not active for AI use. It cannot be trusted while inactive.",
+    );
+  }
+  if (document.needs_ocr !== false) {
+    blocksTrust = true;
+    warnings.push(
+      "OCR is still required or has not been verified. Keep this source untrusted.",
+    );
+  }
+  for (const warning of document.intake_metadata?.warnings ?? [])
+    warnings.push(warning);
+  const config = isObjectRecord(document.extraction_config)
+    ? document.extraction_config
+    : {};
+  const native = isObjectRecord(config.native) ? config.native : {};
+  const nativeConfig = isObjectRecord(native.config) ? native.config : {};
+  for (const riskConfig of [config, nativeConfig]) {
+    const fontRisk = [
+      "font_risk",
+      "font_risk_page_count",
+      "risky_font_names",
+      "known_review_warning",
+      "private_use_glyph_count",
+      "replacement_glyph_count",
+    ].some((key) => hasRiskFlag(riskConfig[key]));
+    const ocrPending =
+      hasRiskFlag(riskConfig.ocr_pending_page_count) ||
+      hasRiskFlag(riskConfig.ocr_pending_reason);
+    if (fontRisk) {
+      blocksTrust = true;
+      warnings.push(
+        "Font or character corruption needs review against the original PDF. Saving corrections does not clear this risk.",
+      );
+    }
+    if (ocrPending) {
+      blocksTrust = true;
+      warnings.push(
+        "OCR is pending. Keep this source untrusted until the reading problem is resolved.",
+      );
+    }
+    for (const [key, label] of [
+      ["font_risk_page_count", "Font-risk pages"],
+      ["private_use_glyph_count", "Private-use glyphs"],
+      ["replacement_glyph_count", "Replacement glyphs"],
+      ["ocr_pending_page_count", "OCR pending pages"],
+    ]) {
+      if (hasRiskFlag(riskConfig[key]))
+        warnings.push(`${label}: ${displayCount(riskConfig[key])}`);
+    }
+    if (Array.isArray(riskConfig.risky_font_names)) {
+      const names = riskConfig.risky_font_names
+        .slice(0, 32)
+        .map((name) => boundedIdentity(name, 200))
+        .filter(Boolean);
+      if (names.length) warnings.push(`Risky fonts: ${names.join(", ")}`);
+    }
+    for (const key of ["known_review_warning", "ocr_pending_reason"]) {
+      const text = boundedIdentity(riskConfig[key], 1024);
+      if (text) warnings.push(text);
+    }
+  }
+  return { blocksTrust, warnings: [...new Set(warnings)] };
+}
+
+function trustConflictMessage(error: unknown): string {
+  const detail =
+    isObjectRecord(error) && isObjectRecord(error.detail) ? error.detail : {};
+  switch (detail.reason_code) {
+    case "metadata_review_required":
+      return "Metadata needs review. Confirm a valid curriculum assignment before trusting this source.";
+    case "inactive_source":
+      return "This source is inactive and cannot be trusted. Review its use status in Materials.";
+    case "needs_ocr":
+      return "OCR is still required. Keep this source untrusted until the reading problem is resolved.";
+    case "font_risk":
+      return "Font or character corruption needs review against the original PDF before this source can be trusted.";
+    case "empty_extraction":
+      return "No usable extracted text is available to trust. Check the original PDF and extraction.";
+    default:
+      return "This source cannot be trusted yet. Review its metadata, font warnings, and OCR status. Your corrections have been kept.";
+  }
+}
+
+function SourceReviewWarnings({ document }: { document: SourceDocument }) {
+  const { warnings } = sourceReviewRisks(document);
+  if (!warnings.length) return null;
+  return (
+    <aside
+      aria-label="Source review warnings"
+      className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"
+    >
+      {document.metadata_review_required && (
+        <p className="mb-3 w-fit rounded-full border border-amber-400 px-3 py-1 text-sm font-semibold">
+          Metadata needs review
+        </p>
+      )}
+      <p className="font-semibold">Review warnings</p>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+        {warnings.map((warning) => (
+          <li key={warning}>{warning}</li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 function materialReviewStatus(document: SourceDocument): string {
   if (document.use_state === "removed") return "Removed";
+  if (sourceReviewRisks(document).blocksTrust) return "Needs review";
   if (document.extraction_status === "trusted") return "Ready for AI";
-  if (["extracted", "in_review"].includes(document.extraction_status)) return "Needs review";
+  if (["extracted", "in_review"].includes(document.extraction_status))
+    return "Needs review";
   if (document.extraction_status === "failed") return "Reading failed";
   return "Processing";
 }
@@ -336,11 +569,15 @@ export function ExtractionReviewStudio({
   );
   const [document, setDocument] = useState<SourceDocument | null>(null);
   const [pages, setPages] = useState<SourcePage[]>([]);
+  const [pageDrafts, setPageDrafts] = useState<Record<string, PageDraft>>({});
   const [blocks, setBlocks] = useState<Record<number, ExtractedBlock[]>>({});
   const blockRequestsInFlight = useRef(new Set<number>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [trustError, setTrustError] = useState("");
+  const [trustBlocked, setTrustBlocked] = useState(false);
+  const [trusting, setTrusting] = useState(false);
   const [selectedPageIndex, setSelectedPageIndex] = useState(0);
 
   const load = useCallback(async () => {
@@ -353,22 +590,29 @@ export function ExtractionReviewStudio({
           params: { path: { document_id: documentId } },
         }),
       ]);
-      const current = documentsResult.data?.find((item) => item.id === documentId) ?? null;
+      const current =
+        documentsResult.data?.find((item) => item.id === documentId) ?? null;
       if (documentsResult.error || pagesResult.error || !current) {
         setError(
           errorCode(
             documentsResult.error ??
-              pagesResult.error ?? { detail: { code: "source_document_not_found" } },
+              pagesResult.error ?? {
+                detail: { code: "source_document_not_found" },
+              },
           ),
         );
         return;
       }
       const nextPages = pagesResult.data ?? [];
       setDocument(current);
+      setTrustError("");
+      setTrustBlocked(false);
       setPages(nextPages);
       setBlocks({});
       blockRequestsInFlight.current.clear();
-      setSelectedPageIndex((index) => Math.min(index, Math.max(0, nextPages.length - 1)));
+      setSelectedPageIndex((index) =>
+        Math.min(index, Math.max(0, nextPages.length - 1)),
+      );
     } catch {
       setError("network_error");
     } finally {
@@ -383,7 +627,11 @@ export function ExtractionReviewStudio({
       try {
         const result = await api.GET(
           "/api/v1/admin/source-documents/{document_id}/pages/{page_number}/blocks",
-          { params: { path: { document_id: documentId, page_number: pageNumber } } },
+          {
+            params: {
+              path: { document_id: documentId, page_number: pageNumber },
+            },
+          },
         );
         if (result.error) {
           setError(errorCode(result.error));
@@ -397,7 +645,8 @@ export function ExtractionReviewStudio({
               (block.bbox.length !== 4 ||
                 block.bbox.some(
                   (coordinate) =>
-                    typeof coordinate !== "number" || !Number.isFinite(coordinate),
+                    typeof coordinate !== "number" ||
+                    !Number.isFinite(coordinate),
                 )),
           )
         ) {
@@ -412,7 +661,12 @@ export function ExtractionReviewStudio({
               bbox:
                 block.bbox === null
                   ? null
-                  : [block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]],
+                  : [
+                      block.bbox[0],
+                      block.bbox[1],
+                      block.bbox[2],
+                      block.bbox[3],
+                    ],
             }),
           ),
         }));
@@ -444,9 +698,12 @@ export function ExtractionReviewStudio({
   }, [blocks, experience, loadBlocks, pages, selectedPageIndex]);
 
   async function beginReview() {
-    const result = await api.POST("/api/v1/admin/source-documents/{document_id}/review", {
-      params: { path: { document_id: documentId } },
-    });
+    const result = await api.POST(
+      "/api/v1/admin/source-documents/{document_id}/review",
+      {
+        params: { path: { document_id: documentId } },
+      },
+    );
     if (result.error) setError(errorCode(result.error));
     else {
       setNotice("Human review started.");
@@ -454,31 +711,106 @@ export function ExtractionReviewStudio({
     }
   }
 
+  function editPage(page: SourcePage, reviewedText: string) {
+    setPageDrafts((current) => ({
+      ...current,
+      [page.id]: {
+        reviewedText,
+        expectedVersion: current[page.id]?.expectedVersion ?? page.version,
+      },
+    }));
+  }
+
   async function savePage(event: FormEvent<HTMLFormElement>, page: SourcePage) {
     event.preventDefault();
-    const reviewedText = String(new FormData(event.currentTarget).get("reviewed_text"));
-    const result = await api.PATCH(
-      "/api/v1/admin/source-documents/{document_id}/pages/{page_number}",
-      {
-        body: { expected_version: page.version, reviewed_text: reviewedText },
-        params: { path: { document_id: documentId, page_number: page.page_number } },
-      },
-    );
-    if (result.error) setError(errorCode(result.error));
-    else {
-      setPages((current) => current.map((item) => (item.id === page.id ? result.data : item)));
+    const draft = pageDrafts[page.id];
+    const reviewedText =
+      draft?.reviewedText ?? page.reviewed_text ?? page.raw_text;
+    const expectedVersion = draft?.expectedVersion ?? page.version;
+    try {
+      const result = await api.PATCH(
+        "/api/v1/admin/source-documents/{document_id}/pages/{page_number}",
+        {
+          body: {
+            expected_version: expectedVersion,
+            reviewed_text: reviewedText,
+          },
+          params: {
+            path: { document_id: documentId, page_number: page.page_number },
+          },
+        },
+      );
+      if (result.error) {
+        setError(errorCode(result.error));
+        return;
+      }
+      const savedPage = result.data;
+      setPages((current) =>
+        current.map((item) => (item.id === page.id ? savedPage : item)),
+      );
+      setPageDrafts((current) => {
+        const currentDraft = current[page.id];
+        if (!currentDraft) return current;
+        if (currentDraft === draft) {
+          const next = { ...current };
+          delete next[page.id];
+          return next;
+        }
+        if (currentDraft.expectedVersion !== expectedVersion) return current;
+        return {
+          ...current,
+          [page.id]: { ...currentDraft, expectedVersion: savedPage.version },
+        };
+      });
       setNotice(`Page ${page.page_number} correction saved.`);
+    } catch {
+      setError("network_error");
     }
   }
 
   async function trustSource() {
-    const result = await api.POST("/api/v1/admin/source-documents/{document_id}/trust", {
-      params: { path: { document_id: documentId } },
-    });
-    if (result.error) setError(errorCode(result.error));
-    else {
-      setNotice(experience === "materials" ? "Ready for AI" : "Trusted source");
-      await load();
+    if (
+      !document ||
+      role !== "admin" ||
+      sourceReviewRisks(document).blocksTrust ||
+      trustBlocked ||
+      trusting
+    )
+      return;
+    setTrusting(true);
+    setTrustError("");
+    setNotice("");
+    try {
+      const result = await api.POST(
+        "/api/v1/admin/source-documents/{document_id}/trust",
+        {
+          params: { path: { document_id: documentId } },
+        },
+      );
+      if (result.error) {
+        if (
+          result.response.status === 409 &&
+          errorCode(result.error) === "extraction_trust_blocked"
+        ) {
+          setTrustBlocked(true);
+          setTrustError(trustConflictMessage(result.error));
+        } else {
+          setTrustError(
+            "This source could not be marked reviewed. Your corrections have been kept; try again when the service is available.",
+          );
+        }
+      } else {
+        setNotice(
+          experience === "materials" ? "Ready for AI" : "Trusted source",
+        );
+        await load();
+      }
+    } catch {
+      setTrustError(
+        "The connection failed. Your corrections have been kept; try again when the service is available.",
+      );
+    } finally {
+      setTrusting(false);
     }
   }
 
@@ -494,7 +826,9 @@ export function ExtractionReviewStudio({
       return (
         <section className="mx-auto max-w-4xl px-5 py-10 sm:px-8" role="alert">
           <div className="rounded-xl border border-red-300 bg-red-50 p-5 text-red-950">
-            <h1 className="text-2xl font-semibold">Text review could not be loaded</h1>
+            <h1 className="text-2xl font-semibold">
+              Text review could not be loaded
+            </h1>
             <p className="mt-2 text-sm leading-6">
               {error === "network_error"
                 ? "The connection to the document service failed. Try again when it is available."
@@ -505,10 +839,17 @@ export function ExtractionReviewStudio({
                     : "The extracted pages could not be opened safely."}
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
-              <button className={secondaryButton} onClick={() => void load()} type="button">
+              <button
+                className={secondaryButton}
+                onClick={() => void load()}
+                type="button"
+              >
                 Try again
               </button>
-              <Link className={secondaryButton} href={`/admin/materials/${documentId}`}>
+              <Link
+                className={secondaryButton}
+                href={`/admin/materials/${documentId}`}
+              >
                 Back to material
               </Link>
             </div>
@@ -524,18 +865,37 @@ export function ExtractionReviewStudio({
   }
   if (!document) return null;
 
+  const trustDisabled =
+    trusting || trustBlocked || sourceReviewRisks(document).blocksTrust;
+  const trustFeedback = (
+    <>
+      <SourceReviewWarnings document={document} />
+      {trustError && (
+        <p
+          className="mt-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-950"
+          role="alert"
+        >
+          {trustError}
+        </p>
+      )}
+    </>
+  );
   const manifest = documentExtractionManifest(document.extraction_config);
   const hasOcrDerivedText =
     manifest.mode === "ocr" ||
     manifest.mode === "hybrid" ||
     manifest.ocrIdentity.engine !== null ||
     manifest.ocrPageNumbers.values.length > 0 ||
-    (typeof document.ocr_page_count === "number" && document.ocr_page_count > 0);
+    (typeof document.ocr_page_count === "number" &&
+      document.ocr_page_count > 0);
 
   if (experience === "materials") {
     const selectedPage = pages[selectedPageIndex] ?? pages[0] ?? null;
-    const selectedBlocks = selectedPage ? blocks[selectedPage.page_number] ?? [] : [];
-    const canEdit = role === "admin" && document.extraction_status === "in_review";
+    const selectedBlocks = selectedPage
+      ? (blocks[selectedPage.page_number] ?? [])
+      : [];
+    const canEdit =
+      role === "admin" && document.extraction_status === "in_review";
     const originalPdfUrl = selectedPage
       ? sourceContentUrl(documentId, selectedPage.page_number)
       : null;
@@ -554,45 +914,68 @@ export function ExtractionReviewStudio({
           </p>
           <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-semibold sm:text-4xl">Review text</h1>
-              <p className="mt-2 break-words text-slate-600">{document.original_filename}</p>
+              <h1 className="text-3xl font-semibold sm:text-4xl">
+                Review text
+              </h1>
+              <p className="mt-2 break-words text-slate-600">
+                {document.original_filename}
+              </p>
             </div>
             <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm font-semibold">
               {materialReviewStatus(document)}
             </span>
           </div>
           <p className="mt-4 max-w-3xl leading-7 text-slate-600">
-            Compare each page of the original PDF with the extracted or corrected text beside it.
-            Uploaded content is untrusted until a person checks it and marks it ready.
+            Compare each page of the original PDF with the extracted or
+            corrected text beside it. Uploaded content is untrusted until a
+            person checks it and marks it ready.
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {document.extraction_status === "extracted" && role === "admin" && (
-              <button className={buttonClass} onClick={() => void beginReview()} type="button">
+              <button
+                className={buttonClass}
+                onClick={() => void beginReview()}
+                type="button"
+              >
                 Begin text review
               </button>
             )}
             {document.extraction_status === "in_review" && role === "admin" && (
-              <button className={buttonClass} onClick={() => void trustSource()} type="button">
+              <button
+                className={buttonClass}
+                disabled={trustDisabled}
+                onClick={() => void trustSource()}
+                type="button"
+              >
                 Mark reviewed / Ready for AI
               </button>
             )}
             {role === "reviewer" && (
-              <p className="text-sm font-semibold text-slate-600">Reviewer access is read-only.</p>
+              <p className="text-sm font-semibold text-slate-600">
+                Reviewer access is read-only.
+              </p>
             )}
           </div>
 
+          {trustFeedback}
           {hasOcrDerivedText && (
             <aside className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
-              <p className="font-semibold">Some text came from OCR and needs careful human review.</p>
+              <p className="font-semibold">
+                Some text came from OCR and needs careful human review.
+              </p>
               <p className="mt-1 text-sm">
-                Confidence information is diagnostic only; it does not make the source trusted.
+                Confidence information is diagnostic only; it does not make the
+                source trusted.
               </p>
             </aside>
           )}
 
           {notice && (
-            <p className="mt-4 rounded-md bg-emerald-50 p-3 font-semibold text-emerald-900" role="status">
+            <p
+              className="mt-4 rounded-md bg-emerald-50 p-3 font-semibold text-emerald-900"
+              role="status"
+            >
               {notice}
             </p>
           )}
@@ -608,7 +991,9 @@ export function ExtractionReviewStudio({
                 <button
                   className={secondaryButton}
                   disabled={selectedPageIndex === 0}
-                  onClick={() => setSelectedPageIndex((index) => Math.max(0, index - 1))}
+                  onClick={() =>
+                    setSelectedPageIndex((index) => Math.max(0, index - 1))
+                  }
                   type="button"
                 >
                   Previous page
@@ -617,7 +1002,9 @@ export function ExtractionReviewStudio({
                   className={secondaryButton}
                   disabled={selectedPageIndex >= pages.length - 1}
                   onClick={() =>
-                    setSelectedPageIndex((index) => Math.min(pages.length - 1, index + 1))
+                    setSelectedPageIndex((index) =>
+                      Math.min(pages.length - 1, index + 1),
+                    )
                   }
                   type="button"
                 >
@@ -649,18 +1036,15 @@ export function ExtractionReviewStudio({
                     </a>
                   )}
                 </div>
-                {originalPdfUrl && (
-                  <iframe
-                    className="mt-4 min-h-[32rem] w-full rounded-md border border-slate-300 bg-white"
-                    referrerPolicy="no-referrer"
-                    sandbox="allow-same-origin"
-                    src={originalPdfUrl}
-                    title="Original PDF preview"
-                  />
-                )}
+                <OriginalPagePreview
+                  documentId={documentId}
+                  key={`${documentId}:${selectedPage.page_number}`}
+                  pageNumber={selectedPage.page_number}
+                />
                 <p className="mt-3 text-xs leading-5 text-slate-600">
-                  If your browser cannot display PDFs here, use Open original PDF. The file remains
-                  behind your signed-in Studio session.
+                  This page image does not change the original PDF. Use Open
+                  original PDF for the full file, protected by your signed-in
+                  Studio session.
                 </p>
               </section>
 
@@ -670,7 +1054,8 @@ export function ExtractionReviewStudio({
               >
                 <h2 className="text-lg font-semibold">Reviewed text</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Correct reading mistakes without changing the immutable source copy.
+                  Correct reading mistakes without changing the immutable source
+                  copy.
                 </p>
                 {canEdit ? (
                   <form
@@ -681,8 +1066,15 @@ export function ExtractionReviewStudio({
                       Corrected text for page {selectedPage.page_number}
                       <textarea
                         className="min-h-56 rounded-md border border-slate-300 p-3 font-normal outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-200"
-                        defaultValue={selectedPage.reviewed_text ?? selectedPage.raw_text}
                         name="reviewed_text"
+                        onChange={(event) =>
+                          editPage(selectedPage, event.currentTarget.value)
+                        }
+                        value={
+                          pageDrafts[selectedPage.id]?.reviewedText ??
+                          selectedPage.reviewed_text ??
+                          selectedPage.raw_text
+                        }
                       />
                     </label>
                     <button className={secondaryButton} type="submit">
@@ -709,8 +1101,10 @@ export function ExtractionReviewStudio({
                   <ProvenanceDefinition
                     label="Extractor"
                     value={
-                      boundedIdentity(selectedPage.extractor, MAX_ENGINE_CHARACTERS) ??
-                      "Not recorded"
+                      boundedIdentity(
+                        selectedPage.extractor,
+                        MAX_ENGINE_CHARACTERS,
+                      ) ?? "Not recorded"
                     }
                   />
                   <ProvenanceDefinition
@@ -728,7 +1122,9 @@ export function ExtractionReviewStudio({
                   />
                 </dl>
                 <p className="mt-3 text-sm text-slate-600">
-                  {selectedBlocks.length} extraction {selectedBlocks.length === 1 ? "block" : "blocks"} recorded for this page.
+                  {selectedBlocks.length} extraction{" "}
+                  {selectedBlocks.length === 1 ? "block" : "blocks"} recorded
+                  for this page.
                 </p>
               </section>
             </details>
@@ -748,9 +1144,13 @@ export function ExtractionReviewStudio({
         Back to documents
       </Link>
       <header className="mt-5 border-b border-slate-300 pb-6">
-        <p className="font-mono text-xs uppercase text-amber-700">Human verification gate</p>
+        <p className="font-mono text-xs uppercase text-amber-700">
+          Human verification gate
+        </p>
         <h1 className="mt-2 text-3xl font-semibold">Extraction review</h1>
-        <p className="mt-2 break-words text-slate-600">{document.original_filename}</p>
+        <p className="mt-2 break-words text-slate-600">
+          {document.original_filename}
+        </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <span className="rounded-full bg-slate-200 px-3 py-1 text-sm font-semibold">
             {document.extraction_status === "trusted"
@@ -769,6 +1169,7 @@ export function ExtractionReviewStudio({
           {document.extraction_status === "in_review" && role === "admin" && (
             <button
               className={buttonClass}
+              disabled={trustDisabled}
               onClick={() => void trustSource()}
               type="button"
             >
@@ -777,13 +1178,17 @@ export function ExtractionReviewStudio({
           )}
         </div>
 
+        {trustFeedback}
         <section
           aria-label="Document extraction provenance"
           className="mt-5 rounded-lg border border-slate-300 bg-slate-50 p-4"
         >
-          <h2 className="text-base font-semibold">Persisted extraction provenance</h2>
+          <h2 className="text-base font-semibold">
+            Persisted extraction provenance
+          </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Only bounded provenance fields are shown; nested configuration values are not expanded.
+            Only bounded provenance fields are shown; nested configuration
+            values are not expanded.
           </p>
           <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <ProvenanceDefinition
@@ -792,7 +1197,10 @@ export function ExtractionReviewStudio({
             />
             <ProvenanceDefinition
               label="Document extractor"
-              value={displayExtractorIdentity(document.extractor, document.extractor_version)}
+              value={displayExtractorIdentity(
+                document.extractor,
+                document.extractor_version,
+              )}
             />
             <ProvenanceDefinition
               label="OCR page count"
@@ -827,17 +1235,21 @@ export function ExtractionReviewStudio({
             className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"
           >
             <p className="font-semibold">
-              OCR-derived text is untrusted source content. Human review is required before trust or
-              downstream use.
+              OCR-derived text is untrusted source content. Human review is
+              required before trust or downstream use.
             </p>
             <p className="mt-1 text-sm">
-              Recorded confidence is provenance only; no OCR quality claim is made.
+              Recorded confidence is provenance only; no OCR quality claim is
+              made.
             </p>
           </aside>
         )}
 
         {notice && (
-          <p className="mt-4 rounded-md bg-emerald-50 p-3 text-emerald-900" role="status">
+          <p
+            className="mt-4 rounded-md bg-emerald-50 p-3 text-emerald-900"
+            role="status"
+          >
             {notice}
           </p>
         )}
@@ -876,14 +1288,17 @@ export function ExtractionReviewStudio({
                   <ProvenanceDefinition
                     label="Extractor"
                     value={
-                      boundedIdentity(page.extractor, MAX_ENGINE_CHARACTERS) ?? "Not recorded"
+                      boundedIdentity(page.extractor, MAX_ENGINE_CHARACTERS) ??
+                      "Not recorded"
                     }
                   />
                   <ProvenanceDefinition
                     label="Extractor version"
                     value={
-                      boundedIdentity(page.extractor_version, MAX_ENGINE_VERSION_CHARACTERS) ??
-                      "Not recorded"
+                      boundedIdentity(
+                        page.extractor_version,
+                        MAX_ENGINE_VERSION_CHARACTERS,
+                      ) ?? "Not recorded"
                     }
                   />
                   <ProvenanceDefinition
@@ -924,8 +1339,15 @@ export function ExtractionReviewStudio({
                         Reviewed page {page.page_number} text
                         <textarea
                           className="min-h-32 rounded-md border border-slate-300 p-3"
-                          defaultValue={page.reviewed_text ?? page.raw_text}
                           name="reviewed_text"
+                          onChange={(event) =>
+                            editPage(page, event.currentTarget.value)
+                          }
+                          value={
+                            pageDrafts[page.id]?.reviewedText ??
+                            page.reviewed_text ??
+                            page.raw_text
+                          }
                         />
                       </label>
                       <button className={secondaryButton} type="submit">
@@ -961,8 +1383,13 @@ export function ExtractionReviewStudio({
                 {pageBlocks.length ? (
                   <ol className="mt-3 grid gap-3">
                     {pageBlocks.map((block, index) => (
-                      <li className="rounded border border-slate-200 p-3 text-sm" key={block.id}>
-                        <section aria-label={`Block ${index + 1} extraction provenance`}>
+                      <li
+                        className="rounded border border-slate-200 p-3 text-sm"
+                        key={block.id}
+                      >
+                        <section
+                          aria-label={`Block ${index + 1} extraction provenance`}
+                        >
                           <h3 className="font-semibold">Block {index + 1}</h3>
                           <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                             <ProvenanceDefinition
@@ -972,8 +1399,10 @@ export function ExtractionReviewStudio({
                             <ProvenanceDefinition
                               label="Extractor"
                               value={
-                                boundedIdentity(block.extractor, MAX_ENGINE_CHARACTERS) ??
-                                "Not recorded"
+                                boundedIdentity(
+                                  block.extractor,
+                                  MAX_ENGINE_CHARACTERS,
+                                ) ?? "Not recorded"
                               }
                             />
                             <ProvenanceDefinition
@@ -999,7 +1428,9 @@ export function ExtractionReviewStudio({
                               </dt>
                               <dd className="mt-2 text-sm text-slate-900">
                                 {" "}
-                                <ScalarConfig config={block.extraction_config} />
+                                <ScalarConfig
+                                  config={block.extraction_config}
+                                />
                               </dd>
                             </div>
                           </dl>
@@ -1011,7 +1442,9 @@ export function ExtractionReviewStudio({
                     ))}
                   </ol>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-600">No extraction blocks recorded.</p>
+                  <p className="mt-3 text-sm text-slate-600">
+                    No extraction blocks recorded.
+                  </p>
                 )}
               </details>
             </article>

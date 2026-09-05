@@ -1,7 +1,8 @@
 import asyncio
+import json
 from collections.abc import Iterator
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -448,3 +449,412 @@ def test_upload_rejects_spoofed_pdf(upload_database_url: str) -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "invalid_pdf_signature"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "metadata",
+    ["", "{", "null", "[]", '{"trusted":true}', '{"candidate_grade":true}', ["{}", "{}"]],
+)
+def test_upload_rejects_invalid_intake_metadata(
+    upload_database_url: str,
+    metadata: str | list[str],
+) -> None:
+    storage = RecordingObjectStorage()
+    with upload_client(upload_database_url, storage) as client:
+        response = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "other_approved", "intake_metadata": metadata},
+            files={"file": ("invalid-intake.pdf", VALID_PDF, "application/pdf")},
+            headers={"Authorization": "Bearer admin-token"},
+        )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_intake_metadata"
+    assert storage.puts == []
+
+
+@pytest.mark.integration
+def test_unassigned_intake_display_confirmation_and_database_guards(
+    upload_database_url: str,
+) -> None:
+    from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
+
+    headers = {"Authorization": "Bearer admin-token"}
+    storage = RecordingObjectStorage()
+    metadata = {
+        "candidate_grade": 7,
+        "subject_label": "Unverified mathematics",
+        "medium_label": "Unverified English",
+        "curriculum_label": "Folder claim only",
+        "document_type_label": "Worksheet",
+        "year": 2024,
+        "term": "Term 2",
+        "publisher": "Unknown publisher",
+        "source_reference": "local-folder/source.pdf",
+        "evidence": ["Folder named Grade 7"],
+        "warnings": ["Curriculum not established"],
+    }
+    with upload_client(upload_database_url, storage) as client:
+        created = client.post(
+            "/api/v1/admin/source-documents",
+            data={"document_type": "other_approved", "intake_metadata": json.dumps(metadata)},
+            files={"file": ("unassigned-intake.pdf", VALID_PDF + b"\nintake", "application/pdf")},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        document_id = created.json()["id"]
+        assert created.json()["intake_metadata"] == metadata
+        assert created.json()["metadata_review_required"] is True
+        assert created.json()["curriculum_version_id"] is None
+        listed = client.get(
+            "/api/v1/admin/materials",
+            params={"grade": 7, "year": 2024, "unassigned_only": True, "document_id": document_id},
+            headers=headers,
+        )
+        assert listed.status_code == 200, listed.text
+        assert len(listed.json()) == 1
+        material = listed.json()[0]
+        assert material["grade"] == 7
+        assert material["subject"] == metadata["subject_label"]
+        assert material["subject_id"] is None
+        assert material["medium"] == metadata["medium_label"]
+        assert material["curriculum"] == metadata["curriculum_label"]
+        assert material["metadata_review_required"] is True
+        assert material["intake_metadata"] == metadata
+        assert material["status"] == "needs_review"
+        assert material["year"] == 2024
+        summary = client.get("/api/v1/admin/materials/grade-summary", headers=headers).json()
+        grade = next(row for row in summary if row["grade"] == 7)
+        assert grade["material_count"] == 1
+        assert grade["subject_count"] == 1
+        assert grade["needs_review_count"] == 1
+        assert grade["ready_count"] == 0
+        exact = client.get(
+            "/api/v1/admin/source-documents",
+            params={"document_id": document_id},
+            headers=headers,
+        )
+        assert [row["id"] for row in exact.json()] == [document_id]
+        unknown = client.post(
+            "/api/v1/admin/source-documents",
+            data={
+                "document_type": "other_approved",
+                "intake_metadata": json.dumps(
+                    {
+                        "candidate_grade": None,
+                        "warnings": ["Ambiguous grades 5 and 6"],
+                    }
+                ),
+            },
+            files={"file": ("ambiguous-intake.pdf", VALID_PDF + b"\nunknown", "application/pdf")},
+            headers=headers,
+        )
+        assert unknown.status_code == 201
+        unknown_item = client.get(
+            "/api/v1/admin/materials",
+            params={"document_id": unknown.json()["id"]},
+            headers=headers,
+        ).json()[0]
+        assert unknown_item["grade"] is None
+        summary = client.get("/api/v1/admin/materials/grade-summary", headers=headers).json()
+        assert next(row for row in summary if row["grade"] is None)["material_count"] >= 1
+
+        async def database_guards(version: int = 0) -> None:
+            engine = create_async_engine(upload_database_url)
+            try:
+                async with engine.connect() as connection:
+
+                    async def mutate(values: dict[str, object]) -> None:
+                        await connection.execute(
+                            update(SourceDocumentModel)
+                            .where(
+                                SourceDocumentModel.id == UUID(document_id),
+                            )
+                            .values(**values)
+                        )
+                        await connection.commit()
+
+                    mutations: tuple[dict[str, object], ...] = (
+                        {"intake_metadata": None},
+                        {"intake_metadata": {}},
+                        {"metadata_review_required": False},
+                        {"metadata_review_required": False, "metadata_scope_version": version + 1},
+                        {"extraction_status": "trusted"},
+                    )
+                    for mutation in mutations:
+                        with pytest.raises(IntegrityError):
+                            await mutate(mutation)
+                        await connection.rollback()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(database_guards())
+        subject = client.post(
+            "/api/v1/admin/subjects",
+            json={
+                "code": "INTAKE-MATH",
+                "name": "Reviewed mathematics",
+            },
+            headers=headers,
+        ).json()
+        exam = client.post(
+            "/api/v1/admin/exam-configurations",
+            json={
+                "code": "INTAKE-G8",
+                "name": "Grade 8",
+                "grade": 8,
+            },
+            headers=headers,
+        ).json()
+        medium = client.post(
+            "/api/v1/admin/media",
+            json={
+                "code": "intake-en",
+                "name": "Reviewed English",
+            },
+            headers=headers,
+        ).json()
+        curriculum = client.post(
+            "/api/v1/admin/curriculum-versions",
+            json={
+                "exam_configuration_id": exam["id"],
+                "medium_id": medium["id"],
+                "subject_id": subject["id"],
+                "code": "INTAKE-V1",
+                "title": "Reviewed scope",
+            },
+            headers=headers,
+        ).json()
+        scope_url = f"/api/v1/admin/materials/{document_id}/scope"
+        for invalid_scope, code in ((None, 422), (str(UUID(int=998877)), 404)):
+            invalid_confirmation = client.patch(
+                scope_url,
+                json={
+                    "curriculum_version_id": invalid_scope,
+                    "expected_version": 0,
+                    "confirm_intake_metadata": True,
+                },
+                headers=headers,
+            )
+            assert invalid_confirmation.status_code == code
+        inactive = client.post(
+            "/api/v1/admin/curriculum-versions",
+            json={
+                "exam_configuration_id": exam["id"],
+                "medium_id": medium["id"],
+                "subject_id": subject["id"],
+                "code": "INTAKE-INACTIVE",
+                "title": "Inactive",
+            },
+            headers=headers,
+        ).json()
+        assert (
+            client.post(
+                f"/api/v1/admin/curriculum-versions/{inactive['id']}/deactivate",
+                headers=headers,
+            ).status_code
+            == 200
+        )
+        invalid_confirmation = client.patch(
+            scope_url,
+            json={
+                "curriculum_version_id": inactive["id"],
+                "expected_version": 0,
+                "confirm_intake_metadata": True,
+            },
+            headers=headers,
+        )
+        assert invalid_confirmation.status_code == 409
+        assert invalid_confirmation.json()["detail"]["code"] == "material_scope_inactive"
+        request = {"curriculum_version_id": curriculum["id"], "expected_version": 0}
+        forbidden = client.patch(
+            scope_url,
+            json={**request, "confirm_intake_metadata": True},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        assert forbidden.status_code == 403
+        assigned = client.patch(scope_url, json=request, headers=headers)
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["metadata_review_required"] is True
+        asyncio.run(database_guards(version=1))
+        confirmed = client.patch(
+            scope_url,
+            json={
+                **request,
+                "expected_version": 1,
+                "confirm_intake_metadata": True,
+            },
+            headers=headers,
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["metadata_review_required"] is False
+        assert confirmed.json()["metadata_scope_version"] == 2
+        assert confirmed.json()["intake_metadata"] == metadata
+        assert confirmed.json()["extraction_status"] == "uploaded"
+        stale = client.patch(
+            scope_url,
+            json={
+                **request,
+                "expected_version": 1,
+                "confirm_intake_metadata": True,
+            },
+            headers=headers,
+        )
+        assert stale.status_code == 409
+        assigned_item = client.get(
+            "/api/v1/admin/materials",
+            params={"document_id": document_id},
+            headers=headers,
+        ).json()[0]
+        assert assigned_item["grade"] == 8
+        assert assigned_item["subject"] == "Reviewed mathematics"
+        assert assigned_item["medium"] == "Reviewed English"
+        assert (
+            client.get(
+                "/api/v1/admin/materials",
+                params={
+                    "document_id": document_id,
+                    "unassigned_only": True,
+                },
+                headers=headers,
+            ).json()
+            == []
+        )
+
+    async def audits() -> list[AdminAuditEventModel]:
+        engine = create_async_engine(upload_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                return list(
+                    await session.scalars(
+                        select(AdminAuditEventModel)
+                        .where(
+                            AdminAuditEventModel.resource_id == UUID(document_id),
+                        )
+                        .order_by(AdminAuditEventModel.created_at)
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+    events = asyncio.run(audits())
+    assert [event.action for event in events] == [
+        "source_document.uploaded",
+        "source_document.scope_corrected",
+        "source_document.intake_metadata_confirmed",
+    ]
+    assert events[0].payload["intake_metadata"] == metadata
+    assert events[-1].payload["intake_metadata"] == metadata
+    assert events[-1].payload["previous_version"] == 1
+
+
+@pytest.mark.integration
+def test_intake_migration_preserves_legacy_rows_and_bounded_database_contract() -> None:
+    from alembic import command
+    from sqlalchemy import text
+
+    from exam_guru_api.infrastructure.migrations import (
+        _config_for_database,
+        assert_database_schema_current,
+    )
+
+    with PostgresContainer(
+        image=PGVECTOR_IMAGE,
+        username="exam_guru",
+        password=uuid4().hex,
+        dbname="source_intake_migration_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        config = _config_for_database(database_url)
+        command.upgrade(config, "0031_teacher_draft_race_guards")
+
+        async def legacy_insert() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO source_documents (id, checksum_sha256, object_key, "
+                            "original_filename, content_type, size_bytes, document_type, "
+                            "created_by, updated_by) VALUES "
+                            "(:id, :checksum, :key, 'legacy.pdf', 'application/pdf', 20, "
+                            "'syllabus', :actor, :actor)"
+                        ),
+                        {
+                            "id": UUID(int=30100),
+                            "checksum": "b" * 64,
+                            "key": "sources/bb/" + "b" * 64 + ".pdf",
+                            "actor": ADMIN_ID,
+                        },
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(legacy_insert())
+        command.upgrade(config, "head")
+        assert_database_schema_current(database_url)
+
+        async def check_contract() -> None:
+            engine = create_async_engine(database_url)
+            try:
+                async with engine.connect() as connection:
+                    row = (
+                        await connection.execute(
+                            text(
+                                "SELECT intake_metadata, metadata_review_required "
+                                "FROM source_documents "
+                                "WHERE id = :id"
+                            ),
+                            {"id": UUID(int=30100)},
+                        )
+                    ).one()
+                    assert row == (None, False)
+                    valid: dict[str, object] = {
+                        "candidate_grade": None,
+                        "subject_label": "Mathematics",
+                        "evidence": [],
+                    }
+                    invalid: list[object] = [
+                        None,
+                        [],
+                        {"trusted": False},
+                        {"candidate_grade": True},
+                        {"candidate_grade": 14},
+                        {"candidate_grade": "7"},
+                        {"year": 1899},
+                        {"year": 2101},
+                        {"year": 2024.5},
+                        {"warnings": None},
+                        {"evidence": ["x"] * 33},
+                        {"evidence": ["x" * 1025]},
+                        {"evidence": [True]},
+                        {"evidence": [""]},
+                        {"evidence": [" padded"]},
+                        {"evidence": ["bad\ntext"]},
+                        {"term": "x" * 65},
+                        {"source_reference": "x" * 1025},
+                        {"publisher": "x" * 201},
+                        {"subject_label": 5},
+                        {"medium_label": ""},
+                        {"warnings": ["x" * 1024] * 32},
+                    ]
+                    for payload, expected in [(valid, True), *[(item, False) for item in invalid]]:
+                        assert (
+                            await connection.scalar(
+                                text(
+                                    "SELECT source_intake_metadata_is_bounded("
+                                    "CAST(:value AS jsonb))"
+                                ),
+                                {"value": json.dumps(payload)},
+                            )
+                            is expected
+                        )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(check_contract())
+        command.downgrade(config, "0031_teacher_draft_race_guards")
+        command.upgrade(config, "head")
+        asyncio.run(check_contract())

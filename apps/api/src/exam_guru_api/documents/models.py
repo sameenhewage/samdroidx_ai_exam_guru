@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    false,
     text,
     true,
 )
@@ -54,6 +55,14 @@ class SourceDocumentModel(AuditColumns, Base):
             name="extraction_status",
         ),
         CheckConstraint("size_bytes > 0", name="ck_source_document_positive_size"),
+        CheckConstraint(
+            "intake_metadata IS NULL OR source_intake_metadata_is_bounded(intake_metadata)",
+            name="ck_source_documents_intake_metadata",
+        ),
+        CheckConstraint(
+            "NOT metadata_review_required OR extraction_status <> 'trusted'",
+            name="ck_source_documents_metadata_review_trust",
+        ),
         CheckConstraint(
             "year IS NULL OR year BETWEEN 1900 AND 2100",
             name="ck_source_document_year",
@@ -229,6 +238,16 @@ class SourceDocumentModel(AuditColumns, Base):
         nullable=False,
         default=0,
         server_default="0",
+    )
+    intake_metadata: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    metadata_review_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
     )
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     paper_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

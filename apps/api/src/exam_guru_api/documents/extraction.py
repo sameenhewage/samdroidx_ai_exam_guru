@@ -1,6 +1,8 @@
+import hashlib
 import math
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -14,6 +16,10 @@ from exam_guru_api.documents.ocr import (
     snapshot_ocr_config,
 )
 
+KNOWN_CORRUPT_SOURCE_FINGERPRINT = (
+    "sha256:a5678c45e0f2f8aced55359ad9d805d30aca136b66e2a8d713199b90800c6058"
+)
+_RISKY_FONT_PREFIX = re.compile(r"^(?:fm|dl|thibus|niesin|kaputa|amalee)", re.IGNORECASE)
 _IMAGE_DOMINANT_COVERAGE = 0.8
 _SPARSE_OVERLAY_CHARACTER_LIMIT = 200
 _SAFE_TEXT_CONTROLS = frozenset("\t\n\r")
@@ -184,6 +190,25 @@ def ocr_page_numbers(pages: Sequence[ExtractedPage]) -> tuple[int, ...]:
     return tuple(page.page_number for page in pages if page_requires_ocr(page))
 
 
+def native_review_config(
+    pages: Sequence[ExtractedPage],
+    checksum_sha256: str,
+) -> dict[str, OCRConfigValue]:
+    risk_pages = tuple(
+        page.page_number for page in pages if (page.extraction_config or {}).get("font_risk")
+    )
+    config: dict[str, OCRConfigValue] = {}
+    if risk_pages:
+        config.update(
+            font_risk=True,
+            font_risk_page_numbers=",".join(map(str, risk_pages)),
+            font_risk_page_count=len(risk_pages),
+        )
+    if f"sha256:{checksum_sha256}" == KNOWN_CORRUPT_SOURCE_FINGERPRINT:
+        config.update(font_risk=True, known_review_warning="confirmed_text_corruption")
+    return config
+
+
 class PyMuPdfExtractor:
     def __init__(self, *, max_pages: int) -> None:
         if (
@@ -236,6 +261,12 @@ class PyMuPdfExtractor:
         )
         image_dominant_page_ratio = image_dominant_pages / len(pages)
         selected_ocr_pages = ocr_page_numbers(pages)
+        config = snapshot_ocr_config(
+            {
+                **config,
+                **native_review_config(pages, hashlib.sha256(data).hexdigest()),
+            }
+        )
         native_manifest: dict[str, object] = {
             "mode": ExtractionMode.NATIVE.value,
             "native": {
@@ -290,15 +321,61 @@ class PyMuPdfExtractor:
                     extraction_config=extraction_config,
                 )
             )
+        text = "\n".join(block.text for block in blocks)
+        risk_config = PyMuPdfExtractor._page_font_risk(page, text)
+        if risk_config:
+            extraction_config = snapshot_ocr_config({**(extraction_config or {}), **risk_config})
+            blocks = [replace(block, extraction_config=extraction_config) for block in blocks]
         return ExtractedPage(
             page_number=page_number,
-            text="\n".join(block.text for block in blocks),
+            text=text,
             blocks=tuple(blocks),
             largest_image_coverage=PyMuPdfExtractor._largest_image_coverage(page),
             extractor=extractor,
             extractor_version=extractor_version,
             extraction_config=extraction_config,
         )
+
+    @staticmethod
+    def _page_font_risk(page: Any, text: str) -> dict[str, OCRConfigValue]:
+        names: set[str] = set()
+        if hasattr(page, "get_fonts"):
+            for font in page.get_fonts(full=True):
+                names.update(str(name) for name in font[3:5])
+            spans = page.get_text(
+                "dict",
+                sort=True,
+                flags=pymupdf.TEXTFLAGS_DICT & ~pymupdf.TEXT_PRESERVE_IMAGES,
+            )
+            for block in spans.get("blocks", []):
+                for line in block.get("lines", []):
+                    names.update(str(span.get("font", "")) for span in line.get("spans", []))
+        risky = sorted(
+            name for name in names if _RISKY_FONT_PREFIX.match(re.sub(r"^[A-Za-z]{6}\+", "", name))
+        )
+        private_use = sum(
+            0xE000 <= ord(character) <= 0xF8FF
+            or 0xF0000 <= ord(character) <= 0xFFFFD
+            or 0x100000 <= ord(character) <= 0x10FFFD
+            for character in text
+        )
+        replacement = text.count("\ufffd")
+        if not risky and not private_use and not replacement:
+            return {}
+        return {
+            "font_risk": True,
+            "risky_font_names": ",".join(
+                "".join(
+                    character
+                    for character in name
+                    if not _contains_unsafe_text_character(character)
+                )[:128]
+                for name in risky[:32]
+            ),
+            "risky_font_names_truncated": len(risky) > 32 or any(len(name) > 128 for name in risky),
+            "private_use_glyph_count": private_use,
+            "replacement_glyph_count": replacement,
+        }
 
     @staticmethod
     def _largest_image_coverage(page: Any) -> float:

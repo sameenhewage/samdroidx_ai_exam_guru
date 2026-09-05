@@ -13,6 +13,22 @@ from exam_guru_api.core.config import (
 )
 
 
+def test_pdf_size_ceiling_accepts_256_mib_without_raising_defaults() -> None:
+    defaults = Settings(environment="test")
+    assert defaults.max_upload_bytes == defaults.ocr_tesseract_max_source_bytes == 25 * 1024 * 1024
+    ceiling = 256 * 1024 * 1024
+    settings = Settings(
+        environment="test",
+        ocr_provider="tesseract",
+        max_upload_bytes=ceiling,
+        ocr_tesseract_max_source_bytes=ceiling,
+    )
+    assert settings.max_upload_bytes == settings.ocr_tesseract_max_source_bytes == ceiling
+    for field in ("max_upload_bytes", "ocr_tesseract_max_source_bytes"):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({"environment": "test", field: ceiling + 1})
+
+
 def test_settings_redact_connection_credentials() -> None:
     settings = Settings(
         database_url=SecretStr("postgresql+asyncpg://user:database-secret@db/app"),

@@ -18,6 +18,7 @@ import {
 } from "react";
 
 import type { AdminRole } from "./admin-header";
+import { MaterialIntakeMetadata } from "./material-details";
 
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type ExamConfiguration = components["schemas"]["ExamConfigurationResponse"];
@@ -101,33 +102,50 @@ type MaterialDiscovery = {
 };
 
 const errorMessages: Record<string, string> = {
-  authentication_required: "Your session has expired. Sign in again before retrying.",
+  authentication_required:
+    "Your session has expired. Sign in again before retrying.",
   concurrent_material_scope_modification:
     "This material changed in another session. Close this window, refresh Materials, and try again.",
-  curriculum_version_inactive: "That curriculum is no longer active. Choose another curriculum.",
+  curriculum_version_inactive:
+    "That curriculum is no longer active. Choose another curriculum.",
   empty_file: "The selected PDF is empty.",
-  file_too_large: "The selected PDF is larger than the configured upload limit.",
+  file_too_large:
+    "The selected PDF is larger than the configured upload limit.",
   invalid_pdf_signature: "The selected file is not a valid PDF.",
   invalid_removal_reason: "Enter a reason using 1–512 printable characters.",
-  learning_scope_inactive: "That unit or lesson is no longer active. Choose an active option.",
-  learning_scope_mismatch: "The unit or lesson does not belong to the selected curriculum.",
-  material_scope_inactive: "That curriculum, unit, or lesson is no longer active.",
-  material_scope_mismatch: "The selected unit or lesson does not belong to that curriculum.",
-  material_scope_not_found: "That curriculum, unit, or lesson could not be found.",
-  network_error: "The connection was interrupted. Your choices are still here; try again.",
-  permission_denied: "Your account does not have permission to make this change.",
+  learning_scope_inactive:
+    "That unit or lesson is no longer active. Choose an active option.",
+  learning_scope_mismatch:
+    "The unit or lesson does not belong to the selected curriculum.",
+  material_scope_inactive:
+    "That curriculum, unit, or lesson is no longer active.",
+  material_scope_mismatch:
+    "The selected unit or lesson does not belong to that curriculum.",
+  material_scope_not_found:
+    "That curriculum, unit, or lesson could not be found.",
+  network_error:
+    "The connection was interrupted. Your choices are still here; try again.",
+  permission_denied:
+    "Your account does not have permission to make this change.",
   request_too_large: "The upload is larger than the same-origin request limit.",
-  service_unavailable: "Materials are temporarily unavailable. Try again shortly.",
+  service_unavailable:
+    "Materials are temporarily unavailable. Try again shortly.",
   trusted_material_scope_immutable_remove_from_use:
     "This material already has trusted or downstream content. Remove it from use instead, then upload a correctly scoped version so provenance remains intact.",
-  unsafe_filename: "Rename the PDF to remove path or control characters, then try again.",
+  unsafe_filename:
+    "Rename the PDF to remove path or control characters, then try again.",
   unsupported_media_type: "Only PDF files can be uploaded.",
 };
 
 function errorCode(error: unknown): string {
   if (error && typeof error === "object" && "detail" in error) {
     const detail = (error as { detail?: unknown }).detail;
-    if (detail && typeof detail === "object" && !Array.isArray(detail) && "code" in detail) {
+    if (
+      detail &&
+      typeof detail === "object" &&
+      !Array.isArray(detail) &&
+      "code" in detail
+    ) {
       return String((detail as { code: unknown }).code);
     }
   }
@@ -149,7 +167,7 @@ function networkError(): UiError {
   return { code: "network_error", message: errorMessages.network_error };
 }
 
-function emptyGradeSummary(grade: number): GradeSummary {
+function emptyGradeSummary(grade: number | null): GradeSummary {
   return {
     grade,
     material_count: 0,
@@ -161,19 +179,27 @@ function emptyGradeSummary(grade: number): GradeSummary {
   };
 }
 
-function completeGradeSummaries(summaries: readonly GradeSummary[]): GradeSummary[] {
+function completeGradeSummaries(
+  summaries: readonly GradeSummary[],
+): GradeSummary[] {
   const byGrade = new Map(summaries.map((summary) => [summary.grade, summary]));
-  return grades.map((grade) => byGrade.get(grade) ?? emptyGradeSummary(grade));
+  return [...grades, null].map(
+    (grade) => byGrade.get(grade) ?? emptyGradeSummary(grade),
+  );
 }
 
-function examBadge(grade: number): string | null {
+function examBadge(grade: number | null): string | null {
   if (grade === 5) return "Scholarship";
   if (grade === 11) return "O/L";
   if (grade === 13) return "A/L";
   return null;
 }
 
-function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+function plural(
+  count: number,
+  singular: string,
+  pluralForm = `${singular}s`,
+): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
@@ -195,10 +221,18 @@ function formatBytes(bytes: number): string {
 }
 
 function validatePdf(file: File | null): UiError | null {
-  if (!file) return { code: "pdf_required", message: "Choose a PDF file to continue." };
-  if (file.size === 0) return { code: "empty_file", message: errorMessages.empty_file };
-  if (file.type !== "application/pdf" || !file.name.toLocaleLowerCase().endsWith(".pdf")) {
-    return { code: "invalid_pdf_selection", message: "Choose a PDF file with a .pdf name." };
+  if (!file)
+    return { code: "pdf_required", message: "Choose a PDF file to continue." };
+  if (file.size === 0)
+    return { code: "empty_file", message: errorMessages.empty_file };
+  if (
+    file.type !== "application/pdf" ||
+    !file.name.toLocaleLowerCase().endsWith(".pdf")
+  ) {
+    return {
+      code: "invalid_pdf_selection",
+      message: "Choose a PDF file with a .pdf name.",
+    };
   }
   if (
     file.name !== file.name.normalize("NFC") ||
@@ -223,7 +257,8 @@ function uploadFormData(body: UploadBody, file: File): FormData {
   }
   if (body.unit_id) form.append("unit_id", body.unit_id);
   if (body.lesson_id) form.append("lesson_id", body.lesson_id);
-  if (body.year !== undefined && body.year !== null) form.append("year", String(body.year));
+  if (body.year !== undefined && body.year !== null)
+    form.append("year", String(body.year));
   if (body.paper_code) form.append("paper_code", body.paper_code);
   return form;
 }
@@ -243,7 +278,10 @@ function Modal({
     onCloseRef.current = onClose;
   }, [onClose]);
   useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const dialog = dialogRef.current;
     const focusable = () =>
       Array.from(
@@ -295,7 +333,10 @@ function Modal({
 
 function InlineError({ error, title }: { error: UiError; title: string }) {
   return (
-    <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-950" role="alert">
+    <div
+      className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-950"
+      role="alert"
+    >
       <p className="font-semibold">{title}</p>
       <p className="mt-1 leading-6">{error.message}</p>
     </div>
@@ -308,7 +349,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     [],
   );
   const [summaries, setSummaries] = useState<GradeSummary[]>([]);
-  const [examConfigurations, setExamConfigurations] = useState<ExamConfiguration[]>([]);
+  const [examConfigurations, setExamConfigurations] = useState<
+    ExamConfiguration[]
+  >([]);
   const [media, setMedia] = useState<Medium[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [curricula, setCurricula] = useState<Curriculum[]>([]);
@@ -318,8 +361,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [selectedSubject, setSelectedSubject] = useState("");
   const [materialSearch, setMaterialSearch] = useState("");
   const [selectedMedium, setSelectedMedium] = useState("");
-  const [selectedMaterialType, setSelectedMaterialType] = useState<MaterialType | "">("");
-  const [selectedMaterialStatus, setSelectedMaterialStatus] = useState<MaterialStatus | "">("");
+  const [selectedMaterialType, setSelectedMaterialType] = useState<
+    MaterialType | ""
+  >("");
+  const [selectedMaterialStatus, setSelectedMaterialStatus] = useState<
+    MaterialStatus | ""
+  >("");
   const [selectedYear, setSelectedYear] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<UiError | null>(null);
@@ -336,7 +383,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [wizardGrade, setWizardGrade] = useState("");
   const [wizardMediumId, setWizardMediumId] = useState("");
   const [wizardSubjectId, setWizardSubjectId] = useState("");
-  const [wizardMaterialType, setWizardMaterialType] = useState<MaterialType>("syllabus");
+  const [wizardMaterialType, setWizardMaterialType] =
+    useState<MaterialType>("syllabus");
   const [wizardYear, setWizardYear] = useState("");
   const [wizardCurriculumId, setWizardCurriculumId] = useState("");
   const [wizardUnitId, setWizardUnitId] = useState("");
@@ -363,6 +411,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [scopeLessons, setScopeLessons] = useState<Lesson[]>([]);
   const [scopeLoading, setScopeLoading] = useState(false);
   const [scopeSaving, setScopeSaving] = useState(false);
+  const [confirmIntakeMetadata, setConfirmIntakeMetadata] = useState(false);
   const [scopeError, setScopeError] = useState<UiError | null>(null);
 
   const sourceById = useMemo(
@@ -370,10 +419,19 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     [sources],
   );
   const examById = useMemo(
-    () => new Map(examConfigurations.map((configuration) => [configuration.id, configuration])),
+    () =>
+      new Map(
+        examConfigurations.map((configuration) => [
+          configuration.id,
+          configuration,
+        ]),
+      ),
     [examConfigurations],
   );
-  const mediumById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
+  const mediumById = useMemo(
+    () => new Map(media.map((item) => [item.id, item])),
+    [media],
+  );
   const subjectById = useMemo(
     () => new Map(subjects.map((subject) => [subject.id, subject])),
     [subjects],
@@ -387,16 +445,25 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     try {
-      const [summaryResult, examResult, mediaResult, subjectResult, curriculumResult, sourceResult] =
-        await Promise.all([
-          api.GET("/api/v1/admin/materials/grade-summary"),
-          api.GET("/api/v1/admin/exam-configurations"),
-          api.GET("/api/v1/admin/media"),
-          api.GET("/api/v1/admin/subjects"),
-          api.GET("/api/v1/admin/curriculum-versions"),
-          api.GET("/api/v1/admin/source-documents"),
-        ]);
-      const workspaceResults: ReadonlyArray<{ error?: unknown; response: Response }> = [
+      const [
+        summaryResult,
+        examResult,
+        mediaResult,
+        subjectResult,
+        curriculumResult,
+        sourceResult,
+      ] = await Promise.all([
+        api.GET("/api/v1/admin/materials/grade-summary"),
+        api.GET("/api/v1/admin/exam-configurations"),
+        api.GET("/api/v1/admin/media"),
+        api.GET("/api/v1/admin/subjects"),
+        api.GET("/api/v1/admin/curriculum-versions"),
+        api.GET("/api/v1/admin/source-documents"),
+      ]);
+      const workspaceResults: ReadonlyArray<{
+        error?: unknown;
+        response: Response;
+      }> = [
         summaryResult,
         examResult,
         mediaResult,
@@ -404,7 +471,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         curriculumResult,
         sourceResult,
       ];
-      const failure = workspaceResults.find((result) => !result.response.ok || result.error);
+      const failure = workspaceResults.find(
+        (result) => !result.response.ok || result.error,
+      );
       if (failure) {
         setWorkspaceError(uiError(failure.error, failure.response.status));
         return;
@@ -424,14 +493,14 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
   const discoverMaterials = useCallback(
     async (
-      grade: number,
+      grade: number | null,
       subjectId: string,
       offset: number,
     ): Promise<MaterialDiscovery> => {
       const result = await api.GET("/api/v1/admin/materials", {
         params: {
           query: {
-            grade,
+            ...(grade === null ? { unassigned_only: true } : { grade }),
             limit: MATERIAL_PAGE_LIMIT,
             material_type: selectedMaterialType || null,
             medium_id: selectedMedium || null,
@@ -467,7 +536,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   );
 
   const loadMaterials = useCallback(
-    async (grade: number, subjectId: string, offset = 0) => {
+    async (grade: number | null, subjectId: string, offset = 0) => {
       const requestId = ++materialsRequestId.current;
       setMaterialsLoading(true);
       setMaterialsError(null);
@@ -482,37 +551,43 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
           setMaterialsHasNext(result.hasNext);
         }
       } catch {
-        if (requestId === materialsRequestId.current) setMaterialsError(networkError());
+        if (requestId === materialsRequestId.current)
+          setMaterialsError(networkError());
       } finally {
-        if (requestId === materialsRequestId.current) setMaterialsLoading(false);
+        if (requestId === materialsRequestId.current)
+          setMaterialsLoading(false);
       }
     },
     [discoverMaterials],
   );
 
-  const refreshCatalog = useCallback(async (
-    grade: number | null = selectedGrade,
-    subjectId: string = selectedSubject,
-  ) => {
-    try {
-      const [summaryResult, sourceResult, materialResult] = await Promise.all([
-        api.GET("/api/v1/admin/materials/grade-summary"),
-        api.GET("/api/v1/admin/source-documents"),
-        grade === null
-          ? Promise.resolve(null)
-          : discoverMaterials(grade, subjectId, 0),
-      ]);
-      if (!summaryResult.error) setSummaries(completeGradeSummaries(summaryResult.data ?? []));
-      if (!sourceResult.error) setSources(sourceResult.data ?? []);
-      if (materialResult && !materialResult.error) {
-        setMaterials(materialResult.items);
-        setMaterialsOffset(0);
-        setMaterialsHasNext(materialResult.hasNext);
+  const refreshCatalog = useCallback(
+    async (
+      grade: number | null = selectedGrade,
+      subjectId: string = selectedSubject,
+    ) => {
+      try {
+        const [summaryResult, sourceResult, materialResult] = await Promise.all(
+          [
+            api.GET("/api/v1/admin/materials/grade-summary"),
+            api.GET("/api/v1/admin/source-documents"),
+            discoverMaterials(grade, subjectId, 0),
+          ],
+        );
+        if (!summaryResult.error)
+          setSummaries(completeGradeSummaries(summaryResult.data ?? []));
+        if (!sourceResult.error) setSources(sourceResult.data ?? []);
+        if (materialResult && !materialResult.error) {
+          setMaterials(materialResult.items);
+          setMaterialsOffset(0);
+          setMaterialsHasNext(materialResult.hasNext);
+        }
+      } catch {
+        // The completed mutation remains authoritative. A later manual retry can refresh the catalog.
       }
-    } catch {
-      // The completed mutation remains authoritative. A later manual retry can refresh the catalog.
-    }
-  }, [api, discoverMaterials, selectedGrade, selectedSubject]);
+    },
+    [api, discoverMaterials, selectedGrade, selectedSubject],
+  );
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadWorkspace(), 0);
@@ -520,7 +595,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   }, [loadWorkspace]);
 
   useEffect(() => {
-    if (selectedGrade === null || workspaceError) return;
+    if (workspaceError) return;
     const timeout = window.setTimeout(
       () => void loadMaterials(selectedGrade, selectedSubject),
       0,
@@ -543,11 +618,13 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
   const activeWizardUnits = wizardUnits.filter((unit) => unit.active);
   const activeWizardLessons = wizardLessons.filter(
-    (lesson) => lesson.active && (!wizardUnitId || lesson.unit_id === wizardUnitId),
+    (lesson) =>
+      lesson.active && (!wizardUnitId || lesson.unit_id === wizardUnitId),
   );
   const activeScopeUnits = scopeUnits.filter((unit) => unit.active);
   const activeScopeLessons = scopeLessons.filter(
-    (lesson) => lesson.active && (!scopeUnitId || lesson.unit_id === scopeUnitId),
+    (lesson) =>
+      lesson.active && (!scopeUnitId || lesson.unit_id === scopeUnitId),
   );
 
   const loadWizardScope = useCallback(
@@ -560,18 +637,26 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       setWizardScopeLoading(true);
       try {
         const [unitResult, lessonResult] = await Promise.all([
-          api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/units", {
-            params: { path: { curriculum_version_id: curriculumId } },
-          }),
-          api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons", {
-            params: { path: { curriculum_version_id: curriculumId } },
-          }),
+          api.GET(
+            "/api/v1/admin/curriculum-versions/{curriculum_version_id}/units",
+            {
+              params: { path: { curriculum_version_id: curriculumId } },
+            },
+          ),
+          api.GET(
+            "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons",
+            {
+              params: { path: { curriculum_version_id: curriculumId } },
+            },
+          ),
         ]);
         if (unitResult.error || lessonResult.error) {
           setWizardError(
             uiError(
               unitResult.error ?? lessonResult.error,
-              unitResult.error ? unitResult.response.status : lessonResult.response.status,
+              unitResult.error
+                ? unitResult.response.status
+                : lessonResult.response.status,
             ),
           );
         } else {
@@ -599,18 +684,26 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       setScopeLoading(true);
       try {
         const [unitResult, lessonResult] = await Promise.all([
-          api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/units", {
-            params: { path: { curriculum_version_id: curriculumId } },
-          }),
-          api.GET("/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons", {
-            params: { path: { curriculum_version_id: curriculumId } },
-          }),
+          api.GET(
+            "/api/v1/admin/curriculum-versions/{curriculum_version_id}/units",
+            {
+              params: { path: { curriculum_version_id: curriculumId } },
+            },
+          ),
+          api.GET(
+            "/api/v1/admin/curriculum-versions/{curriculum_version_id}/lessons",
+            {
+              params: { path: { curriculum_version_id: curriculumId } },
+            },
+          ),
         ]);
         if (unitResult.error || lessonResult.error) {
           setScopeError(
             uiError(
               unitResult.error ?? lessonResult.error,
-              unitResult.error ? unitResult.response.status : lessonResult.response.status,
+              unitResult.error
+                ? unitResult.response.status
+                : lessonResult.response.status,
             ),
           );
         } else {
@@ -652,21 +745,31 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   async function continueWizard() {
     setWizardError(null);
     if (wizardStep === 0 && !wizardGrade) {
-      setWizardError({ code: "grade_required", message: "Choose a grade to continue." });
+      setWizardError({
+        code: "grade_required",
+        message: "Choose a grade to continue.",
+      });
       return;
     }
     if (wizardStep === 1 && !wizardMediumId) {
-      setWizardError({ code: "medium_required", message: "Choose a medium to continue." });
+      setWizardError({
+        code: "medium_required",
+        message: "Choose a medium to continue.",
+      });
       return;
     }
     if (wizardStep === 2 && !wizardSubjectId) {
-      setWizardError({ code: "subject_required", message: "Choose a subject to continue." });
+      setWizardError({
+        code: "subject_required",
+        message: "Choose a subject to continue.",
+      });
       return;
     }
     if (wizardStep === 3) {
       const defaultCurriculum =
-        wizardCurricula.find((curriculum) => curriculum.id === wizardCurriculumId) ??
-        wizardCurricula[0];
+        wizardCurricula.find(
+          (curriculum) => curriculum.id === wizardCurriculumId,
+        ) ?? wizardCurricula[0];
       if (!defaultCurriculum) {
         setWizardError({
           code: "curriculum_required",
@@ -688,11 +791,16 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         });
         return;
       }
-      const needsYear = ["past_paper", "marking_scheme", "evaluation_report"].includes(
-        wizardMaterialType,
-      );
+      const needsYear = [
+        "past_paper",
+        "marking_scheme",
+        "evaluation_report",
+      ].includes(wizardMaterialType);
       const year = Number(wizardYear);
-      if (needsYear && (!Number.isInteger(year) || year < 1900 || year > 2100)) {
+      if (
+        needsYear &&
+        (!Number.isInteger(year) || year < 1900 || year > 2100)
+      ) {
         setWizardError({
           code: "year_required",
           message: "Enter a whole year from 1900 through 2100.",
@@ -748,7 +856,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         bodySerializer: (requestBody) => uploadFormData(requestBody, file),
       });
       if (uploadResult.error || !uploadResult.data) {
-        setWizardError(uiError(uploadResult.error, uploadResult.response.status));
+        setWizardError(
+          uiError(uploadResult.error, uploadResult.response.status),
+        );
         return;
       }
 
@@ -814,10 +924,13 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setRemoving(true);
     setRemoveError(null);
     try {
-      const result = await api.POST("/api/v1/admin/materials/{document_id}/remove-from-use", {
-        body,
-        params: { path: { document_id: removeTarget.id } },
-      });
+      const result = await api.POST(
+        "/api/v1/admin/materials/{document_id}/remove-from-use",
+        {
+          body,
+          params: { path: { document_id: removeTarget.id } },
+        },
+      );
       if (result.error) {
         setRemoveError(uiError(result.error, result.response.status));
         return;
@@ -840,15 +953,20 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   }
 
   async function restoreMaterial(material: Material) {
-    const body: RestoreBody = { expected_version: material.metadata_scope_version };
+    const body: RestoreBody = {
+      expected_version: material.metadata_scope_version,
+    };
     setRestoringId(material.id);
     setNotice("");
     setActionError(null);
     try {
-      const result = await api.POST("/api/v1/admin/materials/{document_id}/restore", {
-        body,
-        params: { path: { document_id: material.id } },
-      });
+      const result = await api.POST(
+        "/api/v1/admin/materials/{document_id}/restore",
+        {
+          body,
+          params: { path: { document_id: material.id } },
+        },
+      );
       if (result.error) {
         setActionError(uiError(result.error, result.response.status));
         return;
@@ -872,6 +990,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     const source = sourceById.get(material.id);
     if (!source) return;
     setScopeTarget(material);
+    setConfirmIntakeMetadata(false);
     setScopeCurriculumId(source.curriculum_version_id ?? "");
     setScopeUnitId(source.unit_id ?? "");
     setScopeLessonId(source.lesson_id ?? "");
@@ -885,6 +1004,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     event.preventDefault();
     if (!scopeTarget) return;
     const body: ScopeBody = {
+      confirm_intake_metadata: confirmIntakeMetadata && canConfirmIntake,
       curriculum_version_id: scopeCurriculumId || null,
       expected_version: scopeTarget.metadata_scope_version,
       lesson_id: scopeLessonId || null,
@@ -893,10 +1013,13 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setScopeSaving(true);
     setScopeError(null);
     try {
-      const result = await api.PATCH("/api/v1/admin/materials/{document_id}/scope", {
-        body,
-        params: { path: { document_id: scopeTarget.id } },
-      });
+      const result = await api.PATCH(
+        "/api/v1/admin/materials/{document_id}/scope",
+        {
+          body,
+          params: { path: { document_id: scopeTarget.id } },
+        },
+      );
       if (result.error) {
         setScopeError(uiError(result.error, result.response.status));
         return;
@@ -924,14 +1047,35 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const selectedWizardMedium = mediumById.get(wizardMediumId);
   const selectedWizardSubject = subjectById.get(wizardSubjectId);
   const selectedWizardCurriculum = curriculumById.get(wizardCurriculumId);
-  const selectedWizardUnit = wizardUnits.find((unit) => unit.id === wizardUnitId);
-  const selectedWizardLesson = wizardLessons.find((lesson) => lesson.id === wizardLessonId);
+  const selectedWizardUnit = wizardUnits.find(
+    (unit) => unit.id === wizardUnitId,
+  );
+  const selectedWizardLesson = wizardLessons.find(
+    (lesson) => lesson.id === wizardLessonId,
+  );
   const scopeCurriculum = curriculumById.get(scopeCurriculumId);
   const scopeConfiguration = scopeCurriculum
     ? examById.get(scopeCurriculum.exam_configuration_id)
     : undefined;
-  const scopeMedium = scopeCurriculum ? mediumById.get(scopeCurriculum.medium_id) : undefined;
-  const scopeSubject = scopeCurriculum ? subjectById.get(scopeCurriculum.subject_id) : undefined;
+  const scopeMedium = scopeCurriculum
+    ? mediumById.get(scopeCurriculum.medium_id)
+    : undefined;
+  const scopeSubject = scopeCurriculum
+    ? subjectById.get(scopeCurriculum.subject_id)
+    : undefined;
+  const scopeNeedsReview =
+    scopeTarget?.metadata_review_required ||
+    (scopeTarget
+      ? sourceById.get(scopeTarget.id)?.metadata_review_required
+      : false);
+  const canConfirmIntake = Boolean(
+    scopeNeedsReview &&
+    scopeCurriculum?.active &&
+    scopeConfiguration?.active &&
+    scopeMedium?.active &&
+    scopeSubject?.active &&
+    !scopeLoading,
+  );
   const visibleMaterials = selectedSubject
     ? materials.filter((material) => material.subject_id === selectedSubject)
     : materials;
@@ -943,10 +1087,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
           <p className="text-xs font-semibold tracking-[0.18em] text-amber-800 uppercase">
             Teaching sources
           </p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight">Materials</h1>
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+            Materials
+          </h1>
           <p className="mt-3 max-w-2xl leading-7 text-slate-600">
-            See what each grade can use, add approved PDFs, and correct mistakes without losing the
-            source history.
+            See what each grade can use, add approved PDFs, and correct mistakes
+            without losing the source history.
           </p>
         </div>
         {role === "admin" ? (
@@ -977,7 +1123,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       )}
       {actionError && (
         <div className="mt-6">
-          <InlineError error={actionError} title="Material could not be restored." />
+          <InlineError
+            error={actionError}
+            title="Material could not be restored."
+          />
         </div>
       )}
 
@@ -992,9 +1141,14 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       )}
 
       {!workspaceLoading && workspaceError && (
-        <section className="mt-7 rounded-xl border border-red-300 bg-red-50 p-5" role="alert">
+        <section
+          className="mt-7 rounded-xl border border-red-300 bg-red-50 p-5"
+          role="alert"
+        >
           <h2 className="text-lg font-semibold text-red-950">
-            {workspaceError.status === 403 ? "Materials access required" : "Materials could not be loaded"}
+            {workspaceError.status === 403
+              ? "Materials access required"
+              : "Materials could not be loaded"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-red-900">
             {workspaceError.status === 403
@@ -1002,7 +1156,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               : workspaceError.message}
           </p>
           {workspaceError.status !== 403 && (
-            <button className={`${secondaryButton} mt-4`} onClick={() => void loadWorkspace()} type="button">
+            <button
+              className={`${secondaryButton} mt-4`}
+              onClick={() => void loadWorkspace()}
+              type="button"
+            >
               Try again
             </button>
           )}
@@ -1015,7 +1173,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-semibold">Choose a grade</h2>
-                <p className="mt-1 text-sm text-slate-600">Counts include active and removed material.</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Counts include active and removed material.
+                </p>
               </div>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -1024,13 +1184,14 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 const selected = selectedGrade === summary.grade;
                 return (
                   <button
+                    aria-label={`${summary.grade === null ? "Unassigned materials" : `Grade ${summary.grade}`} ${badge ?? ""} — ${plural(summary.material_count, "material")}, ${plural(summary.subject_count, "subject")}, ${summary.ready_count} Ready, ${summary.needs_review_count} Needs review, ${summary.processing_count} Processing, ${summary.removed_count} Removed`}
                     aria-pressed={selected}
                     className={`min-h-40 rounded-xl border p-4 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 ${
                       selected
                         ? "border-slate-950 bg-slate-950 text-white shadow-md"
                         : "border-slate-300 bg-white text-slate-950 hover:border-amber-600 hover:shadow-sm"
                     }`}
-                    key={summary.grade}
+                    key={summary.grade ?? "unassigned"}
                     onClick={() => {
                       setSelectedGrade(summary.grade);
                       setSelectedSubject("");
@@ -1039,25 +1200,38 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     type="button"
                   >
                     <span className="flex items-start justify-between gap-3">
-                      <span className="text-xl font-semibold">Grade {summary.grade}</span>
+                      <span className="text-xl font-semibold">
+                        {summary.grade === null
+                          ? "Unassigned materials"
+                          : `Grade ${summary.grade}`}
+                      </span>
                       {badge && (
                         <span
                           className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            selected ? "bg-amber-300 text-slate-950" : "bg-amber-100 text-amber-950"
+                            selected
+                              ? "bg-amber-300 text-slate-950"
+                              : "bg-amber-100 text-amber-950"
                           }`}
                         >
                           {badge}
                         </span>
                       )}
                     </span>
-                    <span className={`mt-5 block text-sm ${selected ? "text-slate-200" : "text-slate-600"}`}>
-                      {plural(summary.material_count, "material")} · {plural(summary.subject_count, "subject")}
+                    <span
+                      className={`mt-5 block text-sm ${selected ? "text-slate-200" : "text-slate-600"}`}
+                    >
+                      {plural(summary.material_count, "material")} ·{" "}
+                      {plural(summary.subject_count, "subject")}
                     </span>
                     <span className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold">
                       <span>{summary.ready_count} Ready</span>
                       <span>{summary.needs_review_count} Needs review</span>
-                      {summary.processing_count > 0 && <span>{summary.processing_count} Processing</span>}
-                      {summary.removed_count > 0 && <span>{summary.removed_count} Removed</span>}
+                      {summary.processing_count > 0 && (
+                        <span>{summary.processing_count} Processing</span>
+                      )}
+                      {summary.removed_count > 0 && (
+                        <span>{summary.removed_count} Removed</span>
+                      )}
                     </span>
                   </button>
                 );
@@ -1065,160 +1239,199 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             </div>
           </section>
 
-          {selectedGrade !== null && (
-            <section aria-label="Uploaded materials" className="mt-10 border-t border-slate-300 pt-8">
-              <div>
-                <p className="text-xs font-semibold tracking-wider text-slate-500 uppercase">
-                  Grade {selectedGrade}
-                </p>
-                <h2 className="mt-1 text-2xl font-semibold">Uploaded materials</h2>
-              </div>
-              <section
-                aria-label="Material filters"
-                className="mt-5 grid gap-4 rounded-xl border border-slate-300 bg-white p-4 sm:grid-cols-2 lg:grid-cols-3"
-              >
-                <label className={fieldClass} htmlFor="materials-search">
-                  Search
-                  <input
-                    className={inputClass}
-                    id="materials-search"
-                    maxLength={200}
-                    onChange={(event) => setMaterialSearch(event.currentTarget.value)}
-                    placeholder="Search filenames"
-                    type="search"
-                    value={materialSearch}
-                  />
-                </label>
-                <label className={fieldClass} htmlFor="materials-subject-filter">
-                  Subject
-                  <select
-                    className={inputClass}
-                    id="materials-subject-filter"
-                    onChange={(event) => setSelectedSubject(event.currentTarget.value)}
-                    value={selectedSubject}
-                  >
-                    <option value="">All subjects</option>
-                    {subjects
-                      .filter((subject) => subject.active)
-                      .map((subject) => (
-                        <option key={subject.id} value={subject.id}>
-                          {subject.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className={fieldClass} htmlFor="materials-medium-filter">
-                  Medium
-                  <select
-                    className={inputClass}
-                    id="materials-medium-filter"
-                    onChange={(event) => setSelectedMedium(event.currentTarget.value)}
-                    value={selectedMedium}
-                  >
-                    <option value="">All media</option>
-                    {media
-                      .filter((item) => item.active)
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className={fieldClass} htmlFor="materials-type-filter">
-                  Material type
-                  <select
-                    className={inputClass}
-                    id="materials-type-filter"
-                    onChange={(event) =>
-                      setSelectedMaterialType(event.currentTarget.value as MaterialType | "")
-                    }
-                    value={selectedMaterialType}
-                  >
-                    <option value="">All types</option>
-                    {materialTypes.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.label}
+          <section
+            aria-label="Uploaded materials"
+            className="mt-10 border-t border-slate-300 pt-8"
+          >
+            <div>
+              <p className="text-xs font-semibold tracking-wider text-slate-500 uppercase">
+                {selectedGrade === null
+                  ? "Unassigned materials"
+                  : `Grade ${selectedGrade}`}
+              </p>
+              <h2 className="mt-1 text-2xl font-semibold">
+                Uploaded materials
+              </h2>
+            </div>
+            <section
+              aria-label="Material filters"
+              className="mt-5 grid gap-4 rounded-xl border border-slate-300 bg-white p-4 sm:grid-cols-2 lg:grid-cols-3"
+            >
+              <label className={fieldClass} htmlFor="materials-search">
+                Search
+                <input
+                  className={inputClass}
+                  id="materials-search"
+                  maxLength={200}
+                  onChange={(event) =>
+                    setMaterialSearch(event.currentTarget.value)
+                  }
+                  placeholder="Search filenames"
+                  type="search"
+                  value={materialSearch}
+                />
+              </label>
+              <label className={fieldClass} htmlFor="materials-subject-filter">
+                Subject
+                <select
+                  className={inputClass}
+                  id="materials-subject-filter"
+                  onChange={(event) =>
+                    setSelectedSubject(event.currentTarget.value)
+                  }
+                  value={selectedSubject}
+                >
+                  <option value="">All subjects</option>
+                  {subjects
+                    .filter((subject) => subject.active)
+                    .map((subject) => (
+                      <option key={subject.id} value={subject.id}>
+                        {subject.name}
                       </option>
                     ))}
-                  </select>
-                </label>
-                <label className={fieldClass} htmlFor="materials-status-filter">
-                  Status
-                  <select
-                    className={inputClass}
-                    id="materials-status-filter"
-                    onChange={(event) =>
-                      setSelectedMaterialStatus(event.currentTarget.value as MaterialStatus | "")
-                    }
-                    value={selectedMaterialStatus}
-                  >
-                    <option value="">All statuses</option>
-                    <option value="processing">Processing</option>
-                    <option value="needs_review">Needs review</option>
-                    <option value="ready_for_ai">Ready for AI</option>
-                    <option value="removed">Removed</option>
-                  </select>
-                </label>
-                <label className={fieldClass} htmlFor="materials-year-filter">
-                  Year
-                  <input
-                    className={inputClass}
-                    id="materials-year-filter"
-                    inputMode="numeric"
-                    max="2100"
-                    min="1900"
-                    onChange={(event) => setSelectedYear(event.currentTarget.value)}
-                    placeholder="All years"
-                    type="number"
-                    value={selectedYear}
-                  />
-                </label>
+                </select>
+              </label>
+              <label className={fieldClass} htmlFor="materials-medium-filter">
+                Medium
+                <select
+                  className={inputClass}
+                  id="materials-medium-filter"
+                  onChange={(event) =>
+                    setSelectedMedium(event.currentTarget.value)
+                  }
+                  value={selectedMedium}
+                >
+                  <option value="">All media</option>
+                  {media
+                    .filter((item) => item.active)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className={fieldClass} htmlFor="materials-type-filter">
+                Material type
+                <select
+                  className={inputClass}
+                  id="materials-type-filter"
+                  onChange={(event) =>
+                    setSelectedMaterialType(
+                      event.currentTarget.value as MaterialType | "",
+                    )
+                  }
+                  value={selectedMaterialType}
+                >
+                  <option value="">All types</option>
+                  {materialTypes.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldClass} htmlFor="materials-status-filter">
+                Status
+                <select
+                  className={inputClass}
+                  id="materials-status-filter"
+                  onChange={(event) =>
+                    setSelectedMaterialStatus(
+                      event.currentTarget.value as MaterialStatus | "",
+                    )
+                  }
+                  value={selectedMaterialStatus}
+                >
+                  <option value="">All statuses</option>
+                  <option value="processing">Processing</option>
+                  <option value="needs_review">Needs review</option>
+                  <option value="ready_for_ai">Ready for AI</option>
+                  <option value="removed">Removed</option>
+                </select>
+              </label>
+              <label className={fieldClass} htmlFor="materials-year-filter">
+                Year
+                <input
+                  className={inputClass}
+                  id="materials-year-filter"
+                  inputMode="numeric"
+                  max="2100"
+                  min="1900"
+                  onChange={(event) =>
+                    setSelectedYear(event.currentTarget.value)
+                  }
+                  placeholder="All years"
+                  type="number"
+                  value={selectedYear}
+                />
+              </label>
+              <button
+                className={`${secondaryButton} sm:col-span-2 lg:col-span-3 lg:justify-self-start`}
+                onClick={() => {
+                  setMaterialSearch("");
+                  setSelectedSubject("");
+                  setSelectedMedium("");
+                  setSelectedMaterialType("");
+                  setSelectedMaterialStatus("");
+                  setSelectedYear("");
+                }}
+                type="button"
+              >
+                Clear filters
+              </button>
+            </section>
+
+            {materialsLoading && (
+              <p
+                className="mt-5 rounded-lg border border-slate-300 bg-white p-4 text-slate-600"
+                role="status"
+              >
+                Loading uploaded materials…
+              </p>
+            )}
+            {!materialsLoading && materialsError && (
+              <div className="mt-5" role="alert">
+                <InlineError
+                  error={materialsError}
+                  title="Uploaded materials could not be loaded."
+                />
                 <button
-                  className={`${secondaryButton} sm:col-span-2 lg:col-span-3 lg:justify-self-start`}
-                  onClick={() => {
-                    setMaterialSearch("");
-                    setSelectedSubject("");
-                    setSelectedMedium("");
-                    setSelectedMaterialType("");
-                    setSelectedMaterialStatus("");
-                    setSelectedYear("");
-                  }}
+                  className={`${secondaryButton} mt-3`}
+                  onClick={() =>
+                    void loadMaterials(selectedGrade, selectedSubject)
+                  }
                   type="button"
                 >
-                  Clear filters
+                  Try again
                 </button>
-              </section>
-
-              {materialsLoading && (
-                <p className="mt-5 rounded-lg border border-slate-300 bg-white p-4 text-slate-600" role="status">
-                  Loading uploaded materials…
-                </p>
-              )}
-              {!materialsLoading && materialsError && (
-                <div className="mt-5" role="alert">
-                  <InlineError error={materialsError} title="Uploaded materials could not be loaded." />
-                  <button
-                    className={`${secondaryButton} mt-3`}
-                    onClick={() => void loadMaterials(selectedGrade, selectedSubject)}
-                    type="button"
-                  >
-                    Try again
-                  </button>
-                </div>
-              )}
-              {!materialsLoading && !materialsError && visibleMaterials.length === 0 && (
+              </div>
+            )}
+            {!materialsLoading &&
+              !materialsError &&
+              visibleMaterials.length === 0 && (
                 <p className="mt-5 rounded-xl border border-dashed border-slate-400 bg-white p-8 text-center text-slate-600">
                   No materials match this grade and subject.
                 </p>
               )}
-              {!materialsLoading &&
-                !materialsError &&
-                (visibleMaterials.length > 0 || materialsOffset > 0) && (
+            {!materialsLoading &&
+              !materialsError &&
+              (visibleMaterials.length > 0 || materialsOffset > 0) && (
                 <div className="mt-5 grid gap-4">
                   {visibleMaterials.map((material) => {
                     const source = sourceById.get(material.id);
-                    const editable = source !== undefined && source.extraction_status !== "trusted";
+                    const intake =
+                      material.intake_metadata ?? source?.intake_metadata;
+                    const metadataReviewRequired =
+                      material.metadata_review_required ||
+                      source?.metadata_review_required;
+                    const typeLabel = metadataReviewRequired
+                      ? (intake?.document_type_label ??
+                        "Unverified material type")
+                      : materialTypeLabels[material.material_type];
+                    const editable =
+                      source !== undefined &&
+                      source.extraction_status !== "trusted";
                     return (
                       <article
                         className="rounded-xl border border-slate-300 bg-white p-5 shadow-sm sm:p-6"
@@ -1226,9 +1439,15 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                       >
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="min-w-0">
-                            <h3 className="break-words text-xl font-semibold">{material.title}</h3>
+                            <h3 className="break-words text-xl font-semibold">
+                              {material.title}
+                            </h3>
                             <p className="mt-1 text-sm text-slate-600">
-                              {material.grade === null ? "Grade not assigned" : `Grade ${material.grade}`} · {material.subject ?? "Subject not assigned"} · {materialTypeLabels[material.material_type].toLocaleLowerCase()}
+                              {material.grade === null
+                                ? "Grade not assigned"
+                                : `${metadataReviewRequired ? "Candidate grade" : "Grade"} ${material.grade}`}{" "}
+                              · {material.subject ?? "Subject not assigned"} ·{" "}
+                              {typeLabel.toLocaleLowerCase()}
                             </p>
                           </div>
                           <span
@@ -1240,44 +1459,73 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
                         <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                           <div>
-                            <dt className="font-semibold text-slate-500">Material type</dt>
-                            <dd className="mt-1">{materialTypeLabels[material.material_type]}</dd>
+                            <dt className="font-semibold text-slate-500">
+                              Material type
+                            </dt>
+                            <dd className="mt-1">{typeLabel}</dd>
                           </div>
                           <div>
-                            <dt className="font-semibold text-slate-500">Medium</dt>
-                            <dd className="mt-1">{material.medium ?? "Not assigned"}</dd>
-                          </div>
-                          <div>
-                            <dt className="font-semibold text-slate-500">Year / curriculum</dt>
+                            <dt className="font-semibold text-slate-500">
+                              Medium
+                            </dt>
                             <dd className="mt-1">
-                              {[material.year, material.curriculum].filter(Boolean).join(" · ") || "Not recorded"}
+                              {material.medium ?? "Not assigned"}
                             </dd>
                           </div>
                           <div>
-                            <dt className="font-semibold text-slate-500">Pages</dt>
+                            <dt className="font-semibold text-slate-500">
+                              Year / curriculum
+                            </dt>
                             <dd className="mt-1">
-                              {material.page_count === null ? "Reading in progress" : plural(material.page_count, "page")}
+                              {[material.year, material.curriculum]
+                                .filter(Boolean)
+                                .join(" · ") || "Not recorded"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-semibold text-slate-500">
+                              Pages
+                            </dt>
+                            <dd className="mt-1">
+                              {material.page_count === null
+                                ? "Reading in progress"
+                                : plural(material.page_count, "page")}
                             </dd>
                           </div>
                           {(material.unit || material.lesson) && (
                             <div className="sm:col-span-2">
-                              <dt className="font-semibold text-slate-500">Curriculum scope</dt>
+                              <dt className="font-semibold text-slate-500">
+                                Curriculum scope
+                              </dt>
                               <dd className="mt-1">
-                                {[material.unit, material.lesson].filter(Boolean).join(" · ")}
+                                {[material.unit, material.lesson]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </dd>
                             </div>
                           )}
                           <div>
-                            <dt className="font-semibold text-slate-500">Uploaded</dt>
-                            <dd className="mt-1">{formatDate(material.uploaded_at)}</dd>
+                            <dt className="font-semibold text-slate-500">
+                              Uploaded
+                            </dt>
+                            <dd className="mt-1">
+                              {formatDate(material.uploaded_at)}
+                            </dd>
                           </div>
                         </dl>
 
-                        {role === "admin" && source?.extraction_status === "trusted" && (
-                          <p className="mt-4 rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                            This material has trusted content. Remove from use before assigning a corrected version.
-                          </p>
-                        )}
+                        <MaterialIntakeMetadata
+                          intake={intake}
+                          reviewRequired={metadataReviewRequired}
+                        />
+
+                        {role === "admin" &&
+                          source?.extraction_status === "trusted" && (
+                            <p className="mt-4 rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                              This material has trusted content. Remove from use
+                              before assigning a corrected version.
+                            </p>
+                          )}
 
                         <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
                           <Link
@@ -1286,46 +1534,55 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                           >
                             View
                           </Link>
-                          {source && ["extracted", "in_review", "trusted"].includes(source.extraction_status) && (
-                            <Link
-                              aria-label={`Review extracted text: ${material.title}`}
-                              className={secondaryButton}
-                              href={`/admin/materials/${material.id}/review-text`}
-                            >
-                              Review extracted text
-                            </Link>
-                          )}
-                          {role === "admin" && editable && material.status !== "removed" && (
-                            <button
-                              aria-label={`Edit metadata: ${material.title}`}
-                              className={secondaryButton}
-                              onClick={() => void openScopeEditor(material)}
-                              type="button"
-                            >
-                              Edit metadata
-                            </button>
-                          )}
-                          {role === "admin" && material.status !== "removed" && (
-                            <button
-                              aria-label={`Remove from use: ${material.title}`}
-                              className={secondaryButton}
-                              onClick={() => openRemoval(material)}
-                              type="button"
-                            >
-                              Remove from use
-                            </button>
-                          )}
-                          {role === "admin" && material.status === "removed" && (
-                            <button
-                              aria-label={`Restore: ${material.title}`}
-                              className={secondaryButton}
-                              disabled={restoringId === material.id}
-                              onClick={() => void restoreMaterial(material)}
-                              type="button"
-                            >
-                              {restoringId === material.id ? "Restoring…" : "Restore"}
-                            </button>
-                          )}
+                          {source &&
+                            ["extracted", "in_review", "trusted"].includes(
+                              source.extraction_status,
+                            ) && (
+                              <Link
+                                aria-label={`Review extracted text: ${material.title}`}
+                                className={secondaryButton}
+                                href={`/admin/materials/${material.id}/review-text`}
+                              >
+                                Review extracted text
+                              </Link>
+                            )}
+                          {role === "admin" &&
+                            editable &&
+                            material.status !== "removed" && (
+                              <button
+                                aria-label={`Edit metadata: ${material.title}`}
+                                className={secondaryButton}
+                                onClick={() => void openScopeEditor(material)}
+                                type="button"
+                              >
+                                Edit metadata
+                              </button>
+                            )}
+                          {role === "admin" &&
+                            material.status !== "removed" && (
+                              <button
+                                aria-label={`Remove from use: ${material.title}`}
+                                className={secondaryButton}
+                                onClick={() => openRemoval(material)}
+                                type="button"
+                              >
+                                Remove from use
+                              </button>
+                            )}
+                          {role === "admin" &&
+                            material.status === "removed" && (
+                              <button
+                                aria-label={`Restore: ${material.title}`}
+                                className={secondaryButton}
+                                disabled={restoringId === material.id}
+                                onClick={() => void restoreMaterial(material)}
+                                type="button"
+                              >
+                                {restoringId === material.id
+                                  ? "Restoring…"
+                                  : "Restore"}
+                              </button>
+                            )}
                         </div>
 
                         <details className="mt-4 border-t border-slate-200 pt-3">
@@ -1334,11 +1591,17 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                           </summary>
                           <dl className="mt-3 grid gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-2">
                             <div>
-                              <dt className="font-semibold text-slate-500">Source document ID</dt>
-                              <dd className="mt-1 break-all font-mono text-xs">{material.id}</dd>
+                              <dt className="font-semibold text-slate-500">
+                                Source document ID
+                              </dt>
+                              <dd className="mt-1 break-all font-mono text-xs">
+                                {material.id}
+                              </dd>
                             </div>
                             <div>
-                              <dt className="font-semibold text-slate-500">Checksum</dt>
+                              <dt className="font-semibold text-slate-500">
+                                Checksum
+                              </dt>
                               <dd className="mt-1 break-all font-mono text-xs">
                                 {source?.checksum_sha256 ?? "Not available"}
                               </dd>
@@ -1353,7 +1616,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white p-4"
                   >
                     <p className="text-sm font-semibold text-slate-700">
-                      Page {Math.floor(materialsOffset / MATERIAL_PAGE_LIMIT) + 1}
+                      Page{" "}
+                      {Math.floor(materialsOffset / MATERIAL_PAGE_LIMIT) + 1}
                     </p>
                     <div className="flex gap-2">
                       <button
@@ -1388,8 +1652,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   </nav>
                 </div>
               )}
-            </section>
-          )}
+          </section>
         </>
       )}
 
@@ -1400,11 +1663,19 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               <p className="text-xs font-semibold tracking-wider text-amber-800 uppercase">
                 Guided upload
               </p>
-              <h2 className="mt-1 text-2xl font-semibold" id="upload-material-heading">
+              <h2
+                className="mt-1 text-2xl font-semibold"
+                id="upload-material-heading"
+              >
                 Upload material
               </h2>
             </div>
-            <button className={secondaryButton} disabled={uploading} onClick={closeWizard} type="button">
+            <button
+              className={secondaryButton}
+              disabled={uploading}
+              onClick={closeWizard}
+              type="button"
+            >
               Close
             </button>
           </div>
@@ -1508,7 +1779,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   className={inputClass}
                   id="upload-material-type"
                   onChange={(event) => {
-                    setWizardMaterialType(event.currentTarget.value as MaterialType);
+                    setWizardMaterialType(
+                      event.currentTarget.value as MaterialType,
+                    );
                     setWizardError(null);
                   }}
                   value={wizardMaterialType}
@@ -1596,7 +1869,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                         className={inputClass}
                         disabled={!wizardUnitId}
                         id="upload-lesson"
-                        onChange={(event) => setWizardLessonId(event.currentTarget.value)}
+                        onChange={(event) =>
+                          setWizardLessonId(event.currentTarget.value)
+                        }
                         value={wizardLessonId}
                       >
                         <option value="">All lessons in unit</option>
@@ -1626,7 +1901,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   }}
                   type="file"
                 />
-                <span className="font-normal text-slate-600" id="upload-pdf-help">
+                <span
+                  className="font-normal text-slate-600"
+                  id="upload-pdf-help"
+                >
                   {wizardFile
                     ? `${wizardFile.name} · ${formatBytes(wizardFile.size)}`
                     : "Choose one approved PDF."}
@@ -1639,7 +1917,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 aria-label="Review upload"
                 className="rounded-xl border border-slate-300 bg-white p-5"
               >
-                <h3 className="text-lg font-semibold">Check before uploading</h3>
+                <h3 className="text-lg font-semibold">
+                  Check before uploading
+                </h3>
                 <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                   <div>
                     <dt className="font-semibold text-slate-500">Grade</dt>
@@ -1654,20 +1934,31 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     <dd className="mt-1">{selectedWizardSubject?.name}</dd>
                   </div>
                   <div>
-                    <dt className="font-semibold text-slate-500">Material type</dt>
-                    <dd className="mt-1">{materialTypeLabels[wizardMaterialType]}</dd>
+                    <dt className="font-semibold text-slate-500">
+                      Material type
+                    </dt>
+                    <dd className="mt-1">
+                      {materialTypeLabels[wizardMaterialType]}
+                    </dd>
                   </div>
                   <div>
-                    <dt className="font-semibold text-slate-500">Year / curriculum</dt>
+                    <dt className="font-semibold text-slate-500">
+                      Year / curriculum
+                    </dt>
                     <dd className="mt-1">
-                      {[wizardYear, selectedWizardCurriculum?.title].filter(Boolean).join(" · ")}
+                      {[wizardYear, selectedWizardCurriculum?.title]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </dd>
                   </div>
                   {(selectedWizardUnit || selectedWizardLesson) && (
                     <div>
                       <dt className="font-semibold text-slate-500">Scope</dt>
                       <dd className="mt-1">
-                        {[selectedWizardUnit?.title, selectedWizardLesson?.title]
+                        {[
+                          selectedWizardUnit?.title,
+                          selectedWizardLesson?.title,
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                       </dd>
@@ -1681,14 +1972,25 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               </section>
             )}
 
-            {wizardError && <InlineError error={wizardError} title="Upload was not completed." />}
+            {wizardError && (
+              <InlineError
+                error={wizardError}
+                title="Upload was not completed."
+              />
+            )}
 
             {duplicate && (
-              <div className="rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950" role="alert">
+              <div
+                className="rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950"
+                role="alert"
+              >
                 <p className="font-semibold">
-                  This exact PDF is already in Materials. No new copy was uploaded.
+                  This exact PDF is already in Materials. No new copy was
+                  uploaded.
                 </p>
-                <p className="mt-2 break-words">{duplicate.original_filename}</p>
+                <p className="mt-2 break-words">
+                  {duplicate.original_filename}
+                </p>
                 <Link
                   className={`${secondaryButton} mt-4`}
                   href={`/admin/materials/${duplicate.id}`}
@@ -1744,8 +2046,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             Remove {removeTarget.title} from use
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            The original and audit history will be kept, but this material will no longer be allowed
-            in future AI retrieval or paper generation.
+            The original and audit history will be kept, but this material will
+            no longer be allowed in future AI retrieval or paper generation.
           </p>
           <form className="mt-5 grid gap-4" onSubmit={removeMaterial}>
             <div className={fieldClass}>
@@ -1761,11 +2063,19 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 }}
                 value={removeReason}
               />
-              <span className="font-normal text-slate-500" id="removal-reason-help">
+              <span
+                className="font-normal text-slate-500"
+                id="removal-reason-help"
+              >
                 Required · up to 512 printable characters
               </span>
             </div>
-            {removeError && <InlineError error={removeError} title="Material was not removed." />}
+            {removeError && (
+              <InlineError
+                error={removeError}
+                title="Material was not removed."
+              />
+            )}
             <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 pt-4">
               <button
                 className={secondaryButton}
@@ -1775,7 +2085,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               >
                 Cancel
               </button>
-              <button className={dangerButton} disabled={removing} type="submit">
+              <button
+                className={dangerButton}
+                disabled={removing}
+                type="submit"
+              >
                 {removing ? "Removing…" : "Remove from use"}
               </button>
             </div>
@@ -1794,8 +2108,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             Edit {scopeTarget.title}
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            Select the correct curriculum. Its grade, medium, and subject are changed together so the
-            material cannot cross education scopes accidentally.
+            Select the correct curriculum. Its grade, medium, and subject are
+            changed together so the material cannot cross education scopes
+            accidentally.
           </p>
           <form className="mt-5 grid gap-5" onSubmit={saveScope}>
             <label className={fieldClass} htmlFor="scope-curriculum">
@@ -1806,6 +2121,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 onChange={(event) => {
                   const id = event.currentTarget.value;
                   setScopeCurriculumId(id);
+                  setConfirmIntakeMetadata(false);
                   setScopeError(null);
                   void loadScopeChoices(id);
                 }}
@@ -1815,13 +2131,16 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 {curricula
                   .filter((curriculum) => curriculum.active)
                   .map((curriculum) => {
-                    const configuration = examById.get(curriculum.exam_configuration_id);
+                    const configuration = examById.get(
+                      curriculum.exam_configuration_id,
+                    );
                     const medium = mediumById.get(curriculum.medium_id);
                     const subject = subjectById.get(curriculum.subject_id);
                     return (
                       <option key={curriculum.id} value={curriculum.id}>
                         {configuration ? `Grade ${configuration.grade} · ` : ""}
-                        {medium?.name ?? "Medium"} · {subject?.name ?? "Subject"} · {curriculum.title}
+                        {medium?.name ?? "Medium"} ·{" "}
+                        {subject?.name ?? "Subject"} · {curriculum.title}
                       </option>
                     );
                   })}
@@ -1830,7 +2149,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
             {scopeCurriculum && (
               <p className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                New assignment: Grade {scopeConfiguration?.grade ?? "not configured"} · {scopeMedium?.name ?? "Medium not configured"} · {scopeSubject?.name ?? "Subject not configured"}
+                New assignment: Grade{" "}
+                {scopeConfiguration?.grade ?? "not configured"} ·{" "}
+                {scopeMedium?.name ?? "Medium not configured"} ·{" "}
+                {scopeSubject?.name ?? "Subject not configured"}
               </p>
             )}
 
@@ -1866,7 +2188,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     className={inputClass}
                     disabled={!scopeUnitId}
                     id="scope-lesson"
-                    onChange={(event) => setScopeLessonId(event.currentTarget.value)}
+                    onChange={(event) =>
+                      setScopeLessonId(event.currentTarget.value)
+                    }
                     value={scopeLessonId}
                   >
                     <option value="">All lessons in unit</option>
@@ -1880,7 +2204,31 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               </div>
             )}
 
-            {scopeError && <InlineError error={scopeError} title="Changes were not saved." />}
+            {scopeNeedsReview && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                <label className="flex items-start gap-3 font-semibold">
+                  <input
+                    checked={confirmIntakeMetadata}
+                    className="mt-1 h-4 w-4"
+                    disabled={!canConfirmIntake || scopeSaving}
+                    onChange={(event) =>
+                      setConfirmIntakeMetadata(event.currentTarget.checked)
+                    }
+                    type="checkbox"
+                  />
+                  I have verified the intake metadata against the original and
+                  confirm this curriculum assignment.
+                </label>
+                <p className="mt-2">
+                  Optional: choose a valid curriculum first. Saving without this
+                  confirmation keeps metadata under review. This does not trust
+                  the text or make it ready for AI.
+                </p>
+              </div>
+            )}
+            {scopeError && (
+              <InlineError error={scopeError} title="Changes were not saved." />
+            )}
             <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 pt-4">
               <button
                 className={secondaryButton}
@@ -1890,7 +2238,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               >
                 Cancel
               </button>
-              <button className={primaryButton} disabled={scopeSaving} type="submit">
+              <button
+                className={primaryButton}
+                disabled={scopeSaving}
+                type="submit"
+              >
                 {scopeSaving ? "Saving…" : "Save changes"}
               </button>
             </div>

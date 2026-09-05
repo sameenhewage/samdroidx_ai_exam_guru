@@ -117,6 +117,7 @@ const fixtureMaterials: Material[] = [
     material_type: "syllabus",
     medium: "English",
     metadata_scope_version: 1,
+    metadata_review_required: false,
     page_count: 42,
     status: "ready_for_ai",
     subject: "Maths",
@@ -134,6 +135,7 @@ const fixtureMaterials: Material[] = [
     material_type: "teacher_guide",
     medium: "English",
     metadata_scope_version: 1,
+    metadata_review_required: false,
     page_count: 96,
     status: "processing",
     subject: "Maths",
@@ -151,6 +153,7 @@ const fixtureMaterials: Material[] = [
     material_type: "past_paper",
     medium: "English",
     metadata_scope_version: 1,
+    metadata_review_required: false,
     page_count: 2,
     status: "needs_review",
     subject: "Maths",
@@ -168,6 +171,7 @@ const fixtureMaterials: Material[] = [
     material_type: "past_paper",
     medium: "English",
     metadata_scope_version: 1,
+    metadata_review_required: false,
     page_count: 16,
     status: "processing",
     subject: "Maths",
@@ -210,6 +214,7 @@ function fixtureSource(
     lesson_id: null,
     likely_metadata_duplicate_of_id: null,
     metadata_scope_version: material.metadata_scope_version,
+    metadata_review_required: false,
     native_text_page_ratio: complete ? 1 : null,
     needs_ocr: complete ? false : null,
     ocr_page_count: complete ? 0 : null,
@@ -345,7 +350,11 @@ const generationOptions = {
   paper_types: [
     { code: "subject_practice", grade: 5, label: "Subject Practice" },
     { code: "term_test", grade: 5, label: "Term Test" },
-    { code: "scholarship_practice", grade: 5, label: "Grade 5 Scholarship Practice" },
+    {
+      code: "scholarship_practice",
+      grade: 5,
+      label: "Grade 5 Scholarship Practice",
+    },
   ],
   scholarship_modes: [
     { code: "paper_i", label: "Paper I — Ability & Reasoning" },
@@ -705,7 +714,13 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     const path = url.pathname;
     const method = request.method();
     const body = requestBody(request);
-    state.requests.push({ body, headers: request.headers(), method, path, search: url.search });
+    state.requests.push({
+      body,
+      headers: request.headers(),
+      method,
+      path,
+      search: url.search,
+    });
 
     if (method === "GET" && path.endsWith("/exam-configurations")) {
       return json(route, [
@@ -801,10 +816,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     }
     const unitScope = path.match(/\/curriculum-versions\/([^/]+)\/units$/);
     if (method === "GET" && unitScope) {
-      return json(
-        route,
-        unitScope[1] === educationIds.gradeSevenCurriculum ? gradeSevenUnits : [],
-      );
+      return json(route, unitScope[1] === educationIds.gradeSevenCurriculum ? gradeSevenUnits : []);
     }
     const lessonScope = path.match(/\/curriculum-versions\/([^/]+)\/lessons$/);
     if (method === "GET" && lessonScope) {
@@ -848,11 +860,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       );
     }
 
-    if (
-      method === "GET" &&
-      path.includes("/source-documents/") &&
-      path.endsWith("/content")
-    ) {
+    if (method === "GET" && path.includes("/source-documents/") && path.endsWith("/content")) {
       return route.fulfill({
         body: syntheticPdf("verified original material preview"),
         contentType: "application/pdf",
@@ -871,27 +879,35 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       return json(route, { ...state.sourceDocuments[0], deduplicated: true }, 200);
     }
 
-    if (
-      method === "GET" &&
-      path.endsWith(`/source-documents/${materialIds.ocr}/pages`)
-    ) {
+    if (method === "GET" && path.endsWith(`/source-documents/${materialIds.ocr}/pages`)) {
       return json(route, sourcePages);
     }
     const sourcePage = sourcePages.find((candidate) =>
-      path.includes(
-        `/source-documents/${materialIds.ocr}/pages/${candidate.page_number}`,
-      ),
+      path.includes(`/source-documents/${materialIds.ocr}/pages/${candidate.page_number}`),
     );
+    if (sourcePage && method === "GET" && path.endsWith("/preview")) {
+      return route.fulfill({
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+          "base64",
+        ),
+        contentType: "image/png",
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "SAMEORIGIN",
+        },
+        status: 200,
+      });
+    }
     if (sourcePage && method === "GET" && path.endsWith("/blocks")) {
       return json(
         route,
         sourceBlocks.filter((candidate) => candidate.page_number === sourcePage.page_number),
       );
     }
-    if (
-      method === "POST" &&
-      path.endsWith(`/source-documents/${materialIds.ocr}/review`)
-    ) {
+    if (method === "POST" && path.endsWith(`/source-documents/${materialIds.ocr}/review`)) {
       const source = state.sourceDocuments.find((candidate) => candidate.id === materialIds.ocr)!;
       source.extraction_status = "in_review";
       return json(route, source);
@@ -923,10 +939,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       state.corrections.push(payload.reviewed_text);
       return json(route, correctedPage);
     }
-    if (
-      method === "POST" &&
-      path.endsWith(`/source-documents/${materialIds.ocr}/trust`)
-    ) {
+    if (method === "POST" && path.endsWith(`/source-documents/${materialIds.ocr}/trust`)) {
       const source = state.sourceDocuments.find((candidate) => candidate.id === materialIds.ocr)!;
       const material = state.materials.find((candidate) => candidate.id === materialIds.ocr)!;
       source.extraction_status = "trusted";
@@ -946,11 +959,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     ) {
       const payload = body as MaterialScopeRequest | null;
       if (!payload || payload.expected_version !== source.metadata_scope_version) {
-        return json(
-          route,
-          { detail: { code: "concurrent_material_scope_modification" } },
-          409,
-        );
+        return json(route, { detail: { code: "concurrent_material_scope_modification" } }, 409);
       }
       if (payload.curriculum_version_id === educationIds.gradeElevenCurriculum) {
         material.curriculum = "Grade 11 Maths 2026";
@@ -998,11 +1007,7 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     ) {
       const payload = body as MaterialRestoreRequest | null;
       if (!payload || payload.expected_version !== source.metadata_scope_version) {
-        return json(
-          route,
-          { detail: { code: "concurrent_material_scope_modification" } },
-          409,
-        );
+        return json(route, { detail: { code: "concurrent_material_scope_modification" } }, 409);
       }
       material.status = source.extraction_status === "trusted" ? "ready_for_ai" : "needs_review";
       material.metadata_scope_version += 1;
@@ -1081,7 +1086,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     const currentQuestion = currentReviewPaper.questions.find((question) =>
       path.includes(`/questions/${question.id}`),
     );
-    if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/start`)) {
+    if (
+      method === "POST" &&
+      currentQuestion &&
+      path.endsWith(`/questions/${currentQuestion.id}/start`)
+    ) {
       const payload = body as components["schemas"]["ReviewCandidateStartRequest"] | null;
       if (!payload || payload.expected_version !== currentQuestion.version) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
@@ -1098,9 +1107,17 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       };
       return json(route, started);
     }
-    if (method === "PATCH" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}`)) {
+    if (
+      method === "PATCH" &&
+      currentQuestion &&
+      path.endsWith(`/questions/${currentQuestion.id}`)
+    ) {
       const payload = body as components["schemas"]["ReviewQuestionEditRequest"] | null;
-      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason_code) {
+      if (
+        !payload ||
+        payload.expected_version !== currentQuestion.version ||
+        !payload.reason_code
+      ) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
       }
       const edited: ReviewQuestion = {
@@ -1135,7 +1152,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       };
       return json(route, edited);
     }
-    if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/approve`)) {
+    if (
+      method === "POST" &&
+      currentQuestion &&
+      path.endsWith(`/questions/${currentQuestion.id}/approve`)
+    ) {
       const payload = body as components["schemas"]["ReviewQuestionApproveRequest"] | null;
       if (
         !payload ||
@@ -1163,9 +1184,17 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       };
       return json(route, approved);
     }
-    if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/reject`)) {
+    if (
+      method === "POST" &&
+      currentQuestion &&
+      path.endsWith(`/questions/${currentQuestion.id}/reject`)
+    ) {
       const payload = body as components["schemas"]["ReviewQuestionRejectRequest"] | null;
-      if (!payload || payload.expected_version !== currentQuestion.version || !payload.reason_code) {
+      if (
+        !payload ||
+        payload.expected_version !== currentQuestion.version ||
+        !payload.reason_code
+      ) {
         return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
       }
       const rejected: ReviewQuestion = {
@@ -1181,7 +1210,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       };
       return json(route, rejected);
     }
-    if (method === "POST" && currentQuestion && path.endsWith(`/questions/${currentQuestion.id}/regenerate`)) {
+    if (
+      method === "POST" &&
+      currentQuestion &&
+      path.endsWith(`/questions/${currentQuestion.id}/regenerate`)
+    ) {
       const payload = body as components["schemas"]["ReviewQuestionRegenerateRequest"] | null;
       if (
         !payload ||

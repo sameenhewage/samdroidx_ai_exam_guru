@@ -161,6 +161,59 @@ def adapter_with(
     return TesseractCliOCRAdapter(config=config, command_runner=runner)
 
 
+def test_adapter_source_ceiling_accepts_256_mib_but_not_unbounded() -> None:
+    ceiling = 256 * 1024 * 1024
+    assert TesseractOCRConfig(max_source_bytes=ceiling).max_source_bytes == ceiling
+    with pytest.raises(TesseractConfigError):
+        TesseractOCRConfig(max_source_bytes=ceiling + 1)
+
+
+@pytest.mark.parametrize("deadline", [True, "105.0", float("nan"), float("inf"), float("-inf")])
+def test_adapter_rejects_invalid_absolute_deadlines_before_commands(deadline: object) -> None:
+    runner = RecordingRunner()
+
+    with pytest.raises(TesseractConfigError, match=r"^execution deadline must be finite$"):
+        TesseractCliOCRAdapter(
+            command_runner=runner,
+            execution_deadline=cast(float, deadline),
+        )
+
+    assert runner.calls == []
+
+
+def test_absolute_ocr_deadline_caps_commands_and_stops_before_next_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    clock = [100.0]
+    runner = RecordingRunner()
+
+    def advancing_runner(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        max_output_bytes: int,
+    ) -> CommandResult:
+        result = runner(
+            argv, cwd=cwd, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes
+        )
+        clock[0] = 106.0
+        return result
+
+    monkeypatch.setattr("exam_guru_api.documents.tesseract_ocr.time.monotonic", lambda: clock[0])
+    adapter = TesseractCliOCRAdapter(
+        config=TesseractOCRConfig(timeout_seconds=10),
+        command_runner=advancing_runner,
+        execution_deadline=105.0,
+    )
+    with pytest.raises(TesseractTimeoutError):
+        adapter.extract(request_for(pdf_bytes()), temporary_directory=tmp_path)
+    assert len(runner.calls) == 1
+    assert runner.calls[0].timeout_seconds == 5.0
+    assert list(tmp_path.iterdir()) == []
+
+
 def assert_port(_port: OCRPort) -> None:
     return None
 
@@ -553,7 +606,7 @@ def test_invalid_page_geometry_or_render_failure_is_typed_and_cleans_temp(
     "build",
     [
         lambda: TesseractOCRConfig(max_source_bytes=0),
-        lambda: TesseractOCRConfig(max_source_bytes=101 * 1024 * 1024),
+        lambda: TesseractOCRConfig(max_source_bytes=257 * 1024 * 1024),
         lambda: TesseractOCRConfig(max_pages=0),
         lambda: TesseractOCRConfig(max_pages=1_001),
         lambda: TesseractOCRConfig(dpi=71),

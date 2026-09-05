@@ -84,6 +84,7 @@ function sourceDocument(
     lesson_id: null,
     likely_metadata_duplicate_of_id: null,
     metadata_scope_version: 1,
+    metadata_review_required: false,
     native_text_page_ratio: 1,
     needs_ocr: false,
     ocr_page_count: 0,

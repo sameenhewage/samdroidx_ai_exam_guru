@@ -188,6 +188,8 @@ Examples:
 - approved/published paper source-of-truth;
 - audit history.
 
+Imported sources may retain bounded, immutable intake candidates before an authoritative curriculum assignment exists. Candidate grade/subject/medium labels are display-only and must be visibly marked as needing review. They never become retrieval scope authority. Explicit audited metadata confirmation requires an active curriculum assignment; extraction trust is a separate gate that also rejects unresolved OCR/font risks. Original-page images for review are rendered on demand through an authenticated, checksum-verified, resource-bounded endpoint, without serving the private source directory or weakening PDF sandbox controls.
+
 ## 5. Duplicate and source-integrity model
 Every raw upload must be content-addressed/deduplicated using a cryptographic hash such as SHA-256.
 

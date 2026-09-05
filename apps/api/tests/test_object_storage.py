@@ -263,7 +263,7 @@ def test_unexpected_put_error_is_not_hidden() -> None:
     assert raised.value is error
 
 
-@pytest.mark.parametrize("max_object_bytes", [0, True, (100 * 1024 * 1024) + 1])
+@pytest.mark.parametrize("max_object_bytes", [0, True, (256 * 1024 * 1024) + 1])
 def test_s3_storage_rejects_invalid_object_bounds(max_object_bytes: int) -> None:
     with pytest.raises(ValueError, match="byte limit"):
         storage_with_client(ScriptedS3Client(), max_object_bytes=max_object_bytes)

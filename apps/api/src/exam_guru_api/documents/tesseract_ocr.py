@@ -37,7 +37,7 @@ from exam_guru_api.documents.ocr import (
     OCRUnavailableError,
 )
 
-_MAX_CONFIG_SOURCE_BYTES = 100 * 1024 * 1024
+_MAX_CONFIG_SOURCE_BYTES = 256 * 1024 * 1024
 _MAX_CONFIG_PAGES = 1_000
 _MIN_CONFIG_DPI = 72
 _MAX_CONFIG_DPI = 600
@@ -510,9 +510,17 @@ class TesseractCliOCRAdapter:
         *,
         config: TesseractOCRConfig | None = None,
         command_runner: CommandRunner | None = None,
+        execution_deadline: float | None = None,
     ) -> None:
+        if execution_deadline is not None and (
+            isinstance(execution_deadline, bool)
+            or not isinstance(execution_deadline, (int, float))
+            or not math.isfinite(execution_deadline)
+        ):
+            raise TesseractConfigError("execution deadline must be finite")
         self._config = config or TesseractOCRConfig()
         self._command_runner = command_runner or SubprocessCommandRunner()
+        self._execution_deadline = execution_deadline
 
     @property
     def config(self) -> TesseractOCRConfig:
@@ -638,6 +646,14 @@ class TesseractCliOCRAdapter:
             available_languages=available_languages,
         )
 
+    def _remaining_command_seconds(self) -> float:
+        remaining = self._config.timeout_seconds
+        if self._execution_deadline is not None:
+            remaining = min(remaining, self._execution_deadline - time.monotonic())
+        if remaining <= 0:
+            raise TesseractTimeoutError(operation="execution budget", timeout_seconds=0)
+        return remaining
+
     def _execute(
         self,
         argv: tuple[str, ...],
@@ -647,11 +663,12 @@ class TesseractCliOCRAdapter:
     ) -> CommandResult:
         result: object | None = None
         failure: str | None = None
+        timeout_seconds = self._remaining_command_seconds()
         try:
             result = self._command_runner(
                 argv,
                 cwd=cwd,
-                timeout_seconds=self._config.timeout_seconds,
+                timeout_seconds=timeout_seconds,
                 max_output_bytes=self._config.max_command_output_bytes,
             )
         except subprocess.TimeoutExpired:
@@ -661,7 +678,7 @@ class TesseractCliOCRAdapter:
         if failure == "timeout":
             raise TesseractTimeoutError(
                 operation=operation,
-                timeout_seconds=self._config.timeout_seconds,
+                timeout_seconds=timeout_seconds,
             )
         if failure == "unavailable":
             raise TesseractUnavailableError()
@@ -719,6 +736,7 @@ class TesseractCliOCRAdapter:
         page_number: int,
         directory: Path,
     ) -> _RenderedPage:
+        self._remaining_command_seconds()
         try:
             page = document[page_number - 1]
             scale = self._config.dpi / 72.0

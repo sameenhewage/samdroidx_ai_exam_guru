@@ -21,6 +21,75 @@ def pdf_bytes(*page_texts: str) -> bytes:
     return data
 
 
+@pytest.mark.parametrize(
+    "font", ["ABCDEF+FMAbhaya", "DL-Manel", "Thibus29", "NIEsin", "FMBindumathi"]
+)
+@pytest.mark.parametrize("location", ["resource", "span"])
+def test_actual_font_names_flag_review_without_rewriting_text(font: str, location: str) -> None:
+    original = "legacy glyph sequence"
+
+    class FontPage:
+        def get_fonts(self, *, full: bool) -> list[tuple[object, ...]]:
+            assert full
+            return [(1, "ttf", "TrueType", font, "F1", "")] if location == "resource" else []
+
+        def get_text(self, mode: str, *, sort: bool, flags: int = 0) -> object:
+            assert sort
+            if mode == "dict":
+                assert not flags & pymupdf.TEXT_PRESERVE_IMAGES
+                return {
+                    "blocks": [
+                        {
+                            "lines": [
+                                {"spans": [{"font": font if location == "span" else "Helvetica"}]}
+                            ]
+                        }
+                    ]
+                }
+            return [(0, 0, 10, 10, original, 0, 0)]
+
+    page = PyMuPdfExtractor._extract_page(FontPage(), 1)
+    assert page.text == original
+    assert page.blocks[0].text == original
+    assert page.extraction_config is not None
+    assert page.extraction_config["font_risk"] is True
+    assert font in str(page.extraction_config["risky_font_names"])
+    assert page.blocks[0].extraction_config == page.extraction_config
+
+
+@pytest.mark.parametrize("glyph", ["\ue000", "\uf0a7", "\U000f0000", "\U00100000", "\ufffd"])
+def test_private_use_and_replacement_glyphs_are_review_risks_not_silent_rewrites(
+    glyph: str,
+) -> None:
+    class GlyphPage:
+        def get_text(self, _mode: str, *, sort: bool) -> list[tuple[object, ...]]:
+            assert sort
+            return [(0, 0, 10, 10, "native " + glyph, 0, 0)]
+
+    page = PyMuPdfExtractor._extract_page(GlyphPage(), 1)
+    assert page.text == "native " + glyph
+    assert page.extraction_config is not None
+    assert page.extraction_config["font_risk"] is True
+
+
+def test_font_risk_summary_is_persistable_and_normal_fonts_are_not_language_guesses() -> None:
+    data = pdf_bytes("Sinhala grade 3 filename is not font evidence")
+    result = PyMuPdfExtractor(max_pages=10).extract(data)
+    assert not result.config.get("font_risk", False)
+    document = pymupdf.open(stream=data, filetype="pdf")
+    font_xref = document[0].get_fonts(full=True)[0][0]
+    document.xref_set_key(font_xref, "BaseFont", "/ABCDEF+FMAbhaya")
+    risky_data = document.tobytes()
+    document.close()
+    result = PyMuPdfExtractor(max_pages=10).extract(risky_data)
+    assert result.config["font_risk"] is True
+    assert result.config["font_risk_page_numbers"] == "1"
+    assert result.extraction_config is not None
+    assert cast(dict[str, object], result.extraction_config["native"])["config"] == dict(
+        result.config
+    )
+
+
 def test_native_pdf_extraction_preserves_page_and_block_provenance() -> None:
     result = PyMuPdfExtractor(max_pages=10).extract(
         pdf_bytes("Grade 5 competency one", "Second page marking guidance")

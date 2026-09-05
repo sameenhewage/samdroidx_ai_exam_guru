@@ -167,7 +167,13 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
             actual_extractor: object,
             *,
             ocr_port: object,
+            ocr_max_pages: int,
+            ocr_timeout_seconds: float,
+            execution_deadline: float,
         ) -> None:
+            assert ocr_max_pages == settings.ocr_tesseract_max_pages
+            assert ocr_timeout_seconds == settings.ocr_tesseract_timeout_seconds
+            assert execution_deadline == 1_300.0
             actual_ocr_port = ocr_port
             assert (actual_session, actual_storage, actual_extractor, actual_ocr_port) == (
                 session,
@@ -201,12 +207,16 @@ def test_extraction_actor_builds_worker_owned_dependencies_and_closes_resources(
         "create_object_storage",
         lambda actual_settings: storage if actual_settings is settings else None,
     )
+    import time
+
+    def create_worker_ocr(actual_settings: Settings, *, execution_deadline: float) -> object:
+        assert actual_settings is settings
+        assert execution_deadline == 1_240.0
+        return expected_ocr_port
+
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000.0)
     monkeypatch.setattr(jobs, "PyMuPdfExtractor", create_extractor)
-    monkeypatch.setattr(
-        jobs,
-        "create_ocr_port",
-        lambda actual_settings: expected_ocr_port if actual_settings is settings else None,
-    )
+    monkeypatch.setattr(jobs, "create_ocr_port", create_worker_ocr)
     monkeypatch.setattr(jobs, "DocumentExtractionService", StubExtractionService)
 
     jobs.extract_document(str(DOCUMENT_ID), str(ACTOR_ID))

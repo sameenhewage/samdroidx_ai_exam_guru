@@ -11,7 +11,9 @@ async function login(page: Page, role: "admin" | "reviewer") {
   await expect(page.getByRole("heading", { name: "Source documents" })).toBeVisible();
 }
 
-test("admin uploads, extracts, corrects, trusts, and reuses an immutable source", async ({ page }) => {
+test("admin uploads, extracts, corrects, trusts, and reuses an immutable source", async ({
+  page,
+}) => {
   const unique = Date.now().toString();
   const filename = `grade-5-source-${unique}.pdf`;
   const pdf = Buffer.concat([
@@ -40,9 +42,7 @@ test("admin uploads, extracts, corrects, trusts, and reuses an immutable source"
   expect(source).toBeTruthy();
   if (!source) return;
 
-  await page
-    .getByRole("button", { name: `Queue extraction for ${filename}` })
-    .click();
+  await page.getByRole("button", { name: `Queue extraction for ${filename}` }).click();
   await expect(page.getByText("Native extraction queued.")).toBeVisible();
 
   await expect
@@ -73,22 +73,29 @@ test("admin uploads, extracts, corrects, trusts, and reuses an immutable source"
 
   await page.goto(`/admin/materials/${source.id}/review-text`);
   await expect(page.getByRole("heading", { name: "Review text" })).toBeVisible();
-  const originalPreview = page.getByTitle("Original PDF preview");
+  const originalPreview = page.getByRole("img", {
+    name: "Original PDF page 1",
+  });
   await expect(originalPreview).toBeVisible();
-  await expect(originalPreview).toHaveAttribute(
+  await expect(originalPreview).toHaveJSProperty(
     "src",
-    new RegExp(`/api/v1/admin/source-documents/${source.id}/content#page=1&view=FitH$`),
+    new URL(`/api/v1/admin/source-documents/${source.id}/pages/1/preview`, page.url()).href,
   );
+  await expect
+    .poll(() => originalPreview.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
+  expect(await contentResponse.body()).toEqual(pdf);
   await expect(page.getByRole("region", { name: "Extracted and corrected text" })).toContainText(
     "Grade 5 source text",
   );
-  await expect(page.locator("details").filter({ hasText: "Technical details" })).not.toHaveAttribute(
-    "open",
-    "",
-  );
+  await expect(
+    page.locator("details").filter({ hasText: "Technical details" }),
+  ).not.toHaveAttribute("open", "");
 
   await page.goto(`/admin/documents/${source.id}`);
-  await expect(page.locator("pre").filter({ hasText: "Grade 5 source text" }).first()).toBeVisible();
+  await expect(
+    page.locator("pre").filter({ hasText: "Grade 5 source text" }).first(),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Begin human review" }).click();
   const reviewedText = page.getByLabel("Reviewed page 1 text");
   await reviewedText.fill("Human-verified Grade 5 source text");
@@ -124,8 +131,6 @@ test("admin uploads, extracts, corrects, trusts, and reuses an immutable source"
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "reviewer");
   await expect(page.getByText("Reviewer access is read-only for source documents.")).toBeVisible();
-  const denied = await page.request.post(
-    `/api/v1/admin/source-documents/${source.id}/extract`,
-  );
+  const denied = await page.request.post(`/api/v1/admin/source-documents/${source.id}/extract`);
   expect(denied.status()).toBe(403);
 });
