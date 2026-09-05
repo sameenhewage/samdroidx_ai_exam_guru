@@ -108,6 +108,89 @@ describe("web security response headers", () => {
     ]);
   });
 
+  it.each(
+    (["local", "test", "staging", "production"] as const).flatMap((appEnvironment) =>
+      ["development", "production", "test", undefined].map((nodeEnvironment) => ({
+        appEnvironment,
+        nodeEnvironment,
+      })),
+    ),
+  )("isolates eval permission for APP_ENVIRONMENT=$appEnvironment NODE_ENV=$nodeEnvironment", async ({
+    appEnvironment,
+    nodeEnvironment,
+  }) => {
+    vi.stubEnv("APP_ENVIRONMENT", appEnvironment);
+    vi.stubEnv("NODE_ENV", nodeEnvironment);
+    vi.stubEnv("APP_BASE_URL", "https://exam-guru.example");
+    vi.stubEnv("ADMIN_COOKIE_SECURE", "true");
+    vi.stubEnv("WEB_IDENTITY_PROVIDER", "oidc");
+    vi.stubEnv("OIDC_ISSUER", "https://identity.example/realms/exam-guru");
+    vi.stubEnv("OIDC_AUTHORIZATION_ENDPOINT", "https://identity.example/oauth2/authorize");
+    vi.stubEnv("OIDC_TOKEN_ENDPOINT", "https://identity.example/oauth2/token");
+    vi.stubEnv("OIDC_CLIENT_ID", "exam-guru-web");
+    vi.stubEnv("OIDC_CLIENT_SECRET", TEST_CLIENT_CREDENTIAL);
+
+    const allowEval = nodeEnvironment === "development" &&
+      (appEnvironment === "local" || appEnvironment === "test");
+    const expectedHeaders = expectedBaseHeaders.map((header) =>
+      header.key === "Content-Security-Policy" && allowEval
+        ? {
+            ...header,
+            value: expectedContentSecurityPolicy.replace(
+              "script-src 'self' 'unsafe-inline'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            ),
+          }
+        : header,
+    );
+    if (appEnvironment === "production") {
+      expectedHeaders.push({
+        key: "Strict-Transport-Security",
+        value: "max-age=63072000; includeSubDomains; preload",
+      });
+    }
+
+    await expect(nextConfig.headers?.()).resolves.toEqual([
+      { headers: expectedHeaders, source: "/(.*)" },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/source-documents/:documentId/content",
+      },
+    ]);
+    expect(CONTENT_SECURITY_POLICY).toBe(expectedContentSecurityPolicy);
+    expect(securityHeaders(parseWebAppConfig())).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: expect.stringContaining("'unsafe-eval'") }),
+      ]),
+    );
+  });
+
+  it("does not retain development eval permission in subsequent production rules", async () => {
+    vi.stubEnv("APP_ENVIRONMENT", "local");
+    vi.stubEnv("APP_BASE_URL", "http://localhost:3000");
+    vi.stubEnv("ADMIN_COOKIE_SECURE", "false");
+    vi.stubEnv("NODE_ENV", "development");
+
+    expect(await nextConfig.headers?.()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          headers: expect.arrayContaining([
+            { key: "Content-Security-Policy", value: expect.stringContaining("'unsafe-eval'") },
+          ]),
+        }),
+      ]),
+    );
+
+    vi.stubEnv("NODE_ENV", "production");
+    await expect(nextConfig.headers?.()).resolves.toEqual([
+      { headers: expectedBaseHeaders, source: "/(.*)" },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/source-documents/:documentId/content",
+      },
+    ]);
+  });
+
   it("wires the deterministic rules through Next for every route", async () => {
     vi.stubEnv("APP_ENVIRONMENT", "local");
     vi.stubEnv("APP_BASE_URL", "http://localhost:3000");

@@ -43,5 +43,5 @@ test("browser responses carry hardening headers without breaking the admin app",
   const apiResponse = await page.request.get("/api/v1/admin/exam-configurations");
   expect(apiResponse.ok()).toBe(true);
   expect(apiResponse.headers()).toMatchObject(expectedHeaders);
-  expect(browserErrors.filter((error) => !error.includes("eval() is not supported in this environment"))).toEqual([]);
+  expect(browserErrors).toEqual([]);
 });
