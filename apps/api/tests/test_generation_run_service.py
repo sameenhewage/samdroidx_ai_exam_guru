@@ -88,6 +88,7 @@ class FakeGenerationRepository:
             curriculum_active=True,
             exam_active=True,
             medium_active=True,
+            catalogue_admitted=True,
         )
         snapshot = serialize_blueprint(PAPER)
         self.blueprint: PaperBlueprintModel | None = PaperBlueprintModel(
@@ -247,6 +248,13 @@ def context_record(kind: str, record_id: UUID) -> GenerationContextRecord:
         source_status=ExtractionStatus.TRUSTED,
         page_number=1,
         source_block_id=BLOCK_ID,
+        source_active_for_ai=True,
+        scope_active=True,
+        source_candidate_id=UUID(int=950_007),
+        source_candidate_sha256="c" * 64,
+        source_fidelity_current=True,
+        metadata_resolved=True,
+        catalogue_admitted=True,
     )
 
 
@@ -831,6 +839,7 @@ def test_context_validation_rejects_cross_unit_and_lesson_records_before_generat
                 replace(
                     context_record("knowledge_chunk", CHUNK_ID),
                     source_status=ExtractionStatus.EXTRACTED,
+                    source_fidelity_current=False,
                 ),
             ),
             GenerationContextSourceUntrustedError,

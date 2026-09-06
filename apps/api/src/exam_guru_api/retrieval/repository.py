@@ -208,6 +208,7 @@ class PostgresHybridRetrievalRepository:
         learning_concept = aliased(TaxonomyNodeModel, name="chunk_learning_concept")
         conditions: list[Any] = [
             KnowledgeChunkModel.review_state == ReviewState.REVIEWED,
+            func.knowledge_record_is_eligible("knowledge_chunk", KnowledgeChunkModel.id).is_(True),
             ExamConfigurationModel.active.is_(True),
             MediumModel.active.is_(True),
             SubjectModel.active.is_(True),
@@ -357,6 +358,9 @@ class PostgresHybridRetrievalRepository:
         learning_concept = aliased(TaxonomyNodeModel, name="question_learning_concept")
         conditions: list[Any] = [
             HistoricalQuestionModel.review_state == ReviewState.REVIEWED,
+            func.knowledge_record_is_eligible(
+                "historical_question", HistoricalQuestionModel.id
+            ).is_(True),
             ExamConfigurationModel.active.is_(True),
             MediumModel.active.is_(True),
             SubjectModel.active.is_(True),

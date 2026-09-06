@@ -11,6 +11,11 @@ from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.curriculum.admission import (
+    admitted_curriculum_predicate,
+    require_admitted_curriculum,
+)
+from exam_guru_api.curriculum.admission_models import CatalogueAdmissionCurrentModel
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
 from exam_guru_api.curriculum.models import (
     CurriculumLessonModel,
@@ -274,8 +279,9 @@ class TeacherPaperRepository:
         code: str,
         grade: int,
         medium: str,
+        lock: bool = False,
     ) -> StoredProgrammePolicy | None:
-        policy_id = await self._session.scalar(
+        statement = (
             select(AssessmentProgrammePolicyVersionModel.id)
             .join(
                 ExamConfigurationModel,
@@ -295,6 +301,11 @@ class TeacherPaperRepository:
                 MediumModel.active.is_(True),
             )
         )
+        if lock:
+            statement = statement.with_for_update(
+                read=True, of=AssessmentProgrammePolicyVersionModel
+            )
+        policy_id = await self._session.scalar(statement)
         if policy_id is None:
             return None
         return await self.get_programme_policy(policy_id)
@@ -335,6 +346,7 @@ class TeacherPaperRepository:
         subject: str | None = None,
         assessment_programme: str | None = None,
         curriculum_id: UUID | None = None,
+        lock: bool = False,
     ) -> tuple[ResolvedCurriculum, ...]:
         statement = (
             select(
@@ -342,6 +354,7 @@ class TeacherPaperRepository:
                 ExamConfigurationModel,
                 MediumModel,
                 SubjectModel,
+                CatalogueAdmissionCurrentModel.version,
             )
             .join(
                 ExamConfigurationModel,
@@ -349,7 +362,12 @@ class TeacherPaperRepository:
             )
             .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
             .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+            .join(
+                CatalogueAdmissionCurrentModel,
+                CatalogueAdmissionCurrentModel.curriculum_version_id == CurriculumVersionModel.id,
+            )
             .where(
+                admitted_curriculum_predicate(CurriculumVersionModel.id),
                 CurriculumVersionModel.active.is_(True),
                 ExamConfigurationModel.active.is_(True),
                 MediumModel.active.is_(True),
@@ -376,11 +394,20 @@ class TeacherPaperRepository:
             statement = statement.where(
                 func.upper(ExamConfigurationModel.code) == assessment_programme.upper()
             )
+        statement = statement.execution_options(populate_existing=True)
         rows = (await self._session.execute(statement)).all()
+        if lock and rows:
+            # Admission review/revocation takes an exclusive curriculum lock. Hold
+            # the shared chain locks until the caller commits the generation write,
+            # then reread so a decision committed while waiting cannot be reused.
+            for curriculum_id_to_lock in sorted(row[0].id for row in rows):
+                await require_admitted_curriculum(self._session, curriculum_id_to_lock)
+            rows = (await self._session.execute(statement)).all()
         resolved: list[ResolvedCurriculum] = []
-        for curriculum, exam, medium_model, subject_model in rows:
+        for curriculum, exam, medium_model, subject_model, admission_version in rows:
             resolved.append(
                 ResolvedCurriculum(
+                    admission_version=admission_version,
                     curriculum_version_id=curriculum.id,
                     exam_configuration_id=exam.id,
                     assessment_code=exam.code,

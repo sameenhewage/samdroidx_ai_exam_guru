@@ -3,18 +3,63 @@
 > **Important:** This tracker does **not** define a prompt-per-phase development process. Development follows `01_ENGINEERING_WORKFLOW.md` as one continuous loop. These phases are status/acceptance gates only.
 
 ## Status legend
+
 - `NOT_STARTED` — no validated implementation evidence yet
 - `IN_PROGRESS` — implementation/evidence exists but exit criteria are incomplete
 - `BLOCKED` — external/human blocker prevents completion
 - `DONE` — every exit criterion is satisfied with tests/evals/runtime evidence
 
 ## Priority rule
+
 **Priority 1 must reach 100% DONE before any Priority 2 product feature begins.**
 
 ## Change log
+
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-06 — Preserve source fidelity through bounded intake, review and downstream use
+
+- **Change / reason:** Replace extraction-complete/legacy-trusted assumptions with immutable, page/version-bound source evidence. Migrations `0033`–`0038` preserve existing data while adding raw UTF-8 candidates, separate conservative NFC text/diagnostics, review-event/version checks, explicitly confirmed benchmark references, durable source-reading jobs, catalogue admission, verified knowledge lineage, resumable uploads and exact audited fixture quarantine. Structural readability, font changes, OCR confidence and model agreement never grant trust. Sinhala/Tamil/English and mixed-source diagnostics retain meaningful Unicode and mathematical characters; JSON text is not double HTML-encoded before React renders it as non-executable text.
+- **Storage and recovery:** Materials uploads use 4 MiB parts, immutable receipts, owner-bound creation request identities and full stored-prefix verification after file re-selection. Lost creation/chunk/completion responses reconcile without silently creating a second session or mixing files. Configurable retained-staging quotas remain distinct from the bounded legacy byte API. File-descriptor PDF access, 1,001-page and 300 MiB regressions, bounded Range streaming and durable image artifacts remove whole-file RAM and legacy page-cap dependencies from the new workflow. Source reading commits at most eight pages per delivery and resumes with leases/CAS while preserving edited/verified/excluded pages. Local storage remains the default; optional unsupported S3 streaming fails explicitly.
+- **Trust and isolation:** New chunks/historical questions must be exact NFC spans of the current verified candidate and use admitted, metadata-confirmed active scope. Embeddings, retrieval, generation, validation-cache replay, candidate approval and new publication recheck lineage, including concurrency and direct-SQL guards. Previously published snapshots and legacy unbound chunks/vectors remain intact, without automatic rebinding. The real-Valkey claim-clock/dispatch-acknowledgement race is fixed with monotonic SQL timestamps and refreshed returned ORM state, not retries or weakened version constraints.
+- **Teacher workflow:** The review workspace provides original-vs-text panels, independent scrolling, bounded navigation/history, flagged-page navigation, explicit correction/save/cancel, image availability checks, version conflicts, reread/exclusion and human comparison confirmation. Fontsource Sinhala/Tamil fonts are self-hosted with their exact licenses. Detected metadata precedes explicit correction; technical source hashes remain behind disclosure. Browser setup attests the actual isolated backend before fixture writes. Normal Studio ports bind to loopback and Docker build context excludes the corpus, durable data and private evidence.
+- **Real runtime preservation:** Forward migration completed into the existing private Studio without a database reset. All **659** source rows remain: **72** checksum/audit/constructor-proven E2E fixtures were quarantined through the supported API, leaving **587** normal Materials entries. Thirty fixture PDFs were present; 42 were already absent and were identified from exact committed constructors plus persisted/audit evidence, not recreated or falsely reported as retrieved. One real legacy page draft was carried forward as an unconfirmed candidate; 20 fixture drafts remain in legacy history. Legacy **3,372 pages / 57,391 blocks / 44 chunks / 51 historical questions / 29 embeddings / eight published versions** are preserved.
+- **Real reprocessing outcome:** Every real original received a supported source-read request. After 116 targeted document retries, all **587 latest whole-document jobs completed** and all **5,234 current page states are `needs_review`**, with **zero current failed/verified/excluded pages and zero human ground-truth rows**. There are **10,362 immutable candidate versions** and **10,546 page events**; earlier failed attempts remain historical evidence. Runtime investigation found recoverable MuPDF diagnostics contaminating JSON stdout and four worker threads competing for two fail-fast render slots. Dedicated child diagnostics now use stderr, and background reads wait within their existing budget; capacity and resource ceilings were not increased. Six supplied failing pages rendered/persisted correctly under four-thread production-style execution before supported retries. All 711 corpus/evidence files remain unchanged by SHA-256, size, nanosecond mtime/ctime, inode, device and mode.
+- **Benchmark and accuracy boundary:** The fixed 40-page/25-original queue contains nine Grade 3, nine Grade 4 and 22 Grade 5 pages. Fast Sinhala/English and best Sinhala with the same fast English model each completed 40/40 controlled attempts, with 31 differing and nine identical outputs. The controlled comparison used 60-second commands; new source reading defaults to 30 seconds and the legacy Compose OCR profile to five seconds. All benchmark failures, raw text/TSV/images, model/configuration hashes and execution snapshots remain private and versioned. Current reference count is **zero**, so no CER/WER, quality winner or corpus-wide accuracy is claimed. Optional source-semantic diagnostics remain disabled and unwired into general corpus reading; they cannot write replacement text or authorize trust. LightOn remains prerequisite-blocked with zero inference, and no unreviewed legacy converter or restricted alternative was adopted.
+- **Evidence and recovery:** Private read-only reconciliation and operation receipts live under `.exam-guru-evidence/studio-reconciliation/` and `studio-rollout/`; the final original-file proof is `studio-rollout/final-original-corpus-proof/original-integrity.json`. The human queue is `/admin/materials/benchmark-review?benchmark_id=6d050ee1-141c-4424-88a9-a6dbff2af9ec`. Protected pre-migration PostgreSQL bundles passed archive/checksum dry runs; the separate synthetic restore integration passed. These on-host bundles are not off-host backups or a persistent-Studio restore exercise. Scheduled storage housekeeping changed its own two tables during the read-only audit; all source/review/configuration/knowledge/publication tables were unchanged by that audit.
+- **Final shared catalogue correction:** Generate Papers now derives all normal choices from currently admitted active scope, binds media/templates/subjects to their grade/medium/curriculum chain, and requires `source_scope_fingerprint` on new job requests. Preview, creation and worker preparation reject stale admission/scope under shared locks. Old unpublished jobs without the new proof fail closed without rewriting historical reads or published snapshots. Real Chrome verification shows the truthful empty-approved-catalogue state, not retained fixture labels; no real admission was fabricated to populate the selector.
+- **Final local verification:** `uv run --project apps/api ruff check apps/api`, `ruff format --check apps/api` (**427 files**) and `uv run --directory apps/api mypy` (**386 source/test files**) pass. `uv run --directory apps/api pytest tests -m 'not backup_restore' --cov=exam_guru_api --cov-report=term-missing` passes **4,887 tests**, four explicit optional skips, one separately executed backup/restore deselection and **100.00% statements/branches** (27,510 statements, 6,350 branches). The optional host Tesseract smoke skips because the host executable is absent; actual worker language availability and real corpus processing are separately verified. Three paid-provider tests remain intentionally opt-in. The separate PostgreSQL restore test passes; required ShellCheck/static backup checks pass via the pinned `shellcheck-py==0.11.0.1` tool. Three existing non-gating Pydantic/Starlette warnings remain, without suppression.
+- **Frontend and runtime verification:** With Node 24.19.0, lint and both TypeScript checks pass; `npm run test:coverage --prefix apps/web -- --maxWorkers=2` passes **780 tests** with all configured coverage metrics at 100%. Existing admin-component instrumentation exclusions are unchanged; their component/E2E tests are not represented as whole-component 100% coverage. `npm audit --audit-level=moderate` reports zero vulnerabilities; the Next.js production build passes. The final isolated full browser suite passes **25/25**, with no skips and no normal-Studio fixture writes. OpenAPI/client regeneration reproduces identical checksums. Coordinated API/worker/maintenance/web deployment is healthy on loopback-only published ports. A runbook phrase/source-reference regression was corrected without weakening its test, followed by the passing full backend gate above. Remote CI is verified after the commit/push and is not inferred from these local results.
+- **Acceptance disposition:** This is processing, preservation and workflow evidence—not educational approval. Real metadata remains review-required, the bounded reference set awaits the user, Scholarship policy/representative RAG and forecasting evidence remain outstanding, the teacher pilot stays **NOT READY**, P10 stays open and Priority 2 stays blocked.
+
+### 2026-09-06 — Review exact source-fidelity scanner findings
+
+- **Reason and approved mechanism:** The owner required individual classification, exact minimal exceptions only through established project practice, and an unchanged scanner before any commit/push. CI already invokes `detect-secrets-hook --baseline .secrets.baseline`; committed baseline entries have existed since the foundation. The installed scanner matches filename, finding type and value fingerprint, not a directory wildcard. Add only the 16 reviewed tuples below, marked `is_secret=false`; preserve all pre-existing entries, detector plugins, entropy limits, filters and CI commands. The native baseline stores each exact value's SHA-1 detector fingerprint; these review reasons identify the corresponding source constant/fixture without duplicating hash literals into another scanned file.
+- **Fixture review:** Retain per-container `uuid4().hex` passwords only for four newly created disposable PostgreSQL test containers, matching the already committed migration-test strategy. Revert six unnecessary random replacements in mocked S3 configurations and the offline semantic-provider logging canary to explicit non-secret fixture values. Their tests use mocks or offline transport and retain all no-provider-call/no-leak assertions. No deployment credentials, model pins, or source checksums are changed or obfuscated.
+
+| Exact file                                           | Exact field/value identity                                        | Classification and reviewed reason                                                                                                                        |
+| ---------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/tests/test_app.py`                         | `object_storage_secret_key` in unsupported-storage test           | Disposable `fixture-secret`; rejection test proves no upload/persistence access.                                                                          |
+| `apps/api/tests/test_source_semantic_diagnostics.py` | `SECRET`                                                          | Explicit `unit-test-placeholder-not-a-credential` mock key and logging canary; fake clients/offline HTTP transport, with exact-value non-leak assertions. |
+| `apps/api/tests/test_streaming_object_storage.py`    | `secret_access_key` in mocked S3 helper                           | Disposable `test-secret`; `boto3.client` is monkeypatched before construction.                                                                            |
+| `apps/api/tests/test_streaming_object_storage.py`    | `secret_access_key` in unsupported/invalid-limit S3 tests         | Disposable `fixture-secret`; identical occurrences share one exact file/type/value tuple. No provider calls occur.                                        |
+| `apps/api/tests/test_upload_jobs.py`                 | `object_storage_secret_key` in unsupported-provider test          | Disposable `fixture-secret`; failure is asserted before resource creation.                                                                                |
+| `scripts/benchmark_source_fidelity.py`               | `BEST_SOURCE_COMMIT`                                              | Public Tesseract model repository commit, independently resolved through GitHub's commit API.                                                             |
+| `scripts/benchmark_source_fidelity.py`               | `BEST_MODEL_SHA256["sin"]`                                        | SHA-256 independently recomputed from the pinned downloaded Sinhala model.                                                                                |
+| `scripts/benchmark_source_fidelity.py`               | `BEST_MODEL_SHA256["eng"]`                                        | SHA-256 independently recomputed from the pinned downloaded English model.                                                                                |
+| `scripts/benchmark_source_fidelity.py`               | `BEST_MODEL_SHA256["tam"]`                                        | SHA-256 independently recomputed from the pinned downloaded Tamil model.                                                                                  |
+| `scripts/benchmark_source_fidelity.py`               | `GUIDE_SHA256`                                                    | SHA-256 independently recomputed from the immutable 371-page Grade 5 teacher guide; source identity, not an authentication value.                         |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_BASE_COMMIT`                                             | Public `lightonai/LightOnOCR-2-1B` revision; the upstream model API reports the exact revision and `private=false`.                                       |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_ADAPTER_COMMIT`                                          | Public `avishadilhara/sinhala-lightonocr-2-1b-Qlora` revision; exact upstream revision and `private=false`.                                               |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_WEIGHTS["lighton-base"]["model.safetensors"]`            | Exact public Hugging Face LFS SHA-256. This establishes non-secret identity, not completed download or inference.                                         |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_WEIGHTS["lighton-base"]["tokenizer.json"]`               | Public LFS SHA-256, also independently recomputed from the pinned public tokenizer download.                                                              |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_WEIGHTS["lighton-adapter"]["adapter_model.safetensors"]` | Exact public LFS SHA-256; no assertion of completed adapter inference.                                                                                    |
+| `scripts/benchmark_source_fidelity.py`               | `LIGHTON_WEIGHTS["lighton-adapter"]["tokenizer.json"]`            | Public LFS SHA-256, also independently recomputed from the pinned public tokenizer download.                                                              |
+
+- **Review outcome:** Five mock-credential findings, three public revision identifiers and eight deterministic checksum findings; no real or unexplained credential was identified. Unknown findings must remain blocked rather than being added to this list. No inline suppression, new exclusion pattern, directory exception, detector disablement or sensitivity change is introduced. The unchanged repository scan passes with zero unexplained findings, and 367 affected tests pass. A negative-control file containing the same reviewed public revision is still reported by the scanner, proving file-specific rather than global allowance. A configuration comparison confirms unchanged plugin/filter/sensitivity settings and pre-existing exception identities; the hook itself refreshed only line-number/order/timestamp metadata. Complete post-remediation gates are recorded in the preceding entry. This review does not close an educational acceptance phase.
+
 ### 2026-09-05 — Preserve intake years through metadata review
+
 - **Change / reason:** A supplementary review completed after `e1ed791` and exposed a real regression: assigning a curriculum hid an imported year from Materials/filtering, and explicit metadata confirmation did not retain it as the source year. Keep the display/filter fallback independent of curriculum assignment; adopt a missing source year only during explicit confirmation, never overwrite an existing year, and audit previous/current years. Immutable intake evidence, source bytes, review versioning, idempotency and trust gates remain unchanged. No existing corpus metadata is automatically confirmed or backfilled.
 - **Affected paths:** `apps/api/src/exam_guru_api/documents/service.py`, `apps/api/tests/test_document_service.py`, `apps/api/tests/integration/test_document_upload_api.py`, `apps/web/e2e/admin-documents.spec.ts`, `AGENTS.md`, known limitations and this log.
 - **RED / GREEN:** The focused year/confirmation regression selection first produced six failures and four passes, including lost filtered results, absent confirmed year and missing year audit evidence. The fixed document service/upload suite passed 57 tests before adding two additional Unicode rejection cases. Coverage now includes pending assignment, explicit confirmation, existing-year precedence, missing years, idempotent replay, reassignment, immutable intake evidence and no automatic trust. A new isolated real-API browser journey asserts the actual Material details Year field before/after assignment and confirmation, plus exact year-filter results.
@@ -23,16 +68,17 @@ This is the canonical per-change log. Keep newest entries first and include each
 - **Runtime / limitations:** Rebuilt API/worker/maintenance images and restarted only those services; health checks pass. Read-only verification still reports **659 documents / 3,372 pages / 57,391 blocks**, with all **587** imports metadata-review-required and **zero** imported trusted records. No corpus file, curriculum assignment, extraction record, embedding or trust state was modified by this follow-up. CI `33982188457` passed all jobs for `e1ed791`; this follow-up's CI is checked after pushing. Teacher-pilot/P10 limitations remain unchanged.
 
 ### 2026-09-05 — Import the complete real Grade 3–5 corpus without granting trust
+
 - **Change / reason:** Import all real local PDFs through source upload/extraction APIs, preserving content-addressed originals and immutable candidate metadata instead of fabricating curriculum assignments. Migration `0032_source_intake_metadata` enforces bounded intake evidence, explicit audited metadata confirmation, legacy-row preservation and trust constraints. Source upload/storage bounds now allow 256 MiB originals; worker-only Sinhala/English Tesseract uses at most 40 routed pages with five-second command bounds inside the existing 300-second actor deadline. Unprocessed/empty OCR pages and legacy-font/private-use/replacement-glyph warnings remain explicit trust blockers. Transient OCR errors retain the failed-to-retry lifecycle; no blanket font conversion, trust, chunking or embedding is performed.
 - **Affected paths:** `scripts/import_studio_corpus.py`, `apps/api/src/exam_guru_api/documents/`, document API routes, configuration/storage bounds, migration `0032`, related unit/integration tests, `.env.example`, `compose.yaml`, generated OpenAPI/client, `README.md`, `AGENTS.md`, architecture/readiness/limitations and this log. Secret-baseline changes update existing line numbers only; no detector or allowlist is relaxed.
 - **Inventory attribution:** Each checksum is allocated once to its first inventory path for the following additive counts. Folder attribution is not approved educational metadata. Grade 5 has 100 distinct accessible checksums, including three aliases first allocated to Grade 4; its 95 deduplicated paths include those aliases.
 
 | Inventory folder | All files | PDF paths | Imported unique originals | Deduplicated paths | Reviewable extraction | Native | OCR | Mixed | Failed | Needs review | Ready | Removed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Grade 3 | 309 | 307 | 300 | 7 | 296 | 203 | 71 | 22 | 4 | 300 | 0 | 0 |
-| Grade 4 | 199 | 197 | 190 | 7 | 184 | 148 | 15 | 21 | 6 | 190 | 0 | 0 |
-| Grade 5 | 203 | 192 | 97 | 95 | 94 | 58 | 9 | 27 | 3 | 97 | 0 | 0 |
-| Total | 711 | 696 | 587 | 109 | 574 | 409 | 95 | 70 | 13 | 587 | 0 | 0 |
+| ---------------- | --------: | --------: | ------------------------: | -----------------: | --------------------: | -----: | --: | ----: | -----: | -----------: | ----: | ------: |
+| Grade 3          |       309 |       307 |                       300 |                  7 |                   296 |    203 |  71 |    22 |      4 |          300 |     0 |       0 |
+| Grade 4          |       199 |       197 |                       190 |                  7 |                   184 |    148 |  15 |    21 |      6 |          190 |     0 |       0 |
+| Grade 5          |       203 |       192 |                        97 |                 95 |                    94 |     58 |   9 |    27 |      3 |           97 |     0 |       0 |
+| Total            |       711 |       696 |                       587 |                109 |                   574 |    409 |  95 |    70 |     13 |          587 |     0 |       0 |
 
 - **Verified data:** The raw corpus contains 1,159,830,200 bytes including 15 existing evidence JSON files (PDFs: 1,158,924,084 bytes). All 711 file hashes and modification times remain unchanged. No unreadable/password-required/repair-required PDFs were found; 134 PDF paths retain recoverable parser warnings. All 587 imported stored originals were independently reread through the storage adapter and matched expected size/SHA-256 (1,076,259,709 bytes). They produced 3,300 pages, 57,319 blocks and 357 OCR pages. Thirteen originals failed with `unsafe_text`; 64 retain pending OCR/empty-page warnings (12/26/26 by allocated grade), and 251 extracted originals have conservative font/glyph warnings (149/75/27). Warning categories overlap; completion does not establish quality.
 - **Current Studio, not a disposable test runtime:** 659 documents, 3,372 pages, 57,391 blocks, 617 source objects / 1,076,279,517 bytes, migration `0032`. The prior 72 fixture records and 30 source objects are preserved; their 71 trusted records and 29 embeddings are not real-corpus approval. The new imports have zero trusted records and zero knowledge chunks. New Materials cards show Grade 3: 300, Grade 4: 187, Grade 5: 97, plus three unassigned originals with conflicting Grade 4/5 evidence. Existing fixture records additionally appear in Grade 5 and Unassigned; no cleanup/reset was performed.
@@ -42,6 +88,7 @@ This is the canonical per-change log. Keep newest entries first and include each
 - **Limitations:** Host Tesseract is absent, so its optional synthetic smoke skips; real worker OCR is evidenced by the imported corpus, not a Sinhala quality benchmark. Three paid-provider tests skip intentionally. The full backend run emits two Pydantic unsupported-field-attribute warnings. Backup script syntax checks pass, but local ShellCheck is unavailable; CI retains its required ShellCheck gate. Required human metadata/text/font/OCR adjudication and authoritative Scholarship Paper I evidence remain outstanding. The teacher pilot stays NOT READY, P10 remains open and Priority 2 remains blocked. The prior dependency-fix commit `fdf56cb` passed CI `33972610675`; this change's remote CI is verified after pushing, not assumed here.
 
 ### 2026-09-05 — Make real intake discoverable and safe to review from Materials
+
 - **Change / reason:** Surface unassigned/candidate metadata without treating it as curriculum authority, paginate and filter materials on the server, load only the selected source/page during review, and require explicit upload-wizard actions rather than accidental form submission. Provide authenticated, checksum-verified original-page PNG previews without weakening the PDF sandbox. Bound input/pixels/dimensions/output and concurrent rendering off the event loop. Page-keyed text drafts preserve edits across navigation and conflicts, and prevent saving a draft to a different page. Trust errors map to teacher-readable reasons; metadata confirmation remains separate from text trust.
 - **Affected paths:** `apps/web/src/components/admin/{materials-library,material-details,extraction-review-studio}.tsx`, their tests, API document reads/previews, generated contracts, related browser fixtures/journeys and small contract/asynchronous-assertion adjustments in knowledge/paper tests.
 - **Verification:** With `/home/sameen/.nvm/versions/node/v24.19.0/bin` first in `PATH`, `npm run lint --prefix apps/web`, `npm run typecheck`, `npm run test:coverage --prefix apps/web` (**445 tests**, configured 100% coverage), `npm audit --audit-level=moderate` (**zero vulnerabilities**), and `npm run build --prefix apps/web` pass. `npm run test:e2e:isolated` passes all **20 Chromium journeys** on disposable PostgreSQL/Valkey/source storage. No normal-Studio fixture writes are used for this gate. An independent security review found no additional critical/high blocker across intake audit guards, preview bounds, trust mapping, importer restrictions, page drafts or OCR retries.
@@ -49,18 +96,21 @@ This is the canonical per-change log. Keep newest entries first and include each
 - **Limitations:** Evidence proves intake and review access, not educational correctness or full Scholarship generation. Font-risk/finalized pending-OCR resolution still needs a provenance-preserving human adjudication workflow. No acceptance gate is promoted by this entry.
 
 ### 2026-09-05 — Restore the frontend dependency security gate
+
 - **Change / reason:** Update the transitive `qs` lockfile resolution from `6.15.3` to `6.16.0`, fixing GHSA-x5fp-wj9c-mxmx and GHSA-4mjr-xmp4-gh2g without changing dependency ranges, audit thresholds, or script approvals. CI run `33944043299` failed on these advisories; its backend passed.
 - **Affected paths:** `package-lock.json` and this change log.
 - **Verification:** In a disposable checkout with Node `24.19.0` / npm `11.17.0`, `npm ci`, `npm audit --audit-level=moderate --json` (zero vulnerabilities), `npm ls qs` (both paths use `6.16.0`), `npm run lint --prefix apps/web`, `npm run typecheck`, generated-client reproducibility, `npm run test:coverage --prefix apps/web` (412 tests, configured 100% coverage), `npm run build --prefix apps/web`, and `git diff --check` passed. After installing the pinned Playwright browser, `npm run test:e2e:isolated` passed all 20 Chromium journeys against disposable PostgreSQL/Valkey/storage, without touching the current Studio.
 - **Limitations:** `6.16.0` was the first release fixing both advisories and was approximately 6 days 14 hours old at selection; no older fixed compatible release existed. This narrowly justified security update falls short of the preferred seven-day age. Remote CI is checked after pushing; this entry does not assume its result.
 
 ### 2026-09-05 — Require change logging and post-commit pushes
+
 - **Change / reason:** Record the repository owner's instruction to log every completed fix, feature, refactor, test, configuration, infrastructure, documentation and skill change, then commit and push verified work to the configured upstream. Include log entries in the same commit and verify the remote result without forcing or rewriting history.
 - **Affected paths:** `AGENTS.md`, `.agents/skills/loop-engineering/SKILL.md`, `docs/v1/01_ENGINEERING_WORKFLOW.md`, and this change log.
 - **Verification:** `git diff --check`; reloading the `loop-engineering` skill validates its existing frontmatter/discovery and the updated workflow. Documentation-only follow-up; application tests were not rerun for these instruction changes.
 - **Limitations:** Respect later no-push instructions and higher-priority restrictions. Authentication, permissions, missing upstream configuration, branch protection and non-fast-forward failures must be reported rather than bypassed. Push success is verified after the commit and does not establish CI success.
 
 ### 2026-09-05 — Fix React development CSP eval compatibility (`3fb7f8d`)
+
 - **Change / reason:** React's development debugging requires `eval`, but the same restrictive CSP was applied to every runtime. Pass `NODE_ENV` into the security-header builder and permit `'unsafe-eval'` only for `NODE_ENV=development` with application environment `local` or `test`.
 - **Security boundaries:** Production/staging and the default policy still forbid eval. Source-PDF sandbox headers and other security headers remain unchanged. The security E2E now asserts zero console errors instead of ignoring the eval warning.
 - **Affected paths:** `apps/web/next.config.ts`, `apps/web/src/lib/security-headers.ts`, `apps/web/src/lib/security-headers.test.ts`, `apps/web/e2e/security.spec.ts`.
@@ -80,9 +130,11 @@ This is the canonical per-change log. Keep newest entries first and include each
 # PRIORITY 1 — ADMIN + EXAM INTELLIGENCE + RAG + LLM
 
 ## P0 — Repository & Engineering Foundation
+
 **Status:** DONE
 
 ### Scope
+
 - monorepo/workspace bootstrap
 - Next.js web shell
 - FastAPI API
@@ -99,6 +151,7 @@ This is the canonical per-change log. Keep newest entries first and include each
 - secrets/config handling
 
 ### Exit criteria
+
 - [x] clean clone can bootstrap documented local environment
 - [x] web/API/worker processes start successfully
 - [x] database migrations run from empty database
@@ -110,6 +163,7 @@ This is the canonical per-change log. Keep newest entries first and include each
 - [x] no secret committed to repository
 
 ### Evidence
+
 - 2026-08-23 bootstrap/runtime: `docker compose up --build --detach --wait --wait-timeout 240` completed with web, API, Dramatiq worker, PostgreSQL 18/pgvector, Valkey and MinIO running; `/api/v1/health/ready` returned database/Valkey `ok`, web returned HTTP 200, worker logged `ready for action`, and PostgreSQL reported pgvector `0.8.6`.
 - Backend gate: `uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing` — 42 passed with 100% statement coverage; real disposable pgvector/PostgreSQL, Valkey and MinIO integration tests include clean migration, readiness, worker startup and immutable/idempotent object storage.
 - Backend quality: Ruff check/format and strict mypy pass; production configuration rejects local credentials and unencrypted database, Valkey and object-storage connections; readiness checks have explicit deadlines and every API response carries a validated request ID.
@@ -122,9 +176,11 @@ This is the canonical per-change log. Keep newest entries first and include each
 ---
 
 ## P1 — Grade 5 Domain Model & Admin Foundation
+
 **Status:** DONE
 
 ### Scope
+
 - admin authentication/authorization boundary using the secure deterministic development/test identity adapter
 - Grade 5 Scholarship exam configuration
 - medium/version metadata
@@ -135,6 +191,7 @@ This is the canonical per-change log. Keep newest entries first and include each
 Production OAuth/OIDC/external identity-provider integration is deferred to P10. P1 proves the same authentication port, role checks, negative authorization paths and admin browser workflow with the secure deterministic adapter.
 
 ### Exit criteria
+
 - [x] Grade 5 domain taxonomy represented in database and validated
 - [x] admin can manage allowed taxonomy/configuration
 - [x] role/permission tests exist
@@ -143,6 +200,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] admin UI/API E2E coverage exists for core taxonomy workflow
 
 ### Evidence
+
 - `19b7ae8` adds the Grade 5 exam configuration, medium, curriculum-version and competency/skill/sub-skill/learning-concept hierarchy domain/persistence foundation.
 - Domain validation rejects malformed codes/titles, missing or wrong-level parents, cross-curriculum parents, inactive-parent activation, duplicate IDs and duplicate sibling codes while supporting incremental hierarchy writes.
 - Alembic `0002_grade5_taxonomy` creates audit-stamped PostgreSQL tables, Grade 5/check constraints, null-safe sibling uniqueness, same-curriculum composite foreign keys and hierarchy/active-parent triggers; clean migration plus `alembic check` pass against real PostgreSQL/pgvector.
@@ -159,9 +217,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P2 — Source Document Ingestion & Extraction
+
 **Status:** IN_PROGRESS
 
 ### Scope
+
 - syllabus/teacher-guide/past-paper/marking-scheme upload
 - S3-compatible file persistence
 - file type/size/security validation
@@ -172,6 +232,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - admin extraction-review/correction workflow
 
 ### Exit criteria
+
 - [x] real Grade 5 fixture documents can be uploaded and preserved
 - [x] native PDF extraction works with deterministic tests
 - [ ] OCR abstraction exists and chosen open-source OCR has a benchmark record on representative Sinhala scans
@@ -182,6 +243,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] extraction quality metrics are recorded
 
 ### Evidence
+
 - `7628bfa` adds bounded PDF-only upload validation, unsafe-name/content spoof rejection, deterministic SHA-256 identity/object keys, immutable object writes, PostgreSQL source metadata, transactional upload auditing and same-checksum idempotent retries.
 - Alembic `0005_source_documents` passes clean migration and schema-drift checks; authorized upload integration tests prove 201 creation, 200 deduplication, reviewer 403 rejection, one immutable storage write and one persisted audit event.
 - PyMuPDF `1.28.2` native extraction has deterministic tests for page numbering, reading-order blocks, bounding-box/page provenance, engine/version metadata, character/page quality metrics, malformed/encrypted/page-limit failures and explicit OCR routing for textless PDFs.
@@ -203,9 +265,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P3 — Historical Question Bank & Curriculum Knowledge Base
+
 **Status:** IN_PROGRESS
 
 ### Scope
+
 - question segmentation/normalization
 - historical question metadata
 - curriculum chunks
@@ -216,6 +280,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - duplicate source import protection
 
 ### Exit criteria
+
 - [x] past-paper questions are stored as structured records
 - [x] curriculum content is chunked by meaningful educational boundaries, not blind character windows alone
 - [x] questions can be linked to competency/skill/sub-skill/source
@@ -225,6 +290,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [ ] representative data-quality tests pass
 
 ### Evidence
+
 - `8325efe` starts P3 with strict historical-question and educational-boundary chunk contracts, immutable source document/page/block provenance, forward-only review states, taxonomy classification requirements for reviewed records, and a provider/model/dimension/version/config-fingerprint-aware deterministic embedding port.
 - `d654bf4` adds PostgreSQL/pgvector persistence, trusted-source and same-curriculum provenance enforcement, taxonomy hierarchy validation, immutable forward review-state triggers, atomic duplicate import handling, immutable versioned embedding configurations, source-text hash binding, idempotent re-embedding, transactional audit events, and real PostgreSQL 18/pgvector integration tests.
 - `502198f` keeps the isolated integration credential scanner-safe. The unified backend gate is 984 tests with 100% statements and branches; all 35 integration tests, Ruff check/format, strict mypy, local-data boundary checks, and the committed-file secret scan pass.
@@ -237,9 +303,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P4 — RAG Retrieval & Grounding
+
 **Status:** IN_PROGRESS
 
 ### Scope
+
 - metadata filters
 - lexical/full-text search
 - pgvector semantic search
@@ -250,6 +318,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - retrieval eval dataset
 
 ### Exit criteria
+
 - [x] retrieval cannot leak content across disallowed grade/medium/curriculum boundaries
 - [x] hybrid retrieval works against real PostgreSQL + pgvector integration tests
 - [x] every returned context item includes source provenance
@@ -259,6 +328,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] adversarial/irrelevant queries are handled safely
 
 ### Evidence
+
 - `1c1a80d` starts P4 with exact grade/exam/medium/curriculum/taxonomy boundaries applied before ranking, embedding-space validation, deterministic weighted reciprocal-rank fusion, Unicode-normalized deduplication, bounded opaque context with complete provenance, and fixed identifier-based Recall@K, Precision@K, MRR, nDCG and leakage metrics.
 - One hundred thirty focused retrieval tests pass with 100% statements and branches, including stronger-scoring forbidden scopes, mixed vector spaces, prompt-injection source text, irrelevant queries, duplicate poisoning, control-character rejection and context amplification limits.
 - `dcc64dc` adds the real PostgreSQL `simple` full-text/pgvector adapter and fixed Grade 5 integration eval. Reviewed records are hard-filtered before ranking; a stronger-scoring forbidden grade/medium/curriculum record is physically present but never enters either channel. The recorded deterministic baseline is Recall@3 `1.0`, MRR `1.0`, leakage `0.0`, with complete provenance and prompt-injection text retained only as untrusted data.
@@ -272,9 +342,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P5 — Historical Exam Intelligence, Forecasting & Backtesting
+
 **Status:** IN_PROGRESS
 
 ### Scope
+
 - deterministic historical statistics
 - competency/skill/question-type/difficulty/marks distributions
 - recency/coverage features
@@ -284,6 +356,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - admin visualization/report
 
 ### Exit criteria
+
 - [x] statistics are reproducible from source data
 - [x] no LLM is required for deterministic scoring calculations
 - [x] rolling held-out backtests exist for multiple historical years where data permits
@@ -293,6 +366,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] no UI/API claims exact future-exam certainty
 
 ### Evidence
+
 - `04a391d` starts P5 with provenance-backed historical observations, exact deterministic competency/skill/type/difficulty/marks distributions, syllabus-balanced baseline and practice-priority methods, explicit pre-holdout leakage rejection, expanding rolling held-out windows, baseline deltas/variance/limitations, and safe baseline fallback when improvement is not meaningful.
 - Fifty-seven focused analytics/backtest tests pass with 100% statements and branches. Synthetic fixed fixtures prove mechanics only; no future-exam prediction claim is made.
 - `36af06f` adds immutable append-only analytics runs (migration `0011`) and authorized APIs. Only reviewed questions with active reviewed skills, complete difficulty evidence, trusted source blocks and checksum-bound source versions are included; all exclusions and question IDs are recorded. Statistics, exact Fraction metrics, expanding held-out windows/leakage audits, baseline and method runs, limitations, recommendation/fallback, source/config/input/result fingerprints and algorithm versions are persisted idempotently and audited.
@@ -303,9 +377,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P6 — Deterministic Paper Blueprint Engine
+
 **Status:** DONE
 
 ### Scope
+
 - paper structure rules
 - competency/skill allocation
 - difficulty allocation
@@ -314,6 +390,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - versioned blueprint creation
 
 ### Exit criteria
+
 - [x] blueprint generation is deterministic for the same inputs/seed/config where designed
 - [x] coverage constraints are validated in code
 - [x] impossible blueprints fail clearly
@@ -322,6 +399,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] admin can inspect a blueprint before generation
 
 ### Evidence
+
 - `7a04c3a` starts P6 with a deterministic versioned blueprint constraint solver, exact paper/section marks, question-type/difficulty/taxonomy allocations, impossible-constraint diagnostics, baseline-safe forecast priorities and self-contained generation slots with scope, rationale and evidence.
 - One hundred twenty-six focused blueprint tests pass with 100% statements and branches across deterministic seeds, boundary distributions, conflicts, backtracking and forged aggregate invariants.
 - `e76df48` adds migration `0012`, immutable bounded specification/blueprint/taxonomy snapshots, exact version/seed/marks/slot/fingerprint columns, same-curriculum analytics FKs, reviewed taxonomy hierarchy checks, atomic idempotency/race convergence and append-only protection. Persisted P5 results are fingerprint-, curriculum-, algorithm- and leakage-validated before server-side priority adaptation; clients cannot supply forecast evidence. Fully typed authorized create/list/get APIs expose stable diagnostics.
@@ -331,9 +409,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P7 — LLM Provider Layer & Question Generation
+
 **Status:** DONE
 
 ### Scope
+
 - provider-independent LLM interface
 - OpenAI initial adapter
 - structured output schemas
@@ -345,6 +425,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - deterministic fakes for CI
 
 ### Exit criteria
+
 - [x] domain services do not depend directly on an OpenAI SDK type
 - [x] generated outputs use validated structured schemas
 - [x] model/provider/prompt/retrieval versions are stored for every generation
@@ -354,6 +435,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] generation uses blueprint + grounded context, not a generic "make a paper" prompt
 
 ### Evidence
+
 - `e9a3d3b` starts P7 with provider-independent typed contracts, canonical P6 blueprint-slot integration, bounded untrusted provenance context, strict structured question/answer/marking schemas, prompt/provider/model/blueprint/retrieval/schema versions, token/cost/latency accounting, typed failures, deterministic fakes, idempotency identity and append-only prompt version registration.
 - The generation boundary has no SDK dependency or publish authority; all candidates require validation. Prompt templates reject reserved context interpolation while retrieved prompt-injection text remains opaque data. Generation and blueprint integration tests pass with 100% generation-package statements and branches.
 - `4ff624c` adds bounded orchestration with retryable-code-only attempts, linked identities, injected backoff scheduling, atomic result-cache semantics and cumulative input/output token and integer-microusd budgets across successes and accounted failures.
@@ -366,9 +448,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P8 — Automated Validation, Evals & Duplicate Detection
+
 **Status:** DONE
 
 ### Scope
+
 - curriculum-scope checks
 - answer/option validation
 - age-appropriateness checks
@@ -379,6 +463,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - evaluation datasets and quality scoring
 
 ### Exit criteria
+
 - [x] invalid structured output is rejected
 - [x] generated question cannot bypass validation to published state
 - [x] duplicate/paraphrase regression fixtures exist
@@ -389,6 +474,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] live-model eval baseline exists for the chosen generation configuration
 
 ### Evidence
+
 - `f0f45b8` starts P8 with immutable versioned validation inputs/reports/findings, stable pass/warn/fail codes, bounded non-leaking evidence, deterministic schema/blueprint/option/answer/marks/grounding/injection/language/age indicators and exact/hash duplicate checks composed through a canonical pipeline.
 - Ninety-four focused validator tests pass with 100% statements and branches. Reports explicitly state that deterministic success does not prove semantic correctness, factual grounding, age appropriateness, fluency or paraphrase uniqueness.
 - `3fce869` adds immutable PostgreSQL validation runs and append-only findings bound by same-curriculum foreign keys to the exact succeeded generation result. The API accepts only a generation-run ID, reconstructs the candidate, blueprint and trusted provenance server-side, verifies every fingerprint, loads a bounded reviewed duplicate bank, executes the canonical pipeline, persists complete reports transactionally and race-idempotently, records audit events, and exposes role-separated list/detail/finding reads. Database triggers reject incomplete, inconsistent, updated or deleted reports.
@@ -404,9 +490,11 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P9 — Human Review, Question Bank & Paper Publishing
+
 **Status:** DONE
 
 ### Scope
+
 - reviewer queue
 - source/context visibility
 - edit/approve/reject workflow
@@ -416,6 +504,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - archive/unpublish rules
 
 ### Exit criteria
+
 - [x] reviewer can inspect question, answer, blueprint, retrieved sources and validation results together
 - [x] approve/reject/edit actions are authorized and audited
 - [x] rejected questions cannot be published
@@ -424,6 +513,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] complete Grade 5 practice paper can be generated, reviewed and published end-to-end
 
 ### Evidence
+
 - `279c4b7` starts P9 with a strict generated→validated→in-review→approved/rejected candidate lifecycle, immutable generation/provenance/validation lineage and reviewer revisions, optimistic command versions, approved-only exact-slot paper assembly, explicit publish authorization, deterministic immutable published snapshots/content hashes and forward-only archive contracts.
 - One hundred fourteen focused paper tests pass with 100% statements and branches, including direct publish construction, forged states, stale commands, prompt-like authorization text, duplicate slots, unapproved candidates and publication mutation attempts.
 - `6a9150e` adds the persisted approved-question-bank foundation: server-derived candidates can be created only from the exact same-curriculum succeeded generation and immutable PASS validation run; PostgreSQL enforces the upstream blueprint/slot/provenance/finding lineage, normalized append-only revisions and review events, CAS transitions, terminal immutability and direct-SQL completeness. Reviewer/admin APIs support bounded queue reads and audited start/edit/approve/reject commands; automated validation is explicitly bound to generated revision 1 while type and marks remain immutable across human edits.
@@ -436,12 +526,15 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 ---
 
 ## P10 — Priority 1 Full Acceptance / Production Readiness Gate
+
 **Status:** IN_PROGRESS
 
 ### Mandatory end-to-end journey
+
 `admin login -> upload real Grade 5 source -> extraction/OCR -> human correction -> ingest -> question/knowledge normalization -> RAG retrieval -> historical analysis/backtest -> blueprint -> LLM generation -> automated validation -> human review -> publish`
 
 ### Exit criteria
+
 - [ ] every P0-P9 phase is DONE
 - [x] Priority 1 E2E journey passes
 - [x] teacher-first multi-grade Materials, Generate Papers, Review & Approve and Published Papers workflows pass
@@ -457,6 +550,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - [x] CI green on the release commit
 
 ### Evidence
+
 - `a7366bd` adds deployment-level recovery scheduling and closes extraction's commit-before-dispatch window. Migration `0019` persists bounded per-attempt extraction queue identity; same-request replay and a `FOR UPDATE SKIP LOCKED` recovery actor safely redrive pending/null outbox rows with sanitized audits. A long-running maintenance service enqueues extraction, generation and embedding recovery actors every bounded interval with monotonic timing, error isolation and clean shutdown. Compose/CI require the scheduler to be healthy; the real Compose service is verified healthy. Backend gate: 1,973 passed / 2 expected optional skips at 100% statements and branches.
 - `a1a179e` adds validated web runtime configuration, production HTTPS/secure-cookie enforcement, CSP and defense-in-depth security headers, plus exact Origin/Fetch-Metadata rejection before cookie mutation or same-origin proxy calls. Malicious cross-site requests cannot reach upstream/cookie side effects; bearer-authenticated backend APIs remain outside browser-cookie CSRF semantics. Header, hydration and login acceptance passes in real Chrome.
 - `94f6d57` adds two production-readiness controls. First, a source-verified backup/restore runbook and guarded `pg_dump`/`pg_restore` scripts default to verification/dry-run, reject credential leakage and nonempty targets, and require exact destructive confirmation. A disposable PostgreSQL 18/pgvector source→target restore preserves critical extraction, knowledge/embedding, generation, validation, review, publication/hash and audit invariants; migration `0020` fixes a real empty-`search_path` restore defect in canonical publication hashing. Second, admin-only operations aggregation and content-free structured logs/manual OpenTelemetry spans cover extraction, embedding, retrieval, generation tokens/cost/latency, validation and publish/archive outcomes. Main backend gate: 2,039 passed / 2 expected skips / 1 isolated restore test at 100% statements and branches; the dedicated restore test passes separately.
@@ -499,6 +593,7 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 - Remaining repository hardening requires live production identity acceptance, human Sinhala OCR/data review and representative P3-P5 real-data thresholds. Real Grade 5 Scholarship publication additionally requires authoritative Paper I ability-framework/past-paper evidence and restored active Grade 3 scope.
 
 ### Priority gate
+
 **Priority 2 remains BLOCKED until P10 is DONE.**
 
 ---
@@ -506,27 +601,32 @@ Production OAuth/OIDC/external identity-provider integration is deferred to P10.
 # PRIORITY 2 — STUDENT PRODUCT
 
 ## P11 — Student Identity, Entitlements & Published Paper Catalog
+
 **Status:** BLOCKED
 
 Blocked by: P10
 
 ### Exit criteria
+
 - [ ] student authentication/profile
 - [ ] Grade 5 entitlements/subscription access rules
 - [ ] free/sample vs premium access tested
 - [ ] published paper catalog only exposes publishable versions
 
 ### Evidence
+
 TBD
 
 ---
 
 ## P12 — Student Exam Runner
+
 **Status:** BLOCKED
 
 Blocked by: P10
 
 ### Exit criteria
+
 - [ ] timed attempt lifecycle
 - [ ] answer autosave/idempotency
 - [ ] navigation/review flags
@@ -535,16 +635,19 @@ Blocked by: P10
 - [ ] E2E coverage
 
 ### Evidence
+
 TBD
 
 ---
 
 ## P13 — Marking & Skill Analytics
+
 **Status:** BLOCKED
 
 Blocked by: P10
 
 ### Exit criteria
+
 - [ ] deterministic marking for supported question types
 - [ ] attempt/answer auditability
 - [ ] competency/skill score aggregation
@@ -552,16 +655,19 @@ Blocked by: P10
 - [ ] edge cases tested
 
 ### Evidence
+
 TBD
 
 ---
 
 ## P14 — Progress Dashboard & Recommendations
+
 **Status:** BLOCKED
 
 Blocked by: P10
 
 ### Exit criteria
+
 - [ ] historical score trends
 - [ ] skill trend calculations
 - [ ] weak-skill identification
@@ -569,16 +675,19 @@ Blocked by: P10
 - [ ] dashboard E2E coverage
 
 ### Evidence
+
 TBD
 
 ---
 
 ## P15 — Full V1 Acceptance Gate
+
 **Status:** BLOCKED
 
 Blocked by: P10-P14
 
 ### Exit criteria
+
 - [ ] Priority 1 remains green/regression-free
 - [ ] P11-P14 DONE
 - [ ] full student journey passes from entitlement to progress dashboard
@@ -588,9 +697,11 @@ Blocked by: P10-P14
 - [ ] release CI green
 
 ### Evidence
+
 TBD
 
 ---
 
 # Current next action
+
 P2 remains IN_PROGRESS on human-adjudicated Sinhala OCR ground truth. P3-P5 remain IN_PROGRESS on representative human-reviewed real Grade 5 data and measured quality thresholds. The configured embedding, generation and factual semantic-verifier synthetic live baselines are complete; they do not establish Sinhala or real-corpus educational quality. Live production identity acceptance remains externally blocked on a real tenant/client/role mapping and deployment evidence. The repository-side deterministic claim decomposition, one-call structured verification, immutable claim/accounting persistence, admin aggregation and teacher review presentation are complete; no further non-blocked implementation slice is identified for these gates. The next action is to obtain and adjudicate the external Sinhala/real-data corpora, supply the authoritative Scholarship Paper I framework/evidence, run real Paper I/Paper II/full-package samples, and execute pinned live identity acceptance without making a production quality claim in advance. Student Priority 2 remains blocked by P10.

@@ -3,11 +3,12 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.curriculum.models import CurriculumVersionModel
+from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import (
@@ -36,7 +37,12 @@ class EmbeddingSourceRecord:
     review_state: ReviewState
     text: str
     version: int
-    active_for_ai: bool = True
+    active_for_ai: bool = False
+    source_candidate_id: UUID | None = None
+    source_candidate_sha256: str | None = None
+    source_fidelity_current: bool = False
+    metadata_resolved: bool = False
+    catalogue_admitted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,20 +74,40 @@ class SqlAlchemyEmbeddingJobRepository:
 
         records: list[EmbeddingSourceRecord] = []
         if historical_question_ids:
-            questions = tuple(
-                await self._session.scalars(
-                    select(HistoricalQuestionModel)
+            questions = (
+                await self._session.execute(
+                    select(HistoricalQuestionModel, PageTextCandidateModel.text_sha256)
                     .join(
                         SourceDocumentModel,
                         SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
                     )
+                    .join(
+                        PageTextCandidateModel,
+                        PageTextCandidateModel.id == HistoricalQuestionModel.source_candidate_id,
+                    )
                     .where(
                         HistoricalQuestionModel.id.in_(historical_question_ids),
                         SourceDocumentModel.active_for_ai.is_(True),
+                        or_(
+                            func.knowledge_record_is_eligible(
+                                "historical_question", HistoricalQuestionModel.id
+                            ).is_(True),
+                            and_(
+                                HistoricalQuestionModel.review_state != ReviewState.REVIEWED,
+                                func.knowledge_source_lineage_is_current(
+                                    HistoricalQuestionModel.source_document_id,
+                                    HistoricalQuestionModel.page_number,
+                                    HistoricalQuestionModel.source_candidate_id,
+                                    HistoricalQuestionModel.curriculum_version_id,
+                                    HistoricalQuestionModel.text,
+                                ).is_(True),
+                            ),
+                        ),
                     )
                     .order_by(HistoricalQuestionModel.id)
+                    .execution_options(populate_existing=True)
                 )
-            )
+            ).all()
             records.extend(
                 EmbeddingSourceRecord(
                     kind="historical_question",
@@ -90,24 +116,50 @@ class SqlAlchemyEmbeddingJobRepository:
                     review_state=question.review_state,
                     text=question.text,
                     version=question.version,
+                    active_for_ai=True,
+                    source_candidate_id=question.source_candidate_id,
+                    source_candidate_sha256=candidate_sha256,
+                    source_fidelity_current=True,
+                    metadata_resolved=True,
+                    catalogue_admitted=True,
                 )
-                for question in questions
+                for question, candidate_sha256 in questions
             )
         if knowledge_chunk_ids:
-            chunks = tuple(
-                await self._session.scalars(
-                    select(KnowledgeChunkModel)
+            chunks = (
+                await self._session.execute(
+                    select(KnowledgeChunkModel, PageTextCandidateModel.text_sha256)
                     .join(
                         SourceDocumentModel,
                         SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
                     )
+                    .join(
+                        PageTextCandidateModel,
+                        PageTextCandidateModel.id == KnowledgeChunkModel.source_candidate_id,
+                    )
                     .where(
                         KnowledgeChunkModel.id.in_(knowledge_chunk_ids),
                         SourceDocumentModel.active_for_ai.is_(True),
+                        or_(
+                            func.knowledge_record_is_eligible(
+                                "knowledge_chunk", KnowledgeChunkModel.id
+                            ).is_(True),
+                            and_(
+                                KnowledgeChunkModel.review_state != ReviewState.REVIEWED,
+                                func.knowledge_source_lineage_is_current(
+                                    KnowledgeChunkModel.source_document_id,
+                                    KnowledgeChunkModel.page_number,
+                                    KnowledgeChunkModel.source_candidate_id,
+                                    KnowledgeChunkModel.curriculum_version_id,
+                                    KnowledgeChunkModel.text,
+                                ).is_(True),
+                            ),
+                        ),
                     )
                     .order_by(KnowledgeChunkModel.id)
+                    .execution_options(populate_existing=True)
                 )
-            )
+            ).all()
             records.extend(
                 EmbeddingSourceRecord(
                     kind="knowledge_chunk",
@@ -116,8 +168,14 @@ class SqlAlchemyEmbeddingJobRepository:
                     review_state=chunk.review_state,
                     text=chunk.text,
                     version=chunk.version,
+                    active_for_ai=True,
+                    source_candidate_id=chunk.source_candidate_id,
+                    source_candidate_sha256=candidate_sha256,
+                    source_fidelity_current=True,
+                    metadata_resolved=True,
+                    catalogue_admitted=True,
                 )
-                for chunk in chunks
+                for chunk, candidate_sha256 in chunks
             )
         return tuple(sorted(records, key=lambda item: (item.kind, item.id.int)))
 
@@ -241,6 +299,7 @@ class SqlAlchemyEmbeddingJobRepository:
         )
 
     async def claim(self, job_id: UUID, *, claimed_at: datetime) -> EmbeddingJobModel | None:
+        claim_time = func.greatest(EmbeddingJobModel.updated_at, claimed_at)
         return await self._session.scalar(
             update(EmbeddingJobModel)
             .where(
@@ -250,9 +309,10 @@ class SqlAlchemyEmbeddingJobRepository:
             .values(
                 status=EmbeddingJobStatus.CLAIMED.value,
                 version=EmbeddingJobModel.version + 1,
-                updated_at=claimed_at,
-                claimed_at=claimed_at,
+                updated_at=claim_time,
+                claimed_at=claim_time,
             )
+            .execution_options(populate_existing=True)
             .returning(EmbeddingJobModel)
         )
 

@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Literal, Self, cast
@@ -135,6 +136,7 @@ class Settings(BaseSettings):
     )
 
     environment: Environment = "local"
+    test_runtime_id: str | None = Field(default=None, strict=True)
     database_url: SecretStr = SecretStr(LOCAL_DATABASE_URL)
     valkey_url: SecretStr = SecretStr(LOCAL_VALKEY_URL)
     storage_backend: StorageBackend = StorageBackend.LOCAL
@@ -171,6 +173,9 @@ class Settings(BaseSettings):
         le=MAX_RATE_LIMIT_PER_WINDOW,
     )
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=256 * 1024 * 1024)
+    source_upload_max_owner_staged_bytes: int = Field(default=8 * 1024**3, ge=5, le=2**63 - 1)
+    source_upload_max_staged_bytes: int = Field(default=32 * 1024**3, ge=5, le=2**63 - 1)
+    source_upload_max_active_sessions_per_owner: int = Field(default=8, ge=1, le=1_000)
     extraction_recovery_batch_size: int = Field(default=50, ge=1, le=100)
     extraction_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
     maintenance_scheduler_interval_seconds: int = Field(default=30, ge=5, le=3_600)
@@ -408,6 +413,18 @@ class Settings(BaseSettings):
     deterministic_admin_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000101")
     deterministic_reviewer_token: SecretStr | None = None
     deterministic_reviewer_subject_id: UUID = UUID("00000000-0000-0000-0000-000000000102")
+
+    @model_validator(mode="after")
+    def validate_test_runtime_id(self) -> Self:
+        if self.test_runtime_id is not None:
+            if self.environment != "test":
+                raise ValueError("test_runtime_id requires the test environment")
+            if (
+                re.fullmatch(r"ai-exam-guru-e2e-[a-z0-9][a-z0-9-]{0,47}", self.test_runtime_id)
+                is None
+            ):
+                raise ValueError("test_runtime_id must identify an isolated E2E Compose project")
+        return self
 
     @model_validator(mode="after")
     def reject_local_credentials_in_production(self) -> Self:

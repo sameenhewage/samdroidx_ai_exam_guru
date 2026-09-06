@@ -273,6 +273,59 @@ def _refingerprint(run: GenerationRunModel) -> None:
     run.request_fingerprint = _fingerprint(_request_fingerprint_payload(run))
 
 
+def verified_generation_record() -> tuple[ValidationGenerationRecord, GenerationResult]:
+    record, expected = generation_record()
+    for index, item in enumerate(
+        cast(list[dict[str, object]], record.run.context_snapshot["items"])
+    ):
+        provenance = cast(dict[str, object], item["provenance"])
+        provenance["source_candidate_id"] = str(UUID(int=980_200 + index))
+        provenance["source_candidate_sha256"] = "a" * 64
+    _refingerprint(record.run)
+    return record, expected
+
+
+def test_reconstruction_accepts_verified_lineage_without_mutating_history() -> None:
+    record, expected = verified_generation_record()
+    snapshot = deepcopy(record.run.context_snapshot)
+    assert reconstruct_generation_result(record) == expected
+    assert record.run.context_snapshot == snapshot
+
+
+@pytest.mark.parametrize(
+    "lineage",
+    [
+        {"source_candidate_id": str(UUID(int=1))},
+        {"source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": None, "source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": True, "source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": None},
+        {"source_candidate_id": "not-a-uuid", "source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": UUID(int=1).hex, "source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": " " + str(UUID(int=1)), "source_candidate_sha256": "a" * 64},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": "A" * 64},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": "a" * 63},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": "a" * 65},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": "g" * 64},
+        {"source_candidate_id": str(UUID(int=1)), "source_candidate_sha256": "a" * 64 + "\n"},
+        {
+            "source_candidate_id": str(UUID(int=1)),
+            "source_candidate_sha256": "a" * 64,
+            "extra": True,
+        },
+    ],
+)
+def test_reconstruction_rejects_partial_or_malformed_candidate_lineage(
+    lineage: dict[str, object],
+) -> None:
+    record, _ = generation_record()
+    item = cast(list[dict[str, object]], record.run.context_snapshot["items"])[0]
+    cast(dict[str, object], item["provenance"]).update(lineage)
+    _refingerprint(record.run)
+    with pytest.raises(ValidationGenerationIntegrityError):
+        reconstruct_generation_result(record)
+
+
 def test_reconstructs_the_exact_generation_result_from_persisted_snapshots() -> None:
     record, expected = generation_record()
 
@@ -1225,6 +1278,8 @@ class FakeRepository:
         self.listed_run = existing or ValidationRunModel(id=UUID(int=980_100))
         self.listed_finding = ValidationFindingModel(id=UUID(int=980_101))
         self.lock_calls: list[tuple[UUID, UUID]] = []
+        self.lineage_current = True
+        self.lineage_locks: list[UUID] = []
 
     async def get_generation(self, curriculum_id: UUID, generation_id: UUID) -> object:
         assert curriculum_id == CURRICULUM_ID
@@ -1237,6 +1292,17 @@ class FakeRepository:
         generation_id: UUID,
     ) -> None:
         self.lock_calls.append((curriculum_id, generation_id))
+
+    async def lock_current_generation_lineage(self, run: GenerationRunModel) -> bool:
+        assert run.id == RUN_ID
+        self.lineage_locks.append(run.id)
+        items = cast(list[dict[str, object]], run.context_snapshot["items"])
+        return self.lineage_current and all(
+            {"source_candidate_id", "source_candidate_sha256"}.issubset(
+                cast(dict[str, object], item["provenance"])
+            )
+            for item in items
+        )
 
     async def get_for_generation_pipeline(
         self,
@@ -1320,9 +1386,27 @@ def service_with_fake(
     return service, session
 
 
+def test_fresh_validation_rejects_legacy_lineage_without_changing_history() -> None:
+    async def exercise() -> None:
+        record, expected = generation_record()
+        snapshot = deepcopy(record.run.context_snapshot)
+        repository = FakeRepository(record)
+        repository.lineage_current = False
+        service, session = service_with_fake(repository)
+        with pytest.raises(ValidationGenerationIntegrityError, match="current verified"):
+            await service.create(CURRICULUM_ID, generation_run_id=RUN_ID, actor_id=ACTOR_ID)
+        assert record.run.context_snapshot == snapshot
+        assert reconstruct_generation_result(record) == expected
+        assert repository.run_values is None
+        assert repository.lineage_locks == [RUN_ID]
+        assert session.rollbacks == 1
+
+    asyncio.run(exercise())
+
+
 def test_validation_service_creates_audits_and_delegates_bounded_reads() -> None:
     async def exercise() -> None:
-        record, _ = generation_record()
+        record, _ = verified_generation_record()
         repository = FakeRepository(record)
         service, session = service_with_fake(repository)
         operational, telemetry_logger, _tracer = telemetry()
@@ -1394,7 +1478,7 @@ def test_validation_creation_failure_codes_are_fixed(error: Exception, code: str
 
 def test_validation_service_sanitizes_failed_creation_telemetry() -> None:
     async def exercise() -> None:
-        record, _ = generation_record()
+        record, _ = verified_generation_record()
         service, session = service_with_fake(FakeRepository(record))
         operational, telemetry_logger, _tracer = telemetry()
         service._telemetry = operational
@@ -1432,7 +1516,7 @@ def test_validation_service_sanitizes_failed_creation_telemetry() -> None:
 
 def test_validation_service_deduplicates_existing_and_race_winner_reports() -> None:
     async def exercise() -> None:
-        record, result = generation_record()
+        record, result = verified_generation_record()
         fingerprint = generation_result_fingerprint(cast(Any, result))
         pipeline = build_default_pipeline()
         existing = ValidationRunModel(
@@ -1564,7 +1648,7 @@ def test_service_rejects_a_pipeline_report_with_foreign_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
-        record, _ = generation_record()
+        record, _ = verified_generation_record()
         service, _ = service_with_fake(FakeRepository(record))
         original_validate = ValidationPipeline.validate
 
@@ -1591,7 +1675,7 @@ def test_service_wraps_adapter_errors_and_rejects_adapter_fingerprint_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
-        record, _ = generation_record()
+        record, _ = verified_generation_record()
         service, _ = service_with_fake(FakeRepository(record))
 
         def reject_adapter(*args: object, **kwargs: object) -> object:
@@ -1609,7 +1693,7 @@ def test_service_wraps_adapter_errors_and_rejects_adapter_fingerprint_mismatch(
     asyncio.run(exercise())
 
     async def mismatch() -> None:
-        record, _ = generation_record()
+        record, _ = verified_generation_record()
         service, _ = service_with_fake(FakeRepository(record))
         original = adapt_generation_result
 

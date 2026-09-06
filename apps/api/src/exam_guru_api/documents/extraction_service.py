@@ -36,6 +36,8 @@ from exam_guru_api.documents.extraction_outbox import (
     SqlAlchemyExtractionOutboxRepository,
     validate_extraction_queue_message_id,
 )
+from exam_guru_api.documents.fidelity_models import PageReviewStateModel
+from exam_guru_api.documents.fidelity_service import PageFidelityService
 from exam_guru_api.documents.models import (
     ExtractedBlockModel,
     SourceDocumentModel,
@@ -89,6 +91,11 @@ class ExtractionTrustBlockedError(RuntimeError):
     def __init__(self, reason_code: str) -> None:
         self.reason_code = reason_code
         super().__init__(reason_code)
+
+
+class VersionedPageReviewRequiredError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("page_review_workspace_required")
 
 
 class ReviewNotActiveError(RuntimeError):
@@ -697,6 +704,18 @@ class DocumentExtractionService:
             )
         ).all()
 
+    async def _require_unversioned_page(
+        self,
+        document: SourceDocumentModel,
+        page_number: int,
+    ) -> None:
+        if (
+            document.original_page_count is not None
+            and await self._session.get(PageReviewStateModel, (document.id, page_number))
+            is not None
+        ):
+            raise VersionedPageReviewRequiredError
+
     async def correct_page(
         self,
         document_id: UUID,
@@ -709,6 +728,7 @@ class DocumentExtractionService:
         document = await self._get_locked_document(document_id)
         if document.extraction_status is not ExtractionStatus.IN_REVIEW:
             raise ReviewNotActiveError(document_id)
+        await self._require_unversioned_page(document, page_number)
         page = await self._session.scalar(
             select(SourcePageModel)
             .where(
@@ -747,6 +767,7 @@ class DocumentExtractionService:
         document = await self._get_locked_document(document_id)
         if document.extraction_status is not ExtractionStatus.IN_REVIEW:
             raise ReviewNotActiveError(document_id)
+        await self._require_unversioned_page(document, page_number)
         block = await self._session.scalar(
             select(ExtractedBlockModel)
             .where(
@@ -789,29 +810,34 @@ class DocumentExtractionService:
             raise ExtractionTrustBlockedError("inactive_source")
         if getattr(document, "metadata_review_required", False):
             raise ExtractionTrustBlockedError("metadata_review_required")
-        config = document.extraction_config or {}
-        native = config.get("native", {})
-        native_config = native.get("config", {}) if isinstance(native, Mapping) else {}
-        risk_configs = (config, native_config) if isinstance(native_config, Mapping) else (config,)
-        if document.needs_ocr is not False or any(
-            item.get("ocr_pending_page_count") for item in risk_configs
-        ):
-            raise ExtractionTrustBlockedError("needs_ocr")
-        if f"sha256:{document.checksum_sha256}" == KNOWN_CORRUPT_SOURCE_FINGERPRINT or any(
-            item.get(key)
-            for item in risk_configs
-            for key in (
-                "font_risk",
-                "font_risk_page_count",
-                "risky_font_names",
-                "known_review_warning",
-                "private_use_glyph_count",
-                "replacement_glyph_count",
+        fully_verified = await PageFidelityService(self._session).document_is_verified(document_id)
+        if not fully_verified:
+            config = document.extraction_config or {}
+            native = config.get("native", {})
+            native_config = native.get("config", {}) if isinstance(native, Mapping) else {}
+            risk_configs = (
+                (config, native_config) if isinstance(native_config, Mapping) else (config,)
             )
-        ):
-            raise ExtractionTrustBlockedError("font_risk")
-        if not document.extracted_page_count or not document.extracted_character_count:
-            raise ExtractionTrustBlockedError("empty_extraction")
+            if document.needs_ocr is not False or any(
+                item.get("ocr_pending_page_count") for item in risk_configs
+            ):
+                raise ExtractionTrustBlockedError("needs_ocr")
+            if f"sha256:{document.checksum_sha256}" == KNOWN_CORRUPT_SOURCE_FINGERPRINT or any(
+                item.get(key)
+                for item in risk_configs
+                for key in (
+                    "font_risk",
+                    "font_risk_page_count",
+                    "risky_font_names",
+                    "known_review_warning",
+                    "private_use_glyph_count",
+                    "replacement_glyph_count",
+                )
+            ):
+                raise ExtractionTrustBlockedError("font_risk")
+            if not document.extracted_page_count or not document.extracted_character_count:
+                raise ExtractionTrustBlockedError("empty_extraction")
+            raise ExtractionTrustBlockedError("page_verification_required")
         if document.extraction_status is ExtractionStatus.TRUSTED:
             return self._result_from_document(document, deduplicated=True)
 
@@ -985,6 +1011,10 @@ class DocumentExtractionService:
         self._session.add_all(blocks)
         await self._session.flush()
 
+        if document.original_page_count is None:
+            document.original_page_count = extraction.page_count
+        elif document.original_page_count != extraction.page_count:
+            raise ExtractionSourceIntegrityError(document_id)
         document.extractor = extraction.engine
         document.extractor_version = extraction.engine_version
         document.extracted_page_count = extraction.page_count

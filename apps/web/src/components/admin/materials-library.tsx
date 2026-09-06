@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  createApiClient,
-  type components,
-  type operations,
-} from "@exam-guru/api-client";
+import { createApiClient, type components } from "@exam-guru/api-client";
 import Link from "next/link";
 import {
   useCallback,
@@ -17,22 +13,33 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  ResumableSourceUpload,
+  recoverUploadCheckpoints,
+  UploadFailure,
+  uploadFailureMessage,
+  type UploadMetadata,
+  type UploadProgress,
+  type UploadSession,
+} from "@/lib/source-upload";
+import {
+  finishUploadCheckpoint,
+  readUploadCheckpoints,
+  recordUploadCheckpoint,
+  type UploadCheckpoints,
+} from "@/lib/source-upload-checkpoint";
+
 import type { AdminRole } from "./admin-header";
 import { MaterialIntakeMetadata } from "./material-details";
 
-type Curriculum = components["schemas"]["CurriculumVersionResponse"];
-type ExamConfiguration = components["schemas"]["ExamConfigurationResponse"];
+type CatalogueEntry = components["schemas"]["MaterialCatalogueEntry"];
 type GradeSummary = components["schemas"]["MaterialGradeSummaryResponse"];
 type Lesson = components["schemas"]["CurriculumLessonResponse"];
 type Material = components["schemas"]["MaterialListItemResponse"];
 type MaterialStatus = components["schemas"]["MaterialStatus"];
 type MaterialType = components["schemas"]["SourceDocumentType"];
-type Medium = components["schemas"]["MediumResponse"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
-type Subject = components["schemas"]["SubjectResponse"];
 type Unit = components["schemas"]["CurriculumUnitResponse"];
-type UploadBody =
-  operations["upload_source_document"]["requestBody"]["content"]["multipart/form-data"];
 type RemoveBody = components["schemas"]["MaterialRemoveRequest"];
 type RestoreBody = components["schemas"]["MaterialRestoreRequest"];
 type ScopeBody = components["schemas"]["MaterialScopeCorrectionRequest"];
@@ -167,6 +174,20 @@ function networkError(): UiError {
   return { code: "network_error", message: errorMessages.network_error };
 }
 
+function catalogueChoices(
+  entries: readonly CatalogueEntry[],
+  kind: "medium" | "subject",
+) {
+  return [
+    ...new Map(
+      entries.map((entry) => [
+        entry[`${kind}_id`],
+        { id: entry[`${kind}_id`], name: entry[`${kind}_name`] },
+      ]),
+    ).values(),
+  ];
+}
+
 function emptyGradeSummary(grade: number | null): GradeSummary {
   return {
     grade,
@@ -246,21 +267,6 @@ function validatePdf(file: File | null): UiError | null {
     return { code: "unsafe_filename", message: errorMessages.unsafe_filename };
   }
   return null;
-}
-
-function uploadFormData(body: UploadBody, file: File): FormData {
-  const form = new FormData();
-  form.append("file", file, file.name);
-  form.append("document_type", body.document_type);
-  if (body.curriculum_version_id) {
-    form.append("curriculum_version_id", body.curriculum_version_id);
-  }
-  if (body.unit_id) form.append("unit_id", body.unit_id);
-  if (body.lesson_id) form.append("lesson_id", body.lesson_id);
-  if (body.year !== undefined && body.year !== null)
-    form.append("year", String(body.year));
-  if (body.paper_code) form.append("paper_code", body.paper_code);
-  return form;
 }
 
 function Modal({
@@ -349,12 +355,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     [],
   );
   const [summaries, setSummaries] = useState<GradeSummary[]>([]);
-  const [examConfigurations, setExamConfigurations] = useState<
-    ExamConfiguration[]
-  >([]);
-  const [media, setMedia] = useState<Medium[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [curricula, setCurricula] = useState<Curriculum[]>([]);
+  const [catalogue, setCatalogue] = useState<CatalogueEntry[]>([]);
   const [sources, setSources] = useState<SourceDocument[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedGrade, setSelectedGrade] = useState<number | null>(5);
@@ -395,7 +396,34 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [wizardFile, setWizardFile] = useState<File | null>(null);
   const [wizardError, setWizardError] = useState<UiError | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [duplicate, setDuplicate] = useState<SourceDocument | null>(null);
+  const [duplicate, setDuplicate] = useState<Pick<
+    SourceDocument,
+    "id" | "original_filename"
+  > | null>(null);
+  const [checkpoints, setCheckpoints] = useState<UploadCheckpoints>({
+    uploadIds: [],
+    requestIds: [],
+    creationUncertain: false,
+  });
+  const [checkpointError, setCheckpointError] = useState("");
+  const [checkpointLoading, setCheckpointLoading] = useState(true);
+  const [uploadRequestId, setUploadRequestId] = useState("");
+  const [continuingRequest, setContinuingRequest] = useState(false);
+  const recoveryRequest = useRef(0);
+  const recoveryController = useRef<AbortController | null>(null);
+  const [activeUpload, setActiveUpload] = useState<UploadSession | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(
+    null,
+  );
+  const [resumeId, setResumeId] = useState("");
+  const [resumeLoading, setResumeLoading] = useState(false);
+  const [uploadRetryBlocked, setUploadRetryBlocked] = useState(false);
+  const [retryDelayMs, setRetryDelayMs] = useState(0);
+  const [uploadedDocumentId, setUploadedDocumentId] = useState("");
+  const uploadTask = useRef<ResumableSourceUpload | null>(null);
+  const uploadController = useRef<AbortController | null>(null);
+  const uploadRunning = useRef(false);
+  const uploadViewRequest = useRef(0);
 
   const [removeTarget, setRemoveTarget] = useState<Material | null>(null);
   const [removeReason, setRemoveReason] = useState("");
@@ -404,6 +432,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const [scopeTarget, setScopeTarget] = useState<Material | null>(null);
+  const [scopeEditing, setScopeEditing] = useState(false);
+  const [scopeGrade, setScopeGrade] = useState("");
+  const [scopeMediumId, setScopeMediumId] = useState("");
+  const [scopeSubjectId, setScopeSubjectId] = useState("");
   const [scopeCurriculumId, setScopeCurriculumId] = useState("");
   const [scopeUnitId, setScopeUnitId] = useState("");
   const [scopeLessonId, setScopeLessonId] = useState("");
@@ -418,59 +450,58 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     () => new Map(sources.map((source) => [source.id, source])),
     [sources],
   );
-  const examById = useMemo(
-    () =>
-      new Map(
-        examConfigurations.map((configuration) => [
-          configuration.id,
-          configuration,
-        ]),
-      ),
-    [examConfigurations],
-  );
-  const mediumById = useMemo(
-    () => new Map(media.map((item) => [item.id, item])),
-    [media],
-  );
-  const subjectById = useMemo(
-    () => new Map(subjects.map((subject) => [subject.id, subject])),
-    [subjects],
-  );
   const curriculumById = useMemo(
-    () => new Map(curricula.map((curriculum) => [curriculum.id, curriculum])),
-    [curricula],
+    () =>
+      new Map(catalogue.map((entry) => [entry.curriculum_version_id, entry])),
+    [catalogue],
+  );
+  const gradeCatalogue = catalogue.filter(
+    (entry) => selectedGrade === null || entry.grade === selectedGrade,
+  );
+  const filterMedia = catalogueChoices(gradeCatalogue, "medium");
+  const filterSubjects = catalogueChoices(
+    gradeCatalogue.filter(
+      (entry) => !selectedMedium || entry.medium_id === selectedMedium,
+    ),
+    "subject",
+  );
+  const wizardGradeCatalogue = catalogue.filter(
+    (entry) => entry.grade === Number(wizardGrade),
+  );
+  const wizardMedia = catalogueChoices(wizardGradeCatalogue, "medium");
+  const wizardSubjects = catalogueChoices(
+    wizardGradeCatalogue.filter((entry) => entry.medium_id === wizardMediumId),
+    "subject",
+  );
+  const scopeGradeCatalogue = catalogue.filter(
+    (entry) => entry.grade === Number(scopeGrade),
+  );
+  const scopeMedia = catalogueChoices(scopeGradeCatalogue, "medium");
+  const scopeSubjects = catalogueChoices(
+    scopeGradeCatalogue.filter((entry) => entry.medium_id === scopeMediumId),
+    "subject",
+  );
+  const scopeCurricula = scopeGradeCatalogue.filter(
+    (entry) =>
+      entry.medium_id === scopeMediumId && entry.subject_id === scopeSubjectId,
   );
 
   const loadWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     try {
-      const [
-        summaryResult,
-        examResult,
-        mediaResult,
-        subjectResult,
-        curriculumResult,
-        sourceResult,
-      ] = await Promise.all([
-        api.GET("/api/v1/admin/materials/grade-summary"),
-        api.GET("/api/v1/admin/exam-configurations"),
-        api.GET("/api/v1/admin/media"),
-        api.GET("/api/v1/admin/subjects"),
-        api.GET("/api/v1/admin/curriculum-versions"),
-        api.GET("/api/v1/admin/source-documents"),
+      const [summaryResult, catalogueResult, sourceResult] = await Promise.all([
+        api.GET("/api/v1/admin/materials/grade-summary", { cache: "no-store" }),
+        api.GET("/api/v1/admin/material-catalogue", {
+          params: { query: { limit: 1000 } },
+          cache: "no-store",
+        }),
+        api.GET("/api/v1/admin/source-documents", { cache: "no-store" }),
       ]);
       const workspaceResults: ReadonlyArray<{
         error?: unknown;
         response: Response;
-      }> = [
-        summaryResult,
-        examResult,
-        mediaResult,
-        subjectResult,
-        curriculumResult,
-        sourceResult,
-      ];
+      }> = [summaryResult, catalogueResult, sourceResult];
       const failure = workspaceResults.find(
         (result) => !result.response.ok || result.error,
       );
@@ -479,10 +510,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         return;
       }
       setSummaries(completeGradeSummaries(summaryResult.data ?? []));
-      setExamConfigurations(examResult.data ?? []);
-      setMedia(mediaResult.data ?? []);
-      setSubjects(subjectResult.data ?? []);
-      setCurricula(curriculumResult.data ?? []);
+      setCatalogue(catalogueResult.data ?? []);
       setSources(sourceResult.data ?? []);
     } catch {
       setWorkspaceError(networkError());
@@ -589,6 +617,57 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     [api, discoverMaterials, selectedGrade, selectedSubject],
   );
 
+  const refreshUploadRecovery = useCallback(async () => {
+    const request = ++recoveryRequest.current;
+    recoveryController.current?.abort();
+    const controller = new AbortController();
+    recoveryController.current = controller;
+    setCheckpointLoading(true);
+    setCheckpointError("");
+    try {
+      setCheckpoints({ requestIds: [], ...readUploadCheckpoints() });
+      const recovered =
+        role === "admin"
+          ? await recoverUploadCheckpoints(api, controller.signal)
+          : readUploadCheckpoints();
+      if (request === recoveryRequest.current)
+        setCheckpoints({ requestIds: [], ...recovered });
+    } catch (error) {
+      if (request === recoveryRequest.current && !controller.signal.aborted) {
+        setCheckpointError(uploadFailureMessage(error));
+        try {
+          setCheckpoints({ requestIds: [], ...readUploadCheckpoints() });
+        } catch {
+          /* Keep the last known recovery links. */
+        }
+      }
+    } finally {
+      if (request === recoveryRequest.current) setCheckpointLoading(false);
+    }
+  }, [api, role]);
+
+  useEffect(() => {
+    const update = () => {
+      void refreshUploadRecovery();
+    };
+    const timer = window.setTimeout(update, 0);
+    window.addEventListener("storage", update);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("storage", update);
+      recoveryRequest.current += 1;
+      recoveryController.current?.abort();
+      uploadViewRequest.current += 1;
+      uploadController.current?.abort();
+    };
+  }, [refreshUploadRecovery]);
+
+  useEffect(() => {
+    if (!retryDelayMs) return;
+    const timer = window.setTimeout(() => setRetryDelayMs(0), retryDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [retryDelayMs]);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadWorkspace(), 0);
     return () => window.clearTimeout(timeout);
@@ -603,18 +682,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     return () => window.clearTimeout(timeout);
   }, [loadMaterials, selectedGrade, selectedSubject, workspaceError]);
 
-  const wizardCurricula = useMemo(() => {
-    const grade = Number(wizardGrade);
-    return curricula.filter((curriculum) => {
-      const configuration = examById.get(curriculum.exam_configuration_id);
-      return (
-        curriculum.active &&
-        configuration?.grade === grade &&
-        curriculum.medium_id === wizardMediumId &&
-        curriculum.subject_id === wizardSubjectId
-      );
-    });
-  }, [curricula, examById, wizardGrade, wizardMediumId, wizardSubjectId]);
+  const wizardCurricula = catalogue.filter(
+    (entry) =>
+      entry.grade === Number(wizardGrade) &&
+      entry.medium_id === wizardMediumId &&
+      entry.subject_id === wizardSubjectId,
+  );
 
   const activeWizardUnits = wizardUnits.filter((unit) => unit.active);
   const activeWizardLessons = wizardLessons.filter(
@@ -720,6 +793,16 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   );
 
   function resetWizard() {
+    uploadViewRequest.current += 1;
+    uploadTask.current = null;
+    setActiveUpload(null);
+    setUploadProgress(null);
+    setResumeId("");
+    setUploadRequestId("");
+    setContinuingRequest(false);
+    setResumeLoading(false);
+    setUploadRetryBlocked(false);
+    setRetryDelayMs(0);
     setWizardStep(0);
     setWizardGrade("");
     setWizardMediumId("");
@@ -768,19 +851,22 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     if (wizardStep === 3) {
       const defaultCurriculum =
         wizardCurricula.find(
-          (curriculum) => curriculum.id === wizardCurriculumId,
-        ) ?? wizardCurricula[0];
-      if (!defaultCurriculum) {
+          (curriculum) =>
+            curriculum.curriculum_version_id === wizardCurriculumId,
+        ) ?? (wizardCurricula.length === 1 ? wizardCurricula[0] : undefined);
+      if (!wizardCurricula.length) {
         setWizardError({
           code: "curriculum_required",
-          message:
-            "No active curriculum connects this grade, medium, and subject. Ask an administrator to configure it before uploading.",
+          message: "විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි",
         });
         return;
       }
-      if (defaultCurriculum.id !== wizardCurriculumId) {
-        setWizardCurriculumId(defaultCurriculum.id);
-        void loadWizardScope(defaultCurriculum.id);
+      if (
+        defaultCurriculum &&
+        defaultCurriculum.curriculum_version_id !== wizardCurriculumId
+      ) {
+        setWizardCurriculumId(defaultCurriculum.curriculum_version_id);
+        void loadWizardScope(defaultCurriculum.curriculum_version_id);
       }
     }
     if (wizardStep === 4) {
@@ -819,6 +905,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   }
 
   function previousWizardStep() {
+    if (uploadRunning.current || activeUpload || uploadProgress) return;
+    uploadTask.current = null;
     setWizardError(null);
     setWizardStep(Math.max(0, wizardStep - 1) as WizardStep);
   }
@@ -827,67 +915,190 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     event.preventDefault();
   }
 
-  async function uploadMaterial() {
-    const file = wizardFile;
-    const fileError = validatePdf(file);
-    if (fileError) {
-      setWizardError(fileError);
-      return;
+  function uploadProblem(error: unknown) {
+    const value =
+      error instanceof UploadFailure
+        ? error
+        : new UploadFailure("upload_interrupted");
+    setWizardError({
+      code: value.code,
+      message: uploadFailureMessage(value),
+      status: value.status,
+    });
+    setUploadRetryBlocked(!value.safeToRetry || value.code === "upload_failed");
+    if (value.retryAfterSeconds)
+      setRetryDelayMs(value.retryAfterSeconds * 1000);
+  }
+
+  function openInterruptedUpload(requestId: string) {
+    if (uploadRunning.current || checkpointLoading || role !== "admin") return;
+    resetWizard();
+    setUploadRequestId(requestId);
+    setContinuingRequest(true);
+    setWizardOpen(true);
+  }
+
+  async function openSavedUpload(id: string) {
+    if (uploadRunning.current || role !== "admin") return;
+    resetWizard();
+    setResumeId(id);
+    setWizardOpen(true);
+    setResumeLoading(true);
+    const view = uploadViewRequest.current;
+    try {
+      const result = await api.GET("/api/v1/admin/source-uploads/{upload_id}", {
+        params: { path: { upload_id: id } },
+        cache: "no-store",
+      });
+      if (view !== uploadViewRequest.current) return;
+      if (result.error || !result.response.ok || !result.data)
+        throw new UploadFailure(
+          errorCode(result.error),
+          result.response.status,
+        );
+      if (result.data.id !== id)
+        throw new UploadFailure("upload_response_invalid");
+      setActiveUpload(result.data);
+    } catch (error) {
+      if (view === uploadViewRequest.current) uploadProblem(error);
+    } finally {
+      if (view === uploadViewRequest.current) setResumeLoading(false);
     }
-    if (!file) return;
+  }
 
-    const numericYear = wizardYear ? Number(wizardYear) : null;
-    const body: UploadBody = {
-      curriculum_version_id: wizardCurriculumId || null,
-      document_type: wizardMaterialType,
-      file: file.name,
-      lesson_id: wizardLessonId || null,
-      paper_code: null,
-      unit_id: wizardUnitId || null,
-      year: Number.isInteger(numericYear) ? numericYear : null,
-    };
-
+  async function uploadMaterial() {
+    if (
+      uploadRunning.current ||
+      role !== "admin" ||
+      uploadRetryBlocked ||
+      retryDelayMs
+    )
+      return;
+    const file = wizardFile;
+    const needsFile = !resumeId || activeUpload?.status === "uploading";
+    if (needsFile) {
+      const fileError = validatePdf(file);
+      if (fileError) {
+        setWizardError(fileError);
+        return;
+      }
+    }
+    const view = uploadViewRequest.current;
+    uploadRunning.current = true;
     setUploading(true);
     setWizardError(null);
     setDuplicate(null);
+    const controller = new AbortController();
+    uploadController.current = controller;
     try {
-      const uploadResult = await api.POST("/api/v1/admin/source-documents", {
-        body,
-        bodySerializer: (requestBody) => uploadFormData(requestBody, file),
+      if (!uploadTask.current) {
+        const saved = readUploadCheckpoints();
+        if (!resumeId && !uploadRequestId && saved.creationUncertain)
+          throw new UploadFailure(
+            "upload_creation_unknown",
+            0,
+            undefined,
+            false,
+          );
+        const numericYear = wizardYear ? Number(wizardYear) : null;
+        const metadata: UploadMetadata = {
+          curriculum_version_id: wizardCurriculumId || null,
+          document_type: wizardMaterialType,
+          lesson_id: wizardLessonId || null,
+          paper_code: null,
+          unit_id: wizardUnitId || null,
+          year: Number.isInteger(numericYear) ? numericYear : null,
+        };
+        uploadTask.current = new ResumableSourceUpload({
+          api,
+          file: file ?? undefined,
+          ...(resumeId
+            ? { uploadId: resumeId }
+            : {
+                metadata,
+                ...(uploadRequestId ? { requestId: uploadRequestId } : {}),
+              }),
+        });
+      }
+      const uploaded = await uploadTask.current.run({
+        signal: controller.signal,
+        pollIntervalMs: 500,
+        maxPolls: 240,
+        onCreating: () => {
+          setUploadRequestId(uploadTask.current?.requestId ?? uploadRequestId);
+          setCheckpoints({ requestIds: [], ...readUploadCheckpoints() });
+        },
+        onSession: (session) => {
+          const saved = recordUploadCheckpoint(session.id);
+          if (view === uploadViewRequest.current) {
+            setActiveUpload(session);
+            setCheckpoints(saved);
+          }
+        },
+        onProgress: (progress) => {
+          if (view === uploadViewRequest.current) setUploadProgress(progress);
+        },
       });
-      if (uploadResult.error || !uploadResult.data) {
-        setWizardError(
-          uiError(uploadResult.error, uploadResult.response.status),
-        );
+      if (view !== uploadViewRequest.current) return;
+      try {
+        setCheckpoints(finishUploadCheckpoint(uploaded.id));
+      } catch (error) {
+        setCheckpointError(uploadFailureMessage(error));
+      }
+      if (uploaded.deduplicated) {
+        setDuplicate({
+          id: uploaded.document_id!,
+          original_filename:
+            sourceById.get(uploaded.document_id!)?.original_filename ??
+            uploaded.filename,
+        });
+        setUploadProgress(null);
         return;
       }
-
-      const uploaded = uploadResult.data;
-      if (uploaded.deduplicated || uploadResult.response.status === 200) {
-        setDuplicate(uploaded);
-        return;
+      let message =
+        "Material uploaded. Open the material to check reading progress and metadata.";
+      if (uploaded.source_read_job_id) {
+        try {
+          const reading = await api.GET(
+            "/api/v1/admin/source-read-jobs/{job_id}",
+            {
+              params: { path: { job_id: uploaded.source_read_job_id } },
+              cache: "no-store",
+              signal: controller.signal,
+            },
+          );
+          if (
+            reading.data?.id === uploaded.source_read_job_id &&
+            reading.data.document_id === uploaded.document_id
+          ) {
+            if (["queued", "running"].includes(reading.data.status))
+              message = "Material uploaded. Reading the PDF now.";
+            else if (reading.data.status === "completed")
+              message =
+                "Material uploaded. Check the material details and system-read text before AI use.";
+            else
+              message =
+                "Material uploaded, but reading needs attention. Open the material to continue.";
+          }
+        } catch {
+          /* The completed upload remains authoritative; never enqueue another reading. */
+        }
       }
-
-      const extractionResult = await api.POST(
-        "/api/v1/admin/source-documents/{document_id}/extract",
-        { params: { path: { document_id: uploaded.id } } },
-      );
-      const uploadedGrade = Number(wizardGrade);
-      setSelectedGrade(uploadedGrade);
-      setSelectedSubject(wizardSubjectId);
-      await refreshCatalog(uploadedGrade, wizardSubjectId);
+      if (view !== uploadViewRequest.current) return;
+      const grade = resumeId ? selectedGrade : Number(wizardGrade);
+      const subject = resumeId ? "" : wizardSubjectId;
+      setSelectedGrade(grade);
+      setSelectedMedium("");
+      setSelectedSubject(subject);
+      setUploadedDocumentId(uploaded.document_id!);
+      await refreshCatalog(grade, subject);
       setWizardOpen(false);
       resetWizard();
-      if (extractionResult.error) {
-        setNotice(
-          "Material uploaded, but reading could not start. Open Advanced → Documents to retry reading.",
-        );
-      } else {
-        setNotice("Material uploaded. Reading the PDF now.");
-      }
-    } catch {
-      setWizardError(networkError());
+      setNotice(message);
+    } catch (error) {
+      if (view === uploadViewRequest.current) uploadProblem(error);
     } finally {
+      uploadRunning.current = false;
       setUploading(false);
     }
   }
@@ -989,20 +1200,31 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   async function openScopeEditor(material: Material) {
     const source = sourceById.get(material.id);
     if (!source) return;
+    const assignment = curriculumById.get(source.curriculum_version_id ?? "");
     setScopeTarget(material);
+    setScopeEditing(false);
     setConfirmIntakeMetadata(false);
-    setScopeCurriculumId(source.curriculum_version_id ?? "");
-    setScopeUnitId(source.unit_id ?? "");
-    setScopeLessonId(source.lesson_id ?? "");
+    setScopeGrade(assignment ? String(assignment.grade) : "");
+    setScopeMediumId(assignment?.medium_id ?? "");
+    setScopeSubjectId(assignment?.subject_id ?? "");
+    setScopeCurriculumId(assignment?.curriculum_version_id ?? "");
+    setScopeUnitId(assignment ? (source.unit_id ?? "") : "");
+    setScopeLessonId(assignment ? (source.lesson_id ?? "") : "");
     setScopeError(null);
-    if (source.curriculum_version_id) {
-      await loadScopeChoices(source.curriculum_version_id, true);
-    }
+    await loadScopeChoices(assignment?.curriculum_version_id ?? "", true);
+  }
+
+  function changeScopeCurriculum(curriculumId: string) {
+    if (curriculumId && !curriculumById.has(curriculumId)) return;
+    setScopeCurriculumId(curriculumId);
+    setConfirmIntakeMetadata(false);
+    setScopeError(null);
+    void loadScopeChoices(curriculumId);
   }
 
   async function saveScope(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!scopeTarget) return;
+    if (!scopeTarget || !canSaveScope || role !== "admin") return;
     const body: ScopeBody = {
       confirm_intake_metadata: confirmIntakeMetadata && canConfirmIntake,
       curriculum_version_id: scopeCurriculumId || null,
@@ -1030,10 +1252,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
           ...current.filter((source) => source.id !== result.data?.id),
         ]);
       }
-      const curriculum = curriculumById.get(scopeCurriculumId);
-      const grade = curriculum
-        ? examById.get(curriculum.exam_configuration_id)?.grade
-        : undefined;
+      const grade = curriculumById.get(scopeCurriculumId)?.grade;
       await refreshCatalog();
       setScopeTarget(null);
       setNotice(grade ? `Moved to Grade ${grade}.` : "Material scope updated.");
@@ -1044,8 +1263,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     }
   }
 
-  const selectedWizardMedium = mediumById.get(wizardMediumId);
-  const selectedWizardSubject = subjectById.get(wizardSubjectId);
+  const selectedWizardMedium = wizardMedia.find(
+    (item) => item.id === wizardMediumId,
+  );
+  const selectedWizardSubject = wizardSubjects.find(
+    (item) => item.id === wizardSubjectId,
+  );
   const selectedWizardCurriculum = curriculumById.get(wizardCurriculumId);
   const selectedWizardUnit = wizardUnits.find(
     (unit) => unit.id === wizardUnitId,
@@ -1054,28 +1277,37 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     (lesson) => lesson.id === wizardLessonId,
   );
   const scopeCurriculum = curriculumById.get(scopeCurriculumId);
-  const scopeConfiguration = scopeCurriculum
-    ? examById.get(scopeCurriculum.exam_configuration_id)
-    : undefined;
-  const scopeMedium = scopeCurriculum
-    ? mediumById.get(scopeCurriculum.medium_id)
-    : undefined;
-  const scopeSubject = scopeCurriculum
-    ? subjectById.get(scopeCurriculum.subject_id)
-    : undefined;
-  const scopeNeedsReview =
+  const scopeSource = scopeTarget ? sourceById.get(scopeTarget.id) : undefined;
+  const scopeNeedsReview = Boolean(
     scopeTarget?.metadata_review_required ||
-    (scopeTarget
-      ? sourceById.get(scopeTarget.id)?.metadata_review_required
-      : false);
-  const canConfirmIntake = Boolean(
-    scopeNeedsReview &&
-    scopeCurriculum?.active &&
-    scopeConfiguration?.active &&
-    scopeMedium?.active &&
-    scopeSubject?.active &&
-    !scopeLoading,
+    scopeSource?.metadata_review_required,
   );
+  const scopeSelectionValid = Boolean(
+    scopeCurriculum &&
+    (!scopeUnitId ||
+      activeScopeUnits.some((unit) => unit.id === scopeUnitId)) &&
+    (!scopeLessonId ||
+      activeScopeLessons.some((lesson) => lesson.id === scopeLessonId)),
+  );
+  const canConfirmIntake =
+    scopeNeedsReview && scopeSelectionValid && !scopeLoading;
+  const scopeChanged = Boolean(
+    scopeSource &&
+    (scopeCurriculumId !== (scopeSource.curriculum_version_id ?? "") ||
+      scopeUnitId !== (scopeSource.unit_id ?? "") ||
+      scopeLessonId !== (scopeSource.lesson_id ?? "")),
+  );
+  const canSaveScope = Boolean(
+    !scopeSaving &&
+    !scopeLoading &&
+    catalogue.length &&
+    scopeSelectionValid &&
+    ((scopeEditing && scopeChanged) ||
+      (canConfirmIntake && confirmIntakeMetadata)),
+  );
+  const pendingUploadRequests = checkpoints.requestIds ?? [];
+  const legacyCreationUncertain =
+    checkpoints.creationUncertain && pendingUploadRequests.length === 0;
   const visibleMaterials = selectedSubject
     ? materials.filter((material) => material.subject_id === selectedSubject)
     : materials;
@@ -1094,10 +1326,21 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             See what each grade can use, add approved PDFs, and correct mistakes
             without losing the source history.
           </p>
+          <Link
+            className="mt-3 inline-block rounded text-sm font-semibold underline focus-visible:ring-2 focus-visible:ring-amber-600"
+            href="/admin/materials/benchmark-review"
+          >
+            Review selected source pages
+          </Link>
         </div>
         {role === "admin" ? (
           <button
             className={primaryButton}
+            disabled={
+              checkpointLoading ||
+              checkpoints.creationUncertain ||
+              Boolean(checkpointError)
+            }
             onClick={() => {
               resetWizard();
               setWizardOpen(true);
@@ -1113,12 +1356,94 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         )}
       </header>
 
+      {role === "admin" &&
+        (checkpoints.uploadIds.length > 0 ||
+          checkpoints.creationUncertain ||
+          checkpointError) && (
+          <section
+            aria-label="Saved uploads"
+            className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          >
+            <h2 className="font-semibold">Saved upload progress</h2>
+            <p className="mt-2">
+              Continue a saved upload after a connection interruption or
+              restart. Reselecting a PDF checks all previously saved content
+              before continuing.
+            </p>
+            {checkpointError && (
+              <p className="mt-2" role="alert">
+                {checkpointError}
+              </p>
+            )}
+            {legacyCreationUncertain && (
+              <p className="mt-2" role="status">
+                {uploadFailureMessage(
+                  new UploadFailure(
+                    "upload_creation_unknown",
+                    0,
+                    undefined,
+                    false,
+                  ),
+                )}
+              </p>
+            )}
+            {checkpointLoading && (
+              <p className="mt-2" role="status">
+                Recovering saved upload progress…
+              </p>
+            )}
+            <button
+              className={`${secondaryButton} mt-3`}
+              disabled={checkpointLoading || uploading}
+              onClick={() => void refreshUploadRecovery()}
+              type="button"
+            >
+              Refresh saved upload progress
+            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {pendingUploadRequests.map((id, index) => (
+                <button
+                  aria-label={`Continue interrupted upload ${index + 1}`}
+                  className={secondaryButton}
+                  disabled={checkpointLoading || Boolean(checkpointError)}
+                  key={id}
+                  onClick={() => openInterruptedUpload(id)}
+                  type="button"
+                >
+                  Continue interrupted upload{" "}
+                  {pendingUploadRequests.length > 1 ? index + 1 : ""}
+                </button>
+              ))}
+              {checkpoints.uploadIds.map((id, index) => (
+                <button
+                  aria-label={`Continue saved upload ${index + 1}`}
+                  className={secondaryButton}
+                  key={id}
+                  onClick={() => void openSavedUpload(id)}
+                  type="button"
+                >
+                  Continue saved upload{" "}
+                  {checkpoints.uploadIds.length > 1 ? index + 1 : ""}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
       {notice && (
         <p
           className="mt-6 rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-semibold text-emerald-950"
           role="status"
         >
-          {notice}
+          <span>{notice}</span>
+          {uploadedDocumentId && (
+            <Link
+              className="ml-3 underline"
+              href={`/admin/materials/${uploadedDocumentId}`}
+            >
+              Open uploaded material
+            </Link>
+          )}
         </p>
       )}
       {actionError && (
@@ -1194,6 +1519,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     key={summary.grade ?? "unassigned"}
                     onClick={() => {
                       setSelectedGrade(summary.grade);
+                      setSelectedMedium("");
                       setSelectedSubject("");
                       setNotice("");
                     }}
@@ -1282,13 +1608,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   value={selectedSubject}
                 >
                   <option value="">All subjects</option>
-                  {subjects
-                    .filter((subject) => subject.active)
-                    .map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
+                  {filterSubjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className={fieldClass} htmlFor="materials-medium-filter">
@@ -1302,13 +1626,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   value={selectedMedium}
                 >
                   <option value="">All media</option>
-                  {media
-                    .filter((item) => item.active)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
+                  {filterMedia.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className={fieldClass} htmlFor="materials-type-filter">
@@ -1457,6 +1779,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                           </span>
                         </div>
 
+                        <MaterialIntakeMetadata
+                          intake={intake}
+                          reviewRequired={metadataReviewRequired}
+                        />
+
                         <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                           <div>
                             <dt className="font-semibold text-slate-500">
@@ -1514,11 +1841,6 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                           </div>
                         </dl>
 
-                        <MaterialIntakeMetadata
-                          intake={intake}
-                          reviewRequired={metadataReviewRequired}
-                        />
-
                         {role === "admin" &&
                           source?.extraction_status === "trusted" && (
                             <p className="mt-4 rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
@@ -1534,18 +1856,14 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                           >
                             View
                           </Link>
-                          {source &&
-                            ["extracted", "in_review", "trusted"].includes(
-                              source.extraction_status,
-                            ) && (
-                              <Link
-                                aria-label={`Review extracted text: ${material.title}`}
-                                className={secondaryButton}
-                                href={`/admin/materials/${material.id}/review-text`}
-                              >
-                                Review extracted text
-                              </Link>
-                            )}
+                          <Link
+                            aria-label={`Review extracted text: ${material.title}`}
+                            className={secondaryButton}
+                            href={`/admin/materials/${material.id}/review-text`}
+                            prefetch={false}
+                          >
+                            Review extracted text
+                          </Link>
                           {role === "admin" &&
                             editable &&
                             material.status !== "removed" && (
@@ -1667,7 +1985,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 className="mt-1 text-2xl font-semibold"
                 id="upload-material-heading"
               >
-                Upload material
+                {resumeId
+                  ? "Continue upload"
+                  : continuingRequest
+                    ? "Continue interrupted upload"
+                    : "Upload material"}
               </h2>
             </div>
             <button
@@ -1680,358 +2002,505 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             </button>
           </div>
 
-          <ol className="mt-5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-7">
-            {wizardStepLabels.map((label, index) => (
-              <li
-                aria-current={wizardStep === index ? "step" : undefined}
-                className={`rounded-md border px-2 py-2 text-center ${
-                  wizardStep === index
-                    ? "border-slate-950 bg-slate-950 font-semibold text-white"
-                    : index < wizardStep
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                      : "border-slate-300 bg-white text-slate-600"
-                }`}
-                key={label}
-              >
-                {label}
-              </li>
-            ))}
-          </ol>
-
-          <form className="mt-6 grid gap-5" onSubmit={submitUploadWizard}>
-            {wizardStep === 0 && (
-              <label className={fieldClass} htmlFor="upload-grade">
-                Grade
-                <select
-                  className={inputClass}
-                  id="upload-grade"
-                  onChange={(event) => {
-                    setWizardGrade(event.currentTarget.value);
-                    setWizardCurriculumId("");
-                    setWizardError(null);
-                  }}
-                  value={wizardGrade}
+          {continuingRequest && (
+            <p className="mt-4 text-sm">
+              Choose the same PDF and original details. This continues the saved
+              upload request rather than starting a new one.
+            </p>
+          )}
+          {resumeId ? (
+            <div className="mt-5 grid gap-4">
+              {resumeLoading ? (
+                <p role="status">Loading saved upload…</p>
+              ) : (
+                activeUpload && (
+                  <>
+                    <h3 className="break-words text-lg font-semibold">
+                      {activeUpload.filename}
+                    </h3>
+                    <p className="text-sm">
+                      {formatBytes(activeUpload.next_offset)} of{" "}
+                      {formatBytes(activeUpload.size_bytes)} saved. The original
+                      upload details and year are kept unchanged.
+                    </p>
+                    {activeUpload.status === "uploading" && (
+                      <label className={fieldClass} htmlFor="resume-upload-pdf">
+                        Original PDF
+                        <input
+                          accept=".pdf,application/pdf"
+                          className={inputClass}
+                          disabled={uploading}
+                          id="resume-upload-pdf"
+                          onChange={(event) => {
+                            setWizardFile(
+                              event.currentTarget.files?.[0] ?? null,
+                            );
+                            uploadTask.current = null;
+                            setWizardError(null);
+                            setUploadRetryBlocked(false);
+                          }}
+                          type="file"
+                        />
+                      </label>
+                    )}
+                    {!duplicate && (
+                      <button
+                        className={primaryButton}
+                        disabled={
+                          uploading ||
+                          uploadRetryBlocked ||
+                          Boolean(retryDelayMs) ||
+                          (activeUpload.status === "uploading" && !wizardFile)
+                        }
+                        onClick={() => void uploadMaterial()}
+                        type="button"
+                      >
+                        {activeUpload.status === "uploading"
+                          ? "Resume upload"
+                          : "Check upload status"}
+                      </button>
+                    )}
+                  </>
+                )
+              )}
+              {!resumeLoading && !activeUpload && (
+                <button
+                  className={secondaryButton}
+                  onClick={() => void openSavedUpload(resumeId)}
+                  type="button"
                 >
-                  <option value="">Choose grade</option>
-                  {grades.map((grade) => (
-                    <option key={grade} value={grade}>
-                      Grade {grade}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+                  Try loading saved upload again
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <ol className="mt-5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-7">
+                {wizardStepLabels.map((label, index) => (
+                  <li
+                    aria-current={wizardStep === index ? "step" : undefined}
+                    className={`rounded-md border px-2 py-2 text-center ${
+                      wizardStep === index
+                        ? "border-slate-950 bg-slate-950 font-semibold text-white"
+                        : index < wizardStep
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                          : "border-slate-300 bg-white text-slate-600"
+                    }`}
+                    key={label}
+                  >
+                    {label}
+                  </li>
+                ))}
+              </ol>
 
-            {wizardStep === 1 && (
-              <label className={fieldClass} htmlFor="upload-medium">
-                Medium
-                <select
-                  className={inputClass}
-                  id="upload-medium"
-                  onChange={(event) => {
-                    setWizardMediumId(event.currentTarget.value);
-                    setWizardCurriculumId("");
-                    setWizardError(null);
-                  }}
-                  value={wizardMediumId}
-                >
-                  <option value="">Choose medium</option>
-                  {media
-                    .filter((medium) => medium.active)
-                    .map((medium) => (
-                      <option key={medium.id} value={medium.id}>
-                        {medium.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
-
-            {wizardStep === 2 && (
-              <label className={fieldClass} htmlFor="upload-subject">
-                Subject
-                <select
-                  className={inputClass}
-                  id="upload-subject"
-                  onChange={(event) => {
-                    setWizardSubjectId(event.currentTarget.value);
-                    setWizardCurriculumId("");
-                    setWizardError(null);
-                  }}
-                  value={wizardSubjectId}
-                >
-                  <option value="">Choose subject</option>
-                  {subjects
-                    .filter((subject) => subject.active)
-                    .map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
-
-            {wizardStep === 3 && (
-              <label className={fieldClass} htmlFor="upload-material-type">
-                Material type
-                <select
-                  className={inputClass}
-                  id="upload-material-type"
-                  onChange={(event) => {
-                    setWizardMaterialType(
-                      event.currentTarget.value as MaterialType,
-                    );
-                    setWizardError(null);
-                  }}
-                  value={wizardMaterialType}
-                >
-                  {materialTypes.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {wizardStep === 4 && (
-              <div className="grid gap-5">
-                {["past_paper", "marking_scheme", "evaluation_report"].includes(
-                  wizardMaterialType,
-                ) && (
-                  <label className={fieldClass} htmlFor="upload-year">
-                    Year
-                    <input
+              <form className="mt-6 grid gap-5" onSubmit={submitUploadWizard}>
+                {wizardStep === 0 && (
+                  <label className={fieldClass} htmlFor="upload-grade">
+                    Grade
+                    <select
                       className={inputClass}
-                      id="upload-year"
-                      inputMode="numeric"
-                      max={2100}
-                      min={1900}
+                      id="upload-grade"
                       onChange={(event) => {
-                        setWizardYear(event.currentTarget.value);
+                        setWizardGrade(event.currentTarget.value);
+                        setWizardMediumId("");
+                        setWizardSubjectId("");
+                        setWizardCurriculumId("");
                         setWizardError(null);
                       }}
-                      type="number"
-                      value={wizardYear}
-                    />
+                      value={wizardGrade}
+                    >
+                      <option value="">Choose grade</option>
+                      {grades.map((grade) => (
+                        <option key={grade} value={grade}>
+                          Grade {grade}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 )}
-                <label className={fieldClass} htmlFor="upload-curriculum">
-                  Curriculum version
-                  <select
-                    className={inputClass}
-                    id="upload-curriculum"
-                    onChange={(event) => {
-                      const id = event.currentTarget.value;
-                      setWizardCurriculumId(id);
-                      setWizardError(null);
-                      void loadWizardScope(id);
-                    }}
-                    value={wizardCurriculumId}
-                  >
-                    <option value="">Choose curriculum</option>
-                    {wizardCurricula.map((curriculum) => (
-                      <option key={curriculum.id} value={curriculum.id}>
-                        {curriculum.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {wizardScopeLoading ? (
-                  <p className="text-sm text-slate-600" role="status">
-                    Loading units and lessons…
-                  </p>
-                ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className={fieldClass} htmlFor="upload-unit">
-                      Unit (optional)
+
+                {wizardStep === 1 && (
+                  <label className={fieldClass} htmlFor="upload-medium">
+                    Medium
+                    <select
+                      className={inputClass}
+                      id="upload-medium"
+                      onChange={(event) => {
+                        setWizardMediumId(event.currentTarget.value);
+                        setWizardSubjectId("");
+                        setWizardCurriculumId("");
+                        setWizardError(null);
+                      }}
+                      value={wizardMediumId}
+                    >
+                      <option value="">Choose medium</option>
+                      {wizardMedia.map((medium) => (
+                        <option key={medium.id} value={medium.id}>
+                          {medium.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {wizardStep === 2 && (
+                  <label className={fieldClass} htmlFor="upload-subject">
+                    Subject
+                    <select
+                      className={inputClass}
+                      id="upload-subject"
+                      onChange={(event) => {
+                        setWizardSubjectId(event.currentTarget.value);
+                        setWizardCurriculumId("");
+                        setWizardError(null);
+                      }}
+                      value={wizardSubjectId}
+                    >
+                      <option value="">Choose subject</option>
+                      {wizardSubjects.map((subject) => (
+                        <option key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {wizardStep === 3 && (
+                  <label className={fieldClass} htmlFor="upload-material-type">
+                    Material type
+                    <select
+                      className={inputClass}
+                      id="upload-material-type"
+                      onChange={(event) => {
+                        setWizardMaterialType(
+                          event.currentTarget.value as MaterialType,
+                        );
+                        setWizardError(null);
+                      }}
+                      value={wizardMaterialType}
+                    >
+                      {materialTypes.map((type) => (
+                        <option key={type.value} value={type.value}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {wizardStep === 4 && (
+                  <div className="grid gap-5">
+                    {[
+                      "past_paper",
+                      "marking_scheme",
+                      "evaluation_report",
+                    ].includes(wizardMaterialType) && (
+                      <label className={fieldClass} htmlFor="upload-year">
+                        Year
+                        <input
+                          className={inputClass}
+                          id="upload-year"
+                          inputMode="numeric"
+                          max={2100}
+                          min={1900}
+                          onChange={(event) => {
+                            setWizardYear(event.currentTarget.value);
+                            setWizardError(null);
+                          }}
+                          type="number"
+                          value={wizardYear}
+                        />
+                      </label>
+                    )}
+                    <label className={fieldClass} htmlFor="upload-curriculum">
+                      Curriculum version
                       <select
                         className={inputClass}
-                        id="upload-unit"
+                        id="upload-curriculum"
                         onChange={(event) => {
-                          setWizardUnitId(event.currentTarget.value);
-                          setWizardLessonId("");
+                          const id = event.currentTarget.value;
+                          setWizardCurriculumId(id);
+                          setWizardError(null);
+                          void loadWizardScope(id);
                         }}
-                        value={wizardUnitId}
+                        value={wizardCurriculumId}
                       >
-                        <option value="">Whole curriculum</option>
-                        {activeWizardUnits.map((unit) => (
-                          <option key={unit.id} value={unit.id}>
-                            {unit.title}
+                        <option value="">Choose curriculum</option>
+                        {wizardCurricula.map((curriculum) => (
+                          <option
+                            key={curriculum.curriculum_version_id}
+                            value={curriculum.curriculum_version_id}
+                          >
+                            {curriculum.curriculum_title}
                           </option>
                         ))}
                       </select>
                     </label>
-                    <label className={fieldClass} htmlFor="upload-lesson">
-                      Lesson (optional)
-                      <select
-                        className={inputClass}
-                        disabled={!wizardUnitId}
-                        id="upload-lesson"
-                        onChange={(event) =>
-                          setWizardLessonId(event.currentTarget.value)
-                        }
-                        value={wizardLessonId}
-                      >
-                        <option value="">All lessons in unit</option>
-                        {activeWizardLessons.map((lesson) => (
-                          <option key={lesson.id} value={lesson.id}>
-                            {lesson.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {wizardScopeLoading ? (
+                      <p className="text-sm text-slate-600" role="status">
+                        Loading units and lessons…
+                      </p>
+                    ) : (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <label className={fieldClass} htmlFor="upload-unit">
+                          Unit (optional)
+                          <select
+                            className={inputClass}
+                            id="upload-unit"
+                            onChange={(event) => {
+                              setWizardUnitId(event.currentTarget.value);
+                              setWizardLessonId("");
+                            }}
+                            value={wizardUnitId}
+                          >
+                            <option value="">Whole curriculum</option>
+                            {activeWizardUnits.map((unit) => (
+                              <option key={unit.id} value={unit.id}>
+                                {unit.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className={fieldClass} htmlFor="upload-lesson">
+                          Lesson (optional)
+                          <select
+                            className={inputClass}
+                            disabled={!wizardUnitId}
+                            id="upload-lesson"
+                            onChange={(event) =>
+                              setWizardLessonId(event.currentTarget.value)
+                            }
+                            value={wizardLessonId}
+                          >
+                            <option value="">All lessons in unit</option>
+                            {activeWizardLessons.map((lesson) => (
+                              <option key={lesson.id} value={lesson.id}>
+                                {lesson.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
 
-            {wizardStep === 5 && (
-              <div className={fieldClass}>
-                <label htmlFor="upload-pdf">PDF file</label>
-                <input
-                  accept=".pdf,application/pdf"
-                  aria-describedby="upload-pdf-help"
-                  className="block w-full cursor-pointer rounded-lg border border-dashed border-slate-400 bg-white px-3 py-6 text-sm file:mr-4 file:rounded-md file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:font-semibold file:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
-                  id="upload-pdf"
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                    setWizardFile(event.currentTarget.files?.[0] ?? null);
-                    setWizardError(null);
-                  }}
-                  type="file"
-                />
-                <span
-                  className="font-normal text-slate-600"
-                  id="upload-pdf-help"
+                {wizardStep === 5 && (
+                  <div className={fieldClass}>
+                    <label htmlFor="upload-pdf">PDF file</label>
+                    <input
+                      accept=".pdf,application/pdf"
+                      aria-describedby="upload-pdf-help"
+                      className="block w-full cursor-pointer rounded-lg border border-dashed border-slate-400 bg-white px-3 py-6 text-sm file:mr-4 file:rounded-md file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:font-semibold file:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+                      id="upload-pdf"
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                        setWizardFile(event.currentTarget.files?.[0] ?? null);
+                        setWizardError(null);
+                      }}
+                      type="file"
+                    />
+                    <span
+                      className="font-normal text-slate-600"
+                      id="upload-pdf-help"
+                    >
+                      {wizardFile
+                        ? `${wizardFile.name} · ${formatBytes(wizardFile.size)}`
+                        : "Choose one approved PDF."}
+                    </span>
+                  </div>
+                )}
+
+                {wizardStep === 6 && (
+                  <section
+                    aria-label="Review upload"
+                    className="rounded-xl border border-slate-300 bg-white p-5"
+                  >
+                    <h3 className="text-lg font-semibold">
+                      Check before uploading
+                    </h3>
+                    <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="font-semibold text-slate-500">Grade</dt>
+                        <dd className="mt-1">Grade {wizardGrade}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-500">Medium</dt>
+                        <dd className="mt-1">{selectedWizardMedium?.name}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-500">
+                          Subject
+                        </dt>
+                        <dd className="mt-1">{selectedWizardSubject?.name}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-500">
+                          Material type
+                        </dt>
+                        <dd className="mt-1">
+                          {materialTypeLabels[wizardMaterialType]}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-500">
+                          Year / curriculum
+                        </dt>
+                        <dd className="mt-1">
+                          {[
+                            wizardYear,
+                            selectedWizardCurriculum?.curriculum_title,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </dd>
+                      </div>
+                      {(selectedWizardUnit || selectedWizardLesson) && (
+                        <div>
+                          <dt className="font-semibold text-slate-500">
+                            Scope
+                          </dt>
+                          <dd className="mt-1">
+                            {[
+                              selectedWizardUnit?.title,
+                              selectedWizardLesson?.title,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </dd>
+                        </div>
+                      )}
+                      <div className="sm:col-span-2">
+                        <dt className="font-semibold text-slate-500">PDF</dt>
+                        <dd className="mt-1 break-words">{wizardFile?.name}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5">
+                  <button
+                    className={secondaryButton}
+                    disabled={
+                      wizardStep === 0 ||
+                      uploading ||
+                      Boolean(activeUpload) ||
+                      Boolean(uploadProgress)
+                    }
+                    onClick={previousWizardStep}
+                    type="button"
+                  >
+                    Back
+                  </button>
+                  {wizardStep < 6 ? (
+                    <button
+                      className={primaryButton}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void continueWizard();
+                      }}
+                      type="button"
+                    >
+                      Continue
+                    </button>
+                  ) : !duplicate ? (
+                    <button
+                      className={primaryButton}
+                      disabled={
+                        uploading ||
+                        uploadRetryBlocked ||
+                        Boolean(retryDelayMs) ||
+                        (!activeUpload &&
+                          !uploadRequestId &&
+                          checkpoints.creationUncertain)
+                      }
+                      onClick={() => void uploadMaterial()}
+                      type="button"
+                    >
+                      {uploading
+                        ? "Uploading…"
+                        : activeUpload || uploadRequestId
+                          ? "Continue upload"
+                          : "Upload material"}
+                    </button>
+                  ) : null}
+                </div>
+              </form>
+            </>
+          )}
+          {uploadProgress && (
+            <section
+              aria-label="Upload progress"
+              className="mt-4 rounded-lg border border-slate-300 bg-white p-4 text-sm"
+              role="status"
+            >
+              <p className="font-semibold">
+                {uploadProgress.phase === "creating"
+                  ? "Preparing upload…"
+                  : uploadProgress.phase === "checking"
+                    ? "Checking the selected PDF against saved progress…"
+                    : uploadProgress.phase === "finishing"
+                      ? "Finishing upload in Studio…"
+                      : "Uploading PDF…"}
+              </p>
+              <progress
+                aria-label="PDF upload progress"
+                className="mt-3 h-3 w-full"
+                max={uploadProgress.totalBytes || 1}
+                value={uploadProgress.uploadedBytes}
+              />
+              <p className="mt-2">
+                {formatBytes(uploadProgress.uploadedBytes)} of{" "}
+                {formatBytes(uploadProgress.totalBytes)} saved.
+              </p>
+              {uploadProgress.phase === "checking" && (
+                <p>
+                  {formatBytes(uploadProgress.checkedBytes ?? 0)} checked
+                  against the saved PDF.
+                </p>
+              )}
+              <p className="mt-2 text-slate-600">
+                Uploading does not confirm the material details or trust its
+                text.
+              </p>
+              {uploading && (
+                <button
+                  className={`${secondaryButton} mt-3`}
+                  disabled={uploadProgress.phase === "creating"}
+                  onClick={() => uploadController.current?.abort()}
+                  type="button"
                 >
-                  {wizardFile
-                    ? `${wizardFile.name} · ${formatBytes(wizardFile.size)}`
-                    : "Choose one approved PDF."}
-                </span>
-              </div>
-            )}
-
-            {wizardStep === 6 && (
-              <section
-                aria-label="Review upload"
-                className="rounded-xl border border-slate-300 bg-white p-5"
-              >
-                <h3 className="text-lg font-semibold">
-                  Check before uploading
-                </h3>
-                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                  <div>
-                    <dt className="font-semibold text-slate-500">Grade</dt>
-                    <dd className="mt-1">Grade {wizardGrade}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-500">Medium</dt>
-                    <dd className="mt-1">{selectedWizardMedium?.name}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-500">Subject</dt>
-                    <dd className="mt-1">{selectedWizardSubject?.name}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-500">
-                      Material type
-                    </dt>
-                    <dd className="mt-1">
-                      {materialTypeLabels[wizardMaterialType]}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-500">
-                      Year / curriculum
-                    </dt>
-                    <dd className="mt-1">
-                      {[wizardYear, selectedWizardCurriculum?.title]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </dd>
-                  </div>
-                  {(selectedWizardUnit || selectedWizardLesson) && (
-                    <div>
-                      <dt className="font-semibold text-slate-500">Scope</dt>
-                      <dd className="mt-1">
-                        {[
-                          selectedWizardUnit?.title,
-                          selectedWizardLesson?.title,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </dd>
-                    </div>
-                  )}
-                  <div className="sm:col-span-2">
-                    <dt className="font-semibold text-slate-500">PDF</dt>
-                    <dd className="mt-1 break-words">{wizardFile?.name}</dd>
-                  </div>
-                </dl>
-              </section>
-            )}
-
-            {wizardError && (
+                  Pause upload
+                </button>
+              )}
+            </section>
+          )}
+          {wizardError && (
+            <div className="mt-4">
               <InlineError
                 error={wizardError}
                 title="Upload was not completed."
               />
-            )}
-
-            {duplicate && (
-              <div
-                className="rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950"
-                role="alert"
-              >
-                <p className="font-semibold">
-                  This exact PDF is already in Materials. No new copy was
-                  uploaded.
-                </p>
-                <p className="mt-2 break-words">
-                  {duplicate.original_filename}
-                </p>
-                <Link
-                  className={`${secondaryButton} mt-4`}
-                  href={`/admin/materials/${duplicate.id}`}
-                >
-                  View existing material
-                </Link>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5">
-              <button
-                className={secondaryButton}
-                disabled={wizardStep === 0 || uploading}
-                onClick={previousWizardStep}
-                type="button"
-              >
-                Back
-              </button>
-              {wizardStep < 6 ? (
-                <button
-                  className={primaryButton}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void continueWizard();
-                  }}
-                  type="button"
-                >
-                  Continue
-                </button>
-              ) : !duplicate ? (
-                <button
-                  className={primaryButton}
-                  disabled={uploading}
-                  onClick={() => void uploadMaterial()}
-                  type="button"
-                >
-                  {uploading ? "Uploading…" : "Upload material"}
-                </button>
-              ) : null}
             </div>
-          </form>
+          )}
+          {duplicate && (
+            <div
+              className="mt-4 rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950"
+              role="alert"
+            >
+              <p className="font-semibold">
+                This exact PDF is already in Materials. No new copy was
+                uploaded.
+              </p>
+              <p className="mt-2 break-words">{duplicate.original_filename}</p>
+              <Link
+                className={`${secondaryButton} mt-4`}
+                href={`/admin/materials/${duplicate.id}`}
+              >
+                View existing material
+              </Link>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -2107,60 +2576,157 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
           <h2 className="text-2xl font-semibold" id="scope-material-heading">
             Edit {scopeTarget.title}
           </h2>
+          <MaterialIntakeMetadata
+            intake={scopeTarget.intake_metadata ?? scopeSource?.intake_metadata}
+            reviewRequired={scopeNeedsReview}
+          />
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            Select the correct curriculum. Its grade, medium, and subject are
-            changed together so the material cannot cross education scopes
-            accidentally.
+            Compare the detected information with the original. Changing the
+            curriculum keeps the existing year and source evidence. Only an
+            approved grade, medium, and subject assignment can be confirmed.
           </p>
           <form className="mt-5 grid gap-5" onSubmit={saveScope}>
-            <label className={fieldClass} htmlFor="scope-curriculum">
-              Curriculum version
-              <select
-                className={inputClass}
-                id="scope-curriculum"
-                onChange={(event) => {
-                  const id = event.currentTarget.value;
-                  setScopeCurriculumId(id);
-                  setConfirmIntakeMetadata(false);
-                  setScopeError(null);
-                  void loadScopeChoices(id);
-                }}
-                value={scopeCurriculumId}
+            {scopeCurriculum ? (
+              <section
+                aria-label="Curriculum assignment"
+                className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700"
               >
-                <option value="">No curriculum assignment</option>
-                {curricula
-                  .filter((curriculum) => curriculum.active)
-                  .map((curriculum) => {
-                    const configuration = examById.get(
-                      curriculum.exam_configuration_id,
-                    );
-                    const medium = mediumById.get(curriculum.medium_id);
-                    const subject = subjectById.get(curriculum.subject_id);
-                    return (
-                      <option key={curriculum.id} value={curriculum.id}>
-                        {configuration ? `Grade ${configuration.grade} · ` : ""}
-                        {medium?.name ?? "Medium"} ·{" "}
-                        {subject?.name ?? "Subject"} · {curriculum.title}
-                      </option>
-                    );
-                  })}
-              </select>
-            </label>
-
-            {scopeCurriculum && (
-              <p className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                New assignment: Grade{" "}
-                {scopeConfiguration?.grade ?? "not configured"} ·{" "}
-                {scopeMedium?.name ?? "Medium not configured"} ·{" "}
-                {scopeSubject?.name ?? "Subject not configured"}
+                <h3 className="font-semibold">
+                  Approved curriculum assignment
+                </h3>
+                <p className="mt-1">
+                  {scopeCurriculum.grade_label} · {scopeCurriculum.medium_name}{" "}
+                  · {scopeCurriculum.subject_name} ·{" "}
+                  {scopeCurriculum.curriculum_title}
+                </p>
+              </section>
+            ) : (
+              <p
+                className="rounded-lg border border-amber-300 bg-amber-50 p-3 font-sans text-sm text-amber-950"
+                lang="si"
+              >
+                විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි
               </p>
+            )}
+            {catalogue.length > 0 && !scopeEditing && (
+              <button
+                className={`${secondaryButton} justify-self-start`}
+                disabled={scopeSaving}
+                onClick={() => setScopeEditing(true)}
+                type="button"
+              >
+                Change curriculum assignment
+              </button>
+            )}
+            {catalogue.length > 0 && scopeEditing && (
+              <fieldset
+                className="grid gap-4 sm:grid-cols-2"
+                disabled={scopeSaving}
+              >
+                <legend className="mb-3 font-semibold">
+                  Change curriculum assignment
+                </legend>
+                <label className={fieldClass} htmlFor="scope-grade">
+                  Grade
+                  <select
+                    className={inputClass}
+                    id="scope-grade"
+                    value={scopeGrade}
+                    onChange={(event) => {
+                      setScopeGrade(event.currentTarget.value);
+                      setScopeMediumId("");
+                      setScopeSubjectId("");
+                      changeScopeCurriculum("");
+                    }}
+                  >
+                    <option value="">Choose grade</option>
+                    {[
+                      ...new Map(
+                        catalogue.map((entry) => [
+                          entry.grade,
+                          entry.grade_label,
+                        ]),
+                      ).entries(),
+                    ]
+                      .sort(([first], [second]) => first - second)
+                      .map(([grade, label]) => (
+                        <option key={grade} value={grade}>
+                          {label}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="scope-medium">
+                  Medium
+                  <select
+                    className={inputClass}
+                    id="scope-medium"
+                    disabled={!scopeGrade}
+                    value={scopeMediumId}
+                    onChange={(event) => {
+                      setScopeMediumId(event.currentTarget.value);
+                      setScopeSubjectId("");
+                      changeScopeCurriculum("");
+                    }}
+                  >
+                    <option value="">Choose medium</option>
+                    {scopeMedia.map((medium) => (
+                      <option key={medium.id} value={medium.id}>
+                        {medium.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="scope-subject">
+                  Subject
+                  <select
+                    className={inputClass}
+                    id="scope-subject"
+                    disabled={!scopeMediumId}
+                    value={scopeSubjectId}
+                    onChange={(event) => {
+                      setScopeSubjectId(event.currentTarget.value);
+                      changeScopeCurriculum("");
+                    }}
+                  >
+                    <option value="">Choose subject</option>
+                    {scopeSubjects.map((subject) => (
+                      <option key={subject.id} value={subject.id}>
+                        {subject.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={fieldClass} htmlFor="scope-curriculum">
+                  Curriculum version
+                  <select
+                    className={inputClass}
+                    id="scope-curriculum"
+                    disabled={!scopeSubjectId}
+                    onChange={(event) =>
+                      changeScopeCurriculum(event.currentTarget.value)
+                    }
+                    value={scopeCurriculumId}
+                  >
+                    <option value="">Choose curriculum</option>
+                    {scopeCurricula.map((curriculum) => (
+                      <option
+                        key={curriculum.curriculum_version_id}
+                        value={curriculum.curriculum_version_id}
+                      >
+                        {curriculum.curriculum_title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </fieldset>
             )}
 
             {scopeLoading ? (
               <p className="text-sm text-slate-600" role="status">
                 Loading units and lessons…
               </p>
-            ) : (
+            ) : scopeEditing && scopeCurriculum ? (
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className={fieldClass} htmlFor="scope-unit">
                   Unit (optional)
@@ -2171,6 +2737,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     onChange={(event) => {
                       setScopeUnitId(event.currentTarget.value);
                       setScopeLessonId("");
+                      setConfirmIntakeMetadata(false);
                     }}
                     value={scopeUnitId}
                   >
@@ -2188,9 +2755,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     className={inputClass}
                     disabled={!scopeUnitId}
                     id="scope-lesson"
-                    onChange={(event) =>
-                      setScopeLessonId(event.currentTarget.value)
-                    }
+                    onChange={(event) => {
+                      setScopeLessonId(event.currentTarget.value);
+                      setConfirmIntakeMetadata(false);
+                    }}
                     value={scopeLessonId}
                   >
                     <option value="">All lessons in unit</option>
@@ -2202,7 +2770,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                   </select>
                 </label>
               </div>
-            )}
+            ) : null}
 
             {scopeNeedsReview && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
@@ -2240,7 +2808,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               </button>
               <button
                 className={primaryButton}
-                disabled={scopeSaving}
+                disabled={!canSaveScope}
                 type="submit"
               >
                 {scopeSaving ? "Saving…" : "Save changes"}

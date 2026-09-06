@@ -1066,4 +1066,9 @@ def test_only_the_openai_adapters_import_the_provider_sdk() -> None:
             if isinstance(node, ast.ImportFrom) and node.module == "openai":
                 sdk_importers.add(source_path.resolve())
 
-    assert sdk_importers == {adapter_path, embedding_adapter_path, semantic_adapter_path}
+    assert sdk_importers == {
+        adapter_path,
+        embedding_adapter_path,
+        semantic_adapter_path,
+        source_root / "documents" / "semantic_diagnostics.py",
+    }

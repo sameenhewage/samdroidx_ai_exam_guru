@@ -72,6 +72,7 @@ def lesson(index: int, *, mapped: bool = True) -> ResolvedLesson:
 
 def curriculum(*, lessons: tuple[ResolvedLesson, ...] | None = None) -> ResolvedCurriculum:
     return ResolvedCurriculum(
+        admission_version=1,
         curriculum_version_id=CURRICULUM_ID,
         exam_configuration_id=EXAM_ID,
         assessment_code="SCHOOL-G7",

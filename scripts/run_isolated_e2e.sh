@@ -30,6 +30,7 @@ fi
 export APP_BASE_URL="http://127.0.0.1:$WEB_PORT"
 export APP_ENVIRONMENT="test"
 export EXAM_GURU_ENVIRONMENT="test"
+export EXAM_GURU_TEST_RUNTIME_ID="$project_name"
 export EXAM_GURU_STORAGE_BACKEND="local"
 export EXAM_GURU_OCR_PROVIDER=""
 export EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER=""
@@ -55,7 +56,7 @@ trap cleanup EXIT INT TERM
 
 docker compose --project-name "$project_name" up --build --detach --wait --wait-timeout 240
 ocr_languages="$(docker compose --project-name "$project_name" exec -T worker tesseract --list-langs 2>/dev/null)"
-for language in eng sin; do
+for language in eng sin tam; do
   if ! grep --fixed-strings --line-regexp --quiet "$language" <<<"$ocr_languages"; then
     printf 'Worker image is missing required Tesseract language: %s\n' "$language" >&2
     exit 1

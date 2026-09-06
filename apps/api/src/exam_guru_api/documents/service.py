@@ -7,16 +7,26 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from time import monotonic
-from typing import cast
+from typing import Annotated, cast
 from uuid import UUID, uuid4
 
 import pymupdf
 from anyio import fail_after, to_thread
-from sqlalchemy import and_, case, func, or_, select
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
+from sqlalchemy import Boolean, ColumnElement, and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.auth.domain import Permission, Principal, authorize
 from exam_guru_api.auth.models import AdminAuditEventModel
+from exam_guru_api.curriculum.admission import require_admitted_curriculum
 from exam_guru_api.curriculum.models import (
     CurriculumLessonModel,
     CurriculumUnitModel,
@@ -30,6 +40,7 @@ from exam_guru_api.documents.domain import (
     SourceDocumentType,
     validate_pdf_upload,
 )
+from exam_guru_api.documents.fidelity_models import PageReviewStateModel, SourceReadJobModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.documents.schemas import (
     MaterialGradeSummaryResponse,
@@ -147,6 +158,56 @@ class InvalidMaterialRemovalReasonError(ValueError):
 
 class MaterialScopeImmutableError(RuntimeError):
     pass
+
+
+class InvalidFixtureQuarantineReviewError(ValueError):
+    pass
+
+
+class FixtureProvenanceMismatchError(RuntimeError):
+    pass
+
+
+class FixtureQuarantineConflictError(RuntimeError):
+    pass
+
+
+def _fixture_review_text(value: str) -> str:
+    if value != value.strip() or not value.isprintable():
+        raise ValueError("Fixture review requires trimmed printable evidence")
+    return value
+
+
+FixtureReviewReason = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=1, max_length=512),
+    AfterValidator(_fixture_review_text),
+]
+FixtureEvidenceText = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=1, max_length=1024),
+    AfterValidator(_fixture_review_text),
+]
+
+
+class FixtureProvenanceEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+
+    source_document_id: UUID
+    checksum_sha256: Annotated[
+        str, StringConstraints(strict=True, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    ]
+    upload_audit_event_id: UUID
+    fixture_reference: FixtureEvidenceText
+    observed_evidence: Annotated[
+        tuple[FixtureEvidenceText, ...], Field(min_length=1, max_length=16)
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureQuarantineResult:
+    document: SourceDocumentModel
+    audit_event_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +411,107 @@ class SourceDocumentService:
             ),
         )
 
+    async def change_fixture_quarantine(
+        self,
+        document_id: UUID,
+        *,
+        quarantined: bool,
+        principal: Principal,
+        expected_version: int,
+        reason: str,
+        confirmation: str,
+        provenance_evidence: FixtureProvenanceEvidence,
+    ) -> FixtureQuarantineResult:
+        authorize(principal, Permission.SOURCE_WRITE)
+        expected_confirmation = (
+            "quarantine_exact_source_fixture" if quarantined else "restore_exact_source_fixture"
+        )
+        if (
+            type(quarantined) is not bool
+            or type(expected_version) is not int
+            or not 0 <= expected_version <= 2_147_483_646
+            or confirmation != expected_confirmation
+            or not isinstance(reason, str)
+            or not 1 <= len(reason) <= 512
+            or reason != reason.strip()
+            or not reason.isprintable()
+        ):
+            raise InvalidFixtureQuarantineReviewError
+        try:
+            evidence = FixtureProvenanceEvidence.model_validate(provenance_evidence)
+        except ValidationError:
+            raise InvalidFixtureQuarantineReviewError from None
+        document = await self._session.get(
+            SourceDocumentModel, document_id, with_for_update=True, populate_existing=True
+        )
+        if document is None:
+            raise SourceDocumentNotFoundError(document_id)
+        self._require_version(document, expected_version)
+        if document.quarantined_for_teacher_use == quarantined:
+            raise FixtureQuarantineConflictError
+        if (
+            evidence.source_document_id != document.id
+            or evidence.checksum_sha256 != document.checksum_sha256
+        ):
+            raise FixtureProvenanceMismatchError
+        upload = await self._session.get(
+            AdminAuditEventModel, evidence.upload_audit_event_id, populate_existing=True
+        )
+        if (
+            upload is None
+            or upload.action != "source_document.uploaded"
+            or upload.resource_type != "source_document"
+            or upload.resource_id != document.id
+            or not isinstance(upload.payload, dict)
+            or upload.payload.get("checksum_sha256") != document.checksum_sha256
+        ):
+            raise FixtureProvenanceMismatchError
+        previous = {
+            "quarantined_for_teacher_use": document.quarantined_for_teacher_use,
+            "active_for_ai": document.active_for_ai,
+        }
+        if document.active_for_ai:
+            document.removal_reason = reason
+            document.removed_by = principal.subject_id
+            document.removed_at = datetime.now(UTC)
+        document.quarantined_for_teacher_use = quarantined
+        document.active_for_ai = False
+        document.metadata_scope_version += 1
+        document.updated_by = principal.subject_id
+        audit_event_id = uuid4()
+        self._session.add(
+            AdminAuditEventModel(
+                id=audit_event_id,
+                actor_id=principal.subject_id,
+                action=(
+                    "source_document.fixture_quarantined"
+                    if quarantined
+                    else "source_document.fixture_restored"
+                ),
+                resource_type="source_document",
+                resource_id=document.id,
+                payload={
+                    "confirmation": confirmation,
+                    "reason": reason,
+                    "provenance_evidence": evidence.model_dump(mode="json"),
+                    "previous_version": expected_version,
+                    "version": document.metadata_scope_version,
+                    "from": previous,
+                    "to": {
+                        "quarantined_for_teacher_use": quarantined,
+                        "active_for_ai": False,
+                    },
+                },
+            )
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError:
+            await self._session.rollback()
+            raise FixtureQuarantineConflictError from None
+        await self._session.refresh(document)
+        return FixtureQuarantineResult(document=document, audit_event_id=audit_event_id)
+
     async def remove_from_ai_use(
         self,
         document_id: UUID,
@@ -396,7 +558,11 @@ class SourceDocumentService:
         expected_version: int,
         actor_id: UUID,
     ) -> SourceDocumentModel:
-        document = await self._get_for_update(document_id)
+        document = await self._session.get(
+            SourceDocumentModel, document_id, with_for_update=True, populate_existing=True
+        )
+        if document is None or document.quarantined_for_teacher_use:
+            raise SourceDocumentNotFoundError(document_id)
         self._require_version(document, expected_version)
         if document.active_for_ai:
             return document
@@ -446,23 +612,22 @@ class SourceDocumentService:
         )
         updated = (curriculum_version_id, unit_id, lesson_id)
         confirming = confirm_intake_metadata and document.metadata_review_required
+        if confirm_intake_metadata:
+            await self._validate_confirmation_scope(cast(UUID, curriculum_version_id))
         if previous == updated and not confirming:
             return document
         source_has_knowledge = await self._source_has_knowledge(document.id)
         if document.extraction_status is ExtractionStatus.TRUSTED or source_has_knowledge:
             raise MaterialScopeImmutableError(document.id)
         await self._validate_learning_scope(curriculum_version_id, unit_id, lesson_id)
-        if confirm_intake_metadata:
-            await self._validate_confirmation_scope(cast(UUID, curriculum_version_id))
         previous_version = document.metadata_scope_version
         previous_year = document.year
         document.curriculum_version_id = curriculum_version_id
         document.unit_id = unit_id
         document.lesson_id = lesson_id
-        if document.intake_metadata is not None:
-            if confirming and document.year is None:
-                document.year = SourceIntakeMetadata.model_validate(document.intake_metadata).year
-            document.metadata_review_required = not confirm_intake_metadata
+        if confirming and document.year is None and document.intake_metadata is not None:
+            document.year = SourceIntakeMetadata.model_validate(document.intake_metadata).year
+        document.metadata_review_required = not confirm_intake_metadata
         document.metadata_scope_version += 1
         document.updated_by = actor_id
         self._session.add(
@@ -512,34 +677,7 @@ class SourceDocumentService:
         normalized_search = None if search is None else search.strip()
         if search is not None and (not normalized_search or len(normalized_search) > 200):
             raise ValueError("material search is out of bounds")
-        status_conditions = {
-            MaterialStatus.READY_FOR_AI: and_(
-                SourceDocumentModel.active_for_ai.is_(True),
-                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
-                SourceDocumentModel.metadata_review_required.is_(False),
-            ),
-            MaterialStatus.NEEDS_REVIEW: and_(
-                SourceDocumentModel.active_for_ai.is_(True),
-                or_(
-                    SourceDocumentModel.metadata_review_required.is_(True),
-                    SourceDocumentModel.extraction_status.in_(
-                        (
-                            ExtractionStatus.EXTRACTED,
-                            ExtractionStatus.IN_REVIEW,
-                            ExtractionStatus.FAILED,
-                        )
-                    ),
-                ),
-            ),
-            MaterialStatus.PROCESSING: and_(
-                SourceDocumentModel.active_for_ai.is_(True),
-                SourceDocumentModel.metadata_review_required.is_(False),
-                SourceDocumentModel.extraction_status.in_(
-                    (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING)
-                ),
-            ),
-            MaterialStatus.REMOVED: SourceDocumentModel.active_for_ai.is_(False),
-        }
+        material_status = self._material_status_expression()
         statement = (
             select(
                 SourceDocumentModel,
@@ -550,6 +688,7 @@ class SourceDocumentService:
                 CurriculumVersionModel.title.label("curriculum_title"),
                 CurriculumUnitModel.title.label("unit_title"),
                 CurriculumLessonModel.title.label("lesson_title"),
+                material_status.label("material_status"),
             )
             .select_from(SourceDocumentModel)
             .outerjoin(
@@ -567,6 +706,7 @@ class SourceDocumentService:
                 CurriculumLessonModel,
                 CurriculumLessonModel.id == SourceDocumentModel.lesson_id,
             )
+            .where(SourceDocumentModel.quarantined_for_teacher_use.is_(False))
             .order_by(SourceDocumentModel.created_at.desc(), SourceDocumentModel.id.desc())
         )
         if unassigned_only:
@@ -601,12 +741,12 @@ class SourceDocumentService:
                 )
             )
         if status is not None:
-            statement = statement.where(status_conditions[status])
+            statement = statement.where(material_status == status.value)
         if normalized_search is not None:
             statement = statement.where(
                 SourceDocumentModel.original_filename.icontains(normalized_search, autoescape=True)
             )
-        statement = statement.limit(limit).offset(offset)
+        statement = statement.limit(limit).offset(offset).execution_options(autoflush=False)
         rows = (await self._session.execute(statement)).all()
         return tuple(
             MaterialListItemResponse(
@@ -622,7 +762,7 @@ class SourceDocumentService:
                 unit=unit_title,
                 lesson=lesson_title,
                 material_type=document.document_type,
-                status=self._material_status(document),
+                status=row_status,
                 year=(
                     document.year
                     if document.year is not None
@@ -632,7 +772,11 @@ class SourceDocumentService:
                 ),
                 intake_metadata=intake,
                 metadata_review_required=bool(document.metadata_review_required),
-                page_count=document.extracted_page_count,
+                page_count=(
+                    document.original_page_count
+                    if document.original_page_count is not None
+                    else document.extracted_page_count
+                ),
                 uploaded_at=document.created_at,
                 metadata_scope_version=document.metadata_scope_version,
             )
@@ -645,6 +789,7 @@ class SourceDocumentService:
                 curriculum_title,
                 unit_title,
                 lesson_title,
+                row_status,
             ) in rows
             for intake in (
                 None
@@ -659,31 +804,7 @@ class SourceDocumentService:
         )
 
     async def grade_summary(self) -> tuple[MaterialGradeSummaryResponse, ...]:
-        ready = and_(
-            SourceDocumentModel.active_for_ai.is_(True),
-            SourceDocumentModel.metadata_review_required.is_(False),
-            SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
-        )
-        needs_review = and_(
-            SourceDocumentModel.active_for_ai.is_(True),
-            or_(
-                SourceDocumentModel.metadata_review_required.is_(True),
-                SourceDocumentModel.extraction_status.in_(
-                    (
-                        ExtractionStatus.EXTRACTED,
-                        ExtractionStatus.IN_REVIEW,
-                        ExtractionStatus.FAILED,
-                    )
-                ),
-            ),
-        )
-        processing = and_(
-            SourceDocumentModel.active_for_ai.is_(True),
-            SourceDocumentModel.metadata_review_required.is_(False),
-            SourceDocumentModel.extraction_status.in_(
-                (ExtractionStatus.UPLOADED, ExtractionStatus.EXTRACTION_PENDING)
-            ),
-        )
+        material_status = self._material_status_expression()
         display_grade = case(
             (
                 SourceDocumentModel.curriculum_version_id.is_(None),
@@ -704,11 +825,17 @@ class SourceDocumentService:
                     display_grade,
                     func.count(SourceDocumentModel.id),
                     func.count(func.distinct(func.lower(display_subject))),
-                    func.count(SourceDocumentModel.id).filter(ready),
-                    func.count(SourceDocumentModel.id).filter(needs_review),
-                    func.count(SourceDocumentModel.id).filter(processing),
                     func.count(SourceDocumentModel.id).filter(
-                        SourceDocumentModel.active_for_ai.is_(False)
+                        material_status == MaterialStatus.READY_FOR_AI.value
+                    ),
+                    func.count(SourceDocumentModel.id).filter(
+                        material_status == MaterialStatus.NEEDS_REVIEW.value
+                    ),
+                    func.count(SourceDocumentModel.id).filter(
+                        material_status == MaterialStatus.PROCESSING.value
+                    ),
+                    func.count(SourceDocumentModel.id).filter(
+                        material_status == MaterialStatus.REMOVED.value
                     ),
                 )
                 .select_from(SourceDocumentModel)
@@ -721,7 +848,9 @@ class SourceDocumentService:
                     ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
                 )
                 .outerjoin(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+                .where(SourceDocumentModel.quarantined_for_teacher_use.is_(False))
                 .group_by(display_grade)
+                .execution_options(autoflush=False)
             )
         ).all()
         by_grade = {row[0]: row[1:] for row in rows}
@@ -766,6 +895,7 @@ class SourceDocumentService:
             )
             if scope is None or not scope.active:
                 raise SourceCurriculumInactiveError
+        await require_admitted_curriculum(self._session, curriculum_version_id)
 
     async def _validate_learning_scope(
         self,
@@ -813,6 +943,7 @@ class SourceDocumentService:
             SourceDocumentModel,
             document_id,
             with_for_update=True,
+            populate_existing=True,
         )
         if document is None:
             raise SourceDocumentNotFoundError(document_id)
@@ -904,20 +1035,49 @@ class SourceDocumentService:
             )
 
     @staticmethod
-    def _material_status(document: SourceDocumentModel) -> MaterialStatus:
-        if not document.active_for_ai:
-            return MaterialStatus.REMOVED
-        if document.metadata_review_required:
-            return MaterialStatus.NEEDS_REVIEW
-        if document.extraction_status is ExtractionStatus.TRUSTED:
-            return MaterialStatus.READY_FOR_AI
-        if document.extraction_status in {
-            ExtractionStatus.EXTRACTED,
-            ExtractionStatus.IN_REVIEW,
-            ExtractionStatus.FAILED,
-        }:
-            return MaterialStatus.NEEDS_REVIEW
-        return MaterialStatus.PROCESSING
+    def _material_status_expression() -> ColumnElement[str]:
+        document, page, job = SourceDocumentModel, PageReviewStateModel, SourceReadJobModel
+        verified_pages = (
+            select(
+                and_(
+                    func.count() == document.original_page_count,
+                    func.count().filter(page.state == "verified") > 0,
+                )
+            )
+            .where(
+                page.document_id == document.id,
+                page.page_number.between(1, document.original_page_count),
+                page.state.in_(("verified", "excluded")),
+            )
+            .correlate(document)
+            .scalar_subquery()
+        )
+        reading = (
+            select(job.id)
+            .where(job.document_id == document.id, job.status.in_(("queued", "running")))
+            .correlate(document)
+            .exists()
+        )
+        ready = and_(
+            document.active_for_ai.is_(True),
+            document.quarantined_for_teacher_use.is_(False),
+            document.metadata_review_required.is_(False),
+            document.original_page_count > 0,
+            func.catalogue_curriculum_is_admitted(document.curriculum_version_id, type_=Boolean()),
+            verified_pages,
+        )
+        return case(
+            (
+                or_(
+                    document.active_for_ai.is_(False),
+                    document.quarantined_for_teacher_use.is_(True),
+                ),
+                MaterialStatus.REMOVED.value,
+            ),
+            (reading, MaterialStatus.PROCESSING.value),
+            (ready, MaterialStatus.READY_FOR_AI.value),
+            else_=MaterialStatus.NEEDS_REVIEW.value,
+        )
 
     @staticmethod
     def _optional_uuid(value: UUID | None) -> str | None:

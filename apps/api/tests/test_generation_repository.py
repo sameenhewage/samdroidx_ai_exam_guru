@@ -179,6 +179,8 @@ def source_model() -> SourceDocumentModel:
         size_bytes=100,
         document_type=SourceDocumentType.SYLLABUS,
         extraction_status=ExtractionStatus.TRUSTED,
+        active_for_ai=True,
+        metadata_review_required=False,
         curriculum_version_id=CURRICULUM_ID,
         created_by=ACTOR_ID,
         updated_by=ACTOR_ID,
@@ -241,6 +243,7 @@ def chunk_model() -> KnowledgeChunkModel:
         source_document_id=SOURCE_ID,
         page_number=1,
         source_block_id=BLOCK_ID,
+        source_candidate_id=UUID(int=960_011),
         review_state=ReviewState.REVIEWED,
         competency_id=UUID(int=960_010),
         version=2,
@@ -262,6 +265,7 @@ def question_model() -> HistoricalQuestionModel:
         source_document_id=SOURCE_ID,
         page_number=1,
         source_block_id=BLOCK_ID,
+        source_candidate_id=UUID(int=960_011),
         review_state=ReviewState.REVIEWED,
         competency_id=UUID(int=960_010),
         version=3,
@@ -317,10 +321,34 @@ def test_repository_loads_scope_blueprint_and_both_context_kinds() -> None:
                 ScriptedSession(
                     execute_results=(
                         ExecuteResult(
-                            rows=((chunk_model(), source, curriculum, exam, medium, subject),)
+                            rows=(
+                                (
+                                    chunk_model(),
+                                    source,
+                                    curriculum,
+                                    exam,
+                                    medium,
+                                    subject,
+                                    "c" * 64,
+                                    True,
+                                    True,
+                                ),
+                            )
                         ),
                         ExecuteResult(
-                            rows=((question_model(), source, curriculum, exam, medium, subject),)
+                            rows=(
+                                (
+                                    question_model(),
+                                    source,
+                                    curriculum,
+                                    exam,
+                                    medium,
+                                    subject,
+                                    "c" * 64,
+                                    True,
+                                    True,
+                                ),
+                            )
                         ),
                     )
                 ),

@@ -20,6 +20,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -28,6 +29,10 @@ from exam_guru_api.infrastructure.migrations import assert_database_schema_curre
 from exam_guru_api.knowledge.domain import DifficultyLabel, QuestionType, ReviewState
 from exam_guru_api.knowledge.models import HistoricalQuestionModel
 from exam_guru_api.main import create_app
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 ADMIN_ID = UUID(int=910_001)
@@ -98,6 +103,14 @@ async def seed_curriculum(
                 created_by=ADMIN_ID,
                 updated_by=ADMIN_ID,
             ),
+            SubjectModel(
+                id=UUID(int=913_000 + offset),
+                code=f"GENERAL-{offset}",
+                name="General scholarship skills",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
             MediumModel(
                 id=medium_id,
                 code=f"an{offset}",
@@ -114,6 +127,7 @@ async def seed_curriculum(
             id=curriculum_id,
             exam_configuration_id=exam_id,
             medium_id=medium_id,
+            subject_id=UUID(int=913_000 + offset),
             code=f"AN-{offset}",
             title=f"Analytics curriculum {offset}",
             active=True,
@@ -152,6 +166,7 @@ async def seed_curriculum(
             )
         )
         await session.flush()
+    await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
 
 
 async def seed_paper(
@@ -167,7 +182,14 @@ async def seed_paper(
     document_id = UUID(int=920_000 + offset)
     page_id = UUID(int=930_000 + offset)
     block_id = UUID(int=940_000 + offset)
-    text = f"Reviewed historical paper {year}"
+    text = "\n".join(
+        [
+            f"Reviewed historical paper {year}",
+            *(f"Reviewed question {year}/{index}" for index in range(1, len(skill_ids) + 1)),
+            "Reviewed but missing difficulty evidence",
+            "Complete metadata but not reviewed",
+        ]
+    )
     checksum = sha256(f"analytics-source-{curriculum_id}-{year}".encode()).hexdigest()
     now = datetime.now(UTC)
     document = SourceDocumentModel(
@@ -184,6 +206,8 @@ async def seed_paper(
         paper_code=f"P{year}",
         extraction_attempt_count=1,
         extraction_started_at=now,
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ADMIN_ID,
         updated_by=ADMIN_ID,
     )
@@ -242,6 +266,7 @@ async def seed_paper(
     await session.flush()
     document.extraction_status = ExtractionStatus.TRUSTED
     await session.flush()
+    candidate_id = await verify_synthetic_page(session, document_id, text, actor_id=ADMIN_ID)
 
     question_ids: list[UUID] = []
     for index, skill_id in enumerate(skill_ids, start=1):
@@ -263,6 +288,7 @@ async def seed_paper(
                 source_document_id=document_id,
                 page_number=1,
                 source_block_id=block_id,
+                source_candidate_id=candidate_id,
                 review_state=ReviewState.REVIEWED,
                 competency_id=competency_id,
                 skill_id=skill_id,
@@ -285,6 +311,7 @@ async def seed_paper(
                     source_document_id=document_id,
                     page_number=1,
                     source_block_id=block_id,
+                    source_candidate_id=candidate_id,
                     review_state=ReviewState.REVIEWED,
                     competency_id=competency_id,
                     skill_id=skill_ids[0],
@@ -306,6 +333,7 @@ async def seed_paper(
                     source_document_id=document_id,
                     page_number=1,
                     source_block_id=block_id,
+                    source_candidate_id=candidate_id,
                     review_state=ReviewState.DRAFT,
                     competency_id=competency_id,
                     skill_id=skill_ids[0],

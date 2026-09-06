@@ -15,6 +15,16 @@ from exam_guru_api.auth.rate_limits import (
 )
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import ExtractionDispatcher, create_extraction_dispatcher
+from exam_guru_api.documents.page_reading_jobs import (
+    SourceReadDispatcher,
+    create_source_read_dispatcher,
+)
+from exam_guru_api.documents.upload_jobs import (
+    SourceUploadDispatcher,
+    create_source_upload_dispatcher,
+    create_upload_artifacts,
+    create_upload_limits,
+)
 from exam_guru_api.generation.jobs import GenerationDispatcher, create_generation_dispatcher
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry, create_generation_runtime
 from exam_guru_api.infrastructure.object_storage import ObjectStorage, create_object_storage
@@ -48,6 +58,8 @@ def create_app(
     identity_provider: IdentityProvider | None = None,
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
+    source_read_dispatcher: SourceReadDispatcher | None = None,
+    source_upload_dispatcher: SourceUploadDispatcher | None = None,
     generation_dispatcher: GenerationDispatcher | None = None,
     paper_generation_dispatcher: PaperGenerationDispatcher | None = None,
     embedding_dispatcher: EmbeddingDispatcher | None = None,
@@ -102,6 +114,18 @@ def create_app(
         extraction_dispatcher
         if extraction_dispatcher is not None
         else create_extraction_dispatcher(resolved_settings)
+    )
+    application.state.source_read_dispatcher = (
+        source_read_dispatcher
+        if source_read_dispatcher is not None
+        else create_source_read_dispatcher(resolved_settings)
+    )
+    application.state.source_upload_limits = create_upload_limits(resolved_settings)
+    application.state.source_upload_artifacts = create_upload_artifacts(resolved_settings)
+    application.state.source_upload_dispatcher = (
+        source_upload_dispatcher
+        if source_upload_dispatcher is not None
+        else create_source_upload_dispatcher(resolved_settings)
     )
     application.state.generation_dispatcher = (
         generation_dispatcher

@@ -43,6 +43,7 @@ from exam_guru_api.documents.extraction_service import (
     ExtractionTrustBlockedError,
     ReviewNotActiveError,
     SourcePageNotFoundError,
+    VersionedPageReviewRequiredError,
 )
 from exam_guru_api.documents.jobs import DeterministicExtractionDispatcher
 from exam_guru_api.documents.models import (
@@ -640,6 +641,7 @@ def test_extraction_trigger_rejects_missing_and_non_dispatchable_documents() -> 
             "concurrent_review_modification",
         ),
         (ReviewNotActiveError(), 409, "invalid_extraction_transition"),
+        (VersionedPageReviewRequiredError(), 409, "page_review_workspace_required"),
         (ExtractionTrustBlockedError("font_risk"), 409, "extraction_trust_blocked"),
         (
             InvalidExtractionTransitionError(

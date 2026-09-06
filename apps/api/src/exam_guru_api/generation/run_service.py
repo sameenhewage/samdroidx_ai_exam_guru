@@ -17,7 +17,6 @@ from exam_guru_api.blueprints.domain import BlueprintSlot
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.core.config import MIN_GENERATION_WORKER_LEASE_SECONDS
 from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
-from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.generation.domain import (
     CandidateDisposition,
     ContextProvenance,
@@ -239,6 +238,7 @@ class GenerationRunService:
             and scope.exam_active
             and scope.medium_active
             and scope.subject_active
+            and scope.catalogue_admitted is True
         ):
             raise GenerationCurriculumInactiveError(curriculum_version_id)
 
@@ -492,9 +492,13 @@ class GenerationRunService:
             if record.review_state is not ReviewState.REVIEWED:
                 raise GenerationContextNotReviewedError(record.id)
             if (
-                record.source_status is not ExtractionStatus.TRUSTED
-                or not record.source_active_for_ai
+                record.source_active_for_ai is not True
                 or record.source_block_id is None
+                or record.source_candidate_id is None
+                or record.source_candidate_sha256 is None
+                or record.source_fidelity_current is not True
+                or record.metadata_resolved is not True
+                or record.catalogue_admitted is not True
             ):
                 raise GenerationContextSourceUntrustedError(record.id)
             if not record.scope_active:
@@ -894,6 +898,8 @@ class GenerationWorkerService:
         failure_code: str | None = None
         try:
             config = self._matching_config(run)
+            if not await self._repository.context_lineage_is_current(run):
+                raise GenerationContextSourceUntrustedError(run.id)
             request = _generation_request(run, config)
             recorder = _RecordingProvider(self._runtime.build_provider(config))
             cache: GenerationResultCache = _RunResultCache()
@@ -906,6 +912,8 @@ class GenerationWorkerService:
                 config=config.budgets,
                 attempt_id_factory=_DeterministicAttemptIds(run.id),
             ).generate()
+        except GenerationContextSourceUntrustedError:
+            failure_code = "generation_source_invalid"
         except GenerationBudgetExceededError as error:
             failure_code = f"budget_exceeded_{error.dimension.value}"
         except GenerationRetryExhaustedError:
@@ -1026,6 +1034,13 @@ class GenerationWorkerService:
             await self._session.rollback()
             return False
         run = active.run
+        if (
+            result is not None
+            and failure_code is None
+            and not await self._repository.context_lineage_is_current(run, lock_sources=True)
+        ):
+            failure_code = "generation_source_invalid"
+            result = None
         for item in completed:
             accounting = item.accounting
             attempt = GenerationAttemptModel(
@@ -1280,6 +1295,8 @@ def _context_snapshot(
                     "page_number": provenance.page_number,
                     "chunk_id": provenance.chunk_id,
                     "source_block_id": str(record.source_block_id),
+                    "source_candidate_id": _optional_uuid(record.source_candidate_id),
+                    "source_candidate_sha256": record.source_candidate_sha256,
                 },
                 "retrieval_scope": (
                     None if record_scope is None else serialize_retrieval_scope(record_scope)

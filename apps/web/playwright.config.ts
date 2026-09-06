@@ -8,6 +8,7 @@ const runtime = requireIsolatedE2ERuntime(process.env);
 export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
+  globalSetup: "./e2e-global-setup.ts",
   projects: [
     {
       name: "chromium",

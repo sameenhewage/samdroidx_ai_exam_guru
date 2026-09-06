@@ -15,3 +15,8 @@
 .env
 .env.*
 !.env.example
+RAG DATA
+.exam-guru-data
+.exam-guru-pilot-data
+.exam-guru-evidence
+graphify-out

@@ -20,12 +20,17 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
 from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.main import create_app
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 ADMIN_ID = UUID(int=800_000)
@@ -103,6 +108,14 @@ async def _seed_curriculum(
                 created_by=ADMIN_ID,
                 updated_by=ADMIN_ID,
             ),
+            SubjectModel(
+                id=UUID(int=803_000 + suffix),
+                code=f"GENERAL-{suffix}",
+                name="General scholarship skills",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
             MediumModel(
                 id=medium_id,
                 code=f"ka{suffix}",
@@ -119,6 +132,7 @@ async def _seed_curriculum(
             id=curriculum_id,
             exam_configuration_id=exam_id,
             medium_id=medium_id,
+            subject_id=UUID(int=803_000 + suffix),
             code=f"KAPI-{suffix}",
             title=f"Knowledge API curriculum {suffix}",
             active=True,
@@ -141,6 +155,7 @@ async def _seed_curriculum(
         )
     )
     await session.flush()
+    await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
 
 
 async def _seed_skill(session: AsyncSession) -> None:
@@ -172,7 +187,10 @@ async def _seed_source(
     trusted: bool,
     suffix: str,
 ) -> None:
-    text = f"Reviewed knowledge API source {suffix}"
+    text = (
+        f"Reviewed knowledge API source {suffix}\n"
+        "Which number is even?\nMeaningful educational explanation."
+    )
     document = SourceDocumentModel(
         id=document_id,
         checksum_sha256=sha256(f"knowledge-api-{suffix}".encode()).hexdigest(),
@@ -187,6 +205,8 @@ async def _seed_source(
         paper_code="P1" if document_type is SourceDocumentType.PAST_PAPER else None,
         extraction_attempt_count=1,
         extraction_started_at=datetime.now(UTC),
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ADMIN_ID,
         updated_by=ADMIN_ID,
     )
@@ -246,6 +266,7 @@ async def _seed_source(
         await session.flush()
         document.extraction_status = ExtractionStatus.TRUSTED
         await session.flush()
+        await verify_synthetic_page(session, document_id, text, actor_id=ADMIN_ID)
 
 
 @pytest.fixture(scope="module")
@@ -330,7 +351,7 @@ def _question_payload(question_number: str) -> dict[str, object]:
         "year": 2021,
         "paper_code": "P1",
         "question_number": question_number,
-        "text": f"Historical question {question_number}",
+        "text": "Which number is even?",
         "question_type": "multiple_choice",
         "marks": 2,
         "source_document_id": str(TRUSTED_PAPER_ID),
@@ -342,7 +363,7 @@ def _question_payload(question_number: str) -> dict[str, object]:
 def _chunk_payload(sequence: int) -> dict[str, object]:
     return {
         "chunk_type": "explanation",
-        "text": f"Meaningful educational chunk {sequence}",
+        "text": "Meaningful educational explanation.",
         "educational_boundary": f"Competency 1 / explanation {sequence}",
         "sequence": sequence,
         "source_document_id": str(TRUSTED_SYLLABUS_ID),

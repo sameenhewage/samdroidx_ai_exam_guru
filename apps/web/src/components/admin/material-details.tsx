@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AdminRole } from "./admin-header";
 
+type CatalogueEntry = components["schemas"]["MaterialCatalogueEntry"];
 type Material = components["schemas"]["MaterialListItemResponse"];
 type MaterialStatus = components["schemas"]["MaterialStatus"];
 type MaterialType = components["schemas"]["SourceDocumentType"];
@@ -75,31 +76,31 @@ export function MaterialIntakeMetadata({
   reviewRequired?: boolean;
 }) {
   if (!intake && !reviewRequired) return null;
-  const fields = intake
-    ? [
-        [
-          "Candidate grade",
-          intake.candidate_grade == null
-            ? "Not assigned"
-            : `Grade ${intake.candidate_grade}`,
-        ],
-        ["Subject label", intake.subject_label],
-        ["Medium label", intake.medium_label],
-        ["Curriculum label", intake.curriculum_label],
-        ["Original type label", intake.document_type_label],
-        ["Year", intake.year == null ? null : String(intake.year)],
-        ["Term", intake.term],
-        ["Publisher", intake.publisher],
-        ["Source reference", intake.source_reference],
-      ]
-    : [];
+  const fields = [
+    [
+      "Candidate grade",
+      intake?.candidate_grade == null
+        ? "Not detected"
+        : `Grade ${intake.candidate_grade}`,
+    ],
+    ["Medium label", intake?.medium_label ?? "Not detected"],
+    ["Subject label", intake?.subject_label ?? "Not detected"],
+    ["Original type label", intake?.document_type_label ?? "Not detected"],
+    ["Year", intake?.year == null ? "Not detected" : String(intake.year)],
+    ["Curriculum label", intake?.curriculum_label],
+    ["Term", intake?.term],
+    ["Publisher", intake?.publisher],
+  ];
   return (
     <section
       aria-label="Intake metadata"
       className="mt-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"
     >
+      <h3 className="font-sans text-lg font-semibold" lang="si">
+        පද්ධතිය හඳුනාගත් තොරතුරු
+      </h3>
       {reviewRequired && (
-        <p className="mb-3 w-fit rounded-full border border-amber-400 px-3 py-1 text-sm font-semibold">
+        <p className="my-3 w-fit rounded-full border border-amber-400 px-3 py-1 text-sm font-semibold">
           Metadata needs review
         </p>
       )}
@@ -132,16 +133,24 @@ export function MaterialIntakeMetadata({
           ))}
         </ul>
       )}
-      {!!intake?.evidence?.length && (
+      {(intake?.source_reference || !!intake?.evidence?.length) && (
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer font-semibold">
             Intake evidence
           </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            {intake.evidence.map((evidence, index) => (
-              <li key={index}>{evidence}</li>
-            ))}
-          </ul>
+          {intake?.source_reference && (
+            <dl className="mt-2">
+              <dt className="font-semibold">Source reference</dt>
+              <dd className="mt-1 break-words">{intake.source_reference}</dd>
+            </dl>
+          )}
+          {!!intake?.evidence?.length && (
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {intake.evidence.map((evidence, index) => (
+                <li key={index}>{evidence}</li>
+              ))}
+            </ul>
+          )}
         </details>
       )}
     </section>
@@ -161,6 +170,7 @@ export function MaterialDetails({
   );
   const [material, setMaterial] = useState<Material | null>(null);
   const [source, setSource] = useState<SourceDocument | null>(null);
+  const [catalogue, setCatalogue] = useState<CatalogueEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -170,12 +180,24 @@ export function MaterialDetails({
     setError("");
     setPermissionDenied(false);
     try {
-      const [materialResult, sourceResult] = await Promise.all([
-        api.GET("/api/v1/admin/materials", {
-          params: { query: { document_id: documentId, limit: 1 } },
-        }),
-        api.GET("/api/v1/admin/source-documents"),
-      ]);
+      const [materialResult, sourceResult, catalogueResult] = await Promise.all(
+        [
+          api.GET("/api/v1/admin/materials", {
+            params: { query: { document_id: documentId, limit: 1 } },
+            cache: "no-store",
+          }),
+          api.GET("/api/v1/admin/source-documents", { cache: "no-store" }),
+          api.GET("/api/v1/admin/material-catalogue", {
+            params: { query: { limit: 1000 } },
+            cache: "no-store",
+          }),
+        ],
+      );
+      if (!catalogueResult.response.ok || catalogueResult.error) {
+        setPermissionDenied(catalogueResult.response.status === 403);
+        setError(errorCode(catalogueResult.error));
+        return;
+      }
       if (materialResult.error) {
         setPermissionDenied(materialResult.response.status === 403);
         setError(errorCode(materialResult.error));
@@ -198,6 +220,7 @@ export function MaterialDetails({
       }
       setMaterial(nextMaterial);
       setSource(nextSource);
+      setCatalogue(catalogueResult.data ?? []);
     } catch {
       setError("network_error");
     } finally {
@@ -242,8 +265,8 @@ export function MaterialDetails({
     );
   }
 
-  const canReviewText = ["extracted", "in_review", "trusted"].includes(
-    source.extraction_status,
+  const assignment = catalogue.find(
+    (entry) => entry.curriculum_version_id === source.curriculum_version_id,
   );
   const intake = material.intake_metadata ?? source.intake_metadata;
   const metadataReviewRequired =
@@ -286,14 +309,13 @@ export function MaterialDetails({
                   : "The PDF is being read. Return later to review the extracted text."}
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
-          {canReviewText && (
-            <Link
-              className={secondaryButton}
-              href={`/admin/materials/${documentId}/review-text`}
-            >
-              Review text
-            </Link>
-          )}
+          <Link
+            className={secondaryButton}
+            href={`/admin/materials/${documentId}/review-text`}
+            prefetch={false}
+          >
+            Review text
+          </Link>
           {role === "reviewer" && (
             <span className="self-center text-sm text-slate-600">
               Reviewer access is read-only.
@@ -306,6 +328,14 @@ export function MaterialDetails({
         intake={intake}
         reviewRequired={metadataReviewRequired}
       />
+      {!assignment && (
+        <p
+          className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 font-sans text-amber-950"
+          lang="si"
+        >
+          විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි
+        </p>
+      )}
 
       <section aria-labelledby="original-pdf-heading" className="mt-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -320,7 +350,7 @@ export function MaterialDetails({
           </div>
           <a
             className={secondaryButton}
-            href={`/api/v1/admin/source-documents/${documentId}/content`}
+            href={`/api/v1/admin/materials/${documentId}/original`}
             rel="noreferrer"
             target="_blank"
           >
@@ -331,7 +361,7 @@ export function MaterialDetails({
           className="mt-4 h-[70vh] min-h-[32rem] w-full rounded-xl border border-slate-300 bg-white"
           loading="lazy"
           referrerPolicy="no-referrer"
-          src={`/api/v1/admin/source-documents/${documentId}/content`}
+          src={`/api/v1/admin/materials/${documentId}/original`}
           title={`Original PDF: ${material.title}`}
         />
       </section>
@@ -343,14 +373,16 @@ export function MaterialDetails({
         <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Detail
             label="Grade"
-            value={
-              material.grade === null
-                ? "Not assigned"
-                : `Grade ${material.grade}`
-            }
+            value={assignment?.grade_label ?? "Not assigned"}
           />
-          <Detail label="Subject" value={material.subject ?? "Not assigned"} />
-          <Detail label="Medium" value={material.medium ?? "Not assigned"} />
+          <Detail
+            label="Subject"
+            value={assignment?.subject_name ?? "Not assigned"}
+          />
+          <Detail
+            label="Medium"
+            value={assignment?.medium_name ?? "Not assigned"}
+          />
           <Detail label="Material type" value={typeLabel} />
           <Detail
             label="Year"
@@ -360,24 +392,22 @@ export function MaterialDetails({
           />
           <Detail
             label="Curriculum"
-            value={material.curriculum ?? "Not assigned"}
+            value={assignment?.curriculum_title ?? "Not assigned"}
           />
           <Detail
             label="Unit"
             value={
-              material.unit ??
-              (source.curriculum_version_id
-                ? "Whole curriculum"
-                : "Not assigned")
+              assignment
+                ? (material.unit ?? "Whole curriculum")
+                : "Not assigned"
             }
           />
           <Detail
             label="Lesson"
             value={
-              material.lesson ??
-              (source.curriculum_version_id
-                ? "All lessons in scope"
-                : "Not assigned")
+              assignment
+                ? (material.lesson ?? "All lessons in scope")
+                : "Not assigned"
             }
           />
           <Detail

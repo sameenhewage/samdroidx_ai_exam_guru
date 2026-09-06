@@ -12,11 +12,12 @@ import secrets
 import stat
 import threading
 from bisect import bisect_right
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
 
 import boto3
 from botocore.config import Config
@@ -39,7 +40,9 @@ _MAX_LIST_PAGE_SIZE = 1_000
 _MAX_CONTINUATION_TOKEN_LENGTH = 2_048
 _MAX_S3_TAGS = 10
 _MAX_S3_OBJECT_SIZE = 5 * 1024**4
-_MAX_LOCAL_OBJECT_SIZE = 256 * 1024 * 1024
+_MAX_IN_MEMORY_OBJECT_SIZE = 256 * 1024 * 1024
+_MAX_STREAM_OBJECT_SIZE = 2**63 - 1
+_SOURCE_STREAM_CHUNK_SIZE = 1024 * 1024
 _MAX_LOCAL_METADATA_SIZE = 16 * 1024
 _LOCAL_METADATA_SCHEMA_VERSION = 1
 _LOCAL_TOKEN_PREFIX = b"exam-guru-local-v1\x00"
@@ -105,6 +108,17 @@ class ObjectStorage(Protocol):
 
     def get_bytes(self, key: str) -> bytes: ...
 
+    def open_source(self, key: str) -> AbstractContextManager[BinaryIO]: ...
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject: ...
+
     def list_source_objects(
         self,
         *,
@@ -161,6 +175,23 @@ def _local_operation_error(
     return ObjectStorageOperationError(code)
 
 
+def _validate_stream_request(
+    stream: BinaryIO, *, content_type: str, expected_size: int, maximum: int
+) -> None:
+    if content_type != "application/pdf":
+        raise ObjectStorageOperationError("object_storage_invalid_content_type")
+    if (
+        not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or not 0 <= expected_size <= _MAX_STREAM_OBJECT_SIZE
+    ):
+        raise ObjectStorageOperationError("object_storage_invalid_size")
+    if expected_size > maximum:
+        raise ObjectStorageOperationError("object_storage_write_too_large")
+    if not callable(getattr(stream, "read", None)):
+        raise ObjectStorageOperationError("object_storage_invalid_data")
+
+
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -173,7 +204,13 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 class LocalFileObjectStorage:
     """POSIX local storage with descriptor-relative, no-follow file operations."""
 
-    def __init__(self, *, root: str | os.PathLike[str], max_object_bytes: int) -> None:
+    def __init__(
+        self,
+        *,
+        root: str | os.PathLike[str],
+        max_object_bytes: int,
+        max_stream_bytes: int | None = None,
+    ) -> None:
         root_value = os.fspath(root)
         if not isinstance(root_value, str):
             raise ValueError("storage root must be text")
@@ -192,11 +229,17 @@ class LocalFileObjectStorage:
         if (
             not isinstance(max_object_bytes, int)
             or isinstance(max_object_bytes, bool)
-            or not 1 <= max_object_bytes <= _MAX_LOCAL_OBJECT_SIZE
+            or not 1 <= max_object_bytes <= _MAX_STREAM_OBJECT_SIZE
         ):
             raise ValueError("local object byte limit is invalid")
+        if max_stream_bytes is not None and (
+            type(max_stream_bytes) is not int
+            or not 1 <= max_stream_bytes <= _MAX_STREAM_OBJECT_SIZE
+        ):
+            raise ValueError("local stream byte limit is invalid")
         self._root = root_value
-        self._max_object_bytes = max_object_bytes
+        self._max_object_bytes = max_object_bytes if max_stream_bytes is None else max_stream_bytes
+        self._max_byte_object_bytes = min(max_object_bytes, _MAX_IN_MEMORY_OBJECT_SIZE)
         self._state_lock = threading.Lock()
         self._root_fd: int | None = None
         self._closed = False
@@ -207,7 +250,7 @@ class LocalFileObjectStorage:
             raise ObjectStorageOperationError("object_storage_invalid_data")
         if content_type != "application/pdf":
             raise ObjectStorageOperationError("object_storage_invalid_content_type")
-        if len(data) > self._max_object_bytes:
+        if len(data) > self._max_byte_object_bytes:
             raise ObjectStorageOperationError("object_storage_write_too_large")
         checksum = hashlib.sha256(data).hexdigest()
         root_fd = self._root_handle()
@@ -258,6 +301,72 @@ class LocalFileObjectStorage:
         finally:
             os.close(root_fd)
         return cast(tuple[bytes, os.stat_result], value)[0]
+
+    @contextmanager
+    def open_source(self, key: str) -> Iterator[BinaryIO]:
+        _, prefix, filename, expected_checksum = self._source_parts(key)
+        root_fd = self._root_handle()
+        try:
+            parent_fd = self._source_parent(root_fd, prefix=prefix, create=False)
+            try:
+                opened = self._open_stream_source_at(
+                    parent_fd,
+                    filename=filename,
+                    expected_checksum=expected_checksum,
+                    missing_ok=False,
+                )
+            finally:
+                os.close(parent_fd)
+        finally:
+            os.close(root_fd)
+        source, _details = cast(tuple[BinaryIO, os.stat_result], opened)
+        with source:
+            yield source
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject:
+        validated_key, prefix, filename, expected_checksum = self._source_parts(key)
+        _validate_stream_request(
+            stream,
+            content_type=content_type,
+            expected_size=expected_size,
+            maximum=self._max_object_bytes,
+        )
+        root_fd = self._root_handle()
+        try:
+            parent_fd = self._source_parent(root_fd, prefix=prefix, create=True)
+            try:
+                existing = self._existing_stream_source(
+                    parent_fd,
+                    key=validated_key,
+                    filename=filename,
+                    checksum=expected_checksum,
+                    missing_ok=True,
+                )
+                if existing is not None:
+                    checksum = self._consume_stream(stream, expected_size=expected_size)
+                    if existing.checksum_sha256 != checksum or existing.size != expected_size:
+                        raise ObjectAlreadyExistsError
+                    self._sync_source_parent(parent_fd)
+                    return existing
+                return self._publish_stream_source(
+                    parent_fd,
+                    key=validated_key,
+                    filename=filename,
+                    stream=stream,
+                    expected_size=expected_size,
+                    expected_checksum=expected_checksum,
+                )
+            finally:
+                os.close(parent_fd)
+        finally:
+            os.close(root_fd)
 
     def list_source_objects(
         self,
@@ -510,6 +619,192 @@ class LocalFileObjectStorage:
         finally:
             os.close(file_fd)
 
+    def _open_stream_source_at(
+        self,
+        parent_fd: int,
+        *,
+        filename: str,
+        expected_checksum: str,
+        missing_ok: bool,
+    ) -> tuple[BinaryIO, os.stat_result] | None:
+        try:
+            file_fd = os.open(filename, _SAFE_READ_FLAGS | os.O_NONBLOCK, dir_fd=parent_fd)
+        except FileNotFoundError:
+            if missing_ok:
+                return None
+            raise ObjectStorageOperationError("object_storage_not_found") from None
+        except OSError as error:
+            raise _local_operation_error(error, "object_storage_read_failed") from None
+        owned_fd: int | None = file_fd
+        try:
+            details = os.fstat(file_fd)
+            self._validate_source_stat(details, max_links=2)
+            if details.st_size > self._max_object_bytes:
+                raise ObjectStorageOperationError("object_storage_read_too_large")
+            if details.st_size < 0:
+                raise ObjectStorageOperationError("object_storage_integrity_failed")
+            checksum = hashlib.sha256()
+            total = 0
+            while True:
+                amount = min(_SOURCE_STREAM_CHUNK_SIZE, details.st_size - total + 1)
+                chunk = os.read(file_fd, amount)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > self._max_object_bytes:
+                    raise ObjectStorageOperationError("object_storage_read_too_large")
+                if total > details.st_size:
+                    raise ObjectStorageOperationError("object_storage_integrity_failed")
+                checksum.update(chunk)
+            final_details = os.fstat(file_fd)
+            self._validate_source_stat(final_details, max_links=2)
+            if final_details.st_size > self._max_object_bytes:
+                raise ObjectStorageOperationError("object_storage_read_too_large")
+            if (
+                total != details.st_size
+                or final_details.st_size != details.st_size
+                or final_details.st_mtime_ns != details.st_mtime_ns
+                or checksum.hexdigest() != expected_checksum
+            ):
+                raise ObjectStorageOperationError("object_storage_integrity_failed")
+            os.lseek(file_fd, 0, os.SEEK_SET)
+            source = os.fdopen(file_fd, "rb", buffering=0)
+            owned_fd = None
+            return cast(BinaryIO, source), details
+        except OSError as error:
+            raise _local_operation_error(error, "object_storage_read_failed") from None
+        finally:
+            if owned_fd is not None:
+                os.close(owned_fd)
+
+    def _existing_stream_source(
+        self,
+        parent_fd: int,
+        *,
+        key: str,
+        filename: str,
+        checksum: str,
+        missing_ok: bool,
+    ) -> StoredObject | None:
+        opened = self._open_stream_source_at(
+            parent_fd,
+            filename=filename,
+            expected_checksum=checksum,
+            missing_ok=missing_ok,
+        )
+        if opened is None:
+            return None
+        source, details = opened
+        with source:
+            return StoredObject(
+                key=key, checksum_sha256=checksum, size=details.st_size, etag=checksum
+            )
+
+    def _consume_stream(
+        self, stream: BinaryIO, *, expected_size: int, destination_fd: int | None = None
+    ) -> str:
+        checksum = hashlib.sha256()
+        total = 0
+        while True:
+            amount = min(_SOURCE_STREAM_CHUNK_SIZE, expected_size - total + 1)
+            try:
+                chunk = stream.read(amount)
+            except Exception:
+                raise ObjectStorageOperationError("object_storage_read_failed") from None
+            if not isinstance(chunk, bytes) or len(chunk) > amount:
+                raise ObjectStorageOperationError("object_storage_invalid_data")
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > self._max_object_bytes:
+                raise ObjectStorageOperationError("object_storage_write_too_large")
+            if total > expected_size:
+                raise ObjectStorageOperationError("object_storage_size_mismatch")
+            checksum.update(chunk)
+            if destination_fd is not None:
+                self._write_all(destination_fd, chunk)
+        if total != expected_size:
+            raise ObjectStorageOperationError("object_storage_size_mismatch")
+        return checksum.hexdigest()
+
+    @staticmethod
+    def _sync_source_parent(parent_fd: int) -> None:
+        try:
+            os.fsync(parent_fd)
+        except OSError as error:
+            raise _local_operation_error(error, "object_storage_write_failed") from None
+
+    def _publish_stream_source(
+        self,
+        parent_fd: int,
+        *,
+        key: str,
+        filename: str,
+        stream: BinaryIO,
+        expected_size: int,
+        expected_checksum: str,
+    ) -> StoredObject:
+        temporary_name = f".tmp-{secrets.token_hex(16)}"
+        temporary_exists = False
+        try:
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    _SAFE_WRITE_FLAGS | os.O_CREAT | os.O_EXCL,
+                    _LOCAL_FILE_MODE,
+                    dir_fd=parent_fd,
+                )
+                temporary_exists = True
+                try:
+                    checksum = self._consume_stream(
+                        stream, expected_size=expected_size, destination_fd=temporary_fd
+                    )
+                    if checksum != expected_checksum:
+                        raise ObjectStorageOperationError("object_storage_checksum_mismatch")
+                    os.fchmod(temporary_fd, _LOCAL_FILE_MODE)
+                    details = os.fstat(temporary_fd)
+                    self._validate_source_stat(details)
+                    if details.st_size != expected_size:
+                        raise ObjectStorageOperationError("object_storage_integrity_failed")
+                    os.fsync(temporary_fd)
+                finally:
+                    os.close(temporary_fd)
+                try:
+                    os.link(
+                        temporary_name,
+                        filename,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    existing = cast(
+                        StoredObject,
+                        self._existing_stream_source(
+                            parent_fd,
+                            key=key,
+                            filename=filename,
+                            checksum=checksum,
+                            missing_ok=False,
+                        ),
+                    )
+                    if existing.size != expected_size:
+                        raise ObjectAlreadyExistsError from None
+                    self._sync_source_parent(parent_fd)
+                    return existing
+                os.unlink(temporary_name, dir_fd=parent_fd)
+                temporary_exists = False
+                self._sync_source_parent(parent_fd)
+            except OSError as error:
+                raise _local_operation_error(error, "object_storage_write_failed") from None
+            return StoredObject(
+                key=key, checksum_sha256=checksum, size=expected_size, etag=checksum
+            )
+        finally:
+            if temporary_exists:
+                with suppress(OSError):
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+
     def _read_source_at(
         self,
         parent_fd: int,
@@ -529,7 +824,7 @@ class LocalFileObjectStorage:
         try:
             details = os.fstat(file_fd)
             self._validate_source_stat(details, max_links=2)
-            if details.st_size > self._max_object_bytes:
+            if details.st_size > self._max_byte_object_bytes:
                 raise ObjectStorageOperationError("object_storage_read_too_large")
             chunks: list[bytes] = []
             total = 0
@@ -538,7 +833,7 @@ class LocalFileObjectStorage:
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > self._max_object_bytes:
+                if total > self._max_byte_object_bytes:
                     raise ObjectStorageOperationError("object_storage_read_too_large")
                 chunks.append(chunk)
             value = b"".join(chunks)
@@ -888,17 +1183,24 @@ class S3ObjectStorage:
         secret_access_key: str,
         bucket: str,
         region: str,
-        max_object_bytes: int = _MAX_LOCAL_OBJECT_SIZE,
+        max_object_bytes: int = _MAX_IN_MEMORY_OBJECT_SIZE,
+        max_stream_bytes: int | None = None,
     ) -> None:
         if (
             not isinstance(max_object_bytes, int)
             or isinstance(max_object_bytes, bool)
-            or not 1 <= max_object_bytes <= _MAX_LOCAL_OBJECT_SIZE
+            or not 1 <= max_object_bytes <= _MAX_STREAM_OBJECT_SIZE
         ):
             raise ValueError("S3 object byte limit is invalid")
+        if max_stream_bytes is not None and (
+            type(max_stream_bytes) is not int
+            or not 1 <= max_stream_bytes <= _MAX_STREAM_OBJECT_SIZE
+        ):
+            raise ValueError("S3 stream byte limit is invalid")
         self._bucket = bucket
         self._region = region
-        self._max_object_bytes = max_object_bytes
+        self._max_object_bytes = max_object_bytes if max_stream_bytes is None else max_stream_bytes
+        self._max_byte_object_bytes = min(max_object_bytes, _MAX_IN_MEMORY_OBJECT_SIZE)
         self._closed = False
         self._client: S3Client = boto3.client(
             "s3",
@@ -932,7 +1234,7 @@ class S3ObjectStorage:
 
     def put_immutable(self, key: str, data: bytes, *, content_type: str) -> StoredObject:
         validated_key = validate_object_key(key)
-        if len(data) > self._max_object_bytes:
+        if len(data) > self._max_byte_object_bytes:
             raise ObjectStorageOperationError("object_storage_write_too_large")
         checksum = hashlib.sha256(data).hexdigest()
         existing = self._head(validated_key)
@@ -969,6 +1271,31 @@ class S3ObjectStorage:
             etag=response["ETag"].strip('"'),
         )
 
+    def open_source(self, key: str) -> AbstractContextManager[BinaryIO]:
+        validate_source_object_key(key)
+        if self._closed:
+            raise ObjectStorageOperationError("object_storage_closed")
+        raise ObjectStorageOperationError("object_storage_streaming_unsupported")
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject:
+        validate_source_object_key(key)
+        _validate_stream_request(
+            stream,
+            content_type=content_type,
+            expected_size=expected_size,
+            maximum=self._max_object_bytes,
+        )
+        if self._closed:
+            raise ObjectStorageOperationError("object_storage_closed")
+        raise ObjectStorageOperationError("object_storage_streaming_unsupported")
+
     def get_bytes(self, key: str) -> bytes:
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=validate_object_key(key))
@@ -985,23 +1312,23 @@ class S3ObjectStorage:
                 not isinstance(size, int)
                 or isinstance(size, bool)
                 or size < 0
-                or size > self._max_object_bytes
+                or size > self._max_byte_object_bytes
             ):
                 code = (
                     "object_storage_read_too_large"
                     if (
                         isinstance(size, int)
                         and not isinstance(size, bool)
-                        and size > self._max_object_bytes
+                        and size > self._max_byte_object_bytes
                     )
                     else "object_storage_invalid_response"
                 )
                 raise ObjectStorageOperationError(code)
             if body is None or not hasattr(body, "read") or not hasattr(body, "close"):
                 raise ObjectStorageOperationError("object_storage_invalid_response")
-            value = body.read(self._max_object_bytes + 1)
+            value = body.read(self._max_byte_object_bytes + 1)
             if not isinstance(value, bytes) or len(value) != size:
-                if isinstance(value, bytes) and len(value) > self._max_object_bytes:
+                if isinstance(value, bytes) and len(value) > self._max_byte_object_bytes:
                     raise ObjectStorageOperationError("object_storage_read_too_large")
                 raise ObjectStorageOperationError("object_storage_invalid_response")
             return value
@@ -1210,6 +1537,7 @@ def create_object_storage(settings: Settings) -> ObjectStorage:
         return LocalFileObjectStorage(
             root=settings.storage_root,
             max_object_bytes=settings.max_upload_bytes,
+            max_stream_bytes=_MAX_STREAM_OBJECT_SIZE,
         )
     endpoint_url = cast(str, settings.object_storage_endpoint_url)
     access_key = cast(SecretStr, settings.object_storage_access_key)

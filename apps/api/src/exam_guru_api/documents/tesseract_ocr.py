@@ -11,9 +11,11 @@ import io
 import math
 import os
 import re
+import stat
 import subprocess
 import time
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -99,6 +101,8 @@ class TesseractInputViolation(StrEnum):
     PAGE_LIMIT_EXCEEDED = "page_limit_exceeded"
     PAGE_OUT_OF_RANGE = "page_out_of_range"
     RASTER_LIMIT_EXCEEDED = "raster_limit_exceeded"
+    FILE_DESCRIPTOR_REQUIRED = "file_descriptor_required"
+    SOURCE_CHANGED = "source_changed"
 
 
 class TesseractInputError(OCRInputError):
@@ -349,8 +353,18 @@ class TesseractOCRConfig:
     page_segmentation_mode: int = 3
     max_pixels_per_page: int = 40_000_000
     max_command_output_bytes: int = 8 * 1024 * 1024
+    tessdata_directory: Path | None = None
+    model_family: str = "system"
 
     def __post_init__(self) -> None:
+        if self.model_family not in {"system", "fast", "best", "custom"}:
+            raise TesseractConfigError("unsupported traineddata model family")
+        if self.tessdata_directory is not None and (
+            not isinstance(self.tessdata_directory, Path)
+            or not self.tessdata_directory.is_absolute()
+            or any(not character.isprintable() for character in str(self.tessdata_directory))
+        ):
+            raise TesseractConfigError("tessdata directory must be an absolute safe local path")
         if (
             not isinstance(self.executable, str)
             or not self.executable.strip()
@@ -443,6 +457,86 @@ class TesseractProbe:
     engine: str
     engine_version: str
     available_languages: tuple[str, ...]
+    traineddata_sha256: tuple[tuple[str, str], ...] = ()
+    tessdata_directory: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedPageImage:
+    page_number: int
+    path: Path
+    sha256: str
+    width: int
+    height: int
+    dpi: int
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "page_number": self.page_number,
+            "sha256": self.sha256,
+            "width": self.width,
+            "height": self.height,
+            "dpi": self.dpi,
+            "content_type": "image/png",
+            "rasterizer": "pymupdf",
+            "rasterizer_version": pymupdf.VersionBind,
+        }
+
+
+@contextmanager
+def open_pdf_file(
+    source: BinaryIO, *, source_checksum_sha256: str | None = None
+) -> Iterator[pymupdf.Document]:
+    descriptor: int | None = None
+    document: pymupdf.Document | None = None
+    try:
+        try:
+            descriptor = os.dup(source.fileno())
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise TesseractInputError(TesseractInputViolation.FILE_DESCRIPTOR_REQUIRED)
+            if os.pread(descriptor, 5, 0) != b"%PDF-":
+                raise TesseractInputError(TesseractInputViolation.INVALID_PDF_SIGNATURE)
+            if source_checksum_sha256 is not None:
+                digest = hashlib.sha256()
+                offset = 0
+                while offset < metadata.st_size:
+                    chunk = os.pread(
+                        descriptor, min(1024 * 1024, metadata.st_size - offset), offset
+                    )
+                    if not chunk:
+                        raise TesseractInputError(TesseractInputViolation.SOURCE_CHANGED)
+                    digest.update(chunk)
+                    offset += len(chunk)
+                if digest.hexdigest() != source_checksum_sha256:
+                    raise TesseractInputError(TesseractInputViolation.CHECKSUM_MISMATCH)
+            current = os.fstat(descriptor)
+            if (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns) != (
+                current.st_size,
+                current.st_mtime_ns,
+                current.st_ctime_ns,
+            ):
+                raise TesseractInputError(TesseractInputViolation.SOURCE_CHANGED)
+        except (AttributeError, OSError, ValueError) as error:
+            if isinstance(error, TesseractInputError):
+                raise
+            raise TesseractInputError(TesseractInputViolation.FILE_DESCRIPTOR_REQUIRED) from None
+        try:
+            document = pymupdf.open(filename=f"/proc/self/fd/{descriptor}", filetype="pdf")
+            if document.needs_pass:
+                raise TesseractInputError(TesseractInputViolation.ENCRYPTED_PDF)
+            if document.page_count < 1:
+                raise TesseractInputError(TesseractInputViolation.MALFORMED_PDF)
+        except TesseractInputError:
+            raise
+        except Exception:
+            raise TesseractInputError(TesseractInputViolation.MALFORMED_PDF) from None
+        yield document
+    finally:
+        if document is not None:
+            document.close()
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,14 +620,97 @@ class TesseractCliOCRAdapter:
     def config(self) -> TesseractOCRConfig:
         return self._config
 
-    def probe(self, *, temporary_directory: Path | None = None) -> TesseractProbe:
+    def probe(
+        self,
+        *,
+        temporary_directory: Path | None = None,
+        hash_traineddata: bool = False,
+        check_selected_languages: bool = True,
+    ) -> TesseractProbe:
         """Verify the executable, version shape, and selected traineddata languages."""
 
         with TemporaryDirectory(
             prefix="exam-guru-tesseract-probe-",
             dir=temporary_directory,
         ) as workspace_name:
-            return self._probe(Path(workspace_name))
+            return self._probe(
+                Path(workspace_name),
+                hash_traineddata=hash_traineddata,
+                check_selected_languages=check_selected_languages,
+            )
+
+    def extract_file(
+        self,
+        source: BinaryIO,
+        *,
+        page_numbers: tuple[int, ...],
+        source_checksum_sha256: str | None = None,
+        temporary_directory: Path | None = None,
+        on_render: Callable[[RenderedPageImage], None] | None = None,
+        probe: TesseractProbe | None = None,
+    ) -> OCRResult:
+        if (
+            not isinstance(page_numbers, tuple)
+            or not 1 <= len(page_numbers) <= self._config.max_pages
+            or any(
+                isinstance(number, bool) or not isinstance(number, int) or number < 1
+                for number in page_numbers
+            )
+            or tuple(sorted(set(page_numbers))) != page_numbers
+        ):
+            raise TesseractInputError(TesseractInputViolation.PAGE_LIMIT_EXCEEDED)
+        with open_pdf_file(source, source_checksum_sha256=source_checksum_sha256) as document:
+            if page_numbers[-1] > document.page_count:
+                raise TesseractInputError(TesseractInputViolation.PAGE_OUT_OF_RANGE)
+            with TemporaryDirectory(prefix="exam-guru-file-ocr-", dir=temporary_directory) as name:
+                workspace = Path(name)
+                active_probe = probe or self._probe(workspace, hash_traineddata=True)
+                directory = self._validate_file_probe(active_probe)
+                pages: list[OCRPage] = []
+                for number in page_numbers:
+                    with TemporaryDirectory(prefix="page-", dir=workspace) as page_name:
+                        rendered = self._render_page(
+                            document, page_number=number, directory=Path(page_name)
+                        )
+                        with rendered.path.open("rb") as image_file:
+                            image_hash = hashlib.file_digest(image_file, "sha256").hexdigest()
+                        if on_render is not None:
+                            on_render(
+                                RenderedPageImage(
+                                    page_number=number,
+                                    path=rendered.path,
+                                    sha256=image_hash,
+                                    width=rendered.width,
+                                    height=rendered.height,
+                                    dpi=self._config.dpi,
+                                )
+                            )
+                        pages.append(self._ocr_page(rendered, tessdata_directory=directory))
+                        self._validate_file_probe(active_probe)
+        return OCRResult(
+            engine=active_probe.engine,
+            engine_version=active_probe.engine_version,
+            config={
+                "input_mode": "file",
+                "dpi": self._config.dpi,
+                "language": self._config.language,
+                "available_languages": "+".join(active_probe.available_languages),
+                "tessdata_directory": active_probe.tessdata_directory,
+                "model_family": self._config.model_family,
+                "page_segmentation_mode": self._config.page_segmentation_mode,
+                "max_pixels_per_page": self._config.max_pixels_per_page,
+                "max_command_output_bytes": self._config.max_command_output_bytes,
+                "timeout_seconds": self._config.timeout_seconds,
+                "output_format": "tsv",
+                "rasterizer": "pymupdf",
+                "rasterizer_version": pymupdf.VersionBind,
+                **{
+                    f"traineddata_{language}_sha256": digest
+                    for language, digest in active_probe.traineddata_sha256
+                },
+            },
+            pages=tuple(pages),
+        )
 
     def extract(
         self,
@@ -620,7 +797,76 @@ class TesseractCliOCRAdapter:
             raise
         return document, page_numbers
 
-    def _probe(self, workspace: Path) -> TesseractProbe:
+    def _tessdata_arguments(self, directory: Path | None = None) -> tuple[str, ...]:
+        selected = directory or self._config.tessdata_directory
+        return ("--tessdata-dir", str(selected)) if selected is not None else ()
+
+    def _validate_file_probe(self, probe: TesseractProbe) -> Path:
+        if probe.engine != "tesseract-cli" or not probe.tessdata_directory:
+            raise TesseractConfigError("file OCR requires a complete traineddata probe")
+        directory = Path(probe.tessdata_directory)
+        if (
+            not directory.is_absolute()
+            or not str(directory).isprintable()
+            or (
+                self._config.tessdata_directory is not None
+                and directory != self._config.tessdata_directory
+            )
+        ):
+            raise TesseractConfigError("traineddata probe does not match the configuration")
+        hashes = dict(probe.traineddata_sha256)
+        missing = tuple(
+            language
+            for language in self._config.selected_languages
+            if language not in hashes or language not in probe.available_languages
+        )
+        if missing:
+            raise TesseractUnavailableError(missing_languages=missing)
+        for language in self._config.selected_languages:
+            if self._hash_traineddata(directory, language) != hashes[language]:
+                raise TesseractConfigError("traineddata changed after probing")
+        return directory
+
+    def _hash_traineddata(self, directory: Path, language: str) -> str:
+        self._remaining_command_seconds()
+        try:
+            descriptor = os.open(
+                directory / f"{language}.traineddata", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            with os.fdopen(descriptor, "rb") as model:
+                metadata = os.fstat(model.fileno())
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or not 0 < metadata.st_size <= 256 * 1024 * 1024
+                ):
+                    raise TesseractUnavailableError(missing_languages=(language,))
+                digest = hashlib.sha256()
+                remaining = metadata.st_size
+                while remaining:
+                    self._remaining_command_seconds()
+                    chunk = model.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise TesseractUnavailableError(missing_languages=(language,))
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                current = os.fstat(model.fileno())
+                if (metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns) != (
+                    current.st_size,
+                    current.st_mtime_ns,
+                    current.st_ctime_ns,
+                ):
+                    raise TesseractUnavailableError(missing_languages=(language,))
+                return digest.hexdigest()
+        except OSError:
+            raise TesseractUnavailableError(missing_languages=(language,)) from None
+
+    def _probe(
+        self,
+        workspace: Path,
+        *,
+        hash_traineddata: bool = False,
+        check_selected_languages: bool = True,
+    ) -> TesseractProbe:
         version_result = self._execute(
             (self._config.executable, "--version"),
             cwd=workspace,
@@ -628,7 +874,7 @@ class TesseractCliOCRAdapter:
         )
         version = self._parse_version(version_result.stdout)
         language_result = self._execute(
-            (self._config.executable, "--list-langs"),
+            (self._config.executable, "--list-langs", *self._tessdata_arguments()),
             cwd=workspace,
             operation="language probe",
         )
@@ -638,12 +884,35 @@ class TesseractCliOCRAdapter:
             for language in self._config.selected_languages
             if language not in available_languages
         )
-        if missing_languages:
+        if missing_languages and check_selected_languages:
             raise TesseractUnavailableError(missing_languages=missing_languages)
+        header = _decode_tesseract_output(language_result.stdout, kind="language").splitlines()[0]
+        directory_name = (
+            header.removeprefix("List of available languages in ").rsplit(" (", 1)[0].strip('"')
+        )
+        directory = self._config.tessdata_directory or Path(directory_name)
+        if not directory.is_absolute() or not str(directory).isprintable():
+            raise TesseractMalformedOutputError("tesseract traineddata path is malformed")
+        selected = (
+            self._config.selected_languages
+            if check_selected_languages
+            else tuple(
+                language
+                for language in self._config.allowed_languages
+                if language in available_languages
+            )
+        )
+        hashes = (
+            tuple((language, self._hash_traineddata(directory, language)) for language in selected)
+            if hash_traineddata
+            else ()
+        )
         return TesseractProbe(
             engine="tesseract-cli",
             engine_version=version,
             available_languages=available_languages,
+            traineddata_sha256=hashes,
+            tessdata_directory=str(directory),
         )
 
     def _remaining_command_seconds(self) -> float:
@@ -752,6 +1021,9 @@ class TesseractCliOCRAdapter:
                 colorspace=pymupdf.csRGB,
                 alpha=False,
             )
+            width, height = pixmap.width, pixmap.height
+            if width * height > self._config.max_pixels_per_page:
+                raise TesseractInputError(TesseractInputViolation.RASTER_LIMIT_EXCEEDED)
             pixmap.save(path)
         except TesseractInputError:
             raise
@@ -764,7 +1036,9 @@ class TesseractCliOCRAdapter:
             height=height,
         )
 
-    def _ocr_page(self, rendered_page: _RenderedPage) -> OCRPage:
+    def _ocr_page(
+        self, rendered_page: _RenderedPage, *, tessdata_directory: Path | None = None
+    ) -> OCRPage:
         result = self._execute(
             (
                 self._config.executable,
@@ -776,6 +1050,7 @@ class TesseractCliOCRAdapter:
                 str(self._config.dpi),
                 "--psm",
                 str(self._config.page_segmentation_mode),
+                *self._tessdata_arguments(tessdata_directory),
                 "tsv",
             ),
             cwd=rendered_page.path.parent,

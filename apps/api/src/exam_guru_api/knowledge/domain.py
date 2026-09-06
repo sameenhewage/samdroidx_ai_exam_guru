@@ -79,8 +79,11 @@ class Provenance:
     source_document_id: UUID
     page_number: int
     source_block_id: UUID | None = None
+    source_candidate_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        if self.source_candidate_id is not None and not isinstance(self.source_candidate_id, UUID):
+            raise KnowledgeContractError("source_candidate_id must be a UUID")
         if self.page_number < 1:
             raise KnowledgeContractError("page_number must be positive")
 

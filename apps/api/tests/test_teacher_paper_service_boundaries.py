@@ -13,6 +13,7 @@ from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.generator import generate_blueprint
 from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.core.config import Settings
+from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
 from exam_guru_api.generation.jobs import DeterministicGenerationDispatcher
 from exam_guru_api.generation.models import GenerationRunModel, GenerationRunStatus
 from exam_guru_api.generation.runtime import create_generation_runtime
@@ -73,6 +74,7 @@ from exam_guru_api.teacher_papers.service import (
     ProgrammePolicyScopeError,
     ProgrammePolicyVersionConflictError,
     ScholarshipProgrammePolicyService,
+    TeacherPaperCatalogueChangedError,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -100,6 +102,7 @@ from exam_guru_api.teacher_papers.service import (
     _review_question,
     _review_status,
     _selection,
+    _source_scope_fingerprint,
     _validate_idempotency_key,
     teacher_paper_job_response,
 )
@@ -145,7 +148,7 @@ def principal() -> Principal:
     return Principal(ACTOR_ID, frozenset({AdminRole.ADMIN}))
 
 
-def pilot_curriculum() -> object:
+def pilot_curriculum() -> ResolvedCurriculum:
     return replace(
         curriculum(lessons=(lesson(1),)),
         assessment_code="SCHOOL-G5",
@@ -159,6 +162,7 @@ def pilot_curriculum() -> object:
 def create_request(*, full: bool = False) -> TeacherPaperJobCreateRequest:
     return TeacherPaperJobCreateRequest.model_validate(
         {
+            "source_scope_fingerprint": _source_scope_fingerprint((pilot_curriculum(),)),
             "target": {
                 "grade": 5,
                 "medium": "si",
@@ -200,6 +204,7 @@ def job(
         medium_id=resolved.medium_id,
         subject_id=resolved.subject_id,
         teacher_intent={
+            "source_scope_fingerprint": _source_scope_fingerprint((resolved,)),
             "target": {"grade": 7},
             "scope": {"kind": "full_subject"},
         },
@@ -562,6 +567,9 @@ class QueryRepository:
         del kwargs
         return self.records
 
+    async def active_programme_policy(self, **_kwargs: object) -> StoredProgrammePolicy | None:
+        return None
+
 
 class RecordingDispatcher:
     def __init__(self, *, fail: bool = False) -> None:
@@ -612,18 +620,10 @@ def test_query_service_returns_empty_options_and_exact_readable_labels() -> None
     service = TeacherPaperQueryService(session(DummySession()))
     service._repository = QueryRepository(())  # type: ignore[assignment]
     empty = asyncio.run(service.options())
-    assert empty.grades == (5,)
+    assert empty.grades == ()
     assert empty.media == ()
-    assert [item.code.value for item in empty.paper_types] == [
-        "subject_practice",
-        "term_test",
-        "scholarship_practice",
-    ]
-    assert [item.code.value for item in empty.scholarship_modes] == [
-        "paper_i",
-        "paper_ii",
-        "full",
-    ]
+    assert empty.paper_types == ()
+    assert empty.scholarship_modes == ()
     assert empty.subjects == ()
     assert (
         asyncio.run(
@@ -676,6 +676,10 @@ def test_query_service_returns_empty_options_and_exact_readable_labels() -> None
         )
     )
     assert lessons.lessons[0].label == "Lesson 1 — Whole numbers"
+    admitted_options = asyncio.run(service.options())
+    assert admitted_options.grades == (5,)
+    assert [item.code.value for item in admitted_options.paper_types] == ["subject_practice"]
+    assert admitted_options.scholarship_modes == ()
 
 
 def test_resolved_job_scope_rejects_missing_server_curriculum_and_restores_settings() -> None:
@@ -757,6 +761,7 @@ def test_job_create_fails_closed_for_targets_without_a_ready_pilot_policy() -> N
         (
             TeacherPaperJobCreateRequest.model_validate(
                 {
+                    "source_scope_fingerprint": _source_scope_fingerprint((pilot_curriculum(),)),
                     "target": {
                         "grade": 5,
                         "medium": "si",
@@ -773,6 +778,7 @@ def test_job_create_fails_closed_for_targets_without_a_ready_pilot_policy() -> N
         (
             TeacherPaperJobCreateRequest.model_validate(
                 {
+                    "source_scope_fingerprint": _source_scope_fingerprint((pilot_curriculum(),)),
                     "target": {
                         "grade": 5,
                         "medium": "si",
@@ -802,11 +808,12 @@ def test_subject_practice_job_service_reuses_the_pipeline_beyond_grade_five() ->
 
     class GradeSevenRepository(CreateRepository):
         async def list_curricula(self, **kwargs: object) -> tuple[object, ...]:
-            assert kwargs == {"grade": 7, "medium": "en", "subject": "MATHEMATICS"}
+            assert kwargs == {"grade": 7, "medium": "en", "subject": "MATHEMATICS", "lock": True}
             return (resolved,)
 
     request = TeacherPaperJobCreateRequest.model_validate(
         {
+            "source_scope_fingerprint": _source_scope_fingerprint((resolved,)),
             "target": {
                 "grade": 7,
                 "medium": "en",
@@ -864,6 +871,31 @@ def test_job_create_rejects_missing_and_ambiguous_curriculum() -> None:
                     principal=principal(),
                 )
             )
+
+
+def test_catalogue_fingerprint_cas_rejects_stale_creation_and_legacy_worker_scope() -> None:
+    repository = CreateRepository()
+    dispatcher = RecordingDispatcher()
+    request = create_request().model_copy(update={"source_scope_fingerprint": "sha256:" + "0" * 64})
+    with pytest.raises(TeacherPaperCatalogueChangedError):
+        asyncio.run(
+            job_service(DummySession(), dispatcher, repository).create(
+                request, idempotency_key="changed-catalogue", principal=principal()
+            )
+        )
+    assert repository.values == {}
+    assert dispatcher.calls == []
+    resolved = curriculum(lessons=(lesson(1),))
+    for previous in (None, "sha256:" + "0" * 64):
+        previous_job = job()
+        previous_job.teacher_intent["source_scope_fingerprint"] = previous
+        with pytest.raises(PaperScopeError) as captured:
+            asyncio.run(
+                _resolved_job_scope(
+                    cast(TeacherPaperRepository, QueryRepository((resolved,))), previous_job
+                )
+            )
+        assert captured.value.code == "paper_generation_catalogue_changed"
 
 
 def test_job_create_detects_winner_conflict_queue_failure_and_attached_duplicate() -> None:
@@ -1532,6 +1564,11 @@ def test_worker_collection_and_validation_skip_already_terminal_slots(
         (
             TeacherPaperContextUnavailableError(),
             "paper_generation_context_unavailable",
+        ),
+        (TeacherPaperCurriculumNotFoundError(), "paper_generation_catalogue_changed"),
+        (
+            CurriculumNotAdmittedError(UUID(int=34), "quarantined"),
+            "paper_generation_catalogue_changed",
         ),
         (
             ActiveEmbeddingConfigUnavailableError(),
@@ -2678,6 +2715,88 @@ def reviewed_programme_fixture() -> tuple[StoredProgrammePolicy, ResolvedCurricu
     return repository.stored, anchor_curriculum
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "missing_source",
+        "source_grade",
+        "source_subject",
+        "source_lesson",
+        "anchor_lesson",
+        "retired_policy",
+        "anchor_exam",
+        "anchor_medium",
+    ],
+)
+def test_teacher_catalogue_programme_options_require_current_bound_source_chains(
+    change: str,
+) -> None:
+    stored, anchor = reviewed_programme_fixture()
+    sources = tuple(
+        replace(
+            curriculum(),
+            curriculum_version_id=scope.source_curriculum_version_id,
+            exam_configuration_id=scope.source_exam_configuration_id,
+            grade=scope.source_grade,
+            medium_id=scope.source_medium_id,
+            medium_code="si",
+            subject_id=scope.source_subject_id,
+            lessons=(
+                replace(
+                    lesson(1),
+                    id=scope.source_lesson_id or lesson(1).id,
+                    unit_id=scope.source_unit_id or lesson(1).unit_id,
+                    taxonomy_targets=(
+                        replace(
+                            target(1),
+                            competency_id=scope.source_competency_id,
+                            skill_id=scope.source_skill_id,
+                            sub_skill_id=scope.source_sub_skill_id,
+                            learning_concept_id=scope.source_learning_concept_id,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        for scope in stored.scopes
+    )
+    if change == "missing_source":
+        sources = sources[:-1]
+    elif change == "source_grade":
+        sources = (*sources[:-1], replace(sources[-1], grade=7))
+    elif change == "source_subject":
+        sources = (*sources[:-1], replace(sources[-1], subject_id=UUID(int=999)))
+    elif change == "source_lesson":
+        sources = (*sources[:-1], replace(sources[-1], lessons=()))
+    elif change == "anchor_lesson":
+        anchor = replace(anchor, lessons=())
+    elif change == "retired_policy":
+        stored.policy.state = "retired"
+    elif change == "anchor_exam":
+        anchor = replace(anchor, exam_configuration_id=UUID(int=999))
+    elif change == "anchor_medium":
+        anchor = replace(anchor, medium_id=UUID(int=999))
+
+    class ProgrammeOptionsRepository(QueryRepository):
+        async def active_programme_policy(self, **_kwargs: object) -> StoredProgrammePolicy:
+            return stored
+
+    service = TeacherPaperQueryService(session(DummySession()))
+    service._repository = cast(
+        TeacherPaperRepository, ProgrammeOptionsRepository((anchor, *sources))
+    )
+    options = asyncio.run(service.options())
+    choices = [item for item in options.paper_types if item.code.value == "scholarship_practice"]
+    assert bool(choices) is (change == "none")
+    if choices:
+        assert choices[0].medium == "si"
+        assert choices[0].source_scope_fingerprint == _source_scope_fingerprint(
+            (anchor, *sources), stored
+        )
+        assert len(options.scholarship_modes) == 3
+
+
 def test_programme_scope_resolution_rejects_unavailable_policy_and_anchor_boundaries() -> None:
     stored, anchor_curriculum = reviewed_programme_fixture()
 
@@ -2807,6 +2926,7 @@ def test_programme_policy_service_rejects_identity_medium_and_update_conflicts(
 def test_scholarship_job_uses_the_active_policy_anchor_curriculum() -> None:
     request = TeacherPaperJobCreateRequest.model_validate(
         {
+            "source_scope_fingerprint": _source_scope_fingerprint((pilot_curriculum(),)),
             "target": {
                 "grade": 5,
                 "medium": "si",
@@ -2852,8 +2972,9 @@ def test_scholarship_job_uses_the_active_policy_anchor_curriculum() -> None:
         "code": "G5-SCHOLARSHIP",
         "grade": 5,
         "medium": "si",
+        "lock": True,
     }
-    assert repository.curriculum_lookup == {"curriculum_id": anchor_curriculum_id}
+    assert repository.curriculum_lookup == {"curriculum_id": anchor_curriculum_id, "lock": True}
 
 
 def test_resolved_programme_snapshot_and_slot_mapping_fail_closed() -> None:

@@ -86,6 +86,16 @@ class HistoricalQuestionModel(AuditColumns, Base):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
+            ["source_candidate_id", "source_document_id", "page_number"],
+            [
+                "source_page_text_candidates.id",
+                "source_page_text_candidates.document_id",
+                "source_page_text_candidates.page_number",
+            ],
+            name="fk_historical_questions_source_candidate",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
             ["unit_id", "curriculum_version_id"],
             ["curriculum_units.id", "curriculum_units.curriculum_version_id"],
             name="fk_historical_questions_unit_curriculum",
@@ -264,6 +274,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
     difficulty_confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
     difficulty_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    source_candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -310,6 +321,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
             lesson_id=question.lesson_id,
             page_number=question.provenance.page_number,
             source_block_id=question.provenance.source_block_id,
+            source_candidate_id=question.provenance.source_candidate_id,
             review_state=question.review_state,
             competency_id=question.competency_id,
             skill_id=question.skill_id,
@@ -345,6 +357,7 @@ class HistoricalQuestionModel(AuditColumns, Base):
                 source_document_id=self.source_document_id,
                 page_number=self.page_number,
                 source_block_id=self.source_block_id,
+                source_candidate_id=self.source_candidate_id,
             ),
             unit_id=self.unit_id,
             lesson_id=self.lesson_id,
@@ -366,6 +379,16 @@ class KnowledgeChunkModel(AuditColumns, Base):
             ["source_document_id", "page_number"],
             ["source_pages.source_document_id", "source_pages.page_number"],
             name="fk_knowledge_chunks_source_page",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_candidate_id", "source_document_id", "page_number"],
+            [
+                "source_page_text_candidates.id",
+                "source_page_text_candidates.document_id",
+                "source_page_text_candidates.page_number",
+            ],
+            name="fk_knowledge_chunks_source_candidate",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -466,6 +489,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
     educational_boundary: Mapped[str] = mapped_column(String(512), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     source_document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    source_candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     unit_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     lesson_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -499,6 +523,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
             lesson_id=chunk.lesson_id,
             page_number=chunk.provenance.page_number,
             source_block_id=chunk.provenance.source_block_id,
+            source_candidate_id=chunk.provenance.source_candidate_id,
             review_state=chunk.review_state,
             competency_id=chunk.competency_id,
             skill_id=chunk.skill_id,
@@ -521,6 +546,7 @@ class KnowledgeChunkModel(AuditColumns, Base):
                 source_document_id=self.source_document_id,
                 page_number=self.page_number,
                 source_block_id=self.source_block_id,
+                source_candidate_id=self.source_candidate_id,
             ),
             unit_id=self.unit_id,
             lesson_id=self.lesson_id,

@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from exam_guru_api.curriculum.admission import ScopeFingerprint
 from exam_guru_api.papers.schemas import (
     QuestionContentRequest,
     QuestionContentResponse,
@@ -171,6 +172,7 @@ class TeacherPaperSettingsRequest(_StrictModel):
 
 
 class TeacherPaperJobCreateRequest(_StrictModel):
+    source_scope_fingerprint: ScopeFingerprint
     target: TeacherPaperTargetRequest
     scope: TeacherPaperScopeRequest
     settings: TeacherPaperSettingsRequest
@@ -304,7 +306,9 @@ class TeacherPaperRetryRequest(_StrictModel):
 class PaperTypeOption(_FrozenStrictModel):
     code: TeacherPaperType
     grade: int
+    medium: str
     label: str
+    source_scope_fingerprint: ScopeFingerprint | None = None
 
 
 class ScholarshipModeOption(_FrozenStrictModel):
@@ -320,6 +324,7 @@ class TermOption(_FrozenStrictModel):
 class MediumOption(_FrozenStrictModel):
     code: str
     label: str
+    grades: tuple[int, ...]
 
 
 class UnitOption(_FrozenStrictModel):
@@ -335,11 +340,20 @@ class LessonOption(_FrozenStrictModel):
     taxonomy: tuple[str, ...]
 
 
+class CurriculumLabelResponse(_FrozenStrictModel):
+    assessment_programme: str
+    assessment_label: str
+    code: str
+    label: str
+    source_scope_fingerprint: ScopeFingerprint
+
+
 class SubjectOption(_FrozenStrictModel):
     code: str
     grade: int
     medium: str
     label: str
+    curriculum: CurriculumLabelResponse
     units: tuple[UnitOption, ...]
     lessons: tuple[LessonOption, ...]
 
@@ -362,13 +376,6 @@ class TeacherPaperOptionsResponse(_FrozenStrictModel):
     subjects: tuple[SubjectOption, ...]
     terms: tuple[TermOption, ...]
     defaults: TeacherPaperDefaults = TeacherPaperDefaults()
-
-
-class CurriculumLabelResponse(_FrozenStrictModel):
-    assessment_programme: str
-    assessment_label: str
-    code: str
-    label: str
 
 
 class CurriculumLabelsResponse(_FrozenStrictModel):

@@ -7,16 +7,23 @@ import {
   within,
 } from "@testing-library/react";
 import axe from "axe-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { File as BrowserFile } from "node:buffer";
+import { webcrypto } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { UPLOAD_CHECKPOINT_KEY } from "@/lib/source-upload-checkpoint";
 
 import { MaterialDetails } from "./material-details";
 import { MaterialsLibrary } from "./materials-library";
 
+type CatalogueEntry = components["schemas"]["MaterialCatalogueEntry"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type GradeSummary = components["schemas"]["MaterialGradeSummaryResponse"];
 type Lesson = components["schemas"]["CurriculumLessonResponse"];
 type Material = components["schemas"]["MaterialListItemResponse"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
+type UploadSession = components["schemas"]["SourceUploadResponse"];
+type UploadCreate = components["schemas"]["SourceUploadCreateRequest"];
 type Unit = components["schemas"]["CurriculumUnitResponse"];
 
 const now = "2026-08-25T11:00:00Z";
@@ -36,6 +43,9 @@ const ids = {
   syllabus: "00000000-0000-0000-0000-000000000501",
   unit: "00000000-0000-0000-0000-000000000406",
   uploaded: "00000000-0000-0000-0000-000000000506",
+  uploadSession: "00000000-0000-0000-0000-000000000507",
+  uploadRequest: "00000000-0000-0000-0000-000000000509",
+  readJob: "00000000-0000-0000-0000-000000000508",
 } as const;
 
 const curricula: Curriculum[] = [
@@ -62,6 +72,19 @@ const curricula: Curriculum[] = [
     updated_at: "2026-08-23T00:00:00Z",
   },
 ];
+
+const catalogue: CatalogueEntry[] = curricula.map((curriculum, index) => ({
+  curriculum_version_id: curriculum.id,
+  curriculum_title: curriculum.title,
+  exam_configuration_id: curriculum.exam_configuration_id,
+  exam_configuration_name: index === 0 ? "Grade 5 Scholarship" : "GCE O/L",
+  grade: index === 0 ? 5 : 11,
+  grade_label: index === 0 ? "Grade 5" : "Grade 11",
+  medium_id: ids.medium,
+  medium_name: "English",
+  subject_id: ids.mathsSubject,
+  subject_name: "Maths",
+}));
 
 const unit: Unit = {
   active: true,
@@ -308,6 +331,7 @@ const unassignedSummary: GradeSummary = {
 };
 
 type FixtureOptions = {
+  catalogue?: CatalogueEntry[];
   initialMaterials?: Material[];
   summaries?: GradeSummary[];
   exactDuplicate?: boolean;
@@ -315,6 +339,12 @@ type FixtureOptions = {
   restoreConflict?: boolean;
   scopeConflict?: boolean;
   throwOnUpload?: boolean;
+  interruptChunk?: boolean;
+  pauseChunk?: boolean;
+  uploadStatus?: number;
+  lookupStatus?: number;
+  savedUpload?: UploadSession;
+  savedChecksum?: string;
   workspaceStatus?: number;
 };
 
@@ -324,6 +354,20 @@ function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
 
 function fixtureApi(options: FixtureOptions = {}) {
   const requests: Request[] = [];
+  let upload: UploadSession | undefined = options.savedUpload;
+  let uploadMetadata: UploadCreate | undefined;
+  let chunkInterrupted = false;
+  let createResponseLost = false;
+  const chunkReceipts: components["schemas"]["SourceUploadChunkReceipt"][] =
+    options.savedUpload?.next_offset
+      ? [
+          {
+            offset: 0,
+            size_bytes: options.savedUpload.next_offset,
+            checksum_sha256: options.savedChecksum ?? "a".repeat(64),
+          },
+        ]
+      : [];
   let currentMaterials = (options.initialMaterials ?? materials).map(
     (material) => ({ ...material }),
   );
@@ -357,6 +401,9 @@ function fixtureApi(options: FixtureOptions = {}) {
           },
           { status: options.workspaceStatus },
         );
+      }
+      if (request.method === "GET" && path.endsWith("/material-catalogue")) {
+        return Response.json(options.catalogue ?? catalogue);
       }
       if (request.method === "GET" && path.endsWith("/exam-configurations")) {
         return Response.json([
@@ -464,66 +511,167 @@ function fixtureApi(options: FixtureOptions = {}) {
       if (request.method === "GET" && path.endsWith("/source-documents")) {
         return Response.json(sources);
       }
-      if (request.method === "POST" && path.endsWith("/source-documents")) {
-        if (options.throwOnUpload) throw new TypeError("network unavailable");
-        if (options.exactDuplicate) {
+      if (request.method === "POST" && path.endsWith("/source-uploads")) {
+        if (options.uploadStatus)
           return Response.json(
             {
-              ...sources.find((source) => source.id === ids.syllabus),
-              deduplicated: true,
+              detail: {
+                code:
+                  options.uploadStatus === 409
+                    ? "source_upload_quota_exceeded"
+                    : options.uploadStatus === 429
+                      ? "rate_limit_exceeded"
+                      : "permission_denied",
+              },
             },
-            { status: 200 },
+            { status: options.uploadStatus, headers: { "Retry-After": "12" } },
           );
+        const incoming = (await request.json()) as UploadCreate;
+        if (upload && uploadMetadata?.request_id === incoming.request_id) {
+          expect(incoming).toEqual(uploadMetadata);
+          return Response.json(upload, { status: 201 });
         }
-        const uploadedMaterial: Material = {
-          curriculum: null,
-          grade: 5,
-          id: ids.uploaded,
-          lesson: null,
-          material_type: "past_paper",
-          medium: "English",
-          metadata_scope_version: 0,
-          metadata_review_required: false,
-          page_count: null,
-          status: "processing",
-          subject: "Maths",
-          subject_id: ids.mathsSubject,
-          title: "grade-5-maths-2026-paper.pdf",
-          unit: null,
-          uploaded_at: now,
-          year: 2026,
+        uploadMetadata = incoming;
+        upload = {
+          id: ids.uploadSession,
+          request_id: incoming.request_id,
+          filename: uploadMetadata.filename,
+          size_bytes: uploadMetadata.size_bytes,
+          document_type: uploadMetadata.document_type,
+          intake_metadata: uploadMetadata.intake_metadata ?? {},
+          status: "uploading",
+          next_offset: 0,
+          verified_bytes: 0,
+          version: 0,
+          chunk_size_bytes: 4_194_304,
+          deduplicated: false,
+          created_at: now,
+          updated_at: now,
         };
-        const uploadedSource = sourceDocument(uploadedMaterial, {
-          extracted_page_count: null,
-          extraction_attempt_count: 0,
-          extraction_queue_message_id: null,
-          extraction_status: "uploaded",
-        });
-        currentMaterials = [uploadedMaterial, ...currentMaterials];
-        sources = [uploadedSource, ...sources];
-        return Response.json(uploadedSource, { status: 201 });
+        if (options.throwOnUpload && !createResponseLost) {
+          createResponseLost = true;
+          throw new TypeError("response lost after session creation");
+        }
+        return Response.json(upload, { status: 201 });
+      }
+      if (
+        request.method === "GET" &&
+        path.includes("/source-uploads/by-request/")
+      ) {
+        if (options.lookupStatus)
+          return Response.json(
+            { detail: { code: "lookup_unavailable" } },
+            { status: options.lookupStatus },
+          );
+        return upload?.request_id && path.endsWith(`/${upload.request_id}`)
+          ? Response.json(upload)
+          : Response.json(
+              { detail: { code: "source_upload_not_found" } },
+              { status: 404 },
+            );
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith(`/source-uploads/${ids.uploadSession}`) &&
+        upload
+      ) {
+        if (upload.status === "pending") {
+          upload = {
+            ...upload,
+            status: "completed",
+            document_id: options.exactDuplicate ? ids.syllabus : ids.uploaded,
+            source_read_job_id: options.exactDuplicate ? null : ids.readJob,
+            verified_bytes: upload.size_bytes,
+            checksum_sha256: "a".repeat(64),
+            deduplicated: options.exactDuplicate ?? false,
+          };
+          if (!options.exactDuplicate) {
+            const uploadedMaterial: Material = {
+              ...materials[2],
+              id: ids.uploaded,
+              title: upload.filename,
+              year: uploadMetadata?.year ?? upload.intake_metadata.year ?? null,
+              status: "processing",
+              page_count: null,
+            };
+            currentMaterials = [
+              uploadedMaterial,
+              ...currentMaterials.filter((item) => item.id !== ids.uploaded),
+            ];
+            sources = [
+              sourceDocument(uploadedMaterial, {
+                extraction_status: "uploaded",
+              }),
+              ...sources.filter((item) => item.id !== ids.uploaded),
+            ];
+          }
+        }
+        return Response.json(upload);
+      }
+      if (
+        path.endsWith(`/source-uploads/${ids.uploadSession}/chunks`) &&
+        upload
+      ) {
+        if (request.method === "GET")
+          return Response.json({
+            upload_id: upload.id,
+            next_offset: upload.next_offset,
+            receipts: chunkReceipts,
+            next_receipt_offset: null,
+          });
+        if (request.method === "PUT") {
+          const bytes = await request.arrayBuffer();
+          if (options.interruptChunk && !chunkInterrupted) {
+            chunkInterrupted = true;
+            throw new TypeError("connection unavailable");
+          }
+          chunkReceipts.push({
+            offset: upload.next_offset,
+            size_bytes: bytes.byteLength,
+            checksum_sha256: request.headers.get("X-Chunk-SHA256")!,
+          });
+          upload = {
+            ...upload,
+            next_offset: upload.next_offset + bytes.byteLength,
+            version: upload.version + 1,
+          };
+          if (options.pauseChunk && !chunkInterrupted) {
+            chunkInterrupted = true;
+            return new Promise<Response>((_resolve, reject) => {
+              const abort = () =>
+                reject(new DOMException("Upload paused", "AbortError"));
+              if (request.signal.aborted) abort();
+              else
+                request.signal.addEventListener("abort", abort, { once: true });
+            });
+          }
+          return Response.json(upload);
+        }
       }
       if (
         request.method === "POST" &&
-        path.endsWith(`/source-documents/${ids.uploaded}/extract`)
+        path.endsWith(`/source-uploads/${ids.uploadSession}/complete`) &&
+        upload
       ) {
-        sources = sources.map((source) =>
-          source.id === ids.uploaded
-            ? {
-                ...source,
-                extraction_attempt_count: 1,
-                extraction_status: "extraction_pending",
-              }
-            : source,
-        );
-        return Response.json(
-          {
-            document_id: ids.uploaded,
-            message_id: "fixture-message",
-            status: "extraction_pending",
-          },
-          { status: 202 },
-        );
+        expect(await request.json()).toEqual({
+          expected_version: upload.version,
+        });
+        upload = { ...upload, status: "pending", version: upload.version + 1 };
+        return Response.json(upload, { status: 202 });
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith(`/source-read-jobs/${ids.readJob}`)
+      ) {
+        return Response.json({
+          id: ids.readJob,
+          document_id: ids.uploaded,
+          status: "queued",
+          next_page: 1,
+          page_number: null,
+          version: 0,
+          failure_code: null,
+        });
       }
 
       const material = currentMaterials.find((candidate) =>
@@ -652,13 +800,43 @@ async function chooseGradeFiveMaths() {
   await screen.findByText("grade-5-maths-syllabus.pdf");
 }
 
+async function chooseScopeAssignment(
+  dialog: HTMLElement,
+  entry = catalogue[1],
+) {
+  fireEvent.click(
+    within(dialog).getByRole("button", {
+      name: "Change curriculum assignment",
+    }),
+  );
+  fireEvent.change(within(dialog).getByLabelText("Grade"), {
+    target: { value: String(entry.grade) },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Medium"), {
+    target: { value: entry.medium_id },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Subject"), {
+    target: { value: entry.subject_id },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Curriculum version"), {
+    target: { value: entry.curriculum_version_id },
+  });
+  await waitFor(() =>
+    expect(
+      within(dialog).queryByText("Loading units and lessons…"),
+    ).not.toBeInTheDocument(),
+  );
+}
+
 async function continueWizard(dialog: HTMLElement) {
   fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
 }
 
-async function openWizardAtPdfStep() {
-  fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
-  const dialog = screen.getByRole("dialog", { name: "Upload material" });
+async function openWizardAtPdfStep(existingDialog?: HTMLElement) {
+  if (!existingDialog)
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+  const dialog =
+    existingDialog ?? screen.getByRole("dialog", { name: "Upload material" });
 
   fireEvent.change(within(dialog).getByLabelText("Grade"), {
     target: { value: "5" },
@@ -688,12 +866,302 @@ async function jsonBody(request: Request): Promise<unknown> {
   return request.clone().json();
 }
 
+beforeEach(() => {
+  localStorage.clear();
+  vi.stubGlobal("File", BrowserFile);
+  vi.stubGlobal("crypto", webcrypto);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("MaterialsLibrary", () => {
+  it("uses only the admitted catalogue for normal teacher selectors, never all active configuration", async () => {
+    const approved = {
+      ...catalogue[0],
+      curriculum_title: "Reviewed test-preparation curriculum",
+      medium_name: "Sinhala medium",
+      subject_name: "Mathematics",
+    } satisfies CatalogueEntry;
+    const { requests } = await renderLibrary("admin", {
+      catalogue: [approved],
+    });
+    const filters = screen.getByRole("region", { name: "Material filters" });
+    expect(within(filters).getByLabelText("Subject")).toHaveTextContent(
+      "Mathematics",
+    );
+    expect(within(filters).getByLabelText("Subject")).not.toHaveTextContent(
+      "Maths",
+    );
+    expect(within(filters).getByLabelText("Medium")).toHaveTextContent(
+      "Sinhala medium",
+    );
+    expect(
+      requests.some((request) =>
+        new URL(request.url).pathname.endsWith("/material-catalogue"),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some((request) =>
+        /\/(exam-configurations|media|subjects|curriculum-versions)$/.test(
+          new URL(request.url).pathname,
+        ),
+      ),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Medium")).toHaveTextContent(
+      "Sinhala medium",
+    );
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Subject")).toHaveTextContent(
+      "Mathematics",
+    );
+    fireEvent.change(within(dialog).getByLabelText("Subject"), {
+      target: { value: ids.mathsSubject },
+    });
+    await continueWizard(dialog);
+    await continueWizard(dialog);
+    expect(
+      within(dialog).getByLabelText("Curriculum version"),
+    ).toHaveTextContent("Reviewed test-preparation curriculum");
+    await within(dialog).findByLabelText("Unit (optional)");
+  });
+
+  it("derives media and subjects from approved grade/medium chains rather than unrelated catalogue rows", async () => {
+    const other = {
+      ...catalogue[1],
+      medium_id: "00000000-0000-0000-0000-000000000450",
+      medium_name: "Tamil",
+      subject_id: ids.sinhalaSubject,
+      subject_name: "History",
+    } satisfies CatalogueEntry;
+    await renderLibrary("admin", { catalogue: [catalogue[0], other] });
+    expect(screen.getByLabelText("Subject")).not.toHaveTextContent("History");
+    expect(screen.getByLabelText("Medium")).not.toHaveTextContent("Tamil");
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Medium")).not.toHaveTextContent(
+      "Tamil",
+    );
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Subject")).not.toHaveTextContent(
+      "History",
+    );
+  });
+
+  it("shows detected metadata before any edit controls and does not invent a mapping when no approved curriculum is available", async () => {
+    const { requests } = await renderLibrary("admin", {
+      catalogue: [],
+      initialMaterials: [{ ...intakeMaterial, grade: 5 }],
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("පද්ධතිය හඳුනාගත් තොරතුරු")).toBeVisible();
+    expect(
+      within(dialog).getByText("විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි"),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+    const confirmation = within(dialog).getByRole("checkbox", {
+      name: /I have verified the intake metadata/,
+    });
+    expect(confirmation).not.toBeChecked();
+    expect(confirmation).toBeDisabled();
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("presents detected grade, medium, subject, material type and year, then reveals only approved assignments on request", async () => {
+    await renderLibrary("admin", {
+      initialMaterials: [{ ...intakeMaterial, grade: 5 }],
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    const detected = within(dialog).getByRole("region", {
+      name: "Intake metadata",
+    });
+    expect(detected).toHaveTextContent("පද්ධතිය හඳුනාගත් තොරතුරු");
+    for (const text of [
+      "Candidate grade",
+      "Medium label",
+      "Subject label",
+      "Workbook",
+      "2020",
+    ])
+      expect(detected).toHaveTextContent(text);
+    expect(
+      within(dialog).queryByLabelText("Curriculum version"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Change curriculum assignment",
+      }),
+    );
+    expect(within(dialog).getByLabelText("Grade")).toBeVisible();
+    expect(within(dialog).getByLabelText("Curriculum version")).toHaveValue("");
+    expect(within(dialog).getByRole("checkbox")).not.toBeChecked();
+  });
+
+  it.each(
+    (["library", "details", "editor"] as const).flatMap((view) =>
+      [false, true].map((hasEvidence) => ({ view, hasEvidence })),
+    ),
+  )(
+    "keeps raw provenance collapsed in $view while retaining detected metadata and warnings (evidence: $hasEvidence)",
+    async ({ view, hasEvidence }) => {
+      const reference = `sha256:${"b".repeat(64)}`;
+      const evidence = "Cover and filename evidence remains unverified";
+      const material: Material = {
+        ...intakeMaterial,
+        grade: 5,
+        page_count: 371,
+        intake_metadata: {
+          ...intakeMaterial.intake_metadata,
+          candidate_grade: 5,
+          source_reference: reference,
+          evidence: hasEvidence ? [evidence] : [],
+          warnings: ["Legacy font needs visual review"],
+        },
+      };
+      const fixture =
+        view === "details"
+          ? fixtureApi({ initialMaterials: [material] })
+          : await renderLibrary("admin", { initialMaterials: [material] });
+      if (view === "details") {
+        vi.stubGlobal("fetch", fixture.fetchMock);
+        render(<MaterialDetails documentId={material.id} role="admin" />);
+      }
+      const heading = await screen.findByRole("heading", {
+        name: material.title,
+      });
+      let container = heading.closest("article")!;
+      if (view === "editor") {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: `Edit metadata: ${material.title}`,
+          }),
+        );
+        container = screen.getByRole("dialog");
+      }
+      const detected = within(container).getByRole("region", {
+        name: "Intake metadata",
+      });
+      for (const value of [
+        "Grade 5",
+        "Sinhala",
+        "Mathematics",
+        "Workbook",
+        "2020",
+        "Term 2",
+        "Original publisher",
+        "Metadata needs review",
+        "Legacy font needs visual review",
+      ]) {
+        expect(
+          within(detected).getByText(value, { exact: true }),
+        ).toBeVisible();
+      }
+      const sourceReference = within(detected).getByText(reference, {
+        exact: true,
+      });
+      expect(detected.querySelector(":scope > dl")).not.toHaveTextContent(
+        reference,
+      );
+      expect(sourceReference).not.toBeVisible();
+      expect(
+        within(detected).getByText("Source reference", { exact: true }),
+      ).not.toBeVisible();
+      const summary = within(detected).getByText("Intake evidence", {
+        exact: true,
+      });
+      const disclosure = summary.closest("details")!;
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(sourceReference.closest("details")).toBe(disclosure);
+      fireEvent.click(summary);
+      expect(sourceReference).toBeVisible();
+      expect(sourceReference.textContent).toBe(reference);
+      if (hasEvidence)
+        expect(
+          within(disclosure).getByText(evidence, { exact: true }),
+        ).toBeVisible();
+      fireEvent.click(summary);
+      expect(sourceReference).not.toBeVisible();
+      expect(
+        fixture.requests.every((request) => request.method === "GET"),
+      ).toBe(true);
+    },
+  );
+
+  it("shows detected information before the assignment details on a normal material card", async () => {
+    await renderLibrary("admin", {
+      initialMaterials: [{ ...intakeMaterial, grade: 5 }],
+    });
+    const article = (
+      await screen.findByRole("heading", { name: intakeMaterial.title })
+    ).closest("article")!;
+    const detected = within(article).getByRole("region", {
+      name: "Intake metadata",
+    });
+    expect(article.querySelector("dl")).toBe(detected.querySelector("dl"));
+  });
+
+  it("clears a previous grade's medium filter before querying a different approved chain", async () => {
+    const other = {
+      ...catalogue[1],
+      medium_id: "00000000-0000-0000-0000-000000000450",
+      medium_name: "Tamil",
+    };
+    const { requests } = await renderLibrary("admin", {
+      catalogue: [catalogue[0], other],
+    });
+    fireEvent.change(screen.getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    fireEvent.click(
+      within(
+        screen.getByRole("region", { name: "Materials by grade" }),
+      ).getByRole("button", { name: /^Grade 11\b/ }),
+    );
+    await waitFor(() => {
+      const request = requests
+        .filter((request) =>
+          new URL(request.url).pathname.endsWith("/materials"),
+        )
+        .at(-1)!;
+      const query = new URL(request.url).searchParams;
+      expect(query.get("grade")).toBe("11");
+      expect(query.get("medium_id")).toBeNull();
+    });
+    expect(screen.getByLabelText("Medium")).toHaveTextContent("Tamil");
+    expect(screen.getByLabelText("Medium")).not.toHaveTextContent("English");
+  });
+
   it("keeps all grade cards and opens unresolved materials without assigning a grade", async () => {
     const { requests } = await renderLibrary("admin", {
       initialMaterials: [intakeMaterial],
@@ -797,9 +1265,7 @@ describe("MaterialsLibrary", () => {
       });
       expect(checkbox).not.toBeChecked();
       expect(checkbox).toBeDisabled();
-      fireEvent.change(within(dialog).getByLabelText("Curriculum version"), {
-        target: { value: ids.curriculumEleven },
-      });
+      await chooseScopeAssignment(dialog);
       await waitFor(() => expect(checkbox).toBeEnabled());
       if (confirm) fireEvent.click(checkbox);
       fireEvent.click(
@@ -825,6 +1291,126 @@ describe("MaterialsLibrary", () => {
     },
   );
 
+  it("clears explicit metadata consent when the unit or lesson changes and never rewrites the existing year", async () => {
+    const { requests } = await renderLibrary("admin", {
+      initialMaterials: [
+        {
+          ...intakeMaterial,
+          grade: 5,
+          curriculum: "2026 curriculum",
+          year: 2025,
+        },
+      ],
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    const checkbox = within(dialog).getByRole("checkbox", {
+      name: /I have verified the intake metadata/,
+    });
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    fireEvent.click(checkbox);
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Change curriculum assignment",
+      }),
+    );
+    fireEvent.change(within(dialog).getByLabelText("Unit (optional)"), {
+      target: { value: ids.unit },
+    });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.change(within(dialog).getByLabelText("Lesson (optional)"), {
+      target: { value: ids.lesson },
+    });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Save changes" }),
+    );
+    await waitFor(() =>
+      expect(requests.some((request) => request.method === "PATCH")).toBe(true),
+    );
+    const body = await jsonBody(
+      requests.find((request) => request.method === "PATCH")!,
+    );
+    expect(body).toMatchObject({
+      confirm_intake_metadata: false,
+      unit_id: ids.unit,
+      lesson_id: ids.lesson,
+    });
+    expect(body).not.toHaveProperty("year");
+  });
+
+  it("does not carry a previous upload medium or subject into another grade", async () => {
+    await renderLibrary("admin");
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    await continueWizard(dialog);
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    await continueWizard(dialog);
+    fireEvent.change(within(dialog).getByLabelText("Subject"), {
+      target: { value: ids.mathsSubject },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "11" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Medium")).toHaveValue("");
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: ids.medium },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Subject")).toHaveValue("");
+  });
+
+  it("provides the new comparison link for sources regardless of legacy extraction state", async () => {
+    await renderLibrary("admin");
+    const link = await screen.findByRole("link", {
+      name: `Review extracted text: ${materials[1].title}`,
+    });
+    expect(link).toHaveAttribute(
+      "href",
+      `/admin/materials/${ids.guide}/review-text`,
+    );
+  });
+
+  it("keeps unadmitted legacy scope out of the material detail assignment and shows detected evidence first", async () => {
+    const fixture = fixtureApi({
+      catalogue: [],
+      initialMaterials: [
+        { ...intakeMaterial, grade: 5, curriculum: "2026 curriculum" },
+      ],
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    render(<MaterialDetails documentId={intakeMaterial.id} role="admin" />);
+    await screen.findByRole("heading", { name: intakeMaterial.title });
+    expect(screen.getByText("පද්ධතිය හඳුනාගත් තොරතුරු")).toBeVisible();
+    expect(
+      screen.getByText("විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි"),
+    ).toBeVisible();
+    const details = screen.getByRole("region", { name: "Material details" });
+    expect(details).not.toHaveTextContent("2026 curriculum");
+    expect(details).not.toHaveTextContent("Whole curriculum");
+    expect(
+      fixture.requests.some((request) =>
+        request.url.includes("/material-catalogue"),
+      ),
+    ).toBe(true);
+    expect(fixture.requests.every((request) => request.method === "GET")).toBe(
+      true,
+    );
+  });
+
   it("clears intake confirmation when the curriculum changes", async () => {
     await renderLibrary("admin", {
       initialMaterials: [{ ...intakeMaterial, grade: 5 }],
@@ -838,9 +1424,7 @@ describe("MaterialsLibrary", () => {
     const checkbox = within(dialog).getByRole("checkbox", {
       name: /I have verified the intake metadata/,
     });
-    fireEvent.change(within(dialog).getByLabelText("Curriculum version"), {
-      target: { value: ids.curriculumEleven },
-    });
+    await chooseScopeAssignment(dialog);
     await waitFor(() => expect(checkbox).toBeEnabled());
     fireEvent.click(checkbox);
     expect(checkbox).toBeChecked();
@@ -851,7 +1435,21 @@ describe("MaterialsLibrary", () => {
     expect(checkbox).toBeDisabled();
   });
 
-  it("opens the verified original PDF inside the material details view", async () => {
+  it("lets a teacher open comparison for a newly uploaded or pending source without starting reading automatically", async () => {
+    const fixture = fixtureApi({ initialMaterials: [materials[1]] });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    render(<MaterialDetails documentId={ids.guide} role="admin" />);
+    await screen.findByRole("heading", { name: materials[1].title });
+    expect(screen.getByRole("link", { name: "Review text" })).toHaveAttribute(
+      "href",
+      `/admin/materials/${ids.guide}/review-text`,
+    );
+    expect(fixture.requests.every((request) => request.method === "GET")).toBe(
+      true,
+    );
+  });
+
+  it("uses the streaming original-PDF endpoint for the detail preview and new-tab link", async () => {
     const fixture = fixtureApi();
     vi.stubGlobal("fetch", fixture.fetchMock);
     render(<MaterialDetails documentId={ids.syllabus} role="reviewer" />);
@@ -865,13 +1463,13 @@ describe("MaterialsLibrary", () => {
     );
     expect(preview).toHaveAttribute(
       "src",
-      `/api/v1/admin/source-documents/${ids.syllabus}/content`,
+      `/api/v1/admin/materials/${ids.syllabus}/original`,
     );
     expect(
       screen.getByRole("link", { name: "Open original PDF in a new tab" }),
     ).toHaveAttribute(
       "href",
-      `/api/v1/admin/source-documents/${ids.syllabus}/content`,
+      `/api/v1/admin/materials/${ids.syllabus}/original`,
     );
   });
 
@@ -973,7 +1571,7 @@ describe("MaterialsLibrary", () => {
         requests.filter(
           (request) =>
             request.method === "POST" &&
-            new URL(request.url).pathname.endsWith("/source-documents"),
+            new URL(request.url).pathname.endsWith("/source-uploads"),
         ),
       ).toHaveLength(0),
     );
@@ -1101,7 +1699,7 @@ describe("MaterialsLibrary", () => {
       requests.filter(
         (request) =>
           request.method === "POST" &&
-          new URL(request.url).pathname.endsWith("/source-documents"),
+          new URL(request.url).pathname.endsWith("/source-uploads"),
       ),
     ).toHaveLength(0);
     expect(within(dialog).getByLabelText("PDF file")).toBeInTheDocument();
@@ -1130,23 +1728,52 @@ describe("MaterialsLibrary", () => {
     const uploadRequests = requests.filter(
       (request) =>
         request.method === "POST" &&
-        new URL(request.url).pathname.endsWith("/source-documents"),
+        new URL(request.url).pathname.endsWith("/source-uploads"),
     );
     expect(uploadRequests).toHaveLength(1);
-    // jsdom and Node currently use different File implementations when Request.formData()
-    // reparses multipart bodies, so inspect the real multipart request without reconstructing it.
-    const uploadBody = await uploadRequests[0]!.clone().text();
-    expect(uploadBody).toMatch(/name="document_type"\r?\n\r?\npast_paper/);
-    expect(uploadBody).toMatch(/name="year"\r?\n\r?\n2026/);
+    expect(await uploadRequests[0]!.json()).toMatchObject({
+      document_type: "past_paper",
+      year: 2026,
+      curriculum_version_id: ids.curriculum,
+      filename: file.name,
+      size_bytes: file.size,
+      unit_id: null,
+      lesson_id: null,
+    });
+    const chunks = requests.filter((request) => request.method === "PUT");
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].headers.get("Content-Type")).toBe(
+      "application/octet-stream",
+    );
+    expect(chunks[0].headers.get("X-Chunk-SHA256")).toMatch(/^[a-f0-9]{64}$/);
+    expect(new URL(chunks[0].url).searchParams.get("offset")).toBe("0");
+    expect(new Uint8Array(await chunks[0].arrayBuffer())).toEqual(
+      new Uint8Array(await file.slice().arrayBuffer()),
+    );
     expect(
       requests.filter(
         (request) =>
-          request.method === "POST" &&
-          new URL(request.url).pathname.endsWith(
-            `/source-documents/${ids.uploaded}/extract`,
-          ),
+          request.method === "POST" && request.url.endsWith("/complete"),
       ),
     ).toHaveLength(1);
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "GET" &&
+          request.url.endsWith(`/source-read-jobs/${ids.readJob}`),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "POST" &&
+          /\/(extract|read)$/.test(new URL(request.url).pathname),
+      ),
+    ).toBe(false);
+    expect(JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!)).toEqual({
+      uploadIds: [],
+      creationUncertain: false,
+    });
   });
 
   it("offers curriculum, unit, and lesson choices when the material type needs them", async () => {
@@ -1317,9 +1944,7 @@ describe("MaterialsLibrary", () => {
     const dialog = screen.getByRole("dialog", {
       name: "Edit grade-5-maths-teacher-guide.pdf",
     });
-    fireEvent.change(within(dialog).getByLabelText("Curriculum version"), {
-      target: { value: ids.curriculumEleven },
-    });
+    await chooseScopeAssignment(dialog);
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Save changes" }),
     );
@@ -1344,8 +1969,152 @@ describe("MaterialsLibrary", () => {
     });
   });
 
-  it("preserves the reviewed upload when the network fails", async () => {
-    await renderLibrary("admin", { throwOnUpload: true });
+  it("recovers an acknowledged lost-create request on remount without creating a second session", async () => {
+    const view = await renderLibrary("admin", { throwOnUpload: true });
+    const dialog = await openWizardAtPdfStep();
+    const file = new File(["%PDF-1.7\nreload"], "reload.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: { files: [file] },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await within(dialog).findByRole("alert");
+    const create = (await view.requests
+      .find((request) => request.method === "POST")!
+      .clone()
+      .json()) as UploadCreate;
+    view.unmount();
+    render(<MaterialsLibrary role="admin" />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue saved upload 1" }),
+    );
+    const resumed = screen.getByRole("dialog", { name: "Continue upload" });
+    fireEvent.change(await within(resumed).findByLabelText("Original PDF"), {
+      target: { files: [file] },
+    });
+    fireEvent.click(
+      within(resumed).getByRole("button", { name: "Resume upload" }),
+    );
+    await screen.findByText("Material uploaded. Reading the PDF now.");
+    expect(
+      view.requests.some(
+        (request) =>
+          request.method === "GET" &&
+          request.url.endsWith(`/by-request/${create.request_id}`),
+      ),
+    ).toBe(true);
+    expect(
+      view.requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.endsWith("/source-uploads"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("retains a 404 request identity and reopens the wizard with that same key, never a replacement key", async () => {
+    localStorage.setItem(
+      UPLOAD_CHECKPOINT_KEY,
+      JSON.stringify({
+        uploadIds: [],
+        requestIds: [ids.uploadRequest],
+        creationUncertain: true,
+      }),
+    );
+    const { requests } = await renderLibrary("admin");
+    const interrupted = await screen.findByRole("button", {
+      name: "Continue interrupted upload 1",
+    });
+    await waitFor(() => expect(interrupted).toBeEnabled());
+    fireEvent.click(interrupted);
+    const dialog = screen.getByRole("dialog", {
+      name: "Continue interrupted upload",
+    });
+    await openWizardAtPdfStep(dialog);
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\nretry"], "same-request.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Continue upload" }),
+    );
+    await screen.findByText("Material uploaded. Reading the PDF now.");
+    const creates = requests.filter(
+      (request) =>
+        request.method === "POST" && request.url.endsWith("/source-uploads"),
+    );
+    expect(creates).toHaveLength(1);
+    expect(await creates[0].json()).toMatchObject({
+      request_id: ids.uploadRequest,
+      filename: "same-request.pdf",
+      year: 2026,
+    });
+  });
+
+  it("keeps pending request IDs through a recovery failure and offers an explicit refresh", async () => {
+    localStorage.setItem(
+      UPLOAD_CHECKPOINT_KEY,
+      JSON.stringify({
+        uploadIds: [],
+        requestIds: [ids.uploadRequest],
+        creationUncertain: true,
+      }),
+    );
+    const options: FixtureOptions = { lookupStatus: 503 };
+    const { requests } = await renderLibrary("admin", options);
+    await screen.findByRole("alert");
+    expect(
+      screen.getByRole("button", { name: "Upload material" }),
+    ).toBeDisabled();
+    options.lookupStatus = undefined;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh saved upload progress" }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.filter((request) => request.url.includes("/by-request/"))
+          .length,
+      ).toBe(2),
+    );
+    expect(
+      JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!),
+    ).toMatchObject({
+      requestIds: [ids.uploadRequest],
+      creationUncertain: true,
+    });
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("retains the safe manual guard only for legacy unkeyed create attempts", async () => {
+    localStorage.setItem(
+      UPLOAD_CHECKPOINT_KEY,
+      JSON.stringify({ uploadIds: [], creationUncertain: true }),
+    );
+    const { requests } = await renderLibrary("admin");
+    expect(
+      await screen.findByText(/ask an administrator to recover the upload/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Upload material" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Continue interrupted upload 1" }),
+    ).not.toBeInTheDocument();
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("preserves reviewed choices but prevents duplicate creation after an ambiguous lost create response", async () => {
+    const { requests } = await renderLibrary("admin", { throwOnUpload: true });
     const dialog = await openWizardAtPdfStep();
     const file = new File(["%PDF-1.7\nretry"], "retry-this-paper.pdf", {
       type: "application/pdf",
@@ -1359,15 +2128,257 @@ describe("MaterialsLibrary", () => {
     );
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "connection",
+      "Do not start it again",
     );
     expect(
       within(dialog).getByRole("region", { name: "Review upload" }),
     ).toHaveTextContent("retry-this-paper.pdf");
+    const first = requests.find((request) => request.method === "POST")!;
+    const body = (await first.clone().json()) as UploadCreate;
+    expect(body.request_id).toMatch(/^[a-f0-9-]{36}$/);
     expect(
-      within(dialog).getByRole("button", { name: "Upload material" }),
-    ).toBeInTheDocument();
+      requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(1);
+    expect(JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!)).toEqual({
+      uploadIds: [],
+      requestIds: [body.request_id],
+      creationUncertain: true,
+    });
+    const retry = within(dialog).getByRole("button", {
+      name: "Continue upload",
+    });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await screen.findByText("Material uploaded. Reading the PDF now.");
+    const creates = requests.filter(
+      (request) =>
+        request.method === "POST" && request.url.endsWith("/source-uploads"),
+    );
+    expect(creates).toHaveLength(2);
+    expect(await creates[1].json()).toEqual(body);
   });
+
+  it("continues an interrupted chunk from the same saved session without recreating or changing reviewed metadata", async () => {
+    const { requests } = await renderLibrary("admin", { interruptChunk: true });
+    const dialog = await openWizardAtPdfStep();
+    const file = new File(["%PDF-1.7\ncheckpoint"], "checkpoint.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: { files: [file] },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await within(dialog).findByRole("alert");
+    expect(
+      within(dialog).getByRole("region", { name: "Review upload" }),
+    ).toHaveTextContent("checkpoint.pdf");
+    expect(JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!)).toEqual({
+      uploadIds: [ids.uploadSession],
+      creationUncertain: false,
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Continue upload",
+      }),
+    );
+    await screen.findByText("Material uploaded. Reading the PDF now.");
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.endsWith("/source-uploads"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "POST" &&
+          /\/(read|extract|trust)$/.test(request.url),
+      ),
+    ).toBe(false);
+  });
+
+  it("pauses an in-flight chunk, keeps its checkpoint on close, and reconciles before resuming", async () => {
+    const { requests } = await renderLibrary("admin", { pauseChunk: true });
+    let dialog = await openWizardAtPdfStep();
+    const file = new File(["%PDF-1.7\npaused"], "paused.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: { files: [file] },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await waitFor(() =>
+      expect(requests.some((request) => request.method === "PUT")).toBe(true),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Pause upload" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Upload paused",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!)).toEqual({
+      uploadIds: [ids.uploadSession],
+      creationUncertain: false,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue saved upload 1" }),
+    );
+    dialog = await screen.findByRole("dialog", { name: "Continue upload" });
+    fireEvent.change(await within(dialog).findByLabelText("Original PDF"), {
+      target: { files: [file] },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Resume upload" }),
+    );
+    await screen.findByText("Material uploaded. Reading the PDF now.");
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      1,
+    );
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.endsWith("/source-uploads"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    "reselects and verifies a saved PDF after reload, rejecting matching-name impostors (%s)",
+    async (mismatch) => {
+      const original = new File(["%PDF-1.7\noriginal"], "saved.pdf", {
+        type: "application/pdf",
+        lastModified: 123,
+      });
+      const digest = await webcrypto.subtle.digest(
+        "SHA-256",
+        await original.slice().arrayBuffer(),
+      );
+      const checksum = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      const saved: UploadSession = {
+        id: ids.uploadSession,
+        filename: original.name,
+        size_bytes: original.size,
+        document_type: "past_paper",
+        intake_metadata: { year: 2025, candidate_grade: 5 },
+        status: "uploading",
+        next_offset: original.size,
+        verified_bytes: 0,
+        version: 3,
+        chunk_size_bytes: 4_194_304,
+        deduplicated: false,
+        created_at: now,
+        updated_at: now,
+      };
+      localStorage.setItem(
+        UPLOAD_CHECKPOINT_KEY,
+        JSON.stringify({
+          uploadIds: [ids.uploadSession],
+          creationUncertain: false,
+        }),
+      );
+      const { requests } = await renderLibrary("admin", {
+        savedUpload: saved,
+        savedChecksum: checksum,
+      });
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Continue saved upload 1" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "Continue upload",
+      });
+      await within(dialog).findByText("saved.pdf");
+      expect(
+        within(dialog).getByRole("button", { name: "Resume upload" }),
+      ).toBeDisabled();
+      const selected = mismatch
+        ? new File(["%PDF-1.7\nreplaced"], original.name, {
+            type: "application/pdf",
+            lastModified: 123,
+          })
+        : original;
+      expect(selected.size).toBe(original.size);
+      fireEvent.change(within(dialog).getByLabelText("Original PDF"), {
+        target: { files: [selected] },
+      });
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Resume upload" }),
+      );
+      if (mismatch) {
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+          "does not match the saved upload",
+        );
+        expect(requests.every((request) => request.method === "GET")).toBe(
+          true,
+        );
+      } else {
+        await screen.findByText("Material uploaded. Reading the PDF now.");
+        expect(
+          requests.filter((request) => request.method !== "GET"),
+        ).toHaveLength(1);
+        expect(
+          requests.find((request) => request.method === "POST")?.url,
+        ).toMatch(/\/complete$/);
+      }
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "GET" &&
+            new URL(request.url).pathname.endsWith("/chunks") &&
+            new URL(request.url).searchParams.get("limit") === "64",
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    [409, /capacity/],
+    [429, /12 seconds/],
+    [401, /expired/],
+    [403, /permission/],
+  ] as const)(
+    "keeps review choices and displays a teacher-friendly %s upload error",
+    async (status, message) => {
+      const { requests } = await renderLibrary("admin", {
+        uploadStatus: status,
+      });
+      const dialog = await openWizardAtPdfStep();
+      fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+        target: {
+          files: [
+            new File(["%PDF-1.7\ncapacity"], "capacity.pdf", {
+              type: "application/pdf",
+            }),
+          ],
+        },
+      });
+      await continueWizard(dialog);
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Upload material" }),
+      );
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        message,
+      );
+      expect(
+        within(dialog).getByRole("region", { name: "Review upload" }),
+      ).toHaveTextContent("capacity.pdf");
+      expect(
+        requests.filter((request) => request.method === "POST"),
+      ).toHaveLength(1);
+      if (status === 429)
+        expect(
+          within(dialog).getByRole("button", { name: "Continue upload" }),
+        ).toBeDisabled();
+    },
+  );
 
   it("keeps reviewer access read-only", async () => {
     await renderLibrary("reviewer");

@@ -3,8 +3,8 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import func, literal, select, update
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.blueprints.models import PaperBlueprintModel
@@ -16,6 +16,7 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus
+from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
@@ -42,6 +43,7 @@ class GenerationScopeRecord:
     medium_active: bool
     subject_id: UUID = LEGACY_UNCLASSIFIED_SUBJECT_ID
     subject_active: bool = True
+    catalogue_admitted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +64,16 @@ class GenerationContextRecord:
     source_status: ExtractionStatus
     page_number: int
     source_block_id: UUID | None
-    source_active_for_ai: bool = True
+    source_active_for_ai: bool = False
     unit_id: UUID | None = None
     lesson_id: UUID | None = None
     retrieval_scope: RetrievalScope | None = None
-    scope_active: bool = True
+    scope_active: bool = False
+    source_candidate_id: UUID | None = None
+    source_candidate_sha256: str | None = None
+    source_fidelity_current: bool = False
+    metadata_resolved: bool = False
+    catalogue_admitted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +177,7 @@ class SqlAlchemyGenerationRepository:
                     ExamConfigurationModel.active,
                     MediumModel.active,
                     SubjectModel.active,
+                    func.catalogue_curriculum_is_admitted(CurriculumVersionModel.id),
                 )
                 .join(
                     ExamConfigurationModel,
@@ -204,6 +212,7 @@ class SqlAlchemyGenerationRepository:
             exam_active=row[7],
             medium_active=row[8],
             subject_active=row[9],
+            catalogue_admitted=row[10] is True,
         )
 
     async def get_blueprint(
@@ -234,6 +243,9 @@ class SqlAlchemyGenerationRepository:
                     ExamConfigurationModel,
                     MediumModel,
                     SubjectModel,
+                    PageTextCandidateModel.text_sha256,
+                    func.knowledge_record_is_eligible("knowledge_chunk", KnowledgeChunkModel.id),
+                    func.catalogue_curriculum_is_admitted(CurriculumVersionModel.id),
                 )
                 .join(
                     SourceDocumentModel,
@@ -249,7 +261,12 @@ class SqlAlchemyGenerationRepository:
                 )
                 .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
                 .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+                .outerjoin(
+                    PageTextCandidateModel,
+                    PageTextCandidateModel.id == KnowledgeChunkModel.source_candidate_id,
+                )
                 .where(KnowledgeChunkModel.id.in_(knowledge_chunk_ids))
+                .execution_options(populate_existing=True)
             )
             records.extend(self._chunk_context(*row) for row in rows.all())
         if historical_question_ids:
@@ -261,6 +278,11 @@ class SqlAlchemyGenerationRepository:
                     ExamConfigurationModel,
                     MediumModel,
                     SubjectModel,
+                    PageTextCandidateModel.text_sha256,
+                    func.knowledge_record_is_eligible(
+                        "historical_question", HistoricalQuestionModel.id
+                    ),
+                    func.catalogue_curriculum_is_admitted(CurriculumVersionModel.id),
                 )
                 .join(
                     SourceDocumentModel,
@@ -276,10 +298,36 @@ class SqlAlchemyGenerationRepository:
                 )
                 .join(MediumModel, MediumModel.id == CurriculumVersionModel.medium_id)
                 .join(SubjectModel, SubjectModel.id == CurriculumVersionModel.subject_id)
+                .outerjoin(
+                    PageTextCandidateModel,
+                    PageTextCandidateModel.id == HistoricalQuestionModel.source_candidate_id,
+                )
                 .where(HistoricalQuestionModel.id.in_(historical_question_ids))
+                .execution_options(populate_existing=True)
             )
             records.extend(self._question_context(*row) for row in rows.all())
         return tuple(records)
+
+    async def context_lineage_is_current(
+        self,
+        run: GenerationRunModel,
+        *,
+        lock_sources: bool = False,
+    ) -> bool:
+        return (
+            await self._session.scalar(
+                select(
+                    func.generation_context_lineage_is_current(
+                        run.curriculum_version_id,
+                        literal(run.knowledge_chunk_ids, type_=JSONB),
+                        literal(run.historical_question_ids, type_=JSONB),
+                        literal(run.context_snapshot, type_=JSONB),
+                        lock_sources,
+                    )
+                )
+            )
+            is True
+        )
 
     async def store_run(
         self,
@@ -615,6 +663,9 @@ class SqlAlchemyGenerationRepository:
         exam: ExamConfigurationModel,
         medium: MediumModel,
         subject: SubjectModel,
+        source_candidate_sha256: str | None,
+        source_fidelity_current: bool,
+        catalogue_admitted: bool,
     ) -> GenerationContextRecord:
         return GenerationContextRecord(
             record_kind="knowledge_chunk",
@@ -636,6 +687,11 @@ class SqlAlchemyGenerationRepository:
             lesson_id=chunk.lesson_id,
             page_number=chunk.page_number,
             source_block_id=chunk.source_block_id,
+            source_candidate_id=chunk.source_candidate_id,
+            source_candidate_sha256=source_candidate_sha256,
+            source_fidelity_current=source_fidelity_current is True,
+            metadata_resolved=source.metadata_review_required is False,
+            catalogue_admitted=catalogue_admitted is True,
             retrieval_scope=RetrievalScope(
                 grade=exam.grade,
                 exam_id=exam.id,
@@ -662,6 +718,9 @@ class SqlAlchemyGenerationRepository:
         exam: ExamConfigurationModel,
         medium: MediumModel,
         subject: SubjectModel,
+        source_candidate_sha256: str | None,
+        source_fidelity_current: bool,
+        catalogue_admitted: bool,
     ) -> GenerationContextRecord:
         return GenerationContextRecord(
             record_kind="historical_question",
@@ -683,6 +742,11 @@ class SqlAlchemyGenerationRepository:
             lesson_id=question.lesson_id,
             page_number=question.page_number,
             source_block_id=question.source_block_id,
+            source_candidate_id=question.source_candidate_id,
+            source_candidate_sha256=source_candidate_sha256,
+            source_fidelity_current=source_fidelity_current is True,
+            metadata_resolved=source.metadata_review_required is False,
+            catalogue_admitted=catalogue_admitted is True,
             retrieval_scope=RetrievalScope(
                 grade=exam.grade,
                 exam_id=exam.id,

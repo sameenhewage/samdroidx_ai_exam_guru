@@ -20,6 +20,7 @@ from exam_guru_api.api.schemas import (
 from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.auth.rate_limits import RateLimitScope
+from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.runtime import (
     GenerationRuntimeRegistry,
@@ -49,6 +50,7 @@ from exam_guru_api.teacher_papers.service import (
     ProgrammePolicyScopeError,
     ProgrammePolicyVersionConflictError,
     ScholarshipProgrammePolicyService,
+    TeacherPaperCatalogueChangedError,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -400,6 +402,11 @@ async def _execute[ResultT](
             else "paper_generation_job_not_found"
         )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": code}) from error
+    except (TeacherPaperCatalogueChangedError, CurriculumNotAdmittedError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "paper_generation_catalogue_changed"},
+        ) from error
     except TeacherPaperCurriculumAmbiguousError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

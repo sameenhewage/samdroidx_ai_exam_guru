@@ -45,8 +45,12 @@ const HSTS_HEADER: SecurityHeader = {
   value: "max-age=63072000; includeSubDomains; preload",
 };
 
-export function securityHeaders(config: WebAppConfig, nodeEnvironment?: string): SecurityHeader[] {
-  const allowDevelopmentEval = nodeEnvironment === "development" &&
+export function securityHeaders(
+  config: WebAppConfig,
+  nodeEnvironment?: string,
+): SecurityHeader[] {
+  const allowDevelopmentEval =
+    nodeEnvironment === "development" &&
     (config.environment === "local" || config.environment === "test");
   const headers = BASE_SECURITY_HEADERS.map((header) =>
     allowDevelopmentEval && header.key === "Content-Security-Policy"
@@ -59,15 +63,24 @@ export function securityHeaders(config: WebAppConfig, nodeEnvironment?: string):
         }
       : header,
   );
-  return config.environment === "production" ? [...headers, HSTS_HEADER] : headers;
+  return config.environment === "production"
+    ? [...headers, HSTS_HEADER]
+    : headers;
 }
 
-export function securityHeaderRules(config: WebAppConfig, nodeEnvironment?: string) {
+export function securityHeaderRules(
+  config: WebAppConfig,
+  nodeEnvironment?: string,
+) {
   return [
     { headers: securityHeaders(config, nodeEnvironment), source: "/(.*)" },
     {
       headers: [...SOURCE_CONTENT_SECURITY_HEADERS],
       source: "/api/v1/admin/source-documents/:documentId/content",
+    },
+    {
+      headers: [...SOURCE_CONTENT_SECURITY_HEADERS],
+      source: "/api/v1/admin/materials/:documentId/original",
     },
   ];
 }

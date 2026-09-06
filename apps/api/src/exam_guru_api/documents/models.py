@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -56,6 +57,10 @@ class SourceDocumentModel(AuditColumns, Base):
         ),
         CheckConstraint("size_bytes > 0", name="ck_source_document_positive_size"),
         CheckConstraint(
+            "original_page_count IS NULL OR original_page_count > 0",
+            name="ck_source_document_original_pages",
+        ),
+        CheckConstraint(
             "intake_metadata IS NULL OR source_intake_metadata_is_bounded(intake_metadata)",
             name="ck_source_documents_intake_metadata",
         ),
@@ -87,6 +92,10 @@ class SourceDocumentModel(AuditColumns, Base):
         CheckConstraint(
             "metadata_scope_version >= 0",
             name="ck_source_documents_metadata_scope_version",
+        ),
+        CheckConstraint(
+            "NOT quarantined_for_teacher_use OR NOT active_for_ai",
+            name="ck_source_documents_quarantine_inactive",
         ),
         ForeignKeyConstraint(
             ["unit_id", "curriculum_version_id"],
@@ -193,7 +202,7 @@ class SourceDocumentModel(AuditColumns, Base):
     object_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     document_type: Mapped[SourceDocumentType] = mapped_column(
         Enum(
             SourceDocumentType,
@@ -230,6 +239,12 @@ class SourceDocumentModel(AuditColumns, Base):
         default=True,
         server_default=true(),
     )
+    quarantined_for_teacher_use: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
     removal_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     removed_by: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -263,6 +278,7 @@ class SourceDocumentModel(AuditColumns, Base):
     )
     extractor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    original_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extracted_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extracted_block_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extracted_character_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import cast
@@ -253,6 +254,35 @@ def _context_snapshot_root(
     return root, filters
 
 
+def _context_provenance(value: object, *, index: int) -> Mapping[str, object]:
+    lineage_keys = frozenset({"source_candidate_id", "source_candidate_sha256"})
+    keys = frozenset(
+        {"source_document_id", "source_version", "page_number", "chunk_id", "source_block_id"}
+    )
+    has_lineage = isinstance(value, Mapping) and bool(lineage_keys.intersection(value))
+    provenance = _object(
+        value,
+        keys=keys | lineage_keys if has_lineage else keys,
+        label=f"generation context provenance {index}",
+    )
+    if has_lineage:
+        candidate_id = _text(provenance["source_candidate_id"], label="source_candidate_id")
+        try:
+            canonical_id = str(UUID(candidate_id))
+        except ValueError as error:
+            raise ValidationGenerationIntegrityError(
+                "source candidate identity is invalid"
+            ) from error
+        candidate_hash = provenance["source_candidate_sha256"]
+        if (
+            candidate_id != canonical_id
+            or not isinstance(candidate_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", candidate_hash) is None
+        ):
+            raise ValidationGenerationIntegrityError("source candidate lineage is invalid")
+    return provenance
+
+
 def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     root, retrieval_filters = _context_snapshot_root(run.context_snapshot)
     if root["trust"] != "untrusted_data":
@@ -288,19 +318,7 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
             keys=item_keys,
             label=f"generation context item {index}",
         )
-        provenance = _object(
-            item["provenance"],
-            keys=frozenset(
-                {
-                    "source_document_id",
-                    "source_version",
-                    "page_number",
-                    "chunk_id",
-                    "source_block_id",
-                }
-            ),
-            label=f"generation context provenance {index}",
-        )
+        provenance = _context_provenance(item["provenance"], index=index)
         taxonomy = _object(
             item["taxonomy"],
             keys=frozenset({"competency_id", "skill_id", "sub_skill_id", "learning_concept_id"}),
@@ -1101,6 +1119,16 @@ class ValidationRunService:
         await self._repository.lock_generation_for_validation(
             curriculum_version_id,
             generation_run_id,
+        )
+        if (
+            await self._repository.lock_current_generation_lineage(generation_record.run)
+            is not True
+        ):
+            raise ValidationGenerationIntegrityError(
+                "validation requires current verified knowledge lineage"
+            )
+        generation_record = await self._repository.get_generation(
+            curriculum_version_id, generation_run_id
         )
         existing = await self._repository.get_for_generation_pipeline(
             generation_run_id,

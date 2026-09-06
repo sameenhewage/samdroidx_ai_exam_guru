@@ -133,6 +133,7 @@ class SqlAlchemyValidationRepository:
                     GenerationRunModel.curriculum_version_id == curriculum_version_id,
                     PaperBlueprintModel.curriculum_version_id == curriculum_version_id,
                 )
+                .execution_options(populate_existing=True)
             )
         ).one_or_none()
         if row is None:
@@ -190,6 +191,11 @@ class SqlAlchemyValidationRepository:
         )
         if locked_id != generation_run_id:
             raise ValidationGenerationNotFoundError(generation_run_id)
+
+    async def lock_current_generation_lineage(self, run: GenerationRunModel) -> bool:
+        return await SqlAlchemyGenerationRepository(self._session).context_lineage_is_current(
+            run, lock_sources=True
+        )
 
     async def selected_scope_is_valid(
         self,

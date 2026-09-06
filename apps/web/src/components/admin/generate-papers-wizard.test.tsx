@@ -1,5 +1,11 @@
 import type { components } from "@exam-guru/api-client";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +16,7 @@ type CurriculumLabels = components["schemas"]["CurriculumLabelsResponse"];
 type LessonLabels = components["schemas"]["LessonLabelsResponse"];
 type PaperJob = components["schemas"]["TeacherPaperJobResponse"];
 
+const scopeFingerprint = `sha256:${"a".repeat(64)}`;
 const generationOptions = {
   defaults: {
     difficulty: "balanced",
@@ -21,11 +28,22 @@ const generationOptions = {
     written_count: 5,
   },
   grades: [5],
-  media: [{ code: "si", label: "Sinhala Medium" }],
+  media: [{ code: "si", label: "Sinhala Medium", grades: [5] }],
   paper_types: [
-    { code: "subject_practice", grade: 5, label: "Subject Practice" },
-    { code: "term_test", grade: 5, label: "Term Test" },
-    { code: "scholarship_practice", grade: 5, label: "Grade 5 Scholarship Practice" },
+    {
+      code: "subject_practice",
+      grade: 5,
+      medium: "si",
+      label: "Subject Practice",
+    },
+    { code: "term_test", grade: 5, medium: "si", label: "Term Test" },
+    {
+      code: "scholarship_practice",
+      grade: 5,
+      medium: "si",
+      source_scope_fingerprint: scopeFingerprint,
+      label: "Grade 5 Scholarship Practice",
+    },
   ],
   scholarship_modes: [
     { code: "paper_i", label: "Paper I — Ability & Reasoning" },
@@ -37,6 +55,13 @@ const generationOptions = {
       code: "MATHEMATICS",
       grade: 5,
       label: "Maths",
+      curriculum: {
+        code: "G5-MATH-V1",
+        label: "Grade 5 Mathematics",
+        assessment_programme: "SCHOOL-G5",
+        assessment_label: "School Grade 5",
+        source_scope_fingerprint: scopeFingerprint,
+      },
       lessons: [
         {
           code: "LESSON-1",
@@ -87,6 +112,7 @@ const gradeFiveCurriculumLabels = {
       assessment_programme: "SCHOOL-G5",
       code: "G5-MATH-V1",
       label: "Grade 5 Mathematics",
+      source_scope_fingerprint: scopeFingerprint,
     },
   ],
 } satisfies CurriculumLabels;
@@ -114,6 +140,7 @@ const curriculumLabels = {
       assessment_programme: "SCHOOL-G5",
       code: "G5-MATH-V1",
       label: "Grade 5 Mathematics",
+      source_scope_fingerprint: scopeFingerprint,
     },
   ],
 } satisfies CurriculumLabels;
@@ -150,7 +177,12 @@ function paperJob(overrides: Partial<PaperJob> = {}): PaperJob {
     medium: "Sinhala Medium",
     paper_id: paperId,
     paper_reference: "EGP-G5-MATH-0001",
-    progress: ["preparing", "generating", "checking_answers", "ready_for_review"],
+    progress: [
+      "preparing",
+      "generating",
+      "checking_answers",
+      "ready_for_review",
+    ],
     review_url: reviewUrl,
     scope_summary: "Lessons 1–3",
     slots: [1, 2, 3].map((number) => ({
@@ -193,86 +225,127 @@ function fixtureApi(configuration: FixtureConfiguration = {}) {
   const requests: Request[] = [];
   let createAttempts = 0;
   let retryAccepted = false;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = asRequest(input, init);
-    requests.push(request.clone());
-    const url = new URL(request.url);
-    const path = url.pathname;
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = asRequest(input, init);
+      requests.push(request.clone());
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-    if (request.method === "GET" && path.endsWith("/paper-generation/options")) {
-      return Response.json(configuration.options ?? generationOptions);
-    }
-    if (request.method === "GET" && path.endsWith("/paper-generation/curricula")) {
-      if (configuration.curriculaError) {
-        return Response.json(
-          { detail: { code: configuration.curriculaError.code } },
-          { status: configuration.curriculaError.status },
-        );
-      }
-      return Response.json(configuration.curricula ?? curriculumLabels);
-    }
-    if (request.method === "GET" && path.endsWith("/paper-generation/lessons")) {
-      return Response.json(configuration.lessons ?? lessonLabels);
-    }
-    if (request.method === "POST" && path.endsWith("/paper-generation/jobs")) {
-      createAttempts += 1;
-      if (configuration.failCreateOnce && createAttempts === 1) {
-        return Response.json(
-          { detail: { code: "paper_generation_queue_unavailable" } },
-          { status: 503 },
-        );
-      }
-      if (configuration.createError) {
-        const headers = configuration.createError.retryAfter
-          ? { "Retry-After": configuration.createError.retryAfter }
-          : undefined;
-        return Response.json(
-          { detail: { code: configuration.createError.code } },
-          { headers, status: configuration.createError.status },
-        );
-      }
-      return Response.json(
-        paperJob({
-          completed_at: null,
-          counts: {
-            approved: 0,
-            candidates: 0,
-            failed: 0,
-            generated: 0,
-            requested: 3,
-            validated: 0,
+      if (
+        request.method === "GET" &&
+        [
+          "/media",
+          "/subjects",
+          "/curriculum-versions",
+          "/exam-configurations",
+        ].some((suffix) => path.endsWith(suffix))
+      ) {
+        return Response.json([
+          {
+            code: "PRIVATE",
+            name: "Blueprint medium 712 private fixture",
+            title: "Knowledge medium private fixture",
+            active: true,
           },
-          progress: ["preparing"],
-          review_url: null,
-          slots: [],
-          status: "preparing",
-          updated_at: "2026-08-25T10:00:00Z",
-          version: 1,
-        }),
-        { status: 202 },
-      );
-    }
-    if (request.method === "POST" && path.endsWith(`/paper-generation/jobs/${jobId}/retry`)) {
-      retryAccepted = true;
-      return Response.json(
-        configuration.retryJob ??
+        ]);
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith("/paper-generation/options")
+      ) {
+        return Response.json(configuration.options ?? generationOptions);
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith("/paper-generation/curricula")
+      ) {
+        if (configuration.curriculaError) {
+          return Response.json(
+            { detail: { code: configuration.curriculaError.code } },
+            { status: configuration.curriculaError.status },
+          );
+        }
+        return Response.json(configuration.curricula ?? curriculumLabels);
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith("/paper-generation/lessons")
+      ) {
+        return Response.json(configuration.lessons ?? lessonLabels);
+      }
+      if (
+        request.method === "POST" &&
+        path.endsWith("/paper-generation/jobs")
+      ) {
+        createAttempts += 1;
+        if (configuration.failCreateOnce && createAttempts === 1) {
+          return Response.json(
+            { detail: { code: "paper_generation_queue_unavailable" } },
+            { status: 503 },
+          );
+        }
+        if (configuration.createError) {
+          const headers = configuration.createError.retryAfter
+            ? { "Retry-After": configuration.createError.retryAfter }
+            : undefined;
+          return Response.json(
+            { detail: { code: configuration.createError.code } },
+            { headers, status: configuration.createError.status },
+          );
+        }
+        return Response.json(
           paperJob({
             completed_at: null,
-            failure: null,
-            progress: ["preparing", "generating"],
+            counts: {
+              approved: 0,
+              candidates: 0,
+              failed: 0,
+              generated: 0,
+              requested: 3,
+              validated: 0,
+            },
+            progress: ["preparing"],
             review_url: null,
-            status: "generating",
-            version: 6,
+            slots: [],
+            status: "preparing",
+            updated_at: "2026-08-25T10:00:00Z",
+            version: 1,
           }),
-        { status: 202 },
+          { status: 202 },
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path.endsWith(`/paper-generation/jobs/${jobId}/retry`)
+      ) {
+        retryAccepted = true;
+        return Response.json(
+          configuration.retryJob ??
+            paperJob({
+              completed_at: null,
+              failure: null,
+              progress: ["preparing", "generating"],
+              review_url: null,
+              status: "generating",
+              version: 6,
+            }),
+          { status: 202 },
+        );
+      }
+      if (
+        request.method === "GET" &&
+        path.endsWith(`/paper-generation/jobs/${jobId}`)
+      ) {
+        if (retryAccepted) return Response.json(paperJob({ version: 7 }));
+        return Response.json(configuration.pollJob ?? paperJob());
+      }
+      return Response.json(
+        { detail: { code: "unexpected_request", path } },
+        { status: 500 },
       );
-    }
-    if (request.method === "GET" && path.endsWith(`/paper-generation/jobs/${jobId}`)) {
-      if (retryAccepted) return Response.json(paperJob({ version: 7 }));
-      return Response.json(configuration.pollJob ?? paperJob());
-    }
-    return Response.json({ detail: { code: "unexpected_request", path } }, { status: 500 });
-  });
+    },
+  );
   return { fetchMock, requests };
 }
 
@@ -287,24 +360,42 @@ async function renderWizard(configuration: FixtureConfiguration = {}) {
 
 async function chooseGradeFiveMaths() {
   fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
-  fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+  fireEvent.change(screen.getByLabelText("Medium"), {
+    target: { value: "si" },
+  });
   fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
-  fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
-  const continueButton = screen.getByRole("button", { name: "Continue to scope" });
+  fireEvent.change(screen.getByLabelText("Subject"), {
+    target: { value: "MATHEMATICS" },
+  });
+  const continueButton = screen.getByRole("button", {
+    name: "Continue to scope",
+  });
   await waitFor(() => expect(continueButton).toBeEnabled());
   fireEvent.click(continueButton);
   await screen.findByRole("region", { name: "Selected scope" });
 }
 
 function chooseSimpleSettings() {
-  fireEvent.click(screen.getByRole("button", { name: "Continue to paper settings" }));
-  fireEvent.change(screen.getByLabelText("MCQ questions"), { target: { value: "12" } });
-  fireEvent.change(screen.getByLabelText("Written questions"), { target: { value: "0" } });
-  fireEvent.change(screen.getByLabelText("Duration in minutes"), { target: { value: "50" } });
-  fireEvent.change(screen.getByLabelText("Difficulty"), { target: { value: "balanced" } });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Continue to paper settings" }),
+  );
+  fireEvent.change(screen.getByLabelText("MCQ questions"), {
+    target: { value: "12" },
+  });
+  fireEvent.change(screen.getByLabelText("Written questions"), {
+    target: { value: "0" },
+  });
+  fireEvent.change(screen.getByLabelText("Duration in minutes"), {
+    target: { value: "50" },
+  });
+  fireEvent.change(screen.getByLabelText("Difficulty"), {
+    target: { value: "balanced" },
+  });
 }
 
-async function submittedBody(requests: Request[]): Promise<Record<string, unknown>> {
+async function submittedBody(
+  requests: Request[],
+): Promise<Record<string, unknown>> {
   await waitFor(() => {
     expect(
       requests.some(
@@ -326,7 +417,10 @@ async function submittedBody(requests: Request[]): Promise<Record<string, unknow
 function allKeys(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(allKeys);
   if (!value || typeof value !== "object") return [];
-  return Object.entries(value).flatMap(([key, nested]) => [key, ...allKeys(nested)]);
+  return Object.entries(value).flatMap(([key, nested]) => [
+    key,
+    ...allKeys(nested),
+  ]);
 }
 
 afterEach(() => {
@@ -335,26 +429,223 @@ afterEach(() => {
 });
 
 describe("GeneratePapersWizard", () => {
-  it("offers only the Grade 5 pilot paper types and hides subject for Scholarship", async () => {
+  it("shows a teacher-friendly empty catalogue without consulting advanced configuration endpoints", async () => {
+    const fixture = fixtureApi({
+      options: {
+        ...generationOptions,
+        grades: [],
+        media: [],
+        subjects: [],
+        paper_types: [],
+        scholarship_modes: [],
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    render(<GeneratePapersWizard role="admin" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "No approved curriculum is available yet",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Ask a curriculum reviewer/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Generate paper" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        /Blueprint medium|Generation English|Knowledge medium/,
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      fixture.requests.map((request) => new URL(request.url).pathname),
+    ).toEqual(["/api/v1/admin/paper-generation/options"]);
+  });
+
+  it("rejects mixed curriculum and lesson responses rather than generating from stale choices", async () => {
+    await renderWizard({
+      lessons: {
+        ...lessonLabels,
+        curriculum: {
+          ...lessonLabels.curriculum,
+          code: "A-CHANGED-CURRICULUM",
+        },
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    fireEvent.change(screen.getByLabelText("Medium"), {
+      target: { value: "si" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "MATHEMATICS" },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Curriculum choices changed",
+    );
+    expect(
+      screen.getByRole("button", { name: "Continue to scope" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Refresh curriculum choices" }),
+    ).toBeInTheDocument();
+  });
+
+  it("binds Grade 7 Mathematics, media, lessons and submission to the admitted catalogue", async () => {
+    const gradeSeven = {
+      ...generationOptions.subjects[0],
+      grade: 7,
+      medium: "en",
+      curriculum: {
+        ...curriculumLabels.items[0],
+        code: "G7-MATH-V1",
+        label: "Grade 7 Mathematics",
+        assessment_programme: "SCHOOL-G7",
+        assessment_label: "School Grade 7",
+      },
+    };
+    const { requests } = await renderWizard({
+      options: {
+        ...generationOptions,
+        grades: [5, 7],
+        media: [
+          ...generationOptions.media,
+          { code: "en", label: "English", grades: [7] },
+        ],
+        paper_types: [
+          ...generationOptions.paper_types,
+          {
+            code: "subject_practice",
+            grade: 7,
+            medium: "en",
+            label: "Subject Practice",
+          },
+        ],
+        subjects: [...generationOptions.subjects, gradeSeven],
+      },
+      curricula: { items: [gradeSeven.curriculum] },
+      lessons: {
+        ...lessonLabels,
+        grade: 7,
+        medium: "en",
+        curriculum: gradeSeven.curriculum,
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Grade"), {
+      target: { value: "7" },
+    });
+    expect(
+      within(screen.getByLabelText("Medium"))
+        .getAllByRole("option")
+        .map((item) => item.textContent),
+    ).toEqual(["Choose medium", "English"]);
+    fireEvent.change(screen.getByLabelText("Medium"), {
+      target: { value: "en" },
+    });
+    expect(
+      screen.queryByRole("radio", { name: "Grade 5 Scholarship Practice" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "MATHEMATICS" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Continue to scope" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue to scope" }));
+    chooseSimpleSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
+    expect(await submittedBody(requests)).toMatchObject({
+      source_scope_fingerprint: scopeFingerprint,
+      target: { grade: 7, medium: "en", subject: "MATHEMATICS" },
+    });
+    expect(
+      requests.every((request) =>
+        new URL(request.url).pathname.includes("/paper-generation/"),
+      ),
+    ).toBe(true);
+  });
+
+  it("clears a revoked selection and reloads the empty admitted catalogue instead of retrying it", async () => {
+    const configuration: FixtureConfiguration = {
+      createError: { code: "paper_generation_catalogue_changed", status: 409 },
+    };
+    const { requests } = await renderWizard(configuration);
+    await chooseGradeFiveMaths();
+    chooseSimpleSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Curriculum choices changed",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Try again safely" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Generate paper" }),
+    ).toBeDisabled();
+    fireEvent.submit(screen.getByRole("form", { name: "Generate a paper" }));
+    expect(
+      requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(1);
+    configuration.options = {
+      ...generationOptions,
+      grades: [],
+      media: [],
+      subjects: [],
+      paper_types: [],
+      scholarship_modes: [],
+    };
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh curriculum choices" }),
+    );
+    await screen.findByRole("heading", {
+      name: "No approved curriculum is available yet",
+    });
+    expect(
+      requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(1);
+  });
+
+  it("offers only the configured paper types and hides subject for Scholarship", async () => {
     await renderWizard({ options: gradeFivePilotOptions });
 
     const grade = screen.getByLabelText("Grade");
-    expect(within(grade).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Choose grade",
-      "Grade 5",
-    ]);
+    expect(
+      within(grade)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Choose grade", "Grade 5"]);
     fireEvent.change(grade, { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+    fireEvent.change(screen.getByLabelText("Medium"), {
+      target: { value: "si" },
+    });
 
-    expect(screen.getByRole("radio", { name: "Subject Practice" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Term Test" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Grade 5 Scholarship Practice" }));
+    expect(
+      screen.getByRole("radio", { name: "Subject Practice" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Term Test" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Grade 5 Scholarship Practice" }),
+    );
 
     expect(screen.queryByLabelText("Subject")).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Paper I — Ability & Reasoning" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Paper II — Curriculum Knowledge" })).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: "Full Scholarship Practice — Paper I + Paper II" }),
+      screen.getByRole("radio", { name: "Paper I — Ability & Reasoning" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: "Paper II — Curriculum Knowledge" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", {
+        name: "Full Scholarship Practice — Paper I + Paper II",
+      }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/O\/L|A\/L|Grade 6/)).not.toBeInTheDocument();
 
@@ -372,22 +663,38 @@ describe("GeneratePapersWizard", () => {
       options: gradeFivePilotOptions,
     });
 
-    fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
+    fireEvent.change(screen.getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    fireEvent.change(screen.getByLabelText("Medium"), {
+      target: { value: "si" },
+    });
     fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
-    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
-    const continueButton = screen.getByRole("button", { name: "Continue to scope" });
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "MATHEMATICS" },
+    });
+    const continueButton = screen.getByRole("button", {
+      name: "Continue to scope",
+    });
     await waitFor(() => expect(continueButton).toBeEnabled());
     fireEvent.click(continueButton);
     fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue to paper settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue to paper settings" }),
+    );
 
     fireEvent.change(screen.getByLabelText("Paper name"), {
       target: { value: "Grade 5 Mathematics practice" },
     });
-    fireEvent.change(screen.getByLabelText("MCQ questions"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Written questions"), { target: { value: "10" } });
-    fireEvent.change(screen.getByLabelText("Structured questions"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("MCQ questions"), {
+      target: { value: "5" },
+    });
+    fireEvent.change(screen.getByLabelText("Written questions"), {
+      target: { value: "10" },
+    });
+    fireEvent.change(screen.getByLabelText("Structured questions"), {
+      target: { value: "0" },
+    });
     fireEvent.change(screen.getByLabelText("Teacher instruction (optional)"), {
       target: { value: "Use familiar classroom wording." },
     });
@@ -413,7 +720,11 @@ describe("GeneratePapersWizard", () => {
       },
     });
     expect(allKeys(body)).not.toEqual(
-      expect.arrayContaining(["marks_per_mcq", "marks_per_written", "marks_per_structured"]),
+      expect.arrayContaining([
+        "marks_per_mcq",
+        "marks_per_written",
+        "marks_per_structured",
+      ]),
     );
   });
 
@@ -421,12 +732,18 @@ describe("GeneratePapersWizard", () => {
     const { requests } = await renderWizard();
 
     await chooseGradeFiveMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Choose specific lessons" }));
-    fireEvent.change(screen.getByLabelText("First lesson"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("Last lesson"), { target: { value: "3" } });
-    expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
-      "Grade 5 Maths · Lessons 1–3",
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Choose specific lessons" }),
     );
+    fireEvent.change(screen.getByLabelText("First lesson"), {
+      target: { value: "1" },
+    });
+    fireEvent.change(screen.getByLabelText("Last lesson"), {
+      target: { value: "3" },
+    });
+    expect(
+      screen.getByRole("region", { name: "Selected scope" }),
+    ).toHaveTextContent("Grade 5 Maths · Lessons 1–3");
 
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
@@ -463,15 +780,23 @@ describe("GeneratePapersWizard", () => {
         request.method === "POST" &&
         new URL(request.url).pathname.endsWith("/paper-generation/jobs"),
     );
-    expect(createRequest?.headers.get("Idempotency-Key")).toMatch(/^teacher-paper-\S+$/);
+    expect(createRequest?.headers.get("Idempotency-Key")).toMatch(
+      /^teacher-paper-\S+$/,
+    );
     expect(
-      requests.some((request) => new URL(request.url).pathname.endsWith("/paper-generation/curricula")),
+      requests.some((request) =>
+        new URL(request.url).pathname.endsWith("/paper-generation/curricula"),
+      ),
     ).toBe(true);
     expect(
-      requests.some((request) => new URL(request.url).pathname.endsWith("/paper-generation/lessons")),
+      requests.some((request) =>
+        new URL(request.url).pathname.endsWith("/paper-generation/lessons"),
+      ),
     ).toBe(true);
 
-    const progress = await screen.findByRole("region", { name: "Paper progress" });
+    const progress = await screen.findByRole("region", {
+      name: "Paper progress",
+    });
     for (const label of [
       "Preparing paper",
       "Generating questions",
@@ -480,10 +805,9 @@ describe("GeneratePapersWizard", () => {
     ]) {
       expect(progress).toHaveTextContent(label);
     }
-    expect(await within(progress).findByRole("link", { name: "Review this paper" })).toHaveAttribute(
-      "href",
-      reviewUrl,
-    );
+    expect(
+      await within(progress).findByRole("link", { name: "Review this paper" }),
+    ).toHaveAttribute("href", reviewUrl);
     expect(progress).not.toHaveTextContent("microusd");
     expect(progress).not.toHaveTextContent("token");
     expect(progress).not.toHaveTextContent("generation run");
@@ -493,12 +817,18 @@ describe("GeneratePapersWizard", () => {
     const { requests } = await renderWizard();
 
     await chooseGradeFiveMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Pick individual lessons" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Lesson 1 — Whole numbers" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Lesson 3 — Fractions" }));
-    expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
-      "Grade 5 Maths · Lessons 1 and 3",
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Pick individual lessons" }),
     );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Lesson 1 — Whole numbers" }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Lesson 3 — Fractions" }),
+    );
+    expect(
+      screen.getByRole("region", { name: "Selected scope" }),
+    ).toHaveTextContent("Grade 5 Maths · Lessons 1 and 3");
 
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
@@ -513,9 +843,9 @@ describe("GeneratePapersWizard", () => {
 
     await chooseGradeFiveMaths();
     fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
-    expect(screen.getByRole("region", { name: "Selected scope" })).toHaveTextContent(
-      "Grade 5 Maths · Full subject",
-    );
+    expect(
+      screen.getByRole("region", { name: "Selected scope" }),
+    ).toHaveTextContent("Grade 5 Maths · Full subject");
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
 
@@ -544,7 +874,9 @@ describe("GeneratePapersWizard", () => {
       /generation run/i,
       /cost/i,
     ]) {
-      expect(within(form).queryByLabelText(forbiddenControl)).not.toBeInTheDocument();
+      expect(
+        within(form).queryByLabelText(forbiddenControl),
+      ).not.toBeInTheDocument();
     }
     expect(container).not.toHaveTextContent(jobId);
   });
@@ -559,7 +891,9 @@ describe("GeneratePapersWizard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("temporarily unavailable");
     expect(screen.getByLabelText("MCQ questions")).toHaveValue(12);
-    fireEvent.click(within(alert).getByRole("button", { name: "Try again safely" }));
+    fireEvent.click(
+      within(alert).getByRole("button", { name: "Try again safely" }),
+    );
     await screen.findByRole("link", { name: "Review this paper" });
 
     const posts = requests.filter(
@@ -568,13 +902,21 @@ describe("GeneratePapersWizard", () => {
         new URL(request.url).pathname.endsWith("/paper-generation/jobs"),
     );
     expect(posts).toHaveLength(2);
-    expect(posts[0]?.headers.get("Idempotency-Key")).toBe(posts[1]?.headers.get("Idempotency-Key"));
-    await expect(posts[0]?.clone().json()).resolves.toEqual(await posts[1]?.clone().json());
+    expect(posts[0]?.headers.get("Idempotency-Key")).toBe(
+      posts[1]?.headers.get("Idempotency-Key"),
+    );
+    await expect(posts[0]?.clone().json()).resolves.toEqual(
+      await posts[1]?.clone().json(),
+    );
   });
 
   it("shows a rate-limit recovery message without clearing the teacher's paper", async () => {
     await renderWizard({
-      createError: { code: "rate_limit_exceeded", retryAfter: "17", status: 429 },
+      createError: {
+        code: "rate_limit_exceeded",
+        retryAfter: "17",
+        status: 429,
+      },
     });
     await chooseGradeFiveMaths();
     fireEvent.click(screen.getByRole("radio", { name: "Full subject" }));
@@ -588,19 +930,36 @@ describe("GeneratePapersWizard", () => {
   });
 
   it.each([
-    ["paper_generation_curriculum_ambiguous", 409, "More than one curriculum matches"],
-    ["paper_generation_curriculum_not_found", 404, "No matching curriculum content"],
-  ])("handles %s while preserving target choices", async (code, status, message) => {
-    await renderWizard({ curriculaError: { code, status } });
-    fireEvent.change(screen.getByLabelText("Grade"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Medium"), { target: { value: "si" } });
-    fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
-    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "MATHEMATICS" } });
+    [
+      "paper_generation_curriculum_ambiguous",
+      409,
+      "More than one curriculum matches",
+    ],
+    [
+      "paper_generation_curriculum_not_found",
+      404,
+      "No matching curriculum content",
+    ],
+  ])(
+    "handles %s while preserving target choices",
+    async (code, status, message) => {
+      await renderWizard({ curriculaError: { code, status } });
+      fireEvent.change(screen.getByLabelText("Grade"), {
+        target: { value: "5" },
+      });
+      fireEvent.change(screen.getByLabelText("Medium"), {
+        target: { value: "si" },
+      });
+      fireEvent.click(screen.getByRole("radio", { name: "Subject Practice" }));
+      fireEvent.change(screen.getByLabelText("Subject"), {
+        target: { value: "MATHEMATICS" },
+      });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(message);
-    expect(screen.getByLabelText("Grade")).toHaveValue("5");
-    expect(screen.getByLabelText("Subject")).toHaveValue("MATHEMATICS");
-  });
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(screen.getByLabelText("Grade")).toHaveValue("5");
+      expect(screen.getByLabelText("Subject")).toHaveValue("MATHEMATICS");
+    },
+  );
 
   it("offers a bounded explicit retry for partial generation failure", async () => {
     const partial = paperJob({
@@ -623,24 +982,40 @@ describe("GeneratePapersWizard", () => {
     });
     const { requests } = await renderWizard({ pollJob: partial });
     await chooseGradeFiveMaths();
-    fireEvent.click(screen.getByRole("radio", { name: "Choose specific lessons" }));
-    fireEvent.change(screen.getByLabelText("First lesson"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("Last lesson"), { target: { value: "3" } });
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Choose specific lessons" }),
+    );
+    fireEvent.change(screen.getByLabelText("First lesson"), {
+      target: { value: "1" },
+    });
+    fireEvent.change(screen.getByLabelText("Last lesson"), {
+      target: { value: "3" },
+    });
     chooseSimpleSettings();
     fireEvent.click(screen.getByRole("button", { name: "Generate paper" }));
 
-    const progress = await screen.findByRole("region", { name: "Paper progress" });
+    const progress = await screen.findByRole("region", {
+      name: "Paper progress",
+    });
     expect(progress).toHaveTextContent("2 of 3 questions were prepared");
-    fireEvent.click(within(progress).getByRole("button", { name: "Retry failed questions" }));
+    fireEvent.click(
+      within(progress).getByRole("button", { name: "Retry failed questions" }),
+    );
     await within(progress).findByRole("link", { name: "Review this paper" });
 
     const retryRequest = requests.find(
       (request) =>
         request.method === "POST" &&
-        new URL(request.url).pathname.endsWith(`/paper-generation/jobs/${jobId}/retry`),
+        new URL(request.url).pathname.endsWith(
+          `/paper-generation/jobs/${jobId}/retry`,
+        ),
     );
-    expect(retryRequest?.headers.get("Idempotency-Key")).toMatch(/^teacher-paper-retry-\S+$/);
-    await expect(retryRequest?.clone().json()).resolves.toEqual({ expected_version: 5 });
+    expect(retryRequest?.headers.get("Idempotency-Key")).toMatch(
+      /^teacher-paper-retry-\S+$/,
+    );
+    await expect(retryRequest?.clone().json()).resolves.toEqual({
+      expected_version: 5,
+    });
   });
 
   it("has no automated accessibility violations in the loaded wizard", async () => {

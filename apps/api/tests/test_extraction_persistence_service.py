@@ -425,8 +425,31 @@ def test_trust_fails_closed_for_unresolved_source_risks(
     assert session.commits == 0
 
 
-def test_trust_reviewed_document_is_forward_only_and_idempotent() -> None:
+def test_clean_extraction_without_page_verification_cannot_be_trusted() -> None:
+    from exam_guru_api.documents.extraction_service import ExtractionTrustBlockedError
+
     model = document(ExtractionStatus.IN_REVIEW)
+    session = StubSession(model)
+    with pytest.raises(ExtractionTrustBlockedError, match="page_verification_required"):
+        asyncio.run(service(session).trust_document(DOCUMENT_ID, actor_id=ACTOR_ID))
+    assert model.extraction_status is ExtractionStatus.IN_REVIEW
+    assert session.commits == 0
+
+
+@pytest.mark.parametrize("historical_font_risk", [False, True])
+def test_trust_reviewed_document_is_forward_only_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    historical_font_risk: bool,
+) -> None:
+    from exam_guru_api.documents.fidelity_service import PageFidelityService
+
+    async def verified(_service: PageFidelityService, requested: UUID) -> bool:
+        assert requested == DOCUMENT_ID
+        return True
+
+    monkeypatch.setattr(PageFidelityService, "document_is_verified", verified)
+    model = document(ExtractionStatus.IN_REVIEW)
+    model.extraction_config = {"font_risk": historical_font_risk}
     session = StubSession(model)
 
     trusted = asyncio.run(service(session).trust_document(DOCUMENT_ID, actor_id=ACTOR_ID))
@@ -437,6 +460,50 @@ def test_trust_reviewed_document_is_forward_only_and_idempotent() -> None:
     assert retried.status is ExtractionStatus.TRUSTED
     assert retried.deduplicated is True
     assert session.commits == 1
+
+
+@pytest.mark.parametrize("target", ["page", "block"])
+def test_legacy_edits_cannot_bypass_a_versioned_page(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from exam_guru_api.documents.fidelity_models import PageReviewStateModel
+
+    model = document(ExtractionStatus.IN_REVIEW)
+    model.original_page_count = 1
+    session = StubSession(model)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        state="verified",
+        version=2,
+        current_candidate_id=UUID(int=991),
+    )
+    monkeypatch.setattr(session, "get", AsyncMock(side_effect=[model, state]))
+    action = (
+        service(session).correct_page(
+            DOCUMENT_ID,
+            page_number=1,
+            reviewed_text="Bypass",
+            expected_version=0,
+            actor_id=ACTOR_ID,
+        )
+        if target == "page"
+        else service(session).correct_block(
+            DOCUMENT_ID,
+            page_number=1,
+            reading_order=0,
+            reviewed_text="Bypass",
+            expected_version=0,
+            actor_id=ACTOR_ID,
+        )
+    )
+    with pytest.raises(RuntimeError, match="page_review_workspace_required"):
+        asyncio.run(action)
+    assert session.added == []
+    assert session.commits == 0
 
 
 def test_review_listing_and_error_boundaries() -> None:
@@ -600,3 +667,104 @@ def test_late_success_wins_over_a_concurrent_failure_and_duplicate_success_is_ig
     assert duplicate.deduplicated is True
     assert failed.extraction_status is ExtractionStatus.EXTRACTED
     assert final_session.commits == 0
+
+
+@pytest.mark.parametrize(
+    ("max_pages", "timeout", "with_ocr"),
+    [
+        (True, 10.0, False),
+        (0, 10.0, False),
+        (1001, 10.0, False),
+        (1.5, 10.0, False),
+        (1, True, False),
+        (1, "10", False),
+        (1, float("nan"), False),
+        (1, float("inf"), False),
+        (1, 0.0, False),
+        (1, -1.0, False),
+        (1, 301.0, False),
+        (1, 80.001, True),
+    ],
+)
+def test_extraction_ocr_budget_rejects_invalid_inputs_before_storage_or_database_access(
+    max_pages: object, timeout: object, with_ocr: bool
+) -> None:
+    from exam_guru_api.documents.ocr import OCRPort
+
+    session = StubSession(document(ExtractionStatus.UPLOADED))
+    with pytest.raises(ValueError, match="OCR batch exceeds the execution budget"):
+        DocumentExtractionService(
+            cast(AsyncSession, session),
+            cast(ObjectStorage, StaticStorage(SOURCE_DATA)),
+            NeverExtractor(),
+            ocr_max_pages=cast(int, max_pages),
+            ocr_timeout_seconds=cast(float, timeout),
+            ocr_port=cast(OCRPort, object()) if with_ocr else None,
+        )
+    assert session.executions == 0
+    assert session.commits == 0
+    assert session.added == []
+
+
+@pytest.mark.parametrize(
+    ("max_pages", "timeout", "with_ocr"), [(1, 80.0, True), (1000, 300.0, False)]
+)
+def test_extraction_ocr_budget_accepts_its_exact_boundary_and_ignores_disabled_provider_work(
+    max_pages: int, timeout: float, with_ocr: bool
+) -> None:
+    from exam_guru_api.documents.ocr import OCRPort
+
+    session = StubSession(document(ExtractionStatus.UPLOADED))
+    configured = DocumentExtractionService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StaticStorage(SOURCE_DATA)),
+        NeverExtractor(),
+        ocr_max_pages=max_pages,
+        ocr_timeout_seconds=timeout,
+        ocr_port=cast(OCRPort, object()) if with_ocr else None,
+    )
+    assert configured._ocr_max_pages == max_pages
+    assert configured._ocr_timeout_seconds == timeout
+    assert session.executions == 0
+    assert session.commits == 0
+
+
+class OnePageExtractor:
+    def extract(self, data: bytes) -> NativeExtractionResult:
+        assert data == SOURCE_DATA
+        return extraction_result()
+
+
+@pytest.mark.parametrize("original_pages", [1, 2])
+def test_extraction_cannot_replace_an_already_recorded_original_page_count(
+    original_pages: int,
+) -> None:
+    model = document(ExtractionStatus.UPLOADED)
+    model.original_page_count = original_pages
+    session = StubSession(model)
+    extraction = DocumentExtractionService(
+        cast(AsyncSession, session),
+        cast(ObjectStorage, StaticStorage(SOURCE_DATA)),
+        OnePageExtractor(),
+    )
+    if original_pages == 1:
+        result = asyncio.run(extraction.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+        assert result.status is ExtractionStatus.EXTRACTED
+        assert result.page_count == 1
+        assert session.rollbacks == 0
+        assert model.extracted_page_count == 1
+    else:
+        with pytest.raises(ExtractionSourceIntegrityError) as raised:
+            asyncio.run(extraction.extract_native(DOCUMENT_ID, actor_id=ACTOR_ID))
+        assert raised.value.document_id == DOCUMENT_ID
+        assert session.rollbacks == 1
+        assert model.extraction_status is ExtractionStatus.FAILED
+        assert model.extraction_failure_code == "source_object_integrity"
+        assert model.extracted_page_count is None
+        assert model.extracted_block_count is None
+        assert model.extracted_character_count is None
+        assert [
+            item.action for item in session.added if isinstance(item, AdminAuditEventModel)
+        ] == ["source_document.extraction_started", "source_document.extraction_failed"]
+    assert model.original_page_count == original_pages
+    assert session.commits == 2

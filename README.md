@@ -3,23 +3,29 @@
 AI-assisted Sri Lankan examination practice platform. V1 validates the **Grade 5 Scholarship examination** first while the reusable curriculum/content architecture is designed for Grades 1–13.
 
 ## System architecture
+
 The authoritative whole-system architecture is:
+
 - [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md)
 
 The product is deliberately split into:
+
 1. **Exam Guru Studio — private/local content + AI factory** — raw educational materials, OCR/extraction, PostgreSQL + pgvector, RAG, generation, validation and teacher review stay on the operator-owned local/private environment by default.
 2. **Exam Guru Student — hosted/public student platform** — receives only human-approved, validated, immutable/versioned student-ready content and stores student runtime data.
 
 Approved papers are **published/copied**, not moved, so the local Studio remains the source-of-truth. Bulk raw materials and the private RAG corpus are not required on the hosted student server.
 
 ## V1 priority order
+
 1. **Priority 1 — Admin + Content Intelligence + RAG + LLM** — must reach 100% acceptance before Priority 2 starts.
 2. **Priority 2 — Student paper experience + marking + progress analytics**.
 
 ## Development model
+
 This repository uses **continuous loop engineering + mandatory TDD/eval-driven development**, not one implementation prompt per phase.
 
 Read:
+
 - [`AGENTS.md`](AGENTS.md)
 - [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md)
 - [`docs/v1/00_V1_MASTER_PLAN.md`](docs/v1/00_V1_MASTER_PLAN.md)
@@ -31,9 +37,11 @@ Read:
 - [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md)
 
 ## Automatic repository skills
+
 Reusable agent workflows live in `.agents/skills/<skill-name>/SKILL.md`.
 
 `AGENTS.md` contains the authoritative skill registry and automatic trigger rules. Every engineering task always loads:
+
 - `loop-engineering`
 - `tdd-eval-engineering`
 
@@ -42,35 +50,45 @@ The agent must then automatically load all matching domain skills, including tea
 See [`docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md`](docs/v1/04_AGENT_SKILLS_OPERATING_MODEL.md) for compositions and maintenance rules.
 
 ## GPT-5.6 Sol operator prompts
+
 Start/resume the general V1 loop with:
+
 - [`prompts/v1/00_GPT_5_6_SOL_MASTER_EXECUTION.md`](prompts/v1/00_GPT_5_6_SOL_MASTER_EXECUTION.md)
 
 Resume an interrupted engineering session with:
+
 - [`prompts/v1/01_CONTINUE_ENGINEERING_LOOP.md`](prompts/v1/01_CONTINUE_ENGINEERING_LOOP.md)
 
 Run adversarial review/fix loops with:
+
 - [`prompts/v1/02_ADVERSARIAL_REVIEW_FIX_LOOP.md`](prompts/v1/02_ADVERSARIAL_REVIEW_FIX_LOOP.md)
 
 Before unlocking student development run:
+
 - [`prompts/v1/03_PRIORITY_1_ACCEPTANCE_AUDIT.md`](prompts/v1/03_PRIORITY_1_ACCEPTANCE_AUDIT.md)
 
 Only after P10 is proven DONE, continue with:
+
 - [`prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md`](prompts/v1/04_PRIORITY_2_UNLOCK_AND_CONTINUE.md)
 
 Use the local Grade 5 dataset steering prompt when working with operator-provided material:
+
 - [`prompts/v1/05_FULL_V1_CONTINUOUS_EXECUTION_WITH_LOCAL_DATA.md`](prompts/v1/05_FULL_V1_CONTINUOUS_EXECUTION_WITH_LOCAL_DATA.md)
 
 Use the teacher-first multi-grade product correction prompt for the current UI/domain redesign:
+
 - [`prompts/v1/06_TEACHER_FIRST_MULTI_GRADE_REDESIGN.md`](prompts/v1/06_TEACHER_FIRST_MULTI_GRADE_REDESIGN.md)
 
 All prompts re-apply the repository skill-routing rules so skill use survives session/resume boundaries.
 
 ## Current state
+
 Implementation is active across Priority 1 acceptance gates. P0 and P1 are DONE; P2 and P3 have substantial implementation evidence but remain incomplete on representative human-reviewed real-data quality gates. Later non-blocked Priority 1 engineering may continue because tracker phases are acceptance gates, not waterfall implementation locks. See [`docs/v1/PHASE_TRACKER.md`](docs/v1/PHASE_TRACKER.md) for the authoritative current status and evidence.
 
 ## Local Studio bootstrap
 
 ### Prerequisites
+
 - Docker Engine 29+ with Docker Compose 2.40+
 - `uv` 0.11.26+ for host-side backend development
 - Node.js 24.19 with npm 11.17 for host-side frontend development
@@ -87,6 +105,7 @@ docker compose up --build --wait
 ```
 
 Core services include:
+
 - teacher/admin web;
 - FastAPI API;
 - PostgreSQL + pgvector;
@@ -117,9 +136,33 @@ uv run --project apps/api python scripts/import_studio_corpus.py \
 
 This defaults to a read-only checksum/metadata preflight. To import, supply `--execute --base-url http://localhost:8000 --token-env EXAM_GURU_IMPORT_TOKEN` with an authorized token in that environment variable. The importer only calls source listing, upload and extraction APIs; respects rate limits; preserves an idempotent ledger; and never trusts, embeds, or publishes documents. Mount the corpus read-only if running the tool in a container.
 
-The local Compose runtime accepts bounded originals up to 256 MiB and enables worker-only Sinhala/English Tesseract with at most 40 routed pages and five seconds per OCR command under the existing actor deadline. Browser uploads retain their smaller UI/proxy limit; the operator importer uses the API directly for large originals. Existing environment overrides still apply and must keep upload/OCR byte bounds consistent. Explicit `EXAM_GURU_OCR_PROVIDER=` disables OCR for isolated deterministic acceptance.
+### Upload and reading contracts
 
-Imported candidate metadata is labeled **Metadata needs review**; unresolved grades appear under **Unassigned materials**. Original PDFs remain accessible, and Materials text review uses authenticated bounded page-image previews. Metadata confirmation requires an explicit approved curriculum assignment and does not trust extraction. Pending OCR, font/glyph warnings and unsafe extracted text remain blocked; there is no automatic legacy-font conversion or bulk trust. Transient OCR failures retain the supported failed-to-retry lifecycle. Finalized pending-page and font-risk adjudication still require an explicit reviewed correction/resolution workflow rather than destructive re-extraction.
+The legacy byte API and the current Materials workflow have **separate limits**; increasing a legacy upload setting is not the large-file solution.
+
+| Path                                                                  | Current contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Legacy `POST /api/v1/admin/source-documents` and `/extract`           | The importer above still uses these endpoints. Byte uploads default to 25 MiB in backend settings, with a 256 MiB maximum; Compose defaults to 256 MiB; the legacy browser multipart proxy remains bounded to 26 MiB including form overhead. Legacy Compose OCR allows 40 routed pages and five seconds per command under its actor budget. `EXAM_GURU_OCR_*` settings, including an empty provider to disable legacy OCR, apply to this path.                                                                                                    |
+| Materials resumable multipart upload (`/api/v1/admin/source-uploads`) | Uses 4 MiB raw octet-stream parts (shorter final part), not a whole-PDF browser buffer. An owner-scoped `request_id` recovers a lost create response; replay must match the original metadata. Resuming with a reselected file verifies the complete saved prefix against paginated SHA-256 chunk receipts before appending. Server finalization rechecks receipts, total size and content hash, deduplicates the immutable original and queues reading.                                                                                           |
+| `SourceReadJob` (`/api/v1/admin/source-documents/{id}/read`)          | File-backed native/OCR reading commits per-page candidates and progress in batches of at most eight pages, then resumes through durable jobs/lease recovery. There is no 1,000-page document cap or 40-page OCR cap on this path. Each job snapshots `PageReadingConfiguration`; its current default is 30 seconds per Tesseract command, 300 dpi, 40 million pixels and 8 MiB command output, within a 300-second execution budget (360-second actor limit, 600-second lease). These are resource budgets, not accuracy or completion guarantees. |
+
+Resumable uploads currently require local POSIX storage; S3/MinIO streaming/resumable support fails explicitly rather than falling back to whole-file reads. Defaults reserve **8 GiB per owner, 32 GiB globally and eight active sessions per owner** through `EXAM_GURU_SOURCE_UPLOAD_MAX_OWNER_STAGED_BYTES`, `EXAM_GURU_SOURCE_UPLOAD_MAX_STAGED_BYTES` and `EXAM_GURU_SOURCE_UPLOAD_MAX_ACTIVE_SESSIONS_PER_OWNER`. These are **operational staging quotas**, not PDF-format/product limits. Retained completed/failed sessions still consume the byte reservation; clearing a browser recovery link does not free server staging. There is no automatic staging purge. Capacity, integer, raster, text and runtime bounds still apply.
+
+The controlled model-comparison benchmark uses a **60-second command budget**, separate from both the legacy five-second Compose profile and the page-reader's 30-second default. Do not infer runtime defaults or Sinhala accuracy from that benchmark.
+
+### Review, provenance and readiness
+
+Imported candidate metadata is labeled **Metadata needs review**; unresolved grades appear under **Unassigned materials**. Explicit metadata confirmation requires a current, evidence-backed admission of the active curriculum catalogue. Catalogue/metadata admission is independent of page-text confirmation and benchmark ground truth; neither grants the other.
+
+Materials uses `SOURCE_READ`-authorized original-PDF streaming (GET/HEAD and a validated single byte Range) and page-image comparison. Workers retain native-comparison and exact OCR-input images under durable `STORAGE_ROOT/fidelity-page-images`, with schema-versioned source/page/rasterizer/hash/size provenance. Reads verify the artifact; a declared image that is lost or corrupt fails closed, not as a cache miss. Bounded original rendering is only a fallback when no durable artifact was declared. Originals, upload staging and image artifacts must survive rebuilds and be covered by backup inventory.
+
+Per-page candidates preserve raw UTF-8 evidence, a separate NFC text view, engine/configuration versions and append-only review history. **No NFKC source rewrite, automatic legacy-font conversion, LLM source authorship or bulk trust is permitted.** Corrections create unverified child candidates; confirmation requires explicit comparison with the original and the exact current candidate/version. Rereads preserve prior candidates and human edits. New knowledge/history, embeddings, retrieval contexts, generation, validation, review approval and publication require current verified page lineage, an exact nonblank NFC source span, admitted metadata/scope and the applicable record/taxonomy review gates. Old published versions remain immutable history; a legacy `trusted` flag does not authorize new work.
+
+The 6 September 2026 reading checkpoint has **all 587 latest whole-document `SourceReadJob`s completed** and all **5,234 current page-review states `needs_review`**: zero failed, verified or excluded pages and zero ground truth. The 116 image-failure whole-document jobs were retried through the API after renderer diagnostic/slot-contention fixes, without larger budgets; old failed attempts remain history. Normal Materials contains the 587 real originals, still active but metadata-required, untrusted and unindexed. Inventory/footer counts are not educational authority.
+
+Forward migration to `0038_upload_request_identity` and audited quarantine of 72 exactly proven E2E sources preserve the Studio's 659 source rows and downstream history. Final original-corpus proof retains all 711 files/696 PDF paths with unchanged SHA-256, size, nanosecond mtime/ctime, inode, device and mode; private evidence is `.exam-guru-evidence/studio-rollout/final-original-corpus-proof/original-integrity.json`. This is processing/integrity evidence, not Sinhala accuracy or final release acceptance. Generate Papers now derives its choices from current admitted scope and requires a source-scope fingerprint; the live empty-admission state shows no fixture choices. Exact final verification and CI outcomes are recorded in the phase tracker. See [known limitations](docs/v1/06_KNOWN_LIMITATIONS.md) and the [NOT READY teacher-pilot verdict](docs/v1/07_GRADE5_TEACHER_PILOT_READINESS.md).
+
+The UI self-hosts Noto Sans Sinhala/Tamil via Fontsource packages `5.3.0`; their licenses ship in `apps/web/public/licenses/`. This identifies the installed packages, not an independently verified official Noto `v3.000` binary. Display fonts do not repair source encoding.
 
 ## Backend development
 
@@ -128,14 +171,20 @@ uv sync --project apps/api --frozen
 uv run --project apps/api ruff check apps/api
 uv run --project apps/api ruff format --check apps/api
 uv run --directory apps/api mypy
-uv run --project apps/api pytest apps/api/tests --cov=exam_guru_api --cov-report=term-missing
+uv run --directory apps/api pytest tests -m 'not backup_restore' --cov=exam_guru_api --cov-report=term-missing
+uv run --directory apps/api pytest tests/integration/test_backup_restore_postgres.py -m backup_restore
 ```
 
-The integration suite uses real disposable PostgreSQL/pgvector and Valkey infrastructure and exercises the configured storage provider/integration adapters as required by the active implementation.
+The integration suite uses real disposable PostgreSQL/pgvector and Valkey infrastructure and exercises the configured storage provider/integration adapters as required by the active implementation. The backup/restore test restores synthetic data into a disposable database, never the persistent Studio.
+
+Source-fidelity regression anchors include [resumable upload/recovery](apps/api/tests/integration/test_resumable_uploads_postgres.py), [page-reading jobs](apps/api/tests/integration/test_page_reading_postgres.py), [image integrity/rendering](apps/api/tests/test_page_images.py), [catalogue admission](apps/api/tests/integration/test_catalogue_admission_postgres.py) and [verified downstream lineage](apps/api/tests/integration/test_verified_knowledge_lineage_postgres.py). These prove contracts, not Sinhala educational accuracy. Record current gate results and explicit skips in the phase tracker; do not reuse an earlier run's counts after changes.
 
 ## Frontend development
 
+Select Node 24.19.0 first (the installed workstation path is below; see `AGENTS.md` for browser-cache requirements).
+
 ```bash
+export PATH="/home/sameen/.nvm/versions/node/v24.19.0/bin:$PATH"
 npm ci
 npm run lint --prefix apps/web
 npm run typecheck
@@ -146,7 +195,16 @@ npm run test:e2e:isolated
 
 Browser acceptance always starts a throwaway Compose project on non-Studio ports, uses disposable database, Valkey, and source-storage state, and removes that state after the run. Direct `npm run test:e2e --prefix apps/web` invocation fails closed so acceptance fixtures cannot be written into the long-lived local Studio.
 
-If the host Node version is older than Node 24, use the Docker runtime instead of relaxing the pinned engine requirement.
+If the pinned host runtime is unavailable, use the Docker runtime instead of relaxing the engine requirement. For interactive runtime inspection use Chrome DevTools MCP, not an IDE/browser preview. Upload and review browser regressions are in `apps/web/e2e/material-upload.spec.ts` and `apps/web/e2e/source-page-review.spec.ts`; never run fixture writes against the long-lived Studio.
+
+## Operational verification
+
+```bash
+docker compose config --quiet
+REQUIRE_SHELLCHECK=1 uv run --no-project --with shellcheck-py==0.11.0.1 -- bash scripts/ops/check_backup_restore.sh
+```
+
+The second command supplies ShellCheck when it is absent on the host; a syntax-only fallback is not the full static gate. PostgreSQL backup/restore scripts cover the database, not original PDFs, retained `.source-uploads` staging or `fidelity-page-images`. Coordinate their copy with the database and restore only into a new empty isolated database/filesystem with correct private ownership, following the [local Studio recovery runbook](docs/ops/BACKUP_RESTORE.md) and [architecture backup contract](docs/SYSTEM_ARCHITECTURE.md#16-backup-and-disaster-recovery). Use known local configuration through a secure helper and protected temporary `PGPASSFILE`, never credential discovery, password arguments or secret logging. Local backup verification and the disposable restore test do not prove off-host recovery or authorize an in-place restore.
 
 ## Generated API client
 
@@ -160,9 +218,11 @@ npm run typecheck --prefix packages/api-client
 CI regenerates both artifacts and fails if the committed output differs.
 
 ## Configuration and observability
+
 Backend settings use the `EXAM_GURU_` environment prefix. Secrets must remain outside Git and be redacted from logs/evidence. Local Studio production-hardening rules must respect the private/local network and durable-host-storage boundaries in `docs/SYSTEM_ARCHITECTURE.md`.
 
 Optional observability variables include:
+
 - `EXAM_GURU_SENTRY_DSN`
 - `EXAM_GURU_OTEL_EXPORTER_OTLP_ENDPOINT`
 - `EXAM_GURU_OTEL_SERVICE_NAME`

@@ -2,9 +2,10 @@ import asyncio
 import hashlib
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from threading import Barrier
-from typing import cast
+from typing import BinaryIO, cast
 from uuid import UUID
 
 import pymupdf
@@ -80,6 +81,19 @@ class MemoryObjectStorage:
     def get_bytes(self, key: str) -> bytes:
         self.reads += 1
         return self.objects[key]
+
+    def open_source(self, key: str) -> AbstractContextManager[BinaryIO]:
+        raise AssertionError("legacy extraction fixture must not use streaming reads")
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject:
+        raise AssertionError("legacy extraction fixture must not use streaming writes")
 
     def list_source_objects(
         self,
@@ -405,6 +419,54 @@ def test_native_extraction_persists_ordered_provenance_metrics_and_is_idempotent
                     page_number=1,
                     reviewed_text="Stale overwrite",
                     expected_version=0,
+                    actor_id=REVIEW_ACTOR_ID,
+                )
+            with pytest.raises(ExtractionTrustBlockedError, match="page_verification_required"):
+                await service.trust_document(document_id, actor_id=REVIEW_ACTOR_ID)
+            from exam_guru_api.documents.fidelity_service import PageFidelityService
+
+            fidelity = PageFidelityService(session)
+            review_pages = list(
+                await session.scalars(
+                    select(SourcePageModel)
+                    .where(SourcePageModel.source_document_id == document_id)
+                    .order_by(SourcePageModel.page_number)
+                )
+            )
+            for review_page in review_pages:
+                candidate = await fidelity.record_candidate(
+                    document_id,
+                    review_page.page_number,
+                    raw_text=review_page.reviewed_text or review_page.raw_text,
+                    method="human" if review_page.reviewed_text else "native",
+                    actor_id=REVIEW_ACTOR_ID,
+                    provenance={"engine": "synthetic-fixture", "version": "1", "languages": ["en"]},
+                )
+                await fidelity.confirm_page(
+                    document_id,
+                    review_page.page_number,
+                    candidate_id=candidate.current_candidate_id,
+                    expected_version=candidate.version,
+                    actor_id=REVIEW_ACTOR_ID,
+                    reason="Explicit synthetic fixture comparison, not real corpus approval",
+                )
+            from exam_guru_api.documents.extraction_service import VersionedPageReviewRequiredError
+
+            with pytest.raises(VersionedPageReviewRequiredError):
+                await service.correct_page(
+                    document_id,
+                    page_number=1,
+                    reviewed_text="Bypass the verified candidate",
+                    expected_version=1,
+                    actor_id=REVIEW_ACTOR_ID,
+                )
+            with pytest.raises(VersionedPageReviewRequiredError):
+                await service.correct_block(
+                    document_id,
+                    page_number=1,
+                    reading_order=0,
+                    reviewed_text="Bypass the verified candidate",
+                    expected_version=1,
                     actor_id=REVIEW_ACTOR_ID,
                 )
             trusted = await service.trust_document(document_id, actor_id=REVIEW_ACTOR_ID)

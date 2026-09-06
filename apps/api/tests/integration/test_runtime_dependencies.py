@@ -15,6 +15,11 @@ from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import EXTRACTION_QUEUE_NAME, recover_extraction_jobs
+from exam_guru_api.documents.page_reading_jobs import (
+    SOURCE_READ_QUEUE_NAME,
+    recover_source_read_jobs,
+)
+from exam_guru_api.documents.upload_jobs import SOURCE_UPLOAD_QUEUE_NAME, recover_source_upload_jobs
 from exam_guru_api.generation.jobs import GENERATION_QUEUE_NAME, recover_generation_jobs
 from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
@@ -147,7 +152,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0032_source_intake_metadata"
+    assert migration_revision == "0038_upload_request_identity"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -912,7 +917,7 @@ def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
     }
     assert indexes == {"ix_source_documents_extraction_outbox"}
     assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
-    assert revision == "0032_source_intake_metadata"
+    assert revision == "0038_upload_request_identity"
 
     command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
 
@@ -1022,6 +1027,7 @@ def test_generation_migration_has_durable_state_and_append_only_attempt_triggers
     } <= attempt_columns
     assert {"generation_run_id", "queue_message_id", "status", "version"} <= job_columns
     assert triggers == {
+        "aa_generation_verified_lineage",
         "enforce_generation_run_insert_trigger",
         "enforce_generation_run_retry_lineage_insert_trigger",
         "enforce_generation_run_update_trigger",
@@ -1068,12 +1074,14 @@ def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
         EMBEDDING_QUEUE_NAME: recover_embedding_jobs.actor_name,
         RECONCILIATION_QUEUE_NAME: reconcile_source_objects.actor_name,
         PAPER_GENERATION_QUEUE_NAME: recover_teacher_papers.actor_name,
+        SOURCE_READ_QUEUE_NAME: recover_source_read_jobs.actor_name,
+        SOURCE_UPLOAD_QUEUE_NAME: recover_source_upload_jobs.actor_name,
     }
 
     try:
         result = enqueue_recovery_jobs()
 
-        assert result.enqueued == 5
+        assert result.enqueued == 7
         assert result.failures == 0
         assert {queue: broker.do_qsize(queue) for queue in expected} == dict.fromkeys(
             expected,

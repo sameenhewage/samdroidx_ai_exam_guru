@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -630,13 +631,13 @@ def test_material_listing_summary_statuses_and_pagination_are_bounded() -> None:
     storage = StubStorage()
     now = datetime.now(UTC)
     statuses = (
-        (ExtractionStatus.TRUSTED, True, MaterialStatus.READY_FOR_AI),
-        (ExtractionStatus.IN_REVIEW, True, MaterialStatus.NEEDS_REVIEW),
+        (ExtractionStatus.UPLOADED, True, MaterialStatus.READY_FOR_AI),
+        (ExtractionStatus.TRUSTED, True, MaterialStatus.NEEDS_REVIEW),
         (ExtractionStatus.UPLOADED, True, MaterialStatus.PROCESSING),
         (ExtractionStatus.TRUSTED, False, MaterialStatus.REMOVED),
     )
     rows: list[object] = []
-    for index, (extraction_status, active_for_ai, _) in enumerate(statuses, start=1):
+    for index, (extraction_status, active_for_ai, sql_status) in enumerate(statuses, start=1):
         document = existing_document()
         document.id = UUID(int=400 + index)
         document.original_filename = f"material-{index}.pdf"
@@ -653,6 +654,7 @@ def test_material_listing_summary_statuses_and_pagination_are_bounded() -> None:
                 "Grade 7 Mathematics",
                 "Numbers",
                 "Whole numbers",
+                sql_status.value,
             )
         )
     session.execute_results = [rows, [(7, 4, 1, 1, 1, 1, 1)]]
@@ -846,10 +848,12 @@ def test_metadata_confirmation_requires_explicit_valid_curriculum_and_preserves_
 
 @pytest.mark.parametrize(("source_year", "intake_year"), [(None, None), (None, 2024), (2023, 2024)])
 def test_confirmation_validates_active_scope_and_requires_review_again_after_reassignment(
-    source_year: int | None, intake_year: int | None
+    source_year: int | None, intake_year: int | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from exam_guru_api.curriculum.models import ExamConfigurationModel, MediumModel
 
+    admission = AsyncMock(return_value=None)
+    monkeypatch.setattr("exam_guru_api.documents.service.require_admitted_curriculum", admission)
     session = MaterialSession()
     material_service = SourceDocumentService(
         cast(AsyncSession, session),
@@ -944,6 +948,8 @@ def test_confirmation_validates_active_scope_and_requires_review_again_after_rea
     assert audits[0].payload["previous_year"] == source_year
     assert audits[0].payload["year"] == expected_year
     assert audits[1].action == "source_document.scope_corrected"
+    assert admission.await_count == 2
+    admission.assert_awaited_with(session, curriculum.id)
 
 
 @pytest.mark.parametrize("metadata_review_required", [True, False])
@@ -963,7 +969,9 @@ def test_assigned_material_year_keeps_intake_fallback_without_overwriting_source
     document.intake_metadata = {"year": intake_year}
     document.year = source_year
     session = MaterialSession()
-    session.execute_results = [[(document, 7, UUID(int=500), "Maths", "English", "V1", None, None)]]
+    session.execute_results = [
+        [(document, 7, UUID(int=500), "Maths", "English", "V1", None, None, "needs_review")]
+    ]
     material_service = SourceDocumentService(
         cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
     )
@@ -1003,3 +1011,111 @@ def test_material_scope_request_shape_rejects_forged_lesson_relationships() -> N
             lesson_id=UUID(int=2),
             expected_version=0,
         )
+
+
+@pytest.mark.parametrize(
+    ("original_pages", "legacy_pages", "expected"), [(12, 3, 12), (None, 3, 3), (None, None, None)]
+)
+def test_material_page_count_prefers_original_identity(
+    original_pages: int | None, legacy_pages: int | None, expected: int | None
+) -> None:
+    document = existing_document()
+    document.original_page_count = original_pages
+    document.extracted_page_count = legacy_pages
+    session = MaterialSession()
+    session.execute_results = [
+        [(document, 7, UUID(int=500), "Maths", "English", "V1", None, None, "needs_review")]
+    ]
+    result = asyncio.run(
+        SourceDocumentService(
+            cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+        ).list_materials()
+    )
+    assert result[0].page_count == expected
+    assert session.commits == 0
+
+
+def test_material_rows_filters_and_summary_use_read_only_fidelity_and_admission_sql() -> None:
+    session = MaterialSession()
+    material_service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    for status in (None, *MaterialStatus):
+        session.execute_results.append([])
+        asyncio.run(material_service.list_materials(status=status))
+    session.execute_results.append([])
+    asyncio.run(material_service.grade_summary())
+    assert len(session.executed) == 6
+    for query in session.executed:
+        compiled = str(cast(Any, query).compile(compile_kwargs={"literal_binds": True}))
+        assert "source_page_review_states" in compiled
+        assert "source_read_jobs" in compiled
+        assert "catalogue_curriculum_is_admitted" in compiled
+        assert "source_documents.original_page_count" in compiled
+        assert "source_documents.extraction_status = 'trusted'" not in compiled
+        assert "FOR UPDATE" not in compiled
+        assert "FOR SHARE" not in compiled
+        assert cast(Any, query).get_execution_options()["autoflush"] is False
+    assert session.commits == 0
+    assert not session.added
+
+
+@pytest.mark.parametrize("scope_state", ["unassigned", "assigned", "unavailable_join"])
+def test_inventory_fallback_fields_never_promote_candidate_labels_to_assigned_scope(
+    scope_state: str,
+) -> None:
+    document = existing_document()
+    document.curriculum_version_id = None if scope_state == "unassigned" else UUID(int=1200)
+    document.metadata_review_required = True
+    document.intake_metadata = {
+        "candidate_grade": 9,
+        "subject_label": "Candidate science",
+        "medium_label": "Candidate English",
+        "curriculum_label": "Candidate curriculum",
+        "year": 2024,
+        "warnings": ["Scope has not been confirmed"],
+    }
+    document.extracted_page_count = 2
+    assigned = scope_state == "assigned"
+    session = MaterialSession()
+    session.execute_results = [
+        [
+            (
+                document,
+                7 if assigned else None,
+                UUID(int=1201) if assigned else None,
+                "Mathematics" if assigned else None,
+                "Sinhala" if assigned else None,
+                "Reviewed curriculum" if assigned else None,
+                None,
+                None,
+                "needs_review",
+            )
+        ]
+    ]
+    result = asyncio.run(
+        SourceDocumentService(
+            cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+        ).list_materials(unassigned_only=scope_state == "unassigned")
+    )[0]
+    expected = {
+        "unassigned": (9, None, "Candidate science", "Candidate English", "Candidate curriculum"),
+        "assigned": (7, UUID(int=1201), "Mathematics", "Sinhala", "Reviewed curriculum"),
+        "unavailable_join": (None, None, None, None, None),
+    }[scope_state]
+    assert (
+        result.grade,
+        result.subject_id,
+        result.subject,
+        result.medium,
+        result.curriculum,
+    ) == expected
+    assert result.year == 2024
+    assert result.page_count == 2
+    assert result.status is MaterialStatus.NEEDS_REVIEW
+    assert result.metadata_review_required
+    assert document.year is None
+    assert document.metadata_scope_version == 0
+    assert document.intake_metadata["candidate_grade"] == 9
+    assert session.commits == 0
+    assert not session.added

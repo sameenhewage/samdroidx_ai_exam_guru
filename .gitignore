@@ -19,5 +19,6 @@ dist/
 .DS_Store
 /.exam-guru-data/
 /.exam-guru-pilot-data/
+/.exam-guru-evidence/
 /RAG DATA
 /graphify-out/

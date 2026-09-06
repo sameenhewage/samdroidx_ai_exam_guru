@@ -1,7 +1,9 @@
 import asyncio
 import json
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from datetime import datetime
+from typing import BinaryIO
 from uuid import UUID, uuid4
 
 import pytest
@@ -55,6 +57,19 @@ class RecordingObjectStorage:
 
     def get_bytes(self, key: str) -> bytes:
         raise AssertionError(key)
+
+    def open_source(self, key: str) -> AbstractContextManager[BinaryIO]:
+        raise AssertionError("legacy upload fixture must not use streaming reads")
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject:
+        raise AssertionError("legacy upload fixture must not use streaming writes")
 
     def list_source_objects(
         self,
@@ -686,6 +701,30 @@ def test_unassigned_intake_display_confirmation_and_database_guards(
         assert [item["id"] for item in pending_items] == [document_id]
         assert pending_items[0]["year"] == 2024
         asyncio.run(database_guards(version=1))
+        unapproved = client.patch(
+            scope_url,
+            json={**request, "expected_version": 1, "confirm_intake_metadata": True},
+            headers=headers,
+        )
+        assert unapproved.status_code == 409
+        assert unapproved.json()["detail"]["code"] == "curriculum_not_admitted"
+        admission_url = f"/api/v1/admin/curriculum-versions/{curriculum['id']}/admission"
+        admission = client.get(admission_url, headers=headers).json()
+        proof = "Disposable synthetic catalogue mechanics, not real educational approval"
+        approved = client.post(
+            admission_url,
+            json={
+                "state": "approved",
+                "expected_version": admission["version"],
+                "expected_scope_fingerprint": admission["scope_fingerprint"],
+                "educational_approval": True,
+                "reason": proof,
+                "source_reference": proof,
+                "evidence": [proof],
+            },
+            headers=headers,
+        )
+        assert approved.status_code == 201, approved.text
         confirmed = client.patch(
             scope_url,
             json={

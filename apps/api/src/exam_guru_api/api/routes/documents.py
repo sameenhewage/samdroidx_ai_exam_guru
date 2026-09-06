@@ -34,6 +34,7 @@ from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.auth.rate_limits import RateLimitScope
 from exam_guru_api.core.config import Settings
+from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
 from exam_guru_api.curriculum.models import CurriculumVersionModel
 from exam_guru_api.documents.domain import SourceDocumentType, UploadValidationError
 from exam_guru_api.documents.extraction import (
@@ -48,6 +49,7 @@ from exam_guru_api.documents.extraction_service import (
     ExtractionTrustBlockedError,
     ReviewNotActiveError,
     SourcePageNotFoundError,
+    VersionedPageReviewRequiredError,
 )
 from exam_guru_api.documents.jobs import ExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
@@ -286,6 +288,7 @@ async def correct_material_scope(
         )
     except (
         ConcurrentMaterialScopeVersionError,
+        CurriculumNotAdmittedError,
         MaterialScopeImmutableError,
         SourceCurriculumInactiveError,
         SourceCurriculumNotFoundError,
@@ -616,6 +619,7 @@ async def correct_source_document_page(
         ConcurrentReviewVersionError,
         ExtractionDocumentNotFoundError,
         ReviewNotActiveError,
+        VersionedPageReviewRequiredError,
         SourcePageNotFoundError,
     ) as error:
         raise _extraction_http_exception(error) from error
@@ -653,6 +657,7 @@ async def correct_source_document_block(
         ExtractedBlockNotFoundError,
         ExtractionDocumentNotFoundError,
         ReviewNotActiveError,
+        VersionedPageReviewRequiredError,
     ) as error:
         raise _extraction_http_exception(error) from error
     return ExtractedBlockResponse.model_validate(block)
@@ -703,6 +708,8 @@ def _extraction_service(
 
 
 def _extraction_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, VersionedPageReviewRequiredError):
+        return HTTPException(409, detail={"code": "page_review_workspace_required"})
     if isinstance(error, ExtractionTrustBlockedError):
         return HTTPException(
             status_code=409,
@@ -857,6 +864,8 @@ async def _source_document_response(
 
 
 def _material_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, CurriculumNotAdmittedError):
+        return HTTPException(status_code=409, detail={"code": "curriculum_not_admitted"})
     if isinstance(error, SourceDocumentNotFoundError):
         return HTTPException(status_code=404, detail={"code": "source_document_not_found"})
     if isinstance(error, SourceCurriculumNotFoundError | SourceLearningScopeNotFoundError):

@@ -1,37 +1,20 @@
 import type { components } from "@exam-guru/api-client";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 import { openAdvancedArea } from "./helpers/advanced-navigation";
-
-function syntheticPdf(marker: string): Buffer {
-  const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
-  const objects = [
-    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n",
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
-    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-  ];
-  let body = "%PDF-1.4\n";
-  const offsets = objects.map((object) => {
-    const offset = Buffer.byteLength(body, "ascii");
-    body += object;
-    return offset;
-  });
-  const xrefOffset = Buffer.byteLength(body, "ascii");
-  const xref = [
-    `xref\n0 ${objects.length + 1}\n`,
-    "0000000000 65535 f \n",
-    ...offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`),
-  ].join("");
-  const trailer = `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return Buffer.from(body + xref + trailer, "ascii");
-}
-
-type Exam = components["schemas"]["ExamConfigurationResponse"];
-type Medium = components["schemas"]["MediumResponse"];
-type Subject = components["schemas"]["SubjectResponse"];
-type Curriculum = components["schemas"]["CurriculumVersionResponse"];
+import {
+  assertVerifiedRecord,
+  confirmSyntheticPage,
+  readSyntheticSource,
+  seedAdmittedScope,
+  syntheticTextPdf,
+  SYNTHETIC_WORKFLOW_EVIDENCE,
+} from "./helpers/teacher-content-studio";
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
@@ -73,7 +56,6 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
   const unique = Date.now().toString().slice(-9);
-  const curriculumTitle = `Knowledge curriculum ${unique}`;
   const sourceFilename = `knowledge-source-${unique}.pdf`;
   const questionNumber = `Q-${unique}`;
   const boundary = `Geometry boundary ${unique}`;
@@ -93,26 +75,7 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   const paperCode = `P-${unique}`;
 
   await login(page, "admin");
-  const exam = await postCreated<Exam>(page.request, "/api/v1/admin/exam-configurations", {
-    code: `E${unique}`,
-    grade: 5,
-    name: `Knowledge exam ${unique}`,
-  });
-  const medium = await postCreated<Medium>(page.request, "/api/v1/admin/media", {
-    code: `m${unique}`,
-    name: `Knowledge medium ${unique}`,
-  });
-  const subject = await postCreated<Subject>(page.request, "/api/v1/admin/subjects", {
-    code: `S${unique}`,
-    name: `Knowledge subject ${unique}`,
-  } satisfies components["schemas"]["SubjectCreate"]);
-  const curriculum = await postCreated<Curriculum>(page.request, "/api/v1/admin/curriculum-versions", {
-    code: `CV-${unique}`,
-    exam_configuration_id: exam.id,
-    medium_id: medium.id,
-    subject_id: subject.id,
-    title: curriculumTitle,
-  } satisfies components["schemas"]["CurriculumVersionCreate"]);
+  const { curriculum, subject } = await seedAdmittedScope(page.request);
   const competency = await postCreated<TaxonomyNode>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/taxonomy/nodes`,
@@ -144,36 +107,71 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   );
   expect(skillReview.ok()).toBe(true);
 
-  const pdf = syntheticPdf(untrustedSourceText);
+  const fixture = syntheticTextPdf([untrustedSourceText]);
   const upload = await page.request.post("/api/v1/admin/source-documents", {
     multipart: {
       curriculum_version_id: curriculum.id,
       document_type: "past_paper",
-      file: { buffer: pdf, mimeType: "application/pdf", name: sourceFilename },
+      intake_metadata: JSON.stringify({
+        candidate_grade: 5,
+        medium_label: "English",
+        subject_label: "Mathematics",
+        year,
+        evidence: [SYNTHETIC_WORKFLOW_EVIDENCE],
+      } satisfies components["schemas"]["SourceIntakeMetadata"]),
+      file: {
+        buffer: fixture.bytes,
+        mimeType: "application/pdf",
+        name: sourceFilename,
+      },
       paper_code: paperCode,
       year: String(year),
     },
   });
   expect(upload.status()).toBe(201);
   const source = (await upload.json()) as SourceDocument;
-  const queued = await page.request.post(`/api/v1/admin/source-documents/${source.id}/extract`);
+  const queued = await page.request.post(
+    `/api/v1/admin/source-documents/${source.id}/extract`,
+  );
   expect(queued.status()).toBe(202);
   await expect
     .poll(
       async () => {
-        const response = await page.request.get("/api/v1/admin/source-documents");
+        const response = await page.request.get(
+          "/api/v1/admin/source-documents",
+        );
         const documents = (await response.json()) as SourceDocument[];
-        return documents.find((document) => document.id === source.id)?.extraction_status;
+        return documents.find((document) => document.id === source.id)
+          ?.extraction_status;
       },
       { timeout: 30_000 },
     )
     .toBe("extracted");
-  expect((await page.request.post(`/api/v1/admin/source-documents/${source.id}/review`)).ok()).toBe(
-    true,
+  expect(
+    (
+      await page.request.post(
+        `/api/v1/admin/source-documents/${source.id}/review`,
+      )
+    ).ok(),
+  ).toBe(true);
+  const candidate = await readSyntheticSource(
+    page.request,
+    source,
+    fixture.text,
   );
-  expect((await page.request.post(`/api/v1/admin/source-documents/${source.id}/trust`)).ok()).toBe(
-    true,
+  const verifiedPage = await confirmSyntheticPage(
+    page.request,
+    source.id,
+    candidate,
+    fixture.text,
   );
+  expect(
+    (
+      await page.request.post(
+        `/api/v1/admin/source-documents/${source.id}/trust`,
+      )
+    ).ok(),
+  ).toBe(true);
   const pagesResponse = await page.request.get(
     `/api/v1/admin/source-documents/${source.id}/pages`,
   );
@@ -186,6 +184,7 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   expect(blocksResponse.ok()).toBe(true);
   const [sourceBlock] = (await blocksResponse.json()) as ExtractedBlock[];
   if (!sourceBlock) throw new Error("Extracted source block was not created");
+  expect(fixture.text).toContain(sourceBlock.raw_text);
   const forbiddenDraft = await postCreated<KnowledgeChunk>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks`,
@@ -201,7 +200,9 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   );
 
   await page.goto("/admin/knowledge");
-  await expect(page.getByRole("heading", { name: "Knowledge Studio" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Knowledge Studio" }),
+  ).toBeVisible();
   await page.getByLabel("Active curriculum").selectOption(curriculum.id);
   await page.getByLabel("Trusted source document").selectOption(source.id);
   await page.getByLabel("Source page").selectOption("1");
@@ -225,37 +226,74 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   const questionCreatedResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      response.url().endsWith(`/curricula/${curriculum.id}/knowledge/questions`),
+      response
+        .url()
+        .endsWith(`/curricula/${curriculum.id}/knowledge/questions`),
   );
-  await page.getByRole("button", { name: "Import historical question" }).click();
-  const importedQuestion = (await (await questionCreatedResponse).json()) as HistoricalQuestion;
+  await page
+    .getByRole("button", { name: "Import historical question" })
+    .click();
+  const importedQuestionResponse = await questionCreatedResponse;
+  expect(importedQuestionResponse.status()).toBe(201);
+  const importedQuestion =
+    (await importedQuestionResponse.json()) as HistoricalQuestion;
+  await assertVerifiedRecord(
+    page.request,
+    "historical_question",
+    importedQuestion,
+    verifiedPage,
+    fixture.text,
+  );
   await expect(page.getByText("Historical question imported.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: `${paperCode} / Question ${questionNumber}` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: `${paperCode} / Question ${questionNumber}`,
+    }),
+  ).toBeVisible();
 
   await page.getByRole("tab", { name: /Knowledge chunks/ }).click();
   await page.getByLabel("Trusted source document").selectOption(source.id);
   await page.getByLabel("Source page").selectOption("1");
   await page.getByLabel("Source block").selectOption({ index: 1 });
   await page.getByLabel("Educational boundary").fill(boundary);
-  await page.getByRole("spinbutton", { exact: true, name: "Sequence" }).fill("1");
+  await page
+    .getByRole("spinbutton", { exact: true, name: "Sequence" })
+    .fill("1");
   const chunkCreatedResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       response.url().endsWith(`/curricula/${curriculum.id}/knowledge/chunks`),
   );
   await page.getByRole("button", { name: "Import knowledge chunk" }).click();
-  const importedChunk = (await (await chunkCreatedResponse).json()) as KnowledgeChunk;
+  const importedChunkResponse = await chunkCreatedResponse;
+  expect(importedChunkResponse.status()).toBe(201);
+  const importedChunk = (await importedChunkResponse.json()) as KnowledgeChunk;
+  for (const record of [forbiddenDraft, importedChunk]) {
+    await assertVerifiedRecord(
+      page.request,
+      "knowledge_chunk",
+      record,
+      verifiedPage,
+      fixture.text,
+    );
+  }
   await expect(page.getByText("Knowledge chunk imported.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: `${boundary} / Sequence 1` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: `${boundary} / Sequence 1` }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "reviewer");
   await page.goto("/admin/knowledge");
   await page.getByLabel("Active curriculum").selectOption(curriculum.id);
   await expect(page.getByText("Import permission required")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import historical question" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Import historical question" }),
+  ).toHaveCount(0);
   await expect(page.getByText("Reviewer read-only access")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Queue selected records" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Queue selected records" }),
+  ).toHaveCount(0);
   const deniedImport = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions`,
     {
@@ -286,16 +324,28 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
     name: "Historical question metadata",
   });
   await expect(metadataPanel).toBeVisible();
-  await expect(metadataPanel.getByText(mediaReference, { exact: true })).toBeVisible();
+  await expect(
+    metadataPanel.getByText(mediaReference, { exact: true }),
+  ).toBeVisible();
   await expect(metadataPanel.getByText(optionA, { exact: true })).toBeVisible();
   await expect(metadataPanel.getByText(optionB, { exact: true })).toBeVisible();
   await expect(metadataPanel.getByText(answer, { exact: true })).toBeVisible();
-  await expect(metadataPanel.getByText(markingGuidance, { exact: true })).toBeVisible();
-  await expect(metadataPanel.getByText(archetype, { exact: true })).toBeVisible();
-  await expect(metadataPanel.getByText("medium", { exact: true })).toBeVisible();
+  await expect(
+    metadataPanel.getByText(markingGuidance, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    metadataPanel.getByText(archetype, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    metadataPanel.getByText("medium", { exact: true }),
+  ).toBeVisible();
   await expect(metadataPanel.getByText("0.91", { exact: true })).toBeVisible();
-  await expect(metadataPanel.getByText(difficultySource, { exact: true })).toBeVisible();
-  await expect(metadataPanel.locator("pre")).toContainText('"description": "Selects the square."');
+  await expect(
+    metadataPanel.getByText(difficultySource, { exact: true }),
+  ).toBeVisible();
+  await expect(metadataPanel.locator("pre")).toContainText(
+    '"description": "Selects the square."',
+  );
   await expect(metadataPanel.getByText("Not supplied")).toHaveCount(0);
   await questionCard
     .getByRole("combobox", { exact: true, name: "Competency" })
@@ -303,15 +353,22 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   await questionCard
     .getByRole("combobox", { exact: true, name: "Skill" })
     .selectOption({ label: `S${unique} — ${skillTitle}` });
-  await questionCard.getByRole("button", { name: "Save classification" }).click();
+  await questionCard
+    .getByRole("button", { name: "Save classification" })
+    .click();
   await expect(questionCard.getByText("Classification saved.")).toBeVisible();
   await questionCard.getByRole("button", { name: "Start review" }).click();
   await questionCard.getByRole("button", { name: "Mark reviewed" }).click();
-  await expect(questionCard.getByText("Final record — read-only")).toBeVisible();
+  await expect(
+    questionCard.getByText("Final record — read-only"),
+  ).toBeVisible();
 
   await page.getByRole("tab", { name: /Knowledge chunks/ }).click();
   const chunkCard = page.locator("article").filter({
-    has: page.getByRole("heading", { exact: true, name: `${boundary} / Sequence 1` }),
+    has: page.getByRole("heading", {
+      exact: true,
+      name: `${boundary} / Sequence 1`,
+    }),
   });
   await chunkCard
     .getByRole("combobox", { exact: true, name: "Competency" })
@@ -346,7 +403,9 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   const questionSelection = page.getByRole("checkbox", {
     name: /Select historical question/i,
   });
-  const chunkSelection = page.getByRole("checkbox", { name: /Select knowledge chunk/i });
+  const chunkSelection = page.getByRole("checkbox", {
+    name: /Select knowledge chunk/i,
+  });
   await expect(questionSelection).toBeVisible();
   await expect(chunkSelection).toBeVisible();
   await questionSelection.check();
@@ -370,23 +429,53 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
     name: `Embedding job ${createdJob.id}`,
   });
   await expect(jobCard).toBeVisible();
-  await expect(jobCard.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 120_000 });
-  await expect(jobCard.getByText(createdJob.configuration.provider, { exact: true })).toBeVisible();
-  await expect(jobCard.getByText(createdJob.configuration.model, { exact: true })).toBeVisible();
-  await expect(jobCard.getByText(String(createdJob.configuration.dimension), { exact: true })).toBeVisible();
-  await expect(jobCard.getByText(createdJob.configuration.version, { exact: true })).toBeVisible();
+  await expect(jobCard.getByText("Succeeded", { exact: true })).toBeVisible({
+    timeout: 120_000,
+  });
   await expect(
-    jobCard.getByText(createdJob.configuration.config_fingerprint, { exact: true }),
+    jobCard.getByText(createdJob.configuration.provider, { exact: true }),
   ).toBeVisible();
-  await expect(jobCard.getByText("Requested", { exact: true }).locator("..")).toContainText("2");
-  await expect(jobCard.getByText("Embedded", { exact: true }).locator("..")).toContainText("2");
-  await expect(jobCard.getByText("Deduplicated", { exact: true }).locator("..")).toContainText("0");
+  await expect(
+    jobCard.getByText(createdJob.configuration.model, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    jobCard.getByText(String(createdJob.configuration.dimension), {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    jobCard.getByText(createdJob.configuration.version, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    jobCard.getByText(createdJob.configuration.config_fingerprint, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    jobCard.getByText("Requested", { exact: true }).locator(".."),
+  ).toContainText("2");
+  await expect(
+    jobCard.getByText("Embedded", { exact: true }).locator(".."),
+  ).toContainText("2");
+  await expect(
+    jobCard.getByText("Deduplicated", { exact: true }).locator(".."),
+  ).toContainText("0");
   await expect(jobCard.getByText("Submission deduplicated: No")).toBeVisible();
-  await expect(jobCard.getByText("Original attempt", { exact: true })).toBeVisible();
-  await expect(jobCard.getByText("Queued at").locator("..")).not.toContainText("Not yet");
-  await expect(jobCard.getByText("Claimed at").locator("..")).not.toContainText("Not yet");
-  await expect(jobCard.getByText("Completed at").locator("..")).not.toContainText("Not yet");
-  await expect(jobCard.getByText("Sanitized failure code").locator("..")).toContainText("None");
+  await expect(
+    jobCard.getByText("Original attempt", { exact: true }),
+  ).toBeVisible();
+  await expect(jobCard.getByText("Queued at").locator("..")).not.toContainText(
+    "Not yet",
+  );
+  await expect(jobCard.getByText("Claimed at").locator("..")).not.toContainText(
+    "Not yet",
+  );
+  await expect(
+    jobCard.getByText("Completed at").locator(".."),
+  ).not.toContainText("Not yet");
+  await expect(
+    jobCard.getByText("Sanitized failure code").locator(".."),
+  ).toContainText("None");
 
   const configurationLabel = `${createdJob.configuration.provider} / ${createdJob.configuration.model} / ${createdJob.configuration.version} / ${createdJob.configuration.dimension}d`;
   const embeddedQuestionRow = page.getByRole("listitem", {
@@ -397,16 +486,26 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   });
   for (const row of [embeddedQuestionRow, embeddedChunkRow]) {
     await expect(row.getByText("Embedded", { exact: true })).toBeVisible();
-    await expect(row.getByText(configurationLabel, { exact: true })).toBeVisible();
     await expect(
-      row.getByText(createdJob.configuration.config_fingerprint, { exact: true }),
+      row.getByText(configurationLabel, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      row.getByText(createdJob.configuration.config_fingerprint, {
+        exact: true,
+      }),
     ).toBeVisible();
   }
 
   await openAdvancedArea(page, "Knowledge / RAG");
-  await expect(page.getByRole("heading", { name: "RAG Explorer" })).toBeVisible();
-  await page.getByLabel("Active retrieval curriculum").selectOption(curriculum.id);
-  const competencySelect = page.locator(`select:has(option[value="${competency.id}"])`);
+  await expect(
+    page.getByRole("heading", { name: "RAG Explorer" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Active retrieval curriculum")
+    .selectOption(curriculum.id);
+  const competencySelect = page.locator(
+    `select:has(option[value="${competency.id}"])`,
+  );
   const skillSelect = page.locator(`select:has(option[value="${skill.id}"])`);
   const embeddingSelect = page.locator(
     `select:has(option[value="${createdJob.configuration.config_fingerprint}"])`,
@@ -414,12 +513,15 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   await expect(embeddingSelect).toBeVisible();
   await competencySelect.selectOption(competency.id);
   await skillSelect.selectOption(skill.id);
-  await embeddingSelect.selectOption(createdJob.configuration.config_fingerprint);
+  await embeddingSelect.selectOption(
+    createdJob.configuration.config_fingerprint,
+  );
   await page.getByLabel("Retrieval query").fill(sourceMarker);
 
   const retrievalResponsePromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" && response.url().endsWith("/admin/retrieval/explore"),
+      response.request().method() === "POST" &&
+      response.url().endsWith("/admin/retrieval/explore"),
   );
   await page.getByRole("button", { name: "Run retrieval" }).click();
   const retrievalResponse = await retrievalResponsePromise;
@@ -436,7 +538,10 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   );
 
   const allowedRecordIds = new Set([importedQuestion.id, importedChunk.id]);
-  for (const candidate of [...retrieval.channels.lexical, ...retrieval.channels.vector]) {
+  for (const candidate of [
+    ...retrieval.channels.lexical,
+    ...retrieval.channels.vector,
+  ]) {
     expect(allowedRecordIds.has(candidate.chunk_id)).toBe(true);
     expect(candidate.scope.curriculum_version_id).toBe(curriculum.id);
     expect(candidate.scope.subject_id).toBe(subject.id);
@@ -449,7 +554,9 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   }
   for (const candidate of retrieval.fused_candidates) {
     expect(candidate.source_chunk_ids.length).toBeGreaterThan(0);
-    expect(candidate.source_chunk_ids.every((id) => allowedRecordIds.has(id))).toBe(true);
+    expect(
+      candidate.source_chunk_ids.every((id) => allowedRecordIds.has(id)),
+    ).toBe(true);
     expect(candidate.provenances.length).toBeGreaterThan(0);
     expect(candidate.scope.curriculum_version_id).toBe(curriculum.id);
     expect(candidate.scope.subject_id).toBe(subject.id);
@@ -461,7 +568,9 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   }
   for (const item of retrieval.context.items) {
     expect(item.source_chunk_ids.length).toBeGreaterThan(0);
-    expect(item.source_chunk_ids.every((id) => allowedRecordIds.has(id))).toBe(true);
+    expect(item.source_chunk_ids.every((id) => allowedRecordIds.has(id))).toBe(
+      true,
+    );
     expect(item.provenances.length).toBeGreaterThan(0);
     expect(item.scope.curriculum_version_id).toBe(curriculum.id);
     expect(item.scope.subject_id).toBe(subject.id);
@@ -473,8 +582,8 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   }
   expect(JSON.stringify(retrieval)).not.toContain(forbiddenDraft.id);
   expect(
-    [...retrieval.channels.lexical, ...retrieval.channels.vector].some((candidate) =>
-      candidate.text.includes(sourceMarker),
+    [...retrieval.channels.lexical, ...retrieval.channels.vector].some(
+      (candidate) => candidate.text.includes(sourceMarker),
     ),
   ).toBe(true);
 
@@ -497,11 +606,23 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
   await expect(vectorSection.locator("ol > li").first()).toBeVisible();
   await expect(fusedSection.locator("ol > li").first()).toBeVisible();
   await expect(contextSection.locator("ol > li").first()).toBeVisible();
-  await expect(contextSection.getByRole("list", { name: "Source provenance" }).first()).toBeVisible();
-  await expect(diagnosticsSection.getByText("Yes", { exact: true })).toBeVisible();
-  await expect(page.getByText(untrustedSourceText, { exact: true }).first()).toBeVisible();
+  await expect(
+    contextSection.getByRole("list", { name: "Source provenance" }).first(),
+  ).toBeVisible();
+  await expect(
+    diagnosticsSection.getByText("Yes", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(untrustedSourceText, { exact: true }).first(),
+  ).toBeVisible();
   await expect(page.locator('img[src="x"]')).toHaveCount(0);
-  await expect(page.getByText(forbiddenBoundary, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(forbiddenBoundary, { exact: true })).toHaveCount(
+    0,
+  );
 
-  expect(browserErrors.filter((error) => !error.includes("eval() is not supported in this environment"))).toEqual([]);
+  expect(
+    browserErrors.filter(
+      (error) => !error.includes("eval() is not supported in this environment"),
+    ),
+  ).toEqual([]);
 });

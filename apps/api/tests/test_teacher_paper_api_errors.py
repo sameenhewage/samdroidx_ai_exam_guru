@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import exam_guru_api.api.routes.review_papers as review_routes
 import exam_guru_api.api.routes.teacher_papers as generation_routes
 from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.runtime import (
     GenerationRuntimeRegistry,
@@ -46,6 +47,7 @@ from exam_guru_api.teacher_papers.schemas import (
 from exam_guru_api.teacher_papers.service import (
     ProgrammePolicyScopeError,
     ProgrammePolicyVersionConflictError,
+    TeacherPaperCatalogueChangedError,
     TeacherPaperContextUnavailableError,
     TeacherPaperCostLimitError,
     TeacherPaperCurriculumAmbiguousError,
@@ -121,6 +123,12 @@ def test_generation_route_error_mapping_is_stable_and_bounded() -> None:
                 "paper_generation_curriculum_not_found",
             ),
             (TeacherPaperJobNotFoundError(), 404, "paper_generation_job_not_found"),
+            (TeacherPaperCatalogueChangedError(), 409, "paper_generation_catalogue_changed"),
+            (
+                CurriculumNotAdmittedError(UUID(int=33), "quarantined"),
+                409,
+                "paper_generation_catalogue_changed",
+            ),
             (
                 TeacherPaperCurriculumAmbiguousError(),
                 409,
@@ -295,6 +303,7 @@ class FakeJobService:
 def job_request() -> TeacherPaperJobCreateRequest:
     return TeacherPaperJobCreateRequest.model_validate(
         {
+            "source_scope_fingerprint": "sha256:" + "a" * 64,
             "target": {
                 "grade": 5,
                 "medium": "si",

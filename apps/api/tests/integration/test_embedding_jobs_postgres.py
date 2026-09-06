@@ -29,6 +29,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -49,7 +50,11 @@ from exam_guru_api.knowledge.embedding_jobs import (
     EmbeddingDispatcher,
     create_embedding_dispatcher,
 )
-from exam_guru_api.knowledge.embeddings import DeterministicEmbeddingProvider, EmbeddingConfig
+from exam_guru_api.knowledge.embeddings import (
+    DeterministicEmbeddingProvider,
+    EmbeddingConfig,
+    EmbeddingResult,
+)
 from exam_guru_api.knowledge.models import (
     EmbeddingConfigurationModel,
     EmbeddingJobModel,
@@ -65,6 +70,10 @@ from exam_guru_api.retrieval.embeddings import (
 )
 from exam_guru_api.retrieval.explorer import RetrievalExplorerService
 from exam_guru_api.retrieval.schemas import RetrievalExploreRequest
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 VALKEY_IMAGE = "valkey/valkey:9.1.1-alpine3.24"
@@ -98,6 +107,8 @@ CHUNK_LEASE_FRESH_ID = UUID(int=1_820_116)
 CHUNK_RECOVERY_A_ID = UUID(int=1_820_117)
 CHUNK_RECOVERY_B_ID = UUID(int=1_820_118)
 CHUNK_LATE_WORKER_ID = UUID(int=1_820_119)
+CHUNK_DISPATCH_CLOCK_ID = UUID(int=1_820_120)
+CHUNK_DISPATCH_CACHED_ID = UUID(int=1_820_121)
 ADMIN_HEADERS = {"Authorization": "Bearer admin-token"}
 REVIEWER_HEADERS = {"Authorization": "Bearer reviewer-token"}
 BASE_PATH = f"/api/v1/admin/curricula/{CURRICULUM_ID}/embedding-jobs"
@@ -230,6 +241,14 @@ async def _seed_curriculum(
                 created_by=ADMIN_ID,
                 updated_by=ADMIN_ID,
             ),
+            SubjectModel(
+                id=UUID(int=curriculum_id.int + 100_000),
+                code=f"GENERAL-{suffix.upper()}",
+                name="General scholarship skills",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
             MediumModel(
                 id=medium_id,
                 code=f"em-{suffix}",
@@ -246,6 +265,7 @@ async def _seed_curriculum(
             id=curriculum_id,
             exam_configuration_id=exam_id,
             medium_id=medium_id,
+            subject_id=UUID(int=curriculum_id.int + 100_000),
             code=f"EMBED-{suffix.upper()}",
             title=f"Embedding curriculum {suffix}",
             active=True,
@@ -268,6 +288,7 @@ async def _seed_curriculum(
         )
     )
     await session.flush()
+    await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
 
 
 async def _seed_source(
@@ -277,7 +298,7 @@ async def _seed_source(
     curriculum_id: UUID,
     document_type: SourceDocumentType,
     value: str,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID, UUID, UUID]:
     document_id = UUID(int=1_821_000 + offset * 3)
     page_id = UUID(int=1_821_001 + offset * 3)
     block_id = UUID(int=1_821_002 + offset * 3)
@@ -295,6 +316,8 @@ async def _seed_source(
         paper_code="P1" if document_type is SourceDocumentType.PAST_PAPER else None,
         extraction_attempt_count=1,
         extraction_started_at=datetime.now(UTC),
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ADMIN_ID,
         updated_by=ADMIN_ID,
     )
@@ -353,7 +376,8 @@ async def _seed_source(
     await session.flush()
     document.extraction_status = ExtractionStatus.TRUSTED
     await session.flush()
-    return document_id, block_id
+    candidate_id = await verify_synthetic_page(session, document_id, value, actor_id=ADMIN_ID)
+    return document_id, block_id, candidate_id
 
 
 async def _seed_question(
@@ -364,7 +388,7 @@ async def _seed_question(
     value: str,
     review_state: ReviewState = ReviewState.REVIEWED,
 ) -> None:
-    document_id, block_id = await _seed_source(
+    document_id, block_id, candidate_id = await _seed_source(
         session,
         offset=offset,
         curriculum_id=CURRICULUM_ID,
@@ -384,6 +408,7 @@ async def _seed_question(
             source_document_id=document_id,
             page_number=1,
             source_block_id=block_id,
+            source_candidate_id=candidate_id,
             review_state=review_state,
             competency_id=COMPETENCY_ID,
             version=0,
@@ -403,7 +428,7 @@ async def _seed_chunk(
     curriculum_id: UUID = CURRICULUM_ID,
     competency_id: UUID = COMPETENCY_ID,
 ) -> None:
-    document_id, block_id = await _seed_source(
+    document_id, block_id, candidate_id = await _seed_source(
         session,
         offset=offset,
         curriculum_id=curriculum_id,
@@ -421,6 +446,7 @@ async def _seed_chunk(
             source_document_id=document_id,
             page_number=1,
             source_block_id=block_id,
+            source_candidate_id=candidate_id,
             review_state=ReviewState.REVIEWED,
             competency_id=competency_id,
             version=0,
@@ -468,6 +494,8 @@ def embedding_seed() -> Iterator[Seed]:
             CHUNK_RECOVERY_A_ID: "Concurrent recovery claim A.",
             CHUNK_RECOVERY_B_ID: "Concurrent recovery claim B.",
             CHUNK_LATE_WORKER_ID: "A late expired worker must roll back this embedding.",
+            CHUNK_DISPATCH_CLOCK_ID: "A queue acknowledgement can overlap a worker claim.",
+            CHUNK_DISPATCH_CACHED_ID: "A cached job must refresh its database claim version.",
         }
 
         async def seed() -> None:
@@ -584,6 +612,8 @@ def embedding_seed() -> Iterator[Seed]:
                         CHUNK_RECOVERY_A_ID,
                         CHUNK_RECOVERY_B_ID,
                         CHUNK_LATE_WORKER_ID,
+                        CHUNK_DISPATCH_CLOCK_ID,
+                        CHUNK_DISPATCH_CACHED_ID,
                     ),
                     start=12,
                 ):
@@ -636,7 +666,7 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         return columns, constraints, triggers, cast(str | None, revision)
 
     columns, constraints, triggers, revision = asyncio.run(inspect())
-    assert revision == "0032_source_intake_metadata"
+    assert revision == "0038_upload_request_identity"
     assert columns == {
         "id",
         "curriculum_version_id",
@@ -1950,6 +1980,7 @@ def test_worker_persisted_configuration_drives_successful_generated_retrieval(
                 "grade": 5,
                 "exam_id": str(EXAM_ID),
                 "medium_id": str(MEDIUM_ID),
+                "subject_id": str(UUID(int=CURRICULUM_ID.int + 100_000)),
                 "curriculum_version_id": str(CURRICULUM_ID),
                 "taxonomy": {"competency_id": str(COMPETENCY_ID)},
             },
@@ -2028,5 +2059,129 @@ def test_real_valkey_dispatch_and_worker_complete_deterministic_job(
         assert body["counts"] == {"requested": 1, "embedded": 1, "deduplicated": 0}
         assert broker.do_qsize(EMBEDDING_QUEUE_NAME) == 0
     finally:
+        worker.stop(timeout=5_000)
+        broker.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("cached", [False, True], ids=["fresh-session", "cached-row"])
+def test_real_valkey_claim_clock_precedes_dispatch_acknowledgement(
+    embedding_seed: Seed, monkeypatch: pytest.MonkeyPatch, cached: bool
+) -> None:
+    from exam_guru_api.core.config import Settings
+
+    config = DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG
+    settings = Settings(
+        environment="test",
+        database_url=SecretStr(embedding_seed.database_url),
+        valkey_url=SecretStr(embedding_seed.valkey_url),
+        retrieval_embedding_provider=config.provider,
+        retrieval_embedding_model=config.model,
+        retrieval_embedding_dimension=config.dimension,
+        retrieval_embedding_version=config.version,
+        retrieval_embedding_config_fingerprint=config.config_fingerprint,
+    )
+    captured = threading.Event()
+    release_claim = threading.Event()
+    finished = threading.Event()
+    clock_inputs: list[datetime] = []
+    cached_versions: list[int] = []
+    claimed_metadata: list[tuple[int, datetime, datetime | None, str | None]] = []
+    errors: list[Exception] = []
+    original_claim = SqlAlchemyEmbeddingJobRepository.claim
+    original_process = jobs._process_embedding_job
+
+    class MetadataCountingProvider:
+        calls = 0
+
+        def embed(self, value: str, active: EmbeddingConfig) -> EmbeddingResult:
+            self.calls += 1
+            return DeterministicEmbeddingProvider().embed(value, active)
+
+    provider = MetadataCountingProvider()
+
+    async def paused_claim(
+        repository: SqlAlchemyEmbeddingJobRepository, job_id: UUID, *, claimed_at: datetime
+    ) -> EmbeddingJobModel | None:
+        clock_inputs.append(claimed_at)
+        if cached:
+            previous = await repository.get_job_unscoped(job_id)
+            assert previous is not None
+            cached_versions.append(previous.version)
+        captured.set()
+        assert await asyncio.to_thread(release_claim.wait, 10)
+        result = await original_claim(repository, job_id, claimed_at=claimed_at)
+        assert result is not None
+        claimed_metadata.append(
+            (result.version, result.updated_at, result.claimed_at, result.queue_message_id)
+        )
+        return result
+
+    async def observed_process(job_id: UUID) -> None:
+        try:
+            await original_process(job_id)
+        except Exception as error:
+            errors.append(error)
+            raise
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(jobs, "Settings", lambda: settings)
+    monkeypatch.setattr(jobs, "create_embedding_provider_registry", lambda _: _registry(provider))
+    monkeypatch.setattr(jobs, "_process_embedding_job", observed_process)
+    monkeypatch.setattr(SqlAlchemyEmbeddingJobRepository, "claim", paused_claim)
+    actual_dispatcher = create_embedding_dispatcher(settings)
+    broker = cast(RedisBroker, jobs.ingest_embeddings.broker)
+
+    class OrderedDispatcher:
+        def dispatch(self, job_id: UUID) -> str:
+            message_id = actual_dispatcher.dispatch(job_id)
+            assert captured.wait(timeout=10)
+            return message_id
+
+    worker = Worker(broker, worker_threads=1, worker_timeout=100)
+    worker.start()
+    try:
+        with _client(embedding_seed, OrderedDispatcher(), settings=settings) as client:
+            created = client.post(
+                BASE_PATH,
+                json=_chunk_payload(
+                    CHUNK_DISPATCH_CACHED_ID if cached else CHUNK_DISPATCH_CLOCK_ID
+                ),
+                headers={**ADMIN_HEADERS, "Idempotency-Key": f"ordered-dispatch-clock-{cached}"},
+            )
+            assert created.status_code == 202, created.text
+            acknowledged = created.json()
+            assert acknowledged["status"] == "queued"
+            assert acknowledged["version"] == 1
+            assert acknowledged["queue_message_id"] is not None
+            acknowledgement_time = datetime.fromisoformat(acknowledged["updated_at"])
+            assert len(clock_inputs) == 1
+            assert clock_inputs[0] < acknowledgement_time
+            assert cached_versions == ([0] if cached else [])
+            release_claim.set()
+            assert finished.wait(timeout=10)
+            if errors:
+                errors[0].add_note(
+                    f"queued_version={acknowledged['version']}; expected_claim_version=2; "
+                    f"worker_clock={clock_inputs[0].isoformat()}; "
+                    f"acknowledgement_clock={acknowledgement_time.isoformat()}"
+                )
+                raise errors[0]
+            broker.join(EMBEDDING_QUEUE_NAME, timeout=5_000)
+            body = client.get(f"{BASE_PATH}/{acknowledged['id']}", headers=REVIEWER_HEADERS).json()
+        assert len(claimed_metadata) == 1
+        version, updated_at, claimed_at, message_id = claimed_metadata[0]
+        assert version == 2
+        assert claimed_at is not None
+        assert updated_at >= claimed_at >= acknowledgement_time
+        assert message_id == acknowledged["queue_message_id"]
+        assert body["status"] == "succeeded"
+        assert body["version"] == 4
+        assert body["queue_message_id"] == acknowledged["queue_message_id"]
+        assert body["counts"] == {"requested": 1, "embedded": 1, "deduplicated": 0}
+        assert provider.calls == 1
+    finally:
+        release_claim.set()
         worker.stop(timeout=5_000)
         broker.close()

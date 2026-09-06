@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
@@ -39,8 +39,8 @@ def _job() -> EmbeddingJobModel:
 
 def test_repository_source_projection_handles_each_bounded_record_kind() -> None:
     async def exercise() -> None:
-        session, _, scalars, _ = _session()
-        repository = SqlAlchemyEmbeddingJobRepository(session)
+        session = AsyncMock(spec=AsyncSession)
+        repository = SqlAlchemyEmbeddingJobRepository(cast(AsyncSession, session))
         assert await repository.load_sources((), ()) == ()
 
         question_model = SimpleNamespace(
@@ -49,6 +49,7 @@ def test_repository_source_projection_handles_each_bounded_record_kind() -> None
             review_state=ReviewState.REVIEWED,
             text="question",
             version=2,
+            source_candidate_id=UUID(int=1_831_006),
         )
         chunk_model = SimpleNamespace(
             id=CHUNK_ID,
@@ -56,12 +57,13 @@ def test_repository_source_projection_handles_each_bounded_record_kind() -> None
             review_state=ReviewState.REVIEWED,
             text="chunk",
             version=3,
+            source_candidate_id=UUID(int=1_831_007),
         )
-        scalars.side_effect = [
-            [question_model],
-            [chunk_model],
-            [question_model],
-            [chunk_model],
+        session.execute.side_effect = [
+            Mock(all=Mock(return_value=[(question_model, "a" * 64)])),
+            Mock(all=Mock(return_value=[(chunk_model, "b" * 64)])),
+            Mock(all=Mock(return_value=[(question_model, "a" * 64)])),
+            Mock(all=Mock(return_value=[(chunk_model, "b" * 64)])),
         ]
         question = await repository.load_sources((QUESTION_ID,), ())
         chunk = await repository.load_sources((), (CHUNK_ID,))

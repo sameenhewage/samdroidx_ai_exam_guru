@@ -13,11 +13,14 @@ const taxonomyRequest = client.POST(
       level: "competency",
       title: "Competency 1",
     },
-    params: { path: { curriculum_version_id: "00000000-0000-0000-0000-000000000001" } },
+    params: {
+      path: { curriculum_version_id: "00000000-0000-0000-0000-000000000001" },
+    },
   },
 );
 const paperJob = client.POST("/api/v1/admin/paper-generation/jobs", {
   body: {
+    source_scope_fingerprint: `sha256:${"a".repeat(64)}`,
     target: {
       grade: 5,
       medium: "si",
@@ -36,9 +39,12 @@ const paperJob = client.POST("/api/v1/admin/paper-generation/jobs", {
   },
   params: { header: { "Idempotency-Key": "teacher-paper-request-1" } },
 });
-const paperProgress = client.GET("/api/v1/admin/paper-generation/jobs/{paper_job_id}", {
-  params: { path: { paper_job_id: "00000000-0000-0000-0000-000000000801" } },
-});
+const paperProgress = client.GET(
+  "/api/v1/admin/paper-generation/jobs/{paper_job_id}",
+  {
+    params: { path: { paper_job_id: "00000000-0000-0000-0000-000000000801" } },
+  },
+);
 const reviewPaper = client.GET("/api/v1/admin/review-papers/{paper_job_id}", {
   params: { path: { paper_job_id: "00000000-0000-0000-0000-000000000801" } },
 });
@@ -74,6 +80,7 @@ const promoteFeedback = client.POST(
   },
 );
 const intent: components["schemas"]["TeacherPaperJobCreateRequest"] = {
+  source_scope_fingerprint: `sha256:${"a".repeat(64)}`,
   target: {
     grade: 5,
     medium: "si",

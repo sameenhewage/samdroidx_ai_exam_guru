@@ -6,18 +6,29 @@ This document defines when Exam Guru is ready to be handed to real teachers for 
 
 The teacher pilot is **not** an architecture test. Teachers should receive a coherent product they can actually use to prepare, review and approve Grade 5 papers.
 
-## Current verdict — NOT READY (5 September 2026)
+## Current verdict — NOT READY (6 September 2026)
 
-The current Studio now contains all 587 unique originals from the 696 Grade 3/4/5 PDF paths. Materials, original PDF access, page-image/text comparison and representative correction/navigation are verified against that real intake. All imported sources remain untrusted: 13 have unsafe-text extraction failures, 64 retain OCR/empty-page warnings, and candidate metadata requires explicit review. This completes source intake and review access, not educational approval or the Scholarship paper-generation acceptance.
+All 711 raw original/evidence files remain unchanged: 696 Grade 3/4/5 PDF paths represent 587 unique originals and 5,234 unique-PDF pages. The final integrity proof verifies SHA-256, size, nanosecond mtime/ctime, inode, device and mode. Forward migration from `0032` to `0038_upload_request_identity` preserved 659 source rows and extraction, knowledge, review and published history. Audited quarantine of 72 exactly proven E2E sources leaves the 587 real originals in normal Materials, active but metadata-required, untrusted and unindexed. Inventory/footer counts do not establish educational coverage. See [known limitations](06_KNOWN_LIMITATIONS.md) for the exact checkpoint and private evidence reference.
 
-The engineering mechanics and isolated deterministic acceptance are substantially complete, but teachers must not be invited for the full paper-generation pilot yet. Gates C, E, I, K and L remain blocked by evidence that cannot be replaced with synthetic fixtures:
+**All 587 latest whole-document reading jobs are completed; all 5,234 current page-review states are `needs_review`.** There are zero failed, verified or excluded current pages and zero ground truth. The 116 image-failure whole-document jobs were retried through the application API after the MuPDF diagnostic/renderer-slot fixes, without larger budgets; old failed attempts remain historical evidence. The 10,362 candidate versions and 10,546 page events are immutable review evidence, not approvals. One real legacy reviewed page remains an unconfirmed human candidate. Completed reading, durable images and review access do not make this a completed teacher-pilot or release gate.
 
-- the available Grade 3 Sinhala Maths extraction was removed from active retrieval after visual review exposed legacy-font glyph corruption;
-- no authoritative reviewed Scholarship Paper I ability/reasoning framework or sufficient Paper I past-paper evidence is available;
-- Paper II cannot satisfy its active Grade 3–5 programme policy while Grade 3 evidence remains excluded; and
-- the required fresh clean-system real-source Paper I/Paper II/full-package validation has not run.
+Normal Generate Papers now exposes only current admitted scope, with bound grade/medium/subject/template choices and a required source-scope fingerprint. The live Studio correctly shows no approved curriculum rather than fixture labels; no real catalogue was approved to make the selector nonempty. Exact final verification and CI outcomes remain in the phase tracker, not inferred from earlier checkpoints.
 
-Live `text-embedding-3-small`, `gpt-5.6-luna` generation and `gpt-5.6-terra` grounded-verification contract baselines now pass from the private Studio configuration. They prove bounded provider integration, structured output and accounting only; they cannot replace the missing reviewed Scholarship sources or real sample-paper adjudication. The application still fails closed with `paper_generation_programme_policy_unavailable` instead of generating an unsupported Scholarship paper. Deterministic policy fixtures prove orchestration and scope isolation only; they do not change this verdict.
+Teachers must not be invited for the full paper-generation pilot yet. Gates C, E, I, K and L remain blocked:
+
+- source text, including the previously corrupt Grade 3 Sinhala Maths material, still needs explicit original-page adjudication;
+- catalogue/metadata admission and page-text verification are separate outstanding decisions;
+- reviewed Scholarship Paper I ability/reasoning authority and sufficient past-paper evidence are unavailable;
+- Paper II lacks verified, admitted Grade 3–5 programme coverage; and
+- fresh clean-system real-source Paper I/Paper II/full-package validation and sample-paper adjudication have not run.
+
+The fixed 25-original/40-page coverage benchmark (nine Grade 3, nine Grade 4, 22 Grade 5 pages) has zero human references. Fast `sin+eng` and best Sinhala plus the same fast English each completed 40/40 attempts, with 31 differing outputs and nine identical outputs; that is not CER/WER, an accuracy result or a model winner. Its 60-second command budget is not the page-reader's 30-second default. The current worker has `eng`, `sin` and `tam`, but language availability does not establish reading quality.
+
+Earlier live `text-embedding-3-small`, `gpt-5.6-luna` generation and `gpt-5.6-terra` generated-question verification baselines prove bounded provider integration, structured output and accounting only. They cannot replace reviewed Scholarship sources or human sample-paper assessment. The optional source-image/text semantic-diagnostic factory is separate, disabled by default and not connected to general corpus reading; no live source-semantic accuracy is claimed. Unsupported Scholarship generation still fails closed with `paper_generation_programme_policy_unavailable`. No P2/P3/P4/P5/P10 acceptance gate or Priority 2 lock is promoted by this remediation.
+
+### Bounded source-adjudication handoff, not a paper-generation pilot
+
+Authorized reviewers can work through the [fixed local benchmark review queue](http://localhost:3000/admin/materials/benchmark-review?benchmark_id=6d050ee1-141c-4424-88a9-a6dbff2af9ec). Compare every selected page with its original image/PDF; retain raw candidate and failure history, save corrections as new candidates, and confirm only the exact current version after comparison. Exclude unsuitable pages explicitly with a reason. Do not substitute an OCR/LLM rewrite or a legacy reviewed flag for human ground truth. Catalogue metadata may be reviewed independently; confirming either gate must not manufacture the other.
 
 ## V1 scope
 
@@ -79,6 +90,10 @@ A teacher can:
 
 No synthetic/test labels or internal IDs appear in normal teacher screens.
 
+`Ready for AI` requires an active, non-quarantined original, confirmed metadata/current catalogue admission, every original page explicitly verified or excluded, and at least one verified page. Excluding every page is neither readiness nor ground truth. Source-page confirmation is distinct from metadata review and does not create or approve curriculum scope.
+
+Upload recovery must retain progress and reject a reselected PDF with a different size or committed-prefix checksum before appending. PDF/image review must preserve source identity across restarts; a missing or corrupt declared page image must show an unavailable/error state, not silently substitute another artifact. Detailed resource/legacy limits remain in [the architecture contract](../SYSTEM_ARCHITECTURE.md#45-separate-legacy-and-resumable-intake-contracts), not teacher-facing setup choices.
+
 ## Gate B — Grade 5 Scholarship setup
 
 A teacher can select:
@@ -129,6 +144,8 @@ For Paper I:
 - it does not accidentally behave like an ordinary subject-syllabus paper.
 
 Cross-grade retrieval is allowed only where the Scholarship programme policy explicitly requires it.
+
+All new knowledge/history, embeddings and retrieved context must carry current verified candidate lineage and exact nonblank NFC source spans, with confirmed metadata/current catalogue admission and active reviewed taxonomy/scope. New generation, validation, review approval and publication recheck that lineage. A page edit/exclusion/reread, source removal or stale catalogue approval must block new use without rewriting existing published history.
 
 ## Gate E — Paper generation
 

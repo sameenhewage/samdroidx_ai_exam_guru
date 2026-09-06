@@ -1,5 +1,6 @@
 import asyncio
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -311,6 +312,9 @@ def test_worker_maps_retry_exhaustion_orchestration_and_internal_failures(
         ) -> None:
             super().__init__(cast(AsyncSession, object()), runtime, sleep=lambda _: None)
             self._config = config
+            repository = AsyncMock()
+            repository.context_lineage_is_current.return_value = True
+            self._repository = repository
             self.failure_codes: list[str | None] = []
 
         async def _claim(self, job_id: UUID, run_id: UUID) -> GenerationRunModel | None:

@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -40,6 +43,117 @@ class ClosingStorage:
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+def test_application_exposes_injected_page_reading_dispatcher() -> None:
+    from exam_guru_api.documents.page_reading_jobs import SourceReadDispatcher
+
+    dispatcher = cast(SourceReadDispatcher, object())
+    app = create_app(source_read_dispatcher=dispatcher)
+    assert app.state.source_read_dispatcher is dispatcher
+
+
+def test_application_initializes_lazy_private_upload_factory_and_operational_quotas(
+    tmp_path: Path,
+) -> None:
+    from exam_guru_api.documents.resumable_uploads import UploadLimits
+    from exam_guru_api.infrastructure.private_artifacts import PrivateUploadArtifacts
+
+    root = tmp_path / "durable"
+    settings = Settings.model_validate(
+        {
+            "environment": "test",
+            "storage_root": str(root),
+            "max_upload_bytes": 1_024,
+            "source_upload_max_owner_staged_bytes": 9 * 1024**3,
+            "source_upload_max_staged_bytes": 40 * 1024**3,
+            "source_upload_max_active_sessions_per_owner": 3,
+        }
+    )
+    app = create_app(settings=settings)
+    limits = app.state.source_upload_limits
+    artifacts = app.state.source_upload_artifacts
+    assert isinstance(limits, UploadLimits)
+    assert isinstance(artifacts, PrivateUploadArtifacts)
+    assert limits.max_total_bytes == 2**63 - 1
+    assert limits.max_owner_staged_bytes == 9 * 1024**3
+    assert limits.max_staged_bytes == 40 * 1024**3
+    assert limits.max_active_sessions_per_owner == 3
+    assert settings.max_upload_bytes == 1_024
+    assert not root.exists()
+    upload_id = uuid4()
+    data = b"%PDF-private fixture"
+    artifacts.put_chunk(upload_id, 0, data, checksum_sha256=hashlib.sha256(data).hexdigest())
+    assert (root / ".source-uploads" / upload_id.hex / "0000000000000000.chunk").is_file()
+    app.state.object_storage.close()
+
+
+def test_application_uses_default_upload_budgets_without_a_product_file_cap() -> None:
+    app = create_app(settings=Settings(environment="test"))
+    limits = app.state.source_upload_limits
+    assert limits.max_total_bytes == 2**63 - 1
+    assert limits.max_owner_staged_bytes == 8 * 1024**3
+    assert limits.max_staged_bytes == 32 * 1024**3
+    app.state.object_storage.close()
+
+
+def test_application_exposes_injected_upload_dispatcher() -> None:
+    from exam_guru_api.documents.upload_jobs import SourceUploadDispatcher
+
+    dispatcher = cast(SourceUploadDispatcher, object())
+    app = create_app(source_upload_dispatcher=dispatcher)
+    assert app.state.source_upload_dispatcher is dispatcher
+    app.state.object_storage.close()
+
+
+def test_s3_upload_factory_fails_explicitly_without_staging_or_database_access(
+    tmp_path: Path,
+) -> None:
+    from exam_guru_api.api.dependencies import get_database_session
+    from exam_guru_api.auth.domain import AdminRole, Principal
+    from exam_guru_api.auth.rate_limits import NoOpRateLimiter
+
+    class Identity:
+        async def authenticate(self, _token: str) -> Principal:
+            return Principal(UUID(int=36020), frozenset({AdminRole.ADMIN}))
+
+    root = tmp_path / "unsupported"
+    settings = Settings(
+        environment="test",
+        storage_backend="s3",
+        storage_root=str(root),
+        object_storage_endpoint_url="http://localhost:9000",
+        object_storage_access_key="fixture-access",
+        object_storage_secret_key="fixture-secret",
+        object_storage_bucket="fixture-sources",
+        object_storage_region="us-east-1",
+    )
+    session = AsyncMock()
+    app = create_app(
+        settings=settings, identity_provider=Identity(), rate_limiter=NoOpRateLimiter()
+    )
+    app.dependency_overrides[get_database_session] = lambda: session
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/admin/source-uploads",
+            headers={"Authorization": "Bearer fixture"},
+            json={
+                "filename": "large.pdf",
+                "size_bytes": 300 * 1024**2,
+                "document_type": "syllabus",
+            },
+        )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "source_upload_storage_unsupported"}}
+    assert not session.mock_calls
+    assert not root.exists()
+
+
+def test_source_review_runtime_routes_are_registered_on_the_root_application() -> None:
+    paths = create_app().openapi()["paths"]
+    assert "/api/v1/admin/studio-safety/runtime-identity" in paths
+    assert "/api/v1/admin/materials/{document_id}/pages/{page_number}/image" in paths
+    assert "/api/v1/admin/materials/{document_id}/original" in paths
 
 
 def test_liveness_contract() -> None:

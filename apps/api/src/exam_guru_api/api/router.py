@@ -4,6 +4,7 @@ from exam_guru_api.api.routes.analytics import router as analytics_router
 from exam_guru_api.api.routes.audit import router as audit_router
 from exam_guru_api.api.routes.auth import router as auth_router
 from exam_guru_api.api.routes.blueprints import router as blueprint_router
+from exam_guru_api.api.routes.catalogue_admission import router as catalogue_admission_router
 from exam_guru_api.api.routes.configuration import router as configuration_router
 from exam_guru_api.api.routes.documents import router as document_router
 from exam_guru_api.api.routes.embedding_jobs import router as embedding_job_router
@@ -11,10 +12,14 @@ from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
 from exam_guru_api.api.routes.operations import router as operations_router
+from exam_guru_api.api.routes.page_images import router as page_images_router
 from exam_guru_api.api.routes.papers import router as paper_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.review_candidates import router as review_candidate_router
 from exam_guru_api.api.routes.review_papers import router as review_paper_router
+from exam_guru_api.api.routes.source_fidelity import router as source_fidelity_router
+from exam_guru_api.api.routes.source_uploads import router as source_uploads_router
+from exam_guru_api.api.routes.studio_safety import router as studio_safety_router
 from exam_guru_api.api.routes.subject_quality import router as subject_quality_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
 from exam_guru_api.api.routes.teacher_papers import router as teacher_paper_router
@@ -26,7 +31,12 @@ api_router.include_router(auth_router, prefix="/auth", tags=["authentication"])
 api_router.include_router(audit_router, prefix="/admin", tags=["admin-audit"])
 api_router.include_router(operations_router, prefix="/admin", tags=["admin-operations"])
 api_router.include_router(configuration_router, prefix="/admin", tags=["admin-configuration"])
+api_router.include_router(catalogue_admission_router, prefix="/admin", tags=["material-catalogue"])
 api_router.include_router(document_router, prefix="/admin", tags=["admin-documents"])
+api_router.include_router(source_fidelity_router, prefix="/admin", tags=["source-fidelity"])
+api_router.include_router(source_uploads_router, prefix="/admin", tags=["source-uploads"])
+api_router.include_router(page_images_router, prefix="/admin", tags=["source-images"])
+api_router.include_router(studio_safety_router, prefix="/admin", tags=["studio-safety"])
 api_router.include_router(
     analytics_router,
     prefix="/admin/curricula",

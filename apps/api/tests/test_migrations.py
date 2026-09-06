@@ -13,34 +13,19 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
 
-from exam_guru_api.blueprints.service import BlueprintGenerationService
-from exam_guru_api.core.config import Settings
-from exam_guru_api.generation.jobs import DeterministicGenerationDispatcher
+from exam_guru_api.blueprints import generate_blueprint
+from exam_guru_api.blueprints.models import PaperBlueprintModel
+from exam_guru_api.blueprints.serialization import serialize_blueprint, serialize_specification
+from exam_guru_api.documents.models import ExtractedBlockModel, SourcePageModel
 from exam_guru_api.generation.repository import SqlAlchemyGenerationRepository
-from exam_guru_api.generation.run_service import GenerationRunService
-from exam_guru_api.generation.runtime import create_generation_runtime
 from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     configure_database_url_from_environment,
 )
-from exam_guru_api.knowledge.embedding_job_service import (
-    EmbeddingJobService,
-    EmbeddingWorkerService,
-)
-from exam_guru_api.knowledge.embedding_jobs import DeterministicEmbeddingDispatcher
-from exam_guru_api.knowledge.embeddings import DeterministicEmbeddingProvider
-from exam_guru_api.retrieval.embeddings import (
-    DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG,
-    EmbeddingProviderRegistry,
-)
-from tests.integration.test_generation_runs_api import (
-    ADMIN_ID,
-    ALLOWED_CHUNK_ID,
-    ALLOWED_QUESTION_ID,
-    seed_context,
-    seed_curricula,
-)
+from exam_guru_api.knowledge.embedding_job_repository import SqlAlchemyEmbeddingJobRepository
+from exam_guru_api.knowledge.models import EmbeddingJobModel
 from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_specification
+from tests.test_generation_repository import ACTOR_ID, run_write
 
 
 def test_0026_does_not_fabricate_feedback_from_historical_review_events() -> None:
@@ -472,91 +457,278 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
     ) as postgres:
         database_url = postgres.get_connection_url()
         config = _config_for_database(database_url)
-        command.upgrade(config, "head")
+        target_revision = "0022_provider_job_retry_depth"
+        command.upgrade(config, target_revision)
 
         async def seed_lineages() -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
             engine = create_async_engine(database_url)
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             try:
                 async with sessions() as session:
-                    await seed_curricula(session)
-                    await seed_context(session)
-                    await session.commit()
-                    specification = replace(
-                        make_uniform_specification((1,), 1),
-                        generation_policy=replace(
-                            make_uniform_specification((1,), 1).generation_policy,
-                            response_language="en-LK",
+                    exam_id, medium_id = UUID(int=2_220_001), UUID(int=2_220_002)
+                    await session.execute(
+                        text(
+                            "INSERT INTO exam_configurations (id, code, name, grade, created_by, "
+                            "updated_by) VALUES (:id, 'G5-LEGACY', 'Grade 5 Scholarship', "
+                            "5, :actor, :actor)"
                         ),
+                        {"id": exam_id, "actor": ACTOR_ID},
                     )
-                    blueprint = await BlueprintGenerationService(session).create_blueprint(
-                        CURRICULUM_VERSION_ID,
-                        specification,
-                        seed=2_200,
-                        analytics_run_id=None,
-                        actor_id=ADMIN_ID,
+                    await session.execute(
+                        text(
+                            "INSERT INTO media (id, code, name, created_by, updated_by) "
+                            "VALUES (:id, 'en', 'English', :actor, :actor)"
+                        ),
+                        {"id": medium_id, "actor": ACTOR_ID},
                     )
-                    slots = cast(list[dict[str, object]], blueprint.record.blueprint["slots"])
-                    runtime = create_generation_runtime(Settings(environment="test"))
-                    generation = GenerationRunService(
-                        session,
-                        runtime,
-                        DeterministicGenerationDispatcher("migration-generation"),
+                    await session.execute(
+                        text(
+                            "INSERT INTO curriculum_versions (id, exam_configuration_id, "
+                            "medium_id, code, title, created_by, updated_by) "
+                            "VALUES (:id, :exam, :medium, 'LEGACY', 'Legacy curriculum', "
+                            ":actor, :actor)"
+                        ),
+                        {
+                            "id": CURRICULUM_VERSION_ID,
+                            "exam": exam_id,
+                            "medium": medium_id,
+                            "actor": ACTOR_ID,
+                        },
                     )
-                    generation_ids: list[UUID] = []
-                    predecessor: UUID | None = None
-                    for depth in range(3):
-                        result = (
-                            await generation.create(
-                                CURRICULUM_VERSION_ID,
-                                paper_blueprint_id=blueprint.record.id,
-                                slot_id=str(slots[0]["slot_id"]),
-                                knowledge_chunk_ids=(ALLOWED_CHUNK_ID,),
-                                historical_question_ids=(ALLOWED_QUESTION_ID,),
-                                idempotency_key=f"migration-generation-{depth}",
-                                actor_id=ADMIN_ID,
-                            )
-                            if predecessor is None
-                            else await generation.retry(
-                                CURRICULUM_VERSION_ID,
-                                predecessor,
-                                idempotency_key=f"migration-generation-{depth}",
-                                actor_id=ADMIN_ID,
-                            )
+                    specification = make_uniform_specification((1,), 1)
+                    blueprint = generate_blueprint(specification, seed=2_200)
+                    snapshot = serialize_blueprint(blueprint)
+                    version = blueprint.version
+                    template = run_write()
+                    target = specification.taxonomy_requirements[0].target
+                    for index, identifier in enumerate((target.competency_id, target.skill_id)):
+                        await session.execute(
+                            text(
+                                "INSERT INTO taxonomy_nodes (id, curriculum_version_id, parent_id, "
+                                "level, code, title, active, review_state, created_by, updated_by) "
+                                "VALUES (:id, :curriculum, :parent, :level, :code, "
+                                "'Legacy taxonomy', true, 'reviewed', :actor, :actor)"
+                            ),
+                            {
+                                "id": identifier,
+                                "curriculum": CURRICULUM_VERSION_ID,
+                                "parent": None if index == 0 else target.competency_id,
+                                "level": "competency" if index == 0 else "skill",
+                                "code": f"T{index}",
+                                "actor": ACTOR_ID,
+                            },
                         )
-                        current_run_id = result.run.id
-                        generation_ids.append(current_run_id)
-                        await SqlAlchemyGenerationRepository(session).fail_dispatch(
-                            current_run_id,
-                            result.job.id,
+                    document_id, page_id, block_id = (
+                        UUID(int=2_220_004),
+                        UUID(int=2_220_005),
+                        UUID(int=2_220_006),
+                    )
+                    await session.execute(
+                        text(
+                            "INSERT INTO source_documents (id, checksum_sha256, object_key, "
+                            "original_filename, content_type, size_bytes, document_type, "
+                            "extraction_status, curriculum_version_id, extraction_attempt_count, "
+                            "extraction_started_at, created_by, updated_by) VALUES "
+                            "(:id, :checksum, 'sources/legacy.pdf', 'legacy.pdf', "
+                            "'application/pdf', 100, 'syllabus', 'extraction_pending', "
+                            ":curriculum, 1, now(), :actor, :actor)"
+                        ),
+                        {
+                            "id": document_id,
+                            "checksum": "a" * 64,
+                            "curriculum": CURRICULUM_VERSION_ID,
+                            "actor": ACTOR_ID,
+                        },
+                    )
+                    source_text = "Legacy source"
+                    audit = {"created_by": ACTOR_ID, "updated_by": ACTOR_ID}
+                    session.add(
+                        SourcePageModel(
+                            id=page_id,
+                            source_document_id=document_id,
+                            page_number=1,
+                            extractor="legacy-fixture",
+                            extractor_version="v1",
+                            raw_text=source_text,
+                            reviewed_text=source_text,
+                            character_count=len(source_text),
+                            block_count=1,
+                            **audit,
+                        )
+                    )
+                    await session.flush()
+                    session.add(
+                        ExtractedBlockModel(
+                            id=block_id,
+                            source_page_id=page_id,
+                            source_document_id=document_id,
+                            page_number=1,
+                            reading_order=0,
+                            extractor="legacy-fixture",
+                            extractor_version="v1",
+                            raw_text=source_text,
+                            reviewed_text=source_text,
+                            character_count=len(source_text),
+                            bbox_x0=0.0,
+                            bbox_y0=0.0,
+                            bbox_x1=1.0,
+                            bbox_y1=1.0,
+                            **audit,
+                        )
+                    )
+                    await session.flush()
+                    await session.execute(
+                        text(
+                            "UPDATE source_documents SET extraction_status='extracted', "
+                            "extractor='legacy-fixture', extractor_version='v1', "
+                            "extracted_page_count=1, extracted_block_count=1, "
+                            "extracted_character_count=:count, native_text_page_ratio=1.0, "
+                            "needs_ocr=false, ocr_page_count=0, extraction_config='{}'::jsonb, "
+                            "extraction_completed_at=now() WHERE id=:id"
+                        ),
+                        {"id": document_id, "count": len(source_text)},
+                    )
+                    for status in ("in_review", "trusted"):
+                        await session.execute(
+                            text(
+                                "UPDATE source_documents SET extraction_status=:status WHERE id=:id"
+                            ),
+                            {"id": document_id, "status": status},
+                        )
+                    await session.execute(
+                        text(
+                            "INSERT INTO knowledge_chunks (id, curriculum_version_id, "
+                            "chunk_type, text, educational_boundary, sequence, "
+                            "source_document_id, page_number, source_block_id, review_state, "
+                            "competency_id, skill_id, created_by, updated_by) VALUES "
+                            "(:id, :curriculum, 'explanation', "
+                            ":text, 'Legacy', 0, :source, 1, :block, 'reviewed', "
+                            ":competency, :skill, :actor, :actor)"
+                        ),
+                        {
+                            "id": UUID(int=2_220_003),
+                            "curriculum": CURRICULUM_VERSION_ID,
+                            "text": source_text,
+                            "source": document_id,
+                            "block": block_id,
+                            "competency": target.competency_id,
+                            "skill": target.skill_id,
+                            "actor": ACTOR_ID,
+                        },
+                    )
+                    session.add(
+                        PaperBlueprintModel(
+                            id=template.paper_blueprint_id,
+                            curriculum_version_id=CURRICULUM_VERSION_ID,
+                            blueprint_id=version.blueprint_id,
+                            schema_version=version.schema_version,
+                            algorithm_version=version.algorithm_version,
+                            config_version=version.config_version,
+                            seed=blueprint.seed,
+                            total_marks=blueprint.total_marks,
+                            slot_count=1,
+                            specification_fingerprint="sha256:" + "a" * 64,
+                            input_fingerprint="sha256:" + "b" * 64,
+                            result_fingerprint="sha256:" + "c" * 64,
+                            specification=serialize_specification(specification),
+                            blueprint=snapshot,
+                            taxonomy_snapshot=[
+                                {
+                                    "id": str(identifier),
+                                    "curriculum_version_id": str(CURRICULUM_VERSION_ID),
+                                    "parent_id": None if index == 0 else str(target.competency_id),
+                                    "level": "competency" if index == 0 else "skill",
+                                    "code": f"T{index}",
+                                    "title": "Legacy reviewed taxonomy",
+                                    "active": True,
+                                    "review_state": "reviewed",
+                                    "reviewed_at": datetime.now(UTC).isoformat(),
+                                    "reviewed_by": str(ACTOR_ID),
+                                }
+                                for index, identifier in enumerate(
+                                    (target.competency_id, target.skill_id)
+                                )
+                            ],
+                            created_by=ACTOR_ID,
+                        )
+                    )
+                    await session.flush()
+                    slot = cast(list[dict[str, object]], snapshot["slots"])[0]
+                    template = replace(
+                        template,
+                        curriculum_version_id=CURRICULUM_VERSION_ID,
+                        blueprint_version=version.blueprint_id,
+                        blueprint_snapshot=cast(dict[str, object], snapshot),
+                        slot_id=str(slot["slot_id"]),
+                        blueprint_slot_snapshot=slot,
+                        historical_question_ids=[],
+                        knowledge_chunk_ids=[str(UUID(int=2_220_003))],
+                        context_snapshot={
+                            "items": [{"text": "Legacy source"}],
+                            "trust": "untrusted_data",
+                        },
+                    )
+                    generation = SqlAlchemyGenerationRepository(session)
+                    generation_ids: list[UUID] = []
+                    for depth in range(3):
+                        identifier = UUID(int=2_221_000 + depth)
+                        stored = await generation.store_run(
+                            replace(
+                                template,
+                                id=identifier,
+                                retry_depth=depth,
+                                retry_of_run_id=generation_ids[-1] if generation_ids else None,
+                                idempotency_key_hash=f"sha256:{identifier.int:064x}",
+                            ),
+                            job_id=UUID(int=2_222_000 + depth),
+                        )
+                        generation_ids.append(identifier)
+                        await generation.fail_dispatch(
+                            identifier,
+                            stored.job.id,
                             completed_at=datetime.now(UTC),
                             failure_code="migration_fixture_failure",
                         )
                         await session.commit()
-                        session.expire_all()
-                        predecessor = current_run_id
 
-                    providers = EmbeddingProviderRegistry(
-                        {"deterministic": DeterministicEmbeddingProvider()}
-                    )
+                    embedding = SqlAlchemyEmbeddingJobRepository(session)
                     embedding_ids: list[UUID] = []
                     for depth in range(3):
-                        embedding_result = await EmbeddingJobService(
-                            session,
-                            providers,
-                            DeterministicEmbeddingDispatcher("migration-embedding"),
-                            DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG,
-                        ).create(
-                            CURRICULUM_VERSION_ID,
-                            historical_question_ids=(ALLOWED_QUESTION_ID,),
-                            knowledge_chunk_ids=(ALLOWED_CHUNK_ID,),
-                            idempotency_key=f"migration-embedding-{depth}",
-                            actor_id=ADMIN_ID,
+                        identifier = UUID(int=2_223_000 + depth)
+                        session.add(
+                            EmbeddingJobModel(
+                                id=identifier,
+                                curriculum_version_id=CURRICULUM_VERSION_ID,
+                                retry_of_job_id=embedding_ids[-1] if embedding_ids else None,
+                                retry_depth=depth,
+                                historical_question_ids=[],
+                                knowledge_chunk_ids=template.knowledge_chunk_ids,
+                                idempotency_key_hash=f"sha256:{identifier.int:064x}",
+                                request_fingerprint="sha256:" + "a" * 64,
+                                source_fingerprint="sha256:" + "b" * 64,
+                                provider="legacy",
+                                model="legacy",
+                                dimension=3,
+                                embedding_version="v1",
+                                config_fingerprint="legacy-v1",
+                                status="queued",
+                                requested_count=1,
+                                created_by=ACTOR_ID,
+                            )
                         )
-                        embedding_ids.append(embedding_result.job.id)
-                        assert await EmbeddingWorkerService(session, providers, None).process(
-                            embedding_result.job.id
+                        await session.flush()
+                        claim = await embedding.claim(identifier, claimed_at=datetime.now(UTC))
+                        assert claim is not None
+                        terminal = await embedding.complete(
+                            identifier,
+                            expected_version=claim.version,
+                            succeeded=False,
+                            failure_code="migration_fixture_failure",
+                            completed_at=datetime.now(UTC),
                         )
+                        assert terminal is not None
+                        await session.commit()
+                        embedding_ids.append(identifier)
                     return tuple(generation_ids), tuple(embedding_ids)
             finally:
                 await engine.dispose()
@@ -592,7 +764,7 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
                 await engine.dispose()
 
         asyncio.run(inspect_downgrade())
-        command.upgrade(config, "head")
+        command.upgrade(config, target_revision)
 
         async def inspect_backfill() -> None:
             engine = create_async_engine(database_url)
@@ -667,7 +839,7 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
 
         child_three, child_four = asyncio.run(add_over_depth_legacy_rows())
         with pytest.raises(DBAPIError):
-            command.upgrade(config, "head")
+            command.upgrade(config, target_revision)
 
         async def replace_over_depth_with_cycle() -> None:
             engine = create_async_engine(database_url)
@@ -710,4 +882,4 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
 
         asyncio.run(replace_over_depth_with_cycle())
         with pytest.raises(DBAPIError):
-            command.upgrade(config, "head")
+            command.upgrade(config, target_revision)

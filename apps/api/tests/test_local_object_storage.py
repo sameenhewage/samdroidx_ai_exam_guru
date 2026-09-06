@@ -403,7 +403,7 @@ def test_local_storage_accepts_bounded_large_original_pdf_configuration(tmp_path
     storage.close()
 
 
-@pytest.mark.parametrize("maximum", [0, True, (256 * 1024 * 1024) + 1])
+@pytest.mark.parametrize("maximum", [0, True, 2**63])
 def test_local_storage_constructor_rejects_invalid_byte_limits(maximum: int) -> None:
     with pytest.raises(ValueError, match="byte limit"):
         LocalFileObjectStorage(root="/data", max_object_bytes=maximum)

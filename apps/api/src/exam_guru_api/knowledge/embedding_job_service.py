@@ -26,8 +26,10 @@ from exam_guru_api.knowledge.repository import (
     KnowledgeRecordNotFoundError,
 )
 from exam_guru_api.knowledge.service import (
+    ActiveKnowledgeSourceRequiredError,
     EmbeddingRequiresReviewedRecordError,
     KnowledgePersistenceService,
+    TrustedKnowledgeSourceRequiredError,
 )
 from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.retrieval.embeddings import (
@@ -138,6 +140,11 @@ def _source_fingerprint(records: tuple[EmbeddingSourceRecord, ...]) -> str:
                 "source_text_sha256": hashlib.sha256(record.text.encode()).hexdigest(),
                 "version": record.version,
                 "active_for_ai": record.active_for_ai,
+                "source_candidate_id": str(record.source_candidate_id),
+                "source_candidate_sha256": record.source_candidate_sha256,
+                "source_fidelity_current": record.source_fidelity_current,
+                "metadata_resolved": record.metadata_resolved,
+                "catalogue_admitted": record.catalogue_admitted,
             }
             for record in records
         ]
@@ -333,8 +340,17 @@ class EmbeddingJobService:
             raise EmbeddingSourceNotFoundError
         if any(record.review_state is not ReviewState.REVIEWED for record in records):
             raise EmbeddingSourceNotReviewedError
-        if any(not record.active_for_ai for record in records):
+        if any(record.active_for_ai is not True for record in records):
             raise EmbeddingSourceRemovedError
+        if any(
+            record.source_candidate_id is None
+            or record.source_candidate_sha256 is None
+            or record.source_fidelity_current is not True
+            or record.metadata_resolved is not True
+            or record.catalogue_admitted is not True
+            for record in records
+        ):
+            raise EmbeddingSourceNotReviewedError("current verified page lineage required")
 
     @staticmethod
     def _same_request(
@@ -490,6 +506,8 @@ class EmbeddingWorkerService:
             EmbeddingSourceNotReviewedError,
             EmbeddingSourceRemovedError,
             EmbeddingRequiresReviewedRecordError,
+            ActiveKnowledgeSourceRequiredError,
+            TrustedKnowledgeSourceRequiredError,
             KnowledgeRecordNotFoundError,
         ):
             failure_code = "embedding_source_invalid"

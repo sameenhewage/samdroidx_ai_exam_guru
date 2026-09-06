@@ -18,7 +18,6 @@ from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureC
 from exam_guru_api.auth.rate_limits import NoOpRateLimiter
 from exam_guru_api.core.config import Settings
 from exam_guru_api.curriculum.domain import (
-    LEGACY_UNCLASSIFIED_SUBJECT_ID,
     TaxonomyLevel,
     TaxonomyReviewState,
 )
@@ -26,6 +25,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -39,6 +39,10 @@ from exam_guru_api.knowledge.models import (
     KnowledgeEmbeddingModel,
 )
 from exam_guru_api.main import create_app
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 EXPLORE_PATH = "/api/v1/admin/retrieval/explore"
@@ -48,6 +52,7 @@ DENIED_ID = UUID(int=900_002)
 EXAM_ID = UUID(int=900_010)
 ENGLISH_ID = UUID(int=900_011)
 SINHALA_ID = UUID(int=900_012)
+SUBJECT_ID = UUID(int=900_013)
 ALLOWED_CURRICULUM_ID = UUID(int=900_020)
 FORBIDDEN_MEDIUM_CURRICULUM_ID = UUID(int=900_021)
 FORBIDDEN_CURRICULUM_ID = UUID(int=900_022)
@@ -143,7 +148,7 @@ async def _seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ScopeS
         ExamConfigurationModel(
             id=EXAM_ID,
             code="G5RAPI",
-            name="Grade 5 retrieval API fixture",
+            name="Grade 5 Scholarship",
             grade=5,
             active=True,
             created_by=ACTOR_ID,
@@ -152,10 +157,18 @@ async def _seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ScopeS
     )
     session.add_all(
         [
+            SubjectModel(
+                id=SUBJECT_ID,
+                code="MATHEMATICS",
+                name="Mathematics",
+                active=True,
+                created_by=ACTOR_ID,
+                updated_by=ACTOR_ID,
+            ),
             MediumModel(
                 id=ENGLISH_ID,
                 code="en-api",
-                name="English API fixture",
+                name="English",
                 active=True,
                 created_by=ACTOR_ID,
                 updated_by=ACTOR_ID,
@@ -163,7 +176,7 @@ async def _seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ScopeS
             MediumModel(
                 id=SINHALA_ID,
                 code="si-api",
-                name="Sinhala API fixture",
+                name="Sinhala",
                 active=True,
                 created_by=ACTOR_ID,
                 updated_by=ACTOR_ID,
@@ -177,6 +190,7 @@ async def _seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ScopeS
                 id=scope.curriculum_id,
                 exam_configuration_id=EXAM_ID,
                 medium_id=scope.medium_id,
+                subject_id=SUBJECT_ID,
                 code=f"RAPI{index}",
                 title=f"Retrieval API curriculum {index}",
                 active=True,
@@ -211,6 +225,8 @@ async def _seed_scope_entities(session: AsyncSession) -> tuple[ScopeSeed, ScopeS
         ]
     )
     await session.flush()
+    for scope in (allowed, forbidden_medium, forbidden_curriculum):
+        await approve_synthetic_curriculum(session, scope.curriculum_id, actor_id=ACTOR_ID)
     return allowed, forbidden_medium, forbidden_curriculum
 
 
@@ -220,7 +236,7 @@ async def _seed_source(
     scope: ScopeSeed,
     offset: int,
     text: str,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID, UUID, UUID]:
     document_id = UUID(int=901_000 + offset)
     page_id = UUID(int=902_000 + offset)
     block_id = UUID(int=903_000 + offset)
@@ -239,6 +255,8 @@ async def _seed_source(
         paper_code=None,
         extraction_attempt_count=1,
         extraction_started_at=now,
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ACTOR_ID,
         updated_by=ACTOR_ID,
     )
@@ -297,7 +315,8 @@ async def _seed_source(
     await session.flush()
     document.extraction_status = ExtractionStatus.TRUSTED
     await session.flush()
-    return document_id, block_id
+    candidate_id = await verify_synthetic_page(session, document_id, text, actor_id=ACTOR_ID)
+    return document_id, block_id, candidate_id
 
 
 async def _seed_chunk(
@@ -308,6 +327,7 @@ async def _seed_chunk(
     embedding_id: UUID,
     document_id: UUID,
     block_id: UUID,
+    candidate_id: UUID,
     text: str,
     sequence: int,
     embedding: tuple[float, ...],
@@ -323,6 +343,7 @@ async def _seed_chunk(
             source_document_id=document_id,
             page_number=1,
             source_block_id=block_id,
+            source_candidate_id=candidate_id,
             review_state=ReviewState.REVIEWED,
             competency_id=scope.competency_id,
             skill_id=None,
@@ -384,7 +405,7 @@ def retrieval_api_database_url() -> Iterator[str]:
                     )
                     .vector
                 )
-                allowed_document_id, allowed_block_id = await _seed_source(
+                allowed_document_id, allowed_block_id, allowed_candidate_id = await _seed_source(
                     session,
                     scope=allowed,
                     offset=1,
@@ -397,6 +418,7 @@ def retrieval_api_database_url() -> Iterator[str]:
                     embedding_id=UUID(int=904_001),
                     document_id=allowed_document_id,
                     block_id=allowed_block_id,
+                    candidate_id=allowed_candidate_id,
                     text=PROMPT_INJECTION_TEXT,
                     sequence=0,
                     embedding=query_vector,
@@ -408,12 +430,13 @@ def retrieval_api_database_url() -> Iterator[str]:
                     embedding_id=UUID(int=904_002),
                     document_id=allowed_document_id,
                     block_id=allowed_block_id,
+                    candidate_id=allowed_candidate_id,
                     text=PROMPT_INJECTION_TEXT,
                     sequence=1,
                     embedding=query_vector,
                 )
                 second_text = "A square perimeter is the sum of its four equal side lengths."
-                second_document_id, second_block_id = await _seed_source(
+                second_document_id, second_block_id, second_candidate_id = await _seed_source(
                     session,
                     scope=allowed,
                     offset=2,
@@ -426,6 +449,7 @@ def retrieval_api_database_url() -> Iterator[str]:
                     embedding_id=UUID(int=904_003),
                     document_id=second_document_id,
                     block_id=second_block_id,
+                    candidate_id=second_candidate_id,
                     text=second_text,
                     sequence=0,
                     embedding=tuple(reversed(query_vector)),
@@ -445,7 +469,7 @@ def retrieval_api_database_url() -> Iterator[str]:
                         UUID(int=904_005),
                     ),
                 ):
-                    document_id, block_id = await _seed_source(
+                    document_id, block_id, candidate_id = await _seed_source(
                         session,
                         scope=scope,
                         offset=offset,
@@ -458,6 +482,7 @@ def retrieval_api_database_url() -> Iterator[str]:
                         embedding_id=embedding_id,
                         document_id=document_id,
                         block_id=block_id,
+                        candidate_id=candidate_id,
                         text=stronger_text,
                         sequence=0,
                         embedding=query_vector,
@@ -476,6 +501,7 @@ def _payload() -> dict[str, object]:
             "grade": 5,
             "exam_id": str(EXAM_ID),
             "medium_id": str(ENGLISH_ID),
+            "subject_id": str(SUBJECT_ID),
             "curriculum_version_id": str(ALLOWED_CURRICULUM_ID),
             "taxonomy": {"competency_id": str(ALLOWED_COMPETENCY_ID)},
         },
@@ -547,7 +573,7 @@ def test_real_postgres_retrieval_explorer_is_authorized_bounded_and_leakage_safe
     expected_scope = cast(dict[str, object], _payload()["scope"])
     assert body["scope"] == {
         **expected_scope,
-        "subject_id": str(LEGACY_UNCLASSIFIED_SUBJECT_ID),
+        "subject_id": str(SUBJECT_ID),
         "unit_ids": [],
         "lesson_ids": [],
         "taxonomy": {

@@ -1,9 +1,27 @@
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+
+def test_docker_context_excludes_private_corpus_storage_and_evidence() -> None:
+    root = Path(__file__).resolve().parents[3]
+    ignored = set((root / ".dockerignore").read_text().splitlines())
+    assert {
+        "RAG DATA",
+        ".exam-guru-data",
+        ".exam-guru-pilot-data",
+        ".exam-guru-evidence",
+        "graphify-out",
+    } <= ignored
+
+
+def test_worker_image_includes_tamil_for_mixed_real_sources() -> None:
+    root = Path(__file__).resolve().parents[3]
+    assert "tesseract-ocr-tam" in (root / "apps/api/Dockerfile").read_text()
 
 
 @pytest.mark.integration
@@ -15,6 +33,8 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
         [
             docker,
             "compose",
+            "--env-file",
+            str(repository_root / ".env.example"),
             "--file",
             str(repository_root / "compose.yaml"),
             "config",
@@ -22,6 +42,7 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
             "json",
         ],
         cwd=repository_root,
+        env={"PATH": os.defpath, "HOME": str(Path.home())},
         check=True,
         capture_output=True,
         text=True,
@@ -33,7 +54,23 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
 
     assert maintenance["command"] == ["exam-guru-maintenance"]
     assert maintenance["build"] == worker["build"]
-    assert api["environment"].items() <= worker["environment"].items()
+    api_shared = {
+        key: value
+        for key, value in api["environment"].items()
+        if key != "EXAM_GURU_TEST_RUNTIME_ID"
+    }
+    assert api_shared.items() <= worker["environment"].items()
+    for name, service in services.items():
+        if name != "api":
+            assert "EXAM_GURU_TEST_RUNTIME_ID" not in service.get("environment", {})
+        assert all(port.get("host_ip") == "127.0.0.1" for port in service.get("ports", []))
+    for name in (
+        "EXAM_GURU_SOURCE_UPLOAD_MAX_OWNER_STAGED_BYTES",
+        "EXAM_GURU_SOURCE_UPLOAD_MAX_STAGED_BYTES",
+        "EXAM_GURU_SOURCE_UPLOAD_MAX_ACTIVE_SESSIONS_PER_OWNER",
+    ):
+        assert name in api_shared
+        assert api_shared[name] == maintenance["environment"][name]
     assert worker["environment"]["EXAM_GURU_OCR_PROVIDER"] == "tesseract"
     assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_LANGUAGE"] == "sin+eng"
     assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_PAGES"] == "40"
@@ -84,13 +121,15 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert {"api", "worker", "maintenance", "web", "postgres", "valkey"} <= services.keys()
     dockerfile = (repository_root / "apps" / "api" / "Dockerfile").read_text(encoding="utf-8")
     assert "--no-install-recommends" in dockerfile
-    for package in ("tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-sin"):
+    for package in ("tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-sin", "tesseract-ocr-tam"):
         assert package in dockerfile
 
     profile_completed = subprocess.run(  # noqa: S603
         [
             docker,
             "compose",
+            "--env-file",
+            str(repository_root / ".env.example"),
             "--file",
             str(repository_root / "compose.yaml"),
             "--profile",
@@ -100,11 +139,17 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
             "json",
         ],
         cwd=repository_root,
+        env={"PATH": os.defpath, "HOME": str(Path.home())},
         check=True,
         capture_output=True,
         text=True,
     )
     profile_services = json.loads(profile_completed.stdout)["services"]
+    assert all(
+        port.get("host_ip") == "127.0.0.1"
+        for service in profile_services.values()
+        for port in service.get("ports", [])
+    )
     assert profile_services["minio"]["profiles"] == ["s3"]
     assert profile_services["minio-init"]["profiles"] == ["s3"]
     assert profile_services["minio-init"]["depends_on"]["minio"] == {

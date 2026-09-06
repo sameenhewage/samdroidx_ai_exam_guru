@@ -1,5 +1,13 @@
 import type { components } from "@exam-guru/api-client";
-import { expect, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type Page,
+  type Route,
+} from "@playwright/test";
+import { createHash, randomUUID } from "node:crypto";
+
+import { requireIsolatedE2ERuntime } from "../../playwright-runtime";
 
 export type AdminRole = "admin" | "reviewer";
 
@@ -9,10 +17,15 @@ type ExtractedBlock = components["schemas"]["ExtractedBlockResponse"];
 type Material = components["schemas"]["MaterialListItemResponse"];
 type MaterialRemoveRequest = components["schemas"]["MaterialRemoveRequest"];
 type MaterialRestoreRequest = components["schemas"]["MaterialRestoreRequest"];
-type MaterialScopeRequest = components["schemas"]["MaterialScopeCorrectionRequest"];
-type ReviewedTextUpdate = components["schemas"]["ReviewedTextUpdate"];
+type MaterialScopeRequest =
+  components["schemas"]["MaterialScopeCorrectionRequest"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
+type PageView = components["schemas"]["PageReviewView"];
+type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
+type UploadSession = components["schemas"]["SourceUploadResponse"];
+type UploadCreate = components["schemas"]["SourceUploadCreateRequest"];
+type CatalogueEntry = components["schemas"]["MaterialCatalogueEntry"];
 type TeacherPaperOptions = components["schemas"]["TeacherPaperOptionsResponse"];
 type CurriculumLabels = components["schemas"]["CurriculumLabelsResponse"];
 type LessonLabels = components["schemas"]["LessonLabelsResponse"];
@@ -61,6 +74,23 @@ const educationIds = {
   mathsSubject: "00000000-0000-0000-0000-000000000907",
   medium: "00000000-0000-0000-0000-000000000908",
 } as const;
+
+const admittedCatalogue: CatalogueEntry[] = [
+  [5, educationIds.gradeFiveCurriculum, educationIds.gradeFiveExam],
+  [7, educationIds.gradeSevenCurriculum, educationIds.gradeSevenExam],
+  [11, educationIds.gradeElevenCurriculum, educationIds.gradeElevenExam],
+].map(([grade, curriculumId, examId]) => ({
+  grade: Number(grade),
+  grade_label: `Grade ${grade}`,
+  curriculum_version_id: String(curriculumId),
+  curriculum_title: `Grade ${grade} Maths 2026`,
+  exam_configuration_id: String(examId),
+  exam_configuration_name: `Grade ${grade} school papers`,
+  medium_id: educationIds.medium,
+  medium_name: "English",
+  subject_id: educationIds.mathsSubject,
+  subject_name: "Maths",
+}));
 
 const gradeSevenUnits = [
   {
@@ -189,7 +219,9 @@ function fixtureSource(
   checksumCharacter: string,
   overrides: Partial<SourceDocument> = {},
 ): SourceDocument {
-  const complete = ["extracted", "in_review", "trusted"].includes(extractionStatus);
+  const complete = ["extracted", "in_review", "trusted"].includes(
+    extractionStatus,
+  );
   return {
     active_for_ai: true,
     checksum_sha256: checksumCharacter.repeat(64),
@@ -335,6 +367,14 @@ const generationLessons = [
   },
 ] satisfies components["schemas"]["LessonOption"][];
 
+const teacherCurriculum = {
+  assessment_label: "School Grade 5",
+  assessment_programme: "SCHOOL-G5",
+  code: "G5-MATHS-2026",
+  label: "Grade 5 Maths 2026",
+  source_scope_fingerprint: `sha256:${"a".repeat(64)}`,
+} satisfies components["schemas"]["CurriculumLabelResponse"];
+
 const generationOptions = {
   defaults: {
     difficulty: "balanced",
@@ -346,13 +386,20 @@ const generationOptions = {
     written_count: 5,
   },
   grades: [5],
-  media: [{ code: "si", label: "Sinhala Medium" }],
+  media: [{ code: "si", label: "Sinhala Medium", grades: [5] }],
   paper_types: [
-    { code: "subject_practice", grade: 5, label: "Subject Practice" },
-    { code: "term_test", grade: 5, label: "Term Test" },
+    {
+      code: "subject_practice",
+      grade: 5,
+      medium: "si",
+      label: "Subject Practice",
+    },
+    { code: "term_test", grade: 5, medium: "si", label: "Term Test" },
     {
       code: "scholarship_practice",
       grade: 5,
+      medium: "si",
+      source_scope_fingerprint: teacherCurriculum.source_scope_fingerprint,
       label: "Grade 5 Scholarship Practice",
     },
   ],
@@ -366,6 +413,7 @@ const generationOptions = {
       code: "MATHEMATICS",
       grade: 5,
       label: "Maths",
+      curriculum: teacherCurriculum,
       lessons: generationLessons,
       medium: "si",
       units: [{ code: "NUMBERS", label: "Numbers" }],
@@ -379,14 +427,7 @@ const generationOptions = {
 } satisfies TeacherPaperOptions;
 
 const teacherCurricula = {
-  items: [
-    {
-      assessment_label: "School Grade 5",
-      assessment_programme: "SCHOOL-G5",
-      code: "G5-MATHS-2026",
-      label: "Grade 5 Maths 2026",
-    },
-  ],
+  items: [teacherCurriculum],
 } satisfies CurriculumLabels;
 
 const teacherLessons = {
@@ -397,7 +438,9 @@ const teacherLessons = {
   subject: "MATHEMATICS",
 } satisfies LessonLabels;
 
-function teacherPaperJob(overrides: Partial<TeacherPaperJob> = {}): TeacherPaperJob {
+function teacherPaperJob(
+  overrides: Partial<TeacherPaperJob> = {},
+): TeacherPaperJob {
   return {
     completed_at: "2026-08-25T10:03:00Z",
     cost_microusd: 45_000,
@@ -417,7 +460,12 @@ function teacherPaperJob(overrides: Partial<TeacherPaperJob> = {}): TeacherPaper
     medium: "Sinhala Medium",
     paper_id: paperId,
     paper_reference: "EGP-G5-MATH-0001",
-    progress: ["preparing", "generating", "checking_answers", "ready_for_review"],
+    progress: [
+      "preparing",
+      "generating",
+      "checking_answers",
+      "ready_for_review",
+    ],
     review_url: `/admin/review-approve?paper=${generationJobId}`,
     scope_summary: "Lessons 1–3",
     slots: [1, 2, 3].map((number) => ({
@@ -446,7 +494,8 @@ const reviewQuestion = {
   answer: "B — 3/4",
   content: {
     answer: "B — 3/4",
-    explanation: "Three of the four equal parts are shaded, so the fraction is 3/4.",
+    explanation:
+      "Three of the four equal parts are shaded, so the fraction is 3/4.",
     marking_guide: ["Identifies three shaded parts out of four equal parts."],
     marking_point_marks: [2],
     marks: 2,
@@ -459,7 +508,8 @@ const reviewQuestion = {
     question_type: "multiple_choice",
     stem: "What fraction of the four equal parts is shaded when three parts are shaded?",
   },
-  explanation: "Three of the four equal parts are shaded, so the fraction is 3/4.",
+  explanation:
+    "Three of the four equal parts are shaded, so the fraction is 3/4.",
   id: questionId,
   marking_scheme: {
     criteria: ["Identifies three shaded parts out of four equal parts."],
@@ -662,7 +712,9 @@ export async function loginAs(page: Page, role: AdminRole) {
     },
   ]);
   await page.goto("/admin/home");
-  await expect(page.getByRole("heading", { name: "Create and manage exam papers" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Create and manage exam papers" }),
+  ).toBeVisible();
 }
 
 export function syntheticPdf(marker: string): Buffer {
@@ -685,7 +737,9 @@ export function syntheticPdf(marker: string): Buffer {
   const xref = [
     `xref\n0 ${objects.length + 1}\n`,
     "0000000000 65535 f \n",
-    ...offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`),
+    ...offsets.map(
+      (offset) => `${String(offset).padStart(10, "0")} 00000 n \n`,
+    ),
   ].join("");
   return Buffer.from(
     `${body}${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
@@ -693,7 +747,311 @@ export function syntheticPdf(marker: string): Buffer {
   );
 }
 
-export async function installTeacherStudioFixture(page: Page): Promise<TeacherStudioFixture> {
+export async function assertDisposableStudio(request: APIRequestContext) {
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  const response = await request.get(
+    "/api/v1/admin/studio-safety/runtime-identity",
+  );
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  return { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+}
+
+export async function seedAdmittedCurriculum(
+  request: APIRequestContext,
+  grade = 5,
+): Promise<components["schemas"]["MaterialCatalogueEntry"]> {
+  return (await seedAdmittedScope(request, grade)).entry;
+}
+
+export async function seedAdmittedScope(request: APIRequestContext, grade = 5) {
+  const headers = await assertDisposableStudio(request);
+  const unique = randomUUID().replaceAll("-", "").slice(0, 12);
+  const post = async <T>(path: string, data: unknown): Promise<T> => {
+    const response = await request.post(path, { headers, data });
+    expect(response.status(), path).toBe(201);
+    return (await response.json()) as T;
+  };
+  const exam = await post<components["schemas"]["ExamConfigurationResponse"]>(
+    "/api/v1/admin/exam-configurations",
+    {
+      code: `Q${unique.toUpperCase()}E`,
+      name: `Grade ${grade} school assessment`,
+      grade,
+    },
+  );
+  const medium = await post<components["schemas"]["MediumResponse"]>(
+    "/api/v1/admin/media",
+    { code: `q${unique}`, name: "English" },
+  );
+  const subject = await post<components["schemas"]["SubjectResponse"]>(
+    "/api/v1/admin/subjects",
+    { code: `Q${unique.toUpperCase()}S`, name: "Mathematics" },
+  );
+  const curriculum = await post<
+    components["schemas"]["CurriculumVersionResponse"]
+  >("/api/v1/admin/curriculum-versions", {
+    code: `Q${unique.toUpperCase()}C`,
+    title: `Grade ${grade} Mathematics curriculum`,
+    exam_configuration_id: exam.id,
+    medium_id: medium.id,
+    subject_id: subject.id,
+  });
+  const reviewResponse = await request.get(
+    `/api/v1/admin/curriculum-versions/${curriculum.id}/admission`,
+  );
+  expect(reviewResponse.status()).toBe(200);
+  const review =
+    (await reviewResponse.json()) as components["schemas"]["CatalogueAdmissionReview"];
+  const explanation =
+    "Disposable synthetic workflow fixture, NOT real educational approval";
+  await post(`/api/v1/admin/curriculum-versions/${curriculum.id}/admission`, {
+    state: "approved",
+    expected_version: review.version,
+    expected_scope_fingerprint: review.scope_fingerprint,
+    educational_approval: true,
+    reason: explanation,
+    source_reference: explanation,
+    evidence: [explanation],
+  } satisfies components["schemas"]["AdmissionDecisionRequest"]);
+  const catalogueResponse = await request.get(
+    "/api/v1/admin/material-catalogue",
+    { params: { grade, medium_id: medium.id, subject_id: subject.id } },
+  );
+  expect(catalogueResponse.status()).toBe(200);
+  const entries =
+    (await catalogueResponse.json()) as components["schemas"]["MaterialCatalogueEntry"][];
+  const entry = entries.find(
+    (item) => item.curriculum_version_id === curriculum.id,
+  );
+  expect(entry).toBeDefined();
+  if (!entry)
+    throw new Error(
+      "The explicitly admitted disposable curriculum must be available",
+    );
+  return { entry, curriculum, exam, medium, subject };
+}
+
+export const SYNTHETIC_WORKFLOW_EVIDENCE =
+  "Disposable synthetic workflow fixture, NOT real educational approval";
+
+/** Explicit printable lines prevent clipping or silent changes to imported source spans. */
+export function syntheticTextPdf(lines: readonly string[]) {
+  if (
+    lines.length < 1 ||
+    lines.length > 40 ||
+    lines.some(
+      (line) =>
+        line.length < 1 ||
+        line.length > 80 ||
+        [...line].some(
+          (character) =>
+            character.charCodeAt(0) < 32 || character.charCodeAt(0) > 126,
+        ),
+    )
+  ) {
+    throw new Error(
+      "Synthetic PDF lines must be printable ASCII and fit the declared page layout",
+    );
+  }
+  const escaped = lines.map((line) =>
+    line.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)"),
+  );
+  const stream = `BT\n/F1 10 Tf\n14 TL\n54 760 Td\n${escaped.map((line, index) => `${index ? "T*\n" : ""}(${line}) Tj`).join("\n")}\nET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = objects.map((object) => {
+    const offset = Buffer.byteLength(body, "ascii");
+    body += object;
+    return offset;
+  });
+  const xrefOffset = Buffer.byteLength(body, "ascii");
+  const xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}`;
+  return {
+    bytes: Buffer.from(
+      `${body}${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+      "ascii",
+    ),
+    text: lines.join("\n"),
+  };
+}
+
+function assertSyntheticPageText(page: PageView, text: string) {
+  expect(text).toBe(text.normalize("NFC"));
+  // JSON preserves the literal NFC source text; the browser renders it as text, not HTML.
+  expect(page.system_text).toBe(text);
+  expect(page.candidate_id).not.toBeNull();
+  expect(
+    page.history.find((candidate) => candidate.id === page.candidate_id)
+      ?.text_sha256,
+  ).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
+}
+
+export async function readSyntheticSource(
+  request: APIRequestContext,
+  source: SourceDocument,
+  text: string,
+): Promise<PageView> {
+  const headers = await assertDisposableStudio(request);
+  if (!source.curriculum_version_id)
+    throw new Error(
+      "Synthetic source verification requires an admitted curriculum",
+    );
+  const metadata = await request.patch(
+    `/api/v1/admin/materials/${source.id}/scope`,
+    {
+      headers,
+      data: {
+        curriculum_version_id: source.curriculum_version_id,
+        unit_id: source.unit_id,
+        lesson_id: source.lesson_id,
+        expected_version: source.metadata_scope_version,
+        confirm_intake_metadata: true,
+      } satisfies components["schemas"]["MaterialScopeCorrectionRequest"],
+    },
+  );
+  expect(metadata.status()).toBe(200);
+  expect(await metadata.json()).toMatchObject({
+    metadata_review_required: false,
+  });
+  const accepted = await request.post(
+    `/api/v1/admin/source-documents/${source.id}/read`,
+    { headers },
+  );
+  expect(accepted.status()).toBe(202);
+  const job =
+    (await accepted.json()) as components["schemas"]["SourceReadJobResponse"];
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          `/api/v1/admin/source-read-jobs/${job.id}`,
+        );
+        expect(response.status()).toBe(200);
+        const current =
+          (await response.json()) as components["schemas"]["SourceReadJobResponse"];
+        return { status: current.status, failure_code: current.failure_code };
+      },
+      { timeout: 60_000, intervals: [250, 500, 1000] },
+    )
+    .toEqual({ status: "completed", failure_code: null });
+  const response = await request.get(
+    `/api/v1/admin/materials/${source.id}/review-workspace`,
+  );
+  expect(response.status()).toBe(200);
+  const workspace = (await response.json()) as Workspace;
+  expect(workspace).toMatchObject({
+    metadata_review_required: false,
+    ready_for_ai: false,
+    progress: {
+      total_pages: 1,
+      processed_pages: 1,
+      verified_pages: 0,
+      remaining_pages: 1,
+    },
+  });
+  if (!workspace.page)
+    throw new Error("The synthetic PDF must have a current reading candidate");
+  assertSyntheticPageText(workspace.page, text);
+  expect(workspace.page.can_confirm).toBe(true);
+  return workspace.page;
+}
+
+export async function confirmSyntheticPage(
+  request: APIRequestContext,
+  documentId: string,
+  page: PageView,
+  text: string,
+): Promise<PageView> {
+  const headers = await assertDisposableStudio(request);
+  assertSyntheticPageText(page, text);
+  expect(page.state).toBe("needs_review");
+  expect(page.can_confirm).toBe(true);
+  const imagePath = `/api/v1/admin/materials/${documentId}/pages/${page.page_number}/image`;
+  expect(page.preview_url).toBe(imagePath);
+  const image = await request.get(imagePath);
+  expect(image.status()).toBe(200);
+  expect(image.headers()["content-type"]).toBe("image/png");
+  const confirmed = await request.post(
+    `/api/v1/admin/materials/${documentId}/pages/${page.page_number}/confirm`,
+    {
+      headers,
+      data: {
+        expected_version: page.version,
+        candidate_id: page.candidate_id!,
+        compared_with_original: true,
+        reason: SYNTHETIC_WORKFLOW_EVIDENCE,
+      } satisfies components["schemas"]["PageConfirmRequest"],
+    },
+  );
+  expect(confirmed.status()).toBe(200);
+  expect(await confirmed.json()).toMatchObject({
+    state: "verified",
+    candidate_id: page.candidate_id,
+    version: page.version + 1,
+  });
+  const response = await request.get(
+    `/api/v1/admin/materials/${documentId}/review-workspace`,
+  );
+  expect(response.status()).toBe(200);
+  const workspace = (await response.json()) as Workspace;
+  expect(workspace).toMatchObject({
+    ready_for_ai: true,
+    metadata_review_required: false,
+    progress: { total_pages: 1, verified_pages: 1, remaining_pages: 0 },
+  });
+  if (!workspace.page)
+    throw new Error("The explicitly compared page must remain available");
+  assertSyntheticPageText(workspace.page, text);
+  return workspace.page;
+}
+
+export async function assertVerifiedRecord(
+  request: APIRequestContext,
+  kind: "historical_question" | "knowledge_chunk",
+  record:
+    | components["schemas"]["HistoricalQuestionResponse"]
+    | components["schemas"]["KnowledgeChunkResponse"],
+  page: PageView,
+  sourceText: string,
+) {
+  expect(record.text).toBe(record.text.normalize("NFC"));
+  expect(sourceText).toContain(record.text);
+  expect(record.provenance.page_number).toBe(page.page_number);
+  // Public record DTOs omit the candidate ID; their append-only import audit exposes the binding.
+  const response = await request.get("/api/v1/admin/audit-events", {
+    params: { resource_type: kind, limit: 200 },
+  });
+  expect(response.status()).toBe(200);
+  const events =
+    (await response.json()) as components["schemas"]["AdminAuditEventResponse"][];
+  const action =
+    kind === "historical_question"
+      ? "knowledge.question.imported"
+      : "knowledge.chunk.imported";
+  const imported = events.filter(
+    (event) => event.resource_id === record.id && event.action === action,
+  );
+  expect(imported).toHaveLength(1);
+  expect(imported[0].payload).toMatchObject({
+    source_document_id: record.provenance.source_document_id,
+    page_number: page.page_number,
+    source_candidate_id: page.candidate_id,
+  });
+}
+
+export async function installTeacherStudioFixture(
+  page: Page,
+): Promise<TeacherStudioFixture> {
   const state: TeacherStudioFixture = {
     corrections: [],
     curriculumIds: { gradeEleven: educationIds.gradeElevenCurriculum },
@@ -704,9 +1062,74 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     reviewQuestionId: questionId,
     sourceDocuments: fixtureSources.map((source) => ({ ...source })),
   };
-  let sourcePages = fixturePages.map((sourcePage) => ({ ...sourcePage }));
-  let sourceBlocks = fixtureBlocks.map((sourceBlock) => ({ ...sourceBlock }));
+  const sourcePages = fixturePages.map((sourcePage) => ({ ...sourcePage }));
+  const sourceBlocks = fixtureBlocks.map((sourceBlock) => ({ ...sourceBlock }));
   let currentReviewPaper: ReviewPaper = structuredClone(reviewPaper);
+  const uploadSessions = new Map<
+    string,
+    {
+      session: UploadSession;
+      input: UploadCreate;
+      hash: ReturnType<typeof createHash>;
+      receipts: components["schemas"]["SourceUploadChunkReceipt"][];
+    }
+  >();
+  const views: PageView[] = fixturePages.map((sourcePage) => ({
+    page_number: sourcePage.page_number,
+    version: sourcePage.version,
+    candidate_id: sourcePage.id,
+    state: "needs_review",
+    system_text: sourcePage.raw_text,
+    language: "en",
+    can_confirm: true,
+    preview_url: `/api/v1/admin/materials/${materialIds.ocr}/pages/${sourcePage.page_number}/image`,
+    risk_codes: [],
+    provenance: { source_checksum_sha256: "c".repeat(64) },
+    diagnostics: {},
+    history: [],
+  }));
+  const reviewWorkspace = (number: number): Workspace => {
+    const source = state.sourceDocuments.find(
+      (item) => item.id === materialIds.ocr,
+    )!;
+    const verified = views.filter((view) => view.state === "verified").length;
+    const excluded = views.filter((view) => view.state === "excluded").length;
+    const remaining = views.length - verified - excluded;
+    const ready =
+      source.active_for_ai &&
+      !source.metadata_review_required &&
+      remaining === 0 &&
+      verified > 0 &&
+      admittedCatalogue.some(
+        (entry) => entry.curriculum_version_id === source.curriculum_version_id,
+      );
+    state.materials.find((item) => item.id === materialIds.ocr)!.status = ready
+      ? "ready_for_ai"
+      : "needs_review";
+    const flagged = views
+      .filter((view) => !["verified", "excluded"].includes(view.state))
+      .map((view) => view.page_number);
+    return {
+      document_id: materialIds.ocr,
+      document_title: source.original_filename,
+      language: "en",
+      metadata_review_required: source.metadata_review_required,
+      source_active: source.active_for_ai,
+      ready_for_ai: ready,
+      progress: {
+        total_pages: views.length,
+        processed_pages: views.length,
+        verified_pages: verified,
+        excluded_pages: excluded,
+        remaining_pages: remaining,
+        flagged_pages: remaining,
+      },
+      page: views.find((view) => view.page_number === number) ?? null,
+      previous_flagged_page:
+        flagged.filter((page) => page < number).at(-1) ?? null,
+      next_flagged_page: flagged.find((page) => page > number) ?? null,
+    };
+  };
 
   await page.route("**/api/v1/admin/**", async (route) => {
     const request = route.request();
@@ -721,6 +1144,172 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       path,
       search: url.search,
     });
+
+    if (method === "GET" && path.endsWith("/material-catalogue"))
+      return json(route, admittedCatalogue);
+    if (method === "POST" && path.endsWith("/source-uploads")) {
+      const input = body as UploadCreate;
+      const existing = [...uploadSessions.values()].find(
+        (item) => item.input.request_id === input.request_id,
+      );
+      if (existing) {
+        expect(input).toEqual(existing.input);
+        return json(route, existing.session, 201);
+      }
+      expect(input.request_id).toMatch(/^[0-9a-f-]{36}$/);
+      const id = randomUUID();
+      const now = "2026-09-06T00:00:00Z";
+      const session: UploadSession = {
+        id,
+        request_id: input.request_id,
+        filename: input.filename,
+        size_bytes: input.size_bytes,
+        document_type: input.document_type,
+        intake_metadata: input.intake_metadata ?? {},
+        status: "uploading",
+        next_offset: 0,
+        verified_bytes: 0,
+        version: 0,
+        chunk_size_bytes: 4_194_304,
+        deduplicated: false,
+        created_at: now,
+        updated_at: now,
+      };
+      uploadSessions.set(id, {
+        session,
+        input,
+        hash: createHash("sha256"),
+        receipts: [],
+      });
+      return json(route, session, 201);
+    }
+    if (method === "GET" && path.includes("/source-uploads/by-request/")) {
+      const entry = [...uploadSessions.values()].find(
+        (item) => item.input.request_id === path.split("/").at(-1),
+      );
+      return entry
+        ? json(route, entry.session)
+        : json(route, { detail: { code: "source_upload_not_found" } }, 404);
+    }
+    const uploadEntry = [...uploadSessions.values()].find((item) =>
+      path.includes(`/source-uploads/${item.session.id}`),
+    );
+    if (uploadEntry) {
+      const upload = uploadEntry.session;
+      if (method === "PUT" && path.endsWith("/chunks")) {
+        const bytes = request.postDataBuffer()!;
+        expect(bytes.length).toBeGreaterThan(0);
+        expect(bytes.length).toBeLessThanOrEqual(4_194_304);
+        expect(Number(url.searchParams.get("offset"))).toBe(upload.next_offset);
+        expect(request.headers()["content-type"]).toBe(
+          "application/octet-stream",
+        );
+        const checksum = createHash("sha256").update(bytes).digest("hex");
+        expect(request.headers()["x-chunk-sha256"]).toBe(checksum);
+        uploadEntry.hash.update(bytes);
+        uploadEntry.receipts.push({
+          offset: upload.next_offset,
+          size_bytes: bytes.length,
+          checksum_sha256: checksum,
+        });
+        upload.next_offset += bytes.length;
+        upload.version += 1;
+        return json(route, upload);
+      }
+      if (method === "GET" && path.endsWith("/chunks"))
+        return json(route, {
+          upload_id: upload.id,
+          next_offset: upload.next_offset,
+          receipts: uploadEntry.receipts,
+          next_receipt_offset: null,
+        });
+      if (method === "POST" && path.endsWith("/complete")) {
+        expect(body).toEqual({ expected_version: upload.version });
+        expect(upload.next_offset).toBe(upload.size_bytes);
+        if (upload.status === "uploading") {
+          upload.status = "pending";
+          upload.version += 1;
+        }
+        return json(route, upload, 202);
+      }
+      if (method === "GET" && path.endsWith(upload.id)) {
+        if (upload.status === "pending") {
+          const checksum = uploadEntry.hash.digest("hex");
+          const duplicateChecksum = createHash("sha256")
+            .update(syntheticPdf("exact duplicate Grade 5 Maths syllabus"))
+            .digest("hex");
+          upload.status = "completed";
+          upload.verified_bytes = upload.size_bytes;
+          upload.checksum_sha256 = checksum;
+          upload.deduplicated = checksum === duplicateChecksum;
+          upload.document_id = upload.deduplicated
+            ? materialIds.duplicate
+            : randomUUID();
+          upload.source_read_job_id = null;
+        }
+        return json(route, upload);
+      }
+    }
+    if (
+      method === "GET" &&
+      path.endsWith(`/materials/${materialIds.ocr}/review-workspace`)
+    )
+      return json(
+        route,
+        reviewWorkspace(Number(url.searchParams.get("page_number") ?? 1)),
+      );
+    const view = views.find((item) =>
+      path.includes(`/materials/${materialIds.ocr}/pages/${item.page_number}/`),
+    );
+    if (
+      view &&
+      method === "POST" &&
+      (path.endsWith("/edit") || path.endsWith("/confirm"))
+    ) {
+      const decision = body as components["schemas"]["PageEditRequest"] &
+        components["schemas"]["PageConfirmRequest"];
+      if (decision.expected_version !== view.version)
+        return json(
+          route,
+          { detail: { code: "source_page_version_conflict" } },
+          409,
+        );
+      if (path.endsWith("/edit")) {
+        expect(decision.reason.trim()).not.toBe("");
+        view.system_text = decision.text;
+        view.candidate_id = randomUUID();
+        view.state = "needs_review";
+        view.can_confirm = true;
+        state.corrections.push(decision.text);
+      } else {
+        expect(decision.compared_with_original).toBe(true);
+        expect(decision.candidate_id).toBe(view.candidate_id);
+        view.state = "verified";
+        view.can_confirm = false;
+      }
+      view.version += 1;
+      reviewWorkspace(view.page_number);
+      return json(route, {
+        document_id: materialIds.ocr,
+        page_number: view.page_number,
+        candidate_id: view.candidate_id,
+        version: view.version,
+        state: view.state,
+      });
+    }
+    if (view && method === "GET" && path.endsWith("/image"))
+      return route.fulfill({
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+          "base64",
+        ),
+        contentType: "image/png",
+        headers: {
+          "Cache-Control": "private, no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+        status: 200,
+      });
 
     if (method === "GET" && path.endsWith("/exam-configurations")) {
       return json(route, [
@@ -816,32 +1405,47 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     }
     const unitScope = path.match(/\/curriculum-versions\/([^/]+)\/units$/);
     if (method === "GET" && unitScope) {
-      return json(route, unitScope[1] === educationIds.gradeSevenCurriculum ? gradeSevenUnits : []);
+      return json(
+        route,
+        unitScope[1] === educationIds.gradeSevenCurriculum
+          ? gradeSevenUnits
+          : [],
+      );
     }
     const lessonScope = path.match(/\/curriculum-versions\/([^/]+)\/lessons$/);
     if (method === "GET" && lessonScope) {
       return json(
         route,
-        lessonScope[1] === educationIds.gradeSevenCurriculum ? gradeSevenLessons : [],
+        lessonScope[1] === educationIds.gradeSevenCurriculum
+          ? gradeSevenLessons
+          : [],
       );
     }
 
     if (method === "GET" && path.endsWith("/materials/grade-summary")) {
       const grades = Array.from({ length: 13 }, (_, index) => {
         const grade = index + 1;
-        const gradeMaterials = state.materials.filter((material) => material.grade === grade);
+        const gradeMaterials = state.materials.filter(
+          (material) => material.grade === grade,
+        );
         return {
           grade,
           material_count: gradeMaterials.length,
           needs_review_count: gradeMaterials.filter(
             (material) => material.status === "needs_review",
           ).length,
-          processing_count: gradeMaterials.filter((material) => material.status === "processing")
-            .length,
-          ready_count: gradeMaterials.filter((material) => material.status === "ready_for_ai")
-            .length,
-          removed_count: gradeMaterials.filter((material) => material.status === "removed").length,
-          subject_count: new Set(gradeMaterials.map((material) => material.subject_id)).size,
+          processing_count: gradeMaterials.filter(
+            (material) => material.status === "processing",
+          ).length,
+          ready_count: gradeMaterials.filter(
+            (material) => material.status === "ready_for_ai",
+          ).length,
+          removed_count: gradeMaterials.filter(
+            (material) => material.status === "removed",
+          ).length,
+          subject_count: new Set(
+            gradeMaterials.map((material) => material.subject_id),
+          ).size,
         };
       });
       return json(route, grades);
@@ -855,18 +1459,25 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         state.materials.filter(
           (material) =>
             (!grade || material.grade === Number(grade)) &&
-            (!subjectId || material.subject_id === subjectId),
+            (!subjectId || material.subject_id === subjectId) &&
+            (!url.searchParams.get("document_id") ||
+              material.id === url.searchParams.get("document_id")),
         ),
       );
     }
 
-    if (method === "GET" && path.includes("/source-documents/") && path.endsWith("/content")) {
+    if (
+      method === "GET" &&
+      ((path.includes("/source-documents/") && path.endsWith("/content")) ||
+        (path.includes("/materials/") && path.endsWith("/original")))
+    ) {
       return route.fulfill({
         body: syntheticPdf("verified original material preview"),
         contentType: "application/pdf",
         headers: {
           "Cache-Control": "private, no-store",
-          "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+          "Content-Security-Policy":
+            "default-src 'none'; frame-ancestors 'self'; sandbox",
           "X-Content-Type-Options": "nosniff",
         },
         status: 200,
@@ -876,14 +1487,23 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       return json(route, state.sourceDocuments);
     }
     if (method === "POST" && path.endsWith("/source-documents")) {
-      return json(route, { ...state.sourceDocuments[0], deduplicated: true }, 200);
+      return json(
+        route,
+        { ...state.sourceDocuments[0], deduplicated: true },
+        200,
+      );
     }
 
-    if (method === "GET" && path.endsWith(`/source-documents/${materialIds.ocr}/pages`)) {
+    if (
+      method === "GET" &&
+      path.endsWith(`/source-documents/${materialIds.ocr}/pages`)
+    ) {
       return json(route, sourcePages);
     }
     const sourcePage = sourcePages.find((candidate) =>
-      path.includes(`/source-documents/${materialIds.ocr}/pages/${candidate.page_number}`),
+      path.includes(
+        `/source-documents/${materialIds.ocr}/pages/${candidate.page_number}`,
+      ),
     );
     if (sourcePage && method === "GET" && path.endsWith("/preview")) {
       return route.fulfill({
@@ -904,50 +1524,53 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     if (sourcePage && method === "GET" && path.endsWith("/blocks")) {
       return json(
         route,
-        sourceBlocks.filter((candidate) => candidate.page_number === sourcePage.page_number),
+        sourceBlocks.filter(
+          (candidate) => candidate.page_number === sourcePage.page_number,
+        ),
       );
     }
-    if (method === "POST" && path.endsWith(`/source-documents/${materialIds.ocr}/review`)) {
-      const source = state.sourceDocuments.find((candidate) => candidate.id === materialIds.ocr)!;
+    if (
+      method === "POST" &&
+      path.endsWith(`/source-documents/${materialIds.ocr}/review`)
+    ) {
+      const source = state.sourceDocuments.find(
+        (candidate) => candidate.id === materialIds.ocr,
+      )!;
       source.extraction_status = "in_review";
       return json(route, source);
     }
     if (sourcePage && method === "PATCH") {
-      const payload = body as ReviewedTextUpdate | null;
-      if (!payload || payload.expected_version !== sourcePage.version) {
-        return json(route, { detail: { code: "concurrent_review_modification" } }, 409);
-      }
-      const correctedPage: SourcePage = {
-        ...sourcePage,
-        reviewed_text: payload.reviewed_text,
-        updated_at: "2026-08-25T11:00:00Z",
-        version: sourcePage.version + 1,
-      };
-      sourcePages = sourcePages.map((candidate) =>
-        candidate.id === sourcePage.id ? correctedPage : candidate,
+      return json(
+        route,
+        { detail: { code: "page_review_workspace_required" } },
+        409,
       );
-      sourceBlocks = sourceBlocks.map((candidate) =>
-        candidate.page_number === sourcePage.page_number
-          ? {
-              ...candidate,
-              reviewed_text: payload.reviewed_text,
-              updated_at: correctedPage.updated_at,
-              version: candidate.version + 1,
-            }
-          : candidate,
-      );
-      state.corrections.push(payload.reviewed_text);
-      return json(route, correctedPage);
     }
-    if (method === "POST" && path.endsWith(`/source-documents/${materialIds.ocr}/trust`)) {
-      const source = state.sourceDocuments.find((candidate) => candidate.id === materialIds.ocr)!;
-      const material = state.materials.find((candidate) => candidate.id === materialIds.ocr)!;
+    if (
+      method === "POST" &&
+      path.endsWith(`/source-documents/${materialIds.ocr}/trust`)
+    ) {
+      const source = state.sourceDocuments.find(
+        (candidate) => candidate.id === materialIds.ocr,
+      )!;
+      if (!reviewWorkspace(1).ready_for_ai)
+        return json(
+          route,
+          {
+            detail: {
+              code: "extraction_trust_blocked",
+              reason_code: "page_verification_required",
+            },
+          },
+          409,
+        );
       source.extraction_status = "trusted";
-      material.status = "ready_for_ai";
       return json(route, source);
     }
 
-    const material = state.materials.find((candidate) => path.includes(candidate.id));
+    const material = state.materials.find((candidate) =>
+      path.includes(candidate.id),
+    );
     const source = material
       ? state.sourceDocuments.find((candidate) => candidate.id === material.id)
       : undefined;
@@ -958,10 +1581,19 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       path.endsWith(`/materials/${material.id}/scope`)
     ) {
       const payload = body as MaterialScopeRequest | null;
-      if (!payload || payload.expected_version !== source.metadata_scope_version) {
-        return json(route, { detail: { code: "concurrent_material_scope_modification" } }, 409);
+      if (
+        !payload ||
+        payload.expected_version !== source.metadata_scope_version
+      ) {
+        return json(
+          route,
+          { detail: { code: "concurrent_material_scope_modification" } },
+          409,
+        );
       }
-      if (payload.curriculum_version_id === educationIds.gradeElevenCurriculum) {
+      if (
+        payload.curriculum_version_id === educationIds.gradeElevenCurriculum
+      ) {
         material.curriculum = "Grade 11 Maths 2026";
         material.grade = 11;
         material.lesson = null;
@@ -1006,10 +1638,20 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       path.endsWith(`/materials/${material.id}/restore`)
     ) {
       const payload = body as MaterialRestoreRequest | null;
-      if (!payload || payload.expected_version !== source.metadata_scope_version) {
-        return json(route, { detail: { code: "concurrent_material_scope_modification" } }, 409);
+      if (
+        !payload ||
+        payload.expected_version !== source.metadata_scope_version
+      ) {
+        return json(
+          route,
+          { detail: { code: "concurrent_material_scope_modification" } },
+          409,
+        );
       }
-      material.status = source.extraction_status === "trusted" ? "ready_for_ai" : "needs_review";
+      material.status =
+        source.extraction_status === "trusted"
+          ? "ready_for_ai"
+          : "needs_review";
       material.metadata_scope_version += 1;
       source.active_for_ai = true;
       source.metadata_scope_version += 1;
@@ -1030,6 +1672,9 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       return json(route, teacherLessons);
     }
     if (method === "POST" && path.endsWith("/paper-generation/jobs")) {
+      expect(body).toMatchObject({
+        source_scope_fingerprint: teacherCurriculum.source_scope_fingerprint,
+      });
       state.generationIntents.push(body);
       return json(
         route,
@@ -1055,7 +1700,10 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         202,
       );
     }
-    if (method === "GET" && path.endsWith(`/paper-generation/jobs/${generationJobId}`)) {
+    if (
+      method === "GET" &&
+      path.endsWith(`/paper-generation/jobs/${generationJobId}`)
+    ) {
       return json(route, teacherPaperJob());
     }
 
@@ -1091,9 +1739,14 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       currentQuestion &&
       path.endsWith(`/questions/${currentQuestion.id}/start`)
     ) {
-      const payload = body as components["schemas"]["ReviewCandidateStartRequest"] | null;
+      const payload = body as
+        components["schemas"]["ReviewCandidateStartRequest"] | null;
       if (!payload || payload.expected_version !== currentQuestion.version) {
-        return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_version_conflict" } },
+          409,
+        );
       }
       const started: ReviewQuestion = {
         ...currentQuestion,
@@ -1112,13 +1765,18 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       currentQuestion &&
       path.endsWith(`/questions/${currentQuestion.id}`)
     ) {
-      const payload = body as components["schemas"]["ReviewQuestionEditRequest"] | null;
+      const payload = body as
+        components["schemas"]["ReviewQuestionEditRequest"] | null;
       if (
         !payload ||
         payload.expected_version !== currentQuestion.version ||
         !payload.reason_code
       ) {
-        return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_version_conflict" } },
+          409,
+        );
       }
       const edited: ReviewQuestion = {
         ...currentQuestion,
@@ -1157,7 +1815,8 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       currentQuestion &&
       path.endsWith(`/questions/${currentQuestion.id}/approve`)
     ) {
-      const payload = body as components["schemas"]["ReviewQuestionApproveRequest"] | null;
+      const payload = body as
+        components["schemas"]["ReviewQuestionApproveRequest"] | null;
       if (
         !payload ||
         payload.marking_confirmed !== true ||
@@ -1165,7 +1824,11 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         currentQuestion.requires_revalidation ||
         currentQuestion.validation.status === "failed_check"
       ) {
-        return json(route, { detail: { code: "review_question_revalidation_required" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_revalidation_required" } },
+          409,
+        );
       }
       const approved: ReviewQuestion = {
         ...currentQuestion,
@@ -1189,13 +1852,18 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       currentQuestion &&
       path.endsWith(`/questions/${currentQuestion.id}/reject`)
     ) {
-      const payload = body as components["schemas"]["ReviewQuestionRejectRequest"] | null;
+      const payload = body as
+        components["schemas"]["ReviewQuestionRejectRequest"] | null;
       if (
         !payload ||
         payload.expected_version !== currentQuestion.version ||
         !payload.reason_code
       ) {
-        return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_version_conflict" } },
+          409,
+        );
       }
       const rejected: ReviewQuestion = {
         ...currentQuestion,
@@ -1215,13 +1883,18 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
       currentQuestion &&
       path.endsWith(`/questions/${currentQuestion.id}/regenerate`)
     ) {
-      const payload = body as components["schemas"]["ReviewQuestionRegenerateRequest"] | null;
+      const payload = body as
+        components["schemas"]["ReviewQuestionRegenerateRequest"] | null;
       if (
         !payload ||
         payload.expected_version !== currentQuestion.aggregate_slot_version ||
         !payload.reason_code
       ) {
-        return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_version_conflict" } },
+          409,
+        );
       }
       const replacement: ReviewQuestion = {
         ...currentQuestion,
@@ -1253,7 +1926,10 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         202,
       );
     }
-    if (method === "POST" && path.endsWith(`/subject-quality/feedback/${feedbackId}/promote`)) {
+    if (
+      method === "POST" &&
+      path.endsWith(`/subject-quality/feedback/${feedbackId}/promote`)
+    ) {
       return json(
         route,
         {
@@ -1275,7 +1951,10 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         201,
       );
     }
-    if (method === "POST" && path.endsWith(`/subject-quality/eval-cases/${evalCaseId}/approve`)) {
+    if (
+      method === "POST" &&
+      path.endsWith(`/subject-quality/eval-cases/${evalCaseId}/approve`)
+    ) {
       return json(route, {
         approved_at: "2026-08-25T10:06:00Z",
         approved_by: "00000000-0000-0000-0000-000000002098",
@@ -1293,10 +1972,18 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
         version: 2,
       } satisfies components["schemas"]["SubjectQualityEvalCaseResponse"]);
     }
-    if (method === "POST" && path.endsWith(`/review-papers/${paperId}/create-draft`)) {
-      const payload = body as components["schemas"]["ReviewPaperCreateDraftRequest"] | null;
+    if (
+      method === "POST" &&
+      path.endsWith(`/review-papers/${paperId}/create-draft`)
+    ) {
+      const payload = body as
+        components["schemas"]["ReviewPaperCreateDraftRequest"] | null;
       if (!payload || payload.expected_version !== currentReviewPaper.version) {
-        return json(route, { detail: { code: "review_question_version_conflict" } }, 409);
+        return json(
+          route,
+          { detail: { code: "review_question_version_conflict" } },
+          409,
+        );
       }
       currentReviewPaper = {
         ...currentReviewPaper,
@@ -1321,7 +2008,9 @@ export async function installTeacherStudioFixture(page: Page): Promise<TeacherSt
     if (method === "GET" && paperLibrary) {
       return json(
         route,
-        paperLibrary[1] === educationIds.gradeSevenCurriculum ? [publishedPaper] : [],
+        paperLibrary[1] === educationIds.gradeSevenCurriculum
+          ? [publishedPaper]
+          : [],
       );
     }
 

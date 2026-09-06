@@ -29,6 +29,11 @@ from exam_guru_api.auth.rate_limits import (
     RateLimitScope,
 )
 from exam_guru_api.core.config import Settings
+from exam_guru_api.curriculum.admission import (
+    AdmissionDecisionRequest,
+    get_catalogue_admission,
+    record_catalogue_admission,
+)
 from exam_guru_api.curriculum.domain import TaxonomyLevel, TaxonomyReviewState
 from exam_guru_api.curriculum.models import (
     CurriculumLessonModel,
@@ -93,6 +98,10 @@ from exam_guru_api.validation.domain import (
 )
 from exam_guru_api.validation.models import ValidationFindingModel
 from exam_guru_api.validation.pipeline import ValidationPipeline, build_default_pipeline
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 VALKEY_IMAGE = "valkey/valkey:9.1.1-alpine3.24"
@@ -171,12 +180,23 @@ class AlwaysFailValidator:
 
 
 def request_payload(
+    client: TestClient,
     *,
     scope: dict[str, object] | None = None,
     question_count: int = 3,
     subject: str = "MATHEMATICS",
 ) -> dict[str, object]:
+    choices = client.get(
+        "/api/v1/admin/paper-generation/curricula",
+        params={"grade": 5, "medium": "si", "subject": subject},
+        headers=ADMIN_HEADERS,
+    )
+    assert choices.status_code == 200, choices.text
+    items = choices.json()["items"]
     return {
+        "source_scope_fingerprint": items[0]["source_scope_fingerprint"]
+        if items
+        else "sha256:" + "0" * 64,
         "target": {
             "grade": 5,
             "medium": "si",
@@ -252,6 +272,8 @@ async def add_reviewed_lesson_source(
         metadata_scope_version=0,
         extraction_attempt_count=1,
         extraction_started_at=now,
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ADMIN_ID,
         updated_by=ADMIN_ID,
     )
@@ -310,6 +332,7 @@ async def add_reviewed_lesson_source(
     await session.flush()
     document.extraction_status = ExtractionStatus.TRUSTED
     await session.flush()
+    candidate_id = await verify_synthetic_page(session, document_id, text_value, actor_id=ADMIN_ID)
     session.add(
         KnowledgeChunkModel(
             id=chunk_id,
@@ -323,6 +346,7 @@ async def add_reviewed_lesson_source(
             lesson_id=lesson_id,
             page_number=1,
             source_block_id=block_id,
+            source_candidate_id=candidate_id,
             review_state=ReviewState.REVIEWED,
             competency_id=competency_id,
             skill_id=skill_id,
@@ -477,6 +501,7 @@ async def seed_database(database_url: str) -> None:
                 )
             )
             await session.flush()
+            await approve_synthetic_curriculum(session, CURRICULUM_ID, actor_id=ADMIN_ID)
             for index, values in enumerate(zip(LESSON_IDS, SKILL_IDS, CHUNK_IDS, strict=True), 1):
                 await add_reviewed_lesson_source(
                     session,
@@ -596,6 +621,8 @@ async def seed_scholarship_supporting_scopes(
                         created_by=ADMIN_ID,
                     )
                 )
+                await session.flush()
+                await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
                 await add_reviewed_lesson_source(
                     session,
                     index=100 + grade,
@@ -738,16 +765,8 @@ def test_grade5_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
         options = options_response.json()
         assert options["grades"] == [5]
         assert any(item["code"] == "si" and item["label"] == "Sinhala" for item in options["media"])
-        assert [item["code"] for item in options["paper_types"]] == [
-            "subject_practice",
-            "term_test",
-            "scholarship_practice",
-        ]
-        assert [item["code"] for item in options["scholarship_modes"]] == [
-            "paper_i",
-            "paper_ii",
-            "full",
-        ]
+        assert [item["code"] for item in options["paper_types"]] == ["subject_practice"]
+        assert options["scholarship_modes"] == []
         maths = next(item for item in options["subjects"] if item["code"] == "MATHEMATICS")
         assert [item["number"] for item in maths["lessons"]] == [1, 2, 3]
         assert "technical_curriculum_id" not in maths
@@ -768,6 +787,7 @@ def test_grade5_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
                 "assessment_label": "School Grade 5",
                 "code": "G5-MATH-V1",
                 "label": "Grade 5 Mathematics",
+                "source_scope_fingerprint": maths["curriculum"]["source_scope_fingerprint"],
             }
         ]
         lessons = client.get(
@@ -789,7 +809,9 @@ def test_grade5_lessons_one_to_three_runs_off_request_thread_and_reaches_review(
 
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers=ADMIN_HEADERS,
         )
         assert created.status_code == 202
@@ -1069,6 +1091,7 @@ def test_selected_lessons_preserve_exact_non_contiguous_scope_through_worker(
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "selected_lessons", "lesson_numbers": [1, 3]},
                 question_count=2,
             ),
@@ -1182,6 +1205,14 @@ def test_reviewed_scholarship_policy_generates_each_mode_without_cross_grade_lea
         )
         assert reviewed_policy.status_code == 200, reviewed_policy.text
         assert reviewed_policy.json()["state"] == "reviewed"
+        available_options = client.get(
+            "/api/v1/admin/paper-generation/options", headers=ADMIN_HEADERS
+        ).json()
+        programme_fingerprint = next(
+            item["source_scope_fingerprint"]
+            for item in available_options["paper_types"]
+            if item["code"] == "scholarship_practice" and item["medium"] == "si"
+        )
 
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
@@ -1192,6 +1223,7 @@ def test_reviewed_scholarship_policy_generates_each_mode_without_cross_grade_lea
                     "paper_type": "scholarship_practice",
                     "scholarship_mode": "full",
                 },
+                "source_scope_fingerprint": programme_fingerprint,
                 "scope": {"kind": "programme"},
                 "settings": {
                     "paper_name": "Full Scholarship Practice",
@@ -1269,6 +1301,7 @@ def test_reviewed_scholarship_policy_generates_each_mode_without_cross_grade_lea
                         "paper_type": "scholarship_practice",
                         "scholarship_mode": mode,
                     },
+                    "source_scope_fingerprint": programme_fingerprint,
                     "scope": {"kind": "programme"},
                     "settings": {
                         "paper_name": label,
@@ -1354,6 +1387,67 @@ def test_reviewed_scholarship_policy_generates_each_mode_without_cross_grade_lea
         }
         assert scope_grades == expected_scope_grades[mode]
 
+    async def revoke_supporting_admission() -> None:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                current = await get_catalogue_admission(session, grade3[0])
+                evidence = "Disposable synthetic workflow fixture, NOT real educational approval"
+                await record_catalogue_admission(
+                    session,
+                    grade3[0],
+                    AdmissionDecisionRequest(
+                        state="quarantined",
+                        expected_version=current.version,
+                        expected_scope_fingerprint=current.scope_fingerprint,
+                        educational_approval=False,
+                        reason=evidence,
+                        source_reference=evidence,
+                        evidence=(evidence,),
+                    ),
+                    principal=Principal(ADMIN_ID, frozenset({AdminRole.ADMIN})),
+                )
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(revoke_supporting_admission())
+    with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
+        unavailable = client.get("/api/v1/admin/paper-generation/options", headers=ADMIN_HEADERS)
+        assert unavailable.status_code == 200
+        assert not any(
+            item["code"] == "scholarship_practice" for item in unavailable.json()["paper_types"]
+        )
+        rejected = client.post(
+            "/api/v1/admin/paper-generation/jobs",
+            json={
+                "source_scope_fingerprint": programme_fingerprint,
+                "target": {
+                    "grade": 5,
+                    "medium": "si",
+                    "paper_type": "scholarship_practice",
+                    "scholarship_mode": "full",
+                },
+                "scope": {"kind": "programme"},
+                "settings": request_payload(client)["settings"],
+            },
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "revoked-programme-source"},
+        )
+        assert rejected.status_code == 404, rejected.text
+        assert rejected.json()["detail"]["code"] == "paper_generation_curriculum_not_found"
+        preserved_policy = client.get(
+            f"/api/v1/admin/paper-generation/programme-policies/{policy['id']}",
+            headers=ADMIN_HEADERS,
+        )
+        assert preserved_policy.status_code == 200
+        assert preserved_policy.json()["state"] == "reviewed"
+        assert (
+            client.get(
+                f"/api/v1/admin/review-papers/{job_id}", headers=REVIEWER_HEADERS
+            ).status_code
+            == 200
+        )
+
     async def mutate_policy(statement: str, identifier: str) -> None:
         engine = create_async_engine(aggregate_seed.database_url)
         try:
@@ -1408,6 +1502,7 @@ def test_grade_five_term_modes_fail_closed_without_reviewed_coverage_policy(
                         "subject": "MATHEMATICS",
                         "term": term,
                     },
+                    "source_scope_fingerprint": request_payload(client)["source_scope_fingerprint"],
                     "scope": {"kind": "full_term"},
                     "settings": {
                         "paper_name": f"Grade 5 {term} test",
@@ -1438,6 +1533,7 @@ def test_partial_provider_failure_is_readable_duplicate_advance_is_safe_and_retr
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 2},
                 question_count=2,
             ),
@@ -1629,7 +1725,7 @@ def test_full_subject_is_idempotent_under_racing_requests_and_does_not_leak_scop
             barrier.wait()
             response = client.post(
                 "/api/v1/admin/paper-generation/jobs",
-                json=request_payload(scope={"kind": "full_subject"}, question_count=1),
+                json=request_payload(client, scope={"kind": "full_subject"}, question_count=1),
                 headers={
                     "Authorization": "Bearer admin-token",
                     "Idempotency-Key": "racing-full-subject-key",
@@ -1743,6 +1839,8 @@ def test_ambiguous_unmapped_missing_and_no_context_fail_with_stable_safe_errors(
                         updated_by=ADMIN_ID,
                     )
                 )
+                await session.flush()
+                await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
                 await session.commit()
             return curriculum_id
         finally:
@@ -1752,14 +1850,16 @@ def test_ambiguous_unmapped_missing_and_no_context_fail_with_stable_safe_errors(
     with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
         ambiguous = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={**ADMIN_HEADERS, "Idempotency-Key": "ambiguous-key"},
         )
         assert ambiguous.status_code == 409
         assert ambiguous.json()["detail"]["code"] == "paper_generation_curriculum_ambiguous"
         missing = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(subject="SCIENCE"),
+            json=request_payload(client, subject="SCIENCE"),
             headers={**ADMIN_HEADERS, "Idempotency-Key": "missing-key"},
         )
         assert missing.status_code == 404
@@ -1787,7 +1887,9 @@ def test_ambiguous_unmapped_missing_and_no_context_fail_with_stable_safe_errors(
     with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
         unmapped = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={**ADMIN_HEADERS, "Idempotency-Key": "unmapped-key"},
         )
         assert unmapped.status_code == 422
@@ -1834,6 +1936,7 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 1},
                 question_count=1,
             ),
@@ -1872,6 +1975,7 @@ def test_subject_fail_blocks_candidate_warn_enters_review_and_edit_requires_rege
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 1},
                 question_count=1,
             ),
@@ -2038,6 +2142,7 @@ def test_feedback_failure_rolls_back_candidate_revision_event_and_slot_together(
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 1},
                 question_count=1,
             ),
@@ -2121,6 +2226,7 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 1, "end_lesson": 2},
                 question_count=2,
             ),
@@ -2558,6 +2664,7 @@ def test_exact_slot_without_active_reviewed_context_fails_safely_without_generic
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
             json=request_payload(
+                client,
                 scope={"kind": "lesson_range", "start_lesson": 4, "end_lesson": 4},
                 question_count=1,
             ),
@@ -2597,7 +2704,7 @@ def test_exact_slot_without_active_reviewed_context_fails_safely_without_generic
 def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
     aggregate_seed: Seed,
 ) -> None:
-    with pytest.raises(RuntimeError, match="subject-quality evidence"):
+    with pytest.raises(DBAPIError, match="cannot discard verified knowledge lineage"):
         command.downgrade(
             _config_for_database(aggregate_seed.database_url),
             "0024_subject_quality_validation_scope",
@@ -2614,13 +2721,17 @@ def test_teacher_paper_commands_enforce_authentication_authorization_idempotency
     with api_client(aggregate_seed, paper_dispatcher, generation_dispatcher) as client:
         unauthenticated = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={"Idempotency-Key": "unauthenticated-key"},
         )
         assert unauthenticated.status_code == 401
         forbidden = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={
                 "Authorization": "Bearer reviewer-token",
                 "Idempotency-Key": "reviewer-forbidden-key",
@@ -2629,13 +2740,17 @@ def test_teacher_paper_commands_enforce_authentication_authorization_idempotency
         assert forbidden.status_code == 403
         missing_key = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={"Authorization": "Bearer admin-token"},
         )
         assert missing_key.status_code == 422
         created = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={**ADMIN_HEADERS, "Idempotency-Key": "manual-advance-key"},
         )
         assert created.status_code == 202
@@ -2655,7 +2770,9 @@ def test_teacher_paper_commands_enforce_authentication_authorization_idempotency
     ) as client:
         limited = client.post(
             "/api/v1/admin/paper-generation/jobs",
-            json=request_payload(),
+            json=request_payload(
+                client,
+            ),
             headers={**ADMIN_HEADERS, "Idempotency-Key": "limited-key"},
         )
         assert limited.status_code == 429

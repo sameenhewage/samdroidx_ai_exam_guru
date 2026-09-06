@@ -1,14 +1,17 @@
 import hashlib
 import math
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.curriculum.models import CurriculumVersionModel
-from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
+from exam_guru_api.documents.domain import SourceDocumentType
+from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import (
     ChunkType,
@@ -62,7 +65,9 @@ class KnowledgeSourceCurriculumMismatchError(ValueError):
 class TrustedKnowledgeSourceRequiredError(ValueError):
     def __init__(self, source_document_id: UUID) -> None:
         self.source_document_id = source_document_id
-        super().__init__(f"trusted source document required: {source_document_id}")
+        super().__init__(
+            f"current verified source page and admitted curriculum required: {source_document_id}"
+        )
 
 
 class ActiveKnowledgeSourceRequiredError(ValueError):
@@ -125,11 +130,13 @@ class KnowledgePersistenceService:
         actor_id: UUID,
     ) -> SourceImportResult[HistoricalQuestion]:
         await self._ensure_curriculum_exists(question.curriculum_version_id)
-        source = await self._validate_source(question)
+        source, candidate = await self._validate_source(question, bind_current=True)
         scoped_question = replace(
             question,
+            text=unicodedata.normalize("NFC", question.text),
             unit_id=source.unit_id,
             lesson_id=source.lesson_id,
+            provenance=replace(question.provenance, source_candidate_id=candidate.id),
         )
         result = await self._repository.import_question(scoped_question, actor_id=actor_id)
         if result.created:
@@ -142,6 +149,7 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
+                    "source_candidate_id": str(result.record.provenance.source_candidate_id),
                     "unit_id": self._optional_uuid(result.record.unit_id),
                     "lesson_id": self._optional_uuid(result.record.lesson_id),
                     "source_block_id": self._optional_uuid(
@@ -162,11 +170,13 @@ class KnowledgePersistenceService:
         actor_id: UUID,
     ) -> SourceImportResult[KnowledgeChunk]:
         await self._ensure_curriculum_exists(chunk.curriculum_version_id)
-        source = await self._validate_source(chunk)
+        source, candidate = await self._validate_source(chunk, bind_current=True)
         scoped_chunk = replace(
             chunk,
+            text=unicodedata.normalize("NFC", chunk.text),
             unit_id=source.unit_id,
             lesson_id=source.lesson_id,
+            provenance=replace(chunk.provenance, source_candidate_id=candidate.id),
         )
         result = await self._repository.import_chunk(scoped_chunk, actor_id=actor_id)
         if result.created:
@@ -179,6 +189,7 @@ class KnowledgePersistenceService:
                     "curriculum_version_id": str(result.record.curriculum_version_id),
                     "source_document_id": str(result.record.provenance.source_document_id),
                     "page_number": result.record.provenance.page_number,
+                    "source_candidate_id": str(result.record.provenance.source_candidate_id),
                     "unit_id": self._optional_uuid(result.record.unit_id),
                     "lesson_id": self._optional_uuid(result.record.lesson_id),
                     "source_block_id": self._optional_uuid(
@@ -333,6 +344,7 @@ class KnowledgePersistenceService:
         current = await self.get_question(curriculum_version_id, question_id)
         self._require_expected_version(current, expected_version)
         transitioned = transition_review_state(current.review_state, target)
+        await self._require_active_source(current)
         if transitioned is current.review_state:
             return current
         self._ensure_review_candidate(current, transitioned)
@@ -360,6 +372,7 @@ class KnowledgePersistenceService:
         current = await self.get_chunk(curriculum_version_id, chunk_id)
         self._require_expected_version(current, expected_version)
         transitioned = transition_review_state(current.review_state, target)
+        await self._require_active_source(current)
         if transitioned is current.review_state:
             return current
         self._ensure_review_candidate(current, transitioned)
@@ -630,9 +643,17 @@ class KnowledgePersistenceService:
     async def _validate_source(
         self,
         record: HistoricalQuestion | KnowledgeChunk,
-    ) -> SourceDocumentModel:
-        source_document_id = record.provenance.source_document_id
-        document = await self._session.get(SourceDocumentModel, source_document_id)
+        *,
+        bind_current: bool = False,
+    ) -> tuple[SourceDocumentModel, PageTextCandidateModel]:
+        provenance = record.provenance
+        source_document_id = provenance.source_document_id
+        document = await self._session.get(
+            SourceDocumentModel,
+            source_document_id,
+            with_for_update={"read": True},
+            populate_existing=True,
+        )
         if document is None:
             raise KnowledgeSourceDocumentNotFoundError(source_document_id)
         if document.curriculum_version_id != record.curriculum_version_id:
@@ -640,31 +661,56 @@ class KnowledgePersistenceService:
                 source_document_id,
                 record.curriculum_version_id,
             )
-        if document.extraction_status is not ExtractionStatus.TRUSTED:
-            raise TrustedKnowledgeSourceRequiredError(source_document_id)
-        if document.active_for_ai is False:
+        if document.active_for_ai is not True:
             raise ActiveKnowledgeSourceRequiredError(source_document_id)
+        if document.metadata_review_required is not False:
+            raise TrustedKnowledgeSourceRequiredError(source_document_id)
         if isinstance(record, HistoricalQuestion) and (
             document.document_type is not SourceDocumentType.PAST_PAPER
             or document.year != record.year
             or document.paper_code != record.paper_code
         ):
             raise KnowledgeSourceMetadataMismatchError(source_document_id)
-        return document
+        if not bind_current and provenance.source_candidate_id is None:
+            raise TrustedKnowledgeSourceRequiredError(source_document_id)
+        await self._session.execute(
+            select(
+                func.lock_knowledge_source_lineage(
+                    source_document_id, provenance.page_number, record.curriculum_version_id
+                )
+            )
+        )
+        query = select(PageTextCandidateModel).where(
+            PageTextCandidateModel.document_id == source_document_id,
+            PageTextCandidateModel.page_number == provenance.page_number,
+            func.knowledge_source_lineage_is_current(
+                source_document_id,
+                provenance.page_number,
+                PageTextCandidateModel.id,
+                record.curriculum_version_id,
+                unicodedata.normalize("NFC", record.text),
+            ).is_(True),
+        )
+        if not bind_current:
+            query = query.where(PageTextCandidateModel.id == provenance.source_candidate_id)
+        candidate = await self._session.scalar(query)
+        if not isinstance(candidate, PageTextCandidateModel):
+            raise TrustedKnowledgeSourceRequiredError(source_document_id)
+        return document, candidate
 
     async def _require_active_source(
         self,
         record: HistoricalQuestion | KnowledgeChunk,
     ) -> None:
-        provenance = getattr(record, "provenance", None)
-        if provenance is None:
-            return
-        source_id = provenance.source_document_id
-        source = await self._session.get(SourceDocumentModel, source_id)
-        if source is None:
-            raise KnowledgeSourceDocumentNotFoundError(source_id)
-        if source.active_for_ai is False:
-            raise ActiveKnowledgeSourceRequiredError(source_id)
+        await self._validate_source(record)
+        if (
+            record.review_state is ReviewState.REVIEWED
+            and await self._session.scalar(
+                select(func.knowledge_record_is_eligible(self._resource_type(record), record.id))
+            )
+            is not True
+        ):
+            raise TrustedKnowledgeSourceRequiredError(record.provenance.source_document_id)
 
     @classmethod
     def _validate_embedding(cls, result: EmbeddingResult) -> None:

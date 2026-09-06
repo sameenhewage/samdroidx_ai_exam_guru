@@ -20,6 +20,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -56,6 +57,10 @@ from exam_guru_api.knowledge.service import (
     KnowledgePersistenceService,
     TrustedKnowledgeSourceRequiredError,
 )
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg18-trixie"
 ACTOR_ID = UUID(int=90_000)
@@ -68,6 +73,7 @@ class SeededSource:
     skill_id: UUID
     source_document_id: UUID
     source_block_id: UUID
+    source_candidate_id: UUID
 
 
 @pytest.fixture(scope="module")
@@ -101,6 +107,14 @@ async def seed_curriculum(session: AsyncSession, offset: int) -> tuple[UUID, UUI
                 created_by=ACTOR_ID,
                 updated_by=ACTOR_ID,
             ),
+            SubjectModel(
+                id=UUID(int=115_000 + offset),
+                code=f"GENERAL-{offset}",
+                name="General scholarship skills",
+                active=True,
+                created_by=ACTOR_ID,
+                updated_by=ACTOR_ID,
+            ),
             MediumModel(
                 id=medium_id,
                 code=f"k{offset}",
@@ -117,6 +131,7 @@ async def seed_curriculum(session: AsyncSession, offset: int) -> tuple[UUID, UUI
             id=curriculum_version_id,
             exam_configuration_id=exam_id,
             medium_id=medium_id,
+            subject_id=UUID(int=115_000 + offset),
             code=f"K-{offset}",
             title=f"Knowledge curriculum {offset}",
             active=True,
@@ -147,6 +162,7 @@ async def seed_curriculum(session: AsyncSession, offset: int) -> tuple[UUID, UUI
     await session.flush()
     session.add(TaxonomyNodeModel.from_domain(skill, ACTOR_ID))
     await session.flush()
+    await approve_synthetic_curriculum(session, curriculum_version_id, actor_id=ACTOR_ID)
     return curriculum_version_id, competency.id, skill.id
 
 
@@ -159,11 +175,14 @@ async def seed_trusted_source(
     finalize_review: bool = True,
     unit_id: UUID | None = None,
     lesson_id: UUID | None = None,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID, UUID, UUID | None]:
     document_id = UUID(int=150_000 + offset)
     page_id = UUID(int=160_000 + offset)
     block_id = UUID(int=170_000 + offset)
-    text = f"Reviewed source block {offset}"
+    text = (
+        f"Reviewed source block {offset}\nWhich answer is correct?\n"
+        "A meaningful reviewed educational explanation.\nReviewed scoped explanation"
+    )
     document = SourceDocumentModel(
         id=document_id,
         checksum_sha256=sha256(f"source-{offset}".encode()).hexdigest(),
@@ -180,6 +199,8 @@ async def seed_trusted_source(
         paper_code="P1" if document_type is SourceDocumentType.PAST_PAPER else None,
         extraction_attempt_count=1,
         extraction_started_at=datetime.now(UTC),
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ACTOR_ID,
         updated_by=ACTOR_ID,
     )
@@ -223,6 +244,7 @@ async def seed_trusted_source(
     )
     await session.flush()
 
+    candidate_id = None
     if finalize_review:
         document.extraction_status = ExtractionStatus.EXTRACTED
         document.extractor = "fixture"
@@ -240,7 +262,8 @@ async def seed_trusted_source(
         await session.flush()
         document.extraction_status = ExtractionStatus.TRUSTED
         await session.flush()
-    return document_id, block_id
+        candidate_id = await verify_synthetic_page(session, document_id, text, actor_id=ACTOR_ID)
+    return document_id, block_id, candidate_id
 
 
 async def seed_foundation(
@@ -250,19 +273,21 @@ async def seed_foundation(
     document_type: SourceDocumentType = SourceDocumentType.PAST_PAPER,
 ) -> SeededSource:
     curriculum_version_id, competency_id, skill_id = await seed_curriculum(session, offset)
-    source_document_id, source_block_id = await seed_trusted_source(
+    source_document_id, source_block_id, source_candidate_id = await seed_trusted_source(
         session,
         offset=offset,
         curriculum_version_id=curriculum_version_id,
         document_type=document_type,
     )
     await session.commit()
+    assert source_candidate_id is not None
     return SeededSource(
         curriculum_version_id=curriculum_version_id,
         competency_id=competency_id,
         skill_id=skill_id,
         source_document_id=source_document_id,
         source_block_id=source_block_id,
+        source_candidate_id=source_candidate_id,
     )
 
 
@@ -280,6 +305,7 @@ def question_record(seed: SeededSource, *, record_id: UUID) -> HistoricalQuestio
             source_document_id=seed.source_document_id,
             page_number=1,
             source_block_id=seed.source_block_id,
+            source_candidate_id=seed.source_candidate_id,
         ),
     )
 
@@ -296,6 +322,7 @@ def chunk_record(seed: SeededSource, *, record_id: UUID, sequence: int = 0) -> K
             source_document_id=seed.source_document_id,
             page_number=1,
             source_block_id=seed.source_block_id,
+            source_candidate_id=seed.source_candidate_id,
         ),
     )
 
@@ -353,7 +380,7 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
 
             with pytest.raises(SourceImportConflictError):
                 await service.import_question(
-                    replace(question, id=UUID(int=180_003), text="Conflicting source text"),
+                    replace(question, id=UUID(int=180_003), text="Which answer"),
                     actor_id=ACTOR_ID,
                 )
             with pytest.raises(SourceImportConflictError):
@@ -363,7 +390,7 @@ def test_source_import_review_and_reembedding_are_idempotent_and_versioned(
                 )
             with pytest.raises(SourceImportConflictError):
                 await service.import_chunk(
-                    replace(chunk, id=UUID(int=190_004), text="Conflicting chunk text"),
+                    replace(chunk, id=UUID(int=190_004), text="A meaningful reviewed"),
                     actor_id=ACTOR_ID,
                 )
 
@@ -667,7 +694,7 @@ def test_scoped_source_import_persists_inherited_unit_and_lesson(
                         created_by=ACTOR_ID,
                     )
                 )
-                source_id, block_id = await seed_trusted_source(
+                source_id, block_id, _candidate_id = await seed_trusted_source(
                     session,
                     offset=80,
                     curriculum_version_id=curriculum_id,
@@ -750,7 +777,7 @@ def test_database_enforces_provenance_review_taxonomy_and_vector_space_invariant
         async with sessions() as session:
             first = await seed_foundation(session, 2)
             second = await seed_foundation(session, 3)
-            pending_document_id, pending_block_id = await seed_trusted_source(
+            pending_document_id, pending_block_id, _pending_candidate = await seed_trusted_source(
                 session,
                 offset=5,
                 curriculum_version_id=first.curriculum_version_id,
@@ -922,6 +949,7 @@ def test_database_enforces_provenance_review_taxonomy_and_vector_space_invariant
                     source_document_id=first.source_document_id,
                     page_number=1,
                     source_block_id=second.source_block_id,
+                    source_candidate_id=first.source_candidate_id,
                 ),
                 review_state=ReviewState.REVIEWED,
                 competency_id=first.competency_id,

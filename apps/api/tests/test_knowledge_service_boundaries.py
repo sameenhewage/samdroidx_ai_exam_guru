@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
+from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import (
     ChunkType,
@@ -29,14 +30,24 @@ from exam_guru_api.knowledge.service import (
 CURRICULUM_ID = UUID(int=100)
 SOURCE_ID = UUID(int=101)
 BLOCK_ID = UUID(int=102)
+CANDIDATE_ID = UUID(int=105)
 
 
 class LookupSession:
-    def __init__(self, *responses: object | None) -> None:
+    def __init__(self, *responses: object | None, scalar_response: object | None = None) -> None:
         self.responses = list(responses)
+        self.scalar_response = scalar_response
 
-    async def get(self, _model: object, _identity: object) -> object | None:
+    async def get(self, _model: object, _identity: object, **kwargs: object) -> object | None:
+        if _model is SourceDocumentModel:
+            assert kwargs == {"with_for_update": {"read": True}, "populate_existing": True}
         return self.responses.pop(0)
+
+    async def execute(self, _statement: object) -> None:
+        return None
+
+    async def scalar(self, _statement: object) -> object | None:
+        return self.scalar_response
 
 
 def historical_question() -> HistoricalQuestion:
@@ -49,7 +60,7 @@ def historical_question() -> HistoricalQuestion:
         text="Question",
         question_type=QuestionType.SHORT_ANSWER,
         marks=1,
-        provenance=Provenance(SOURCE_ID, 1, BLOCK_ID),
+        provenance=Provenance(SOURCE_ID, 1, BLOCK_ID, CANDIDATE_ID),
     )
 
 
@@ -61,7 +72,7 @@ def knowledge_chunk() -> KnowledgeChunk:
         text="Chunk",
         educational_boundary="Unit",
         sequence=0,
-        provenance=Provenance(SOURCE_ID, 1, BLOCK_ID),
+        provenance=Provenance(SOURCE_ID, 1, BLOCK_ID, CANDIDATE_ID),
     )
 
 
@@ -79,6 +90,7 @@ def source_document(
         document_type=document_type,
         extraction_status=ExtractionStatus.TRUSTED,
         active_for_ai=active_for_ai,
+        metadata_review_required=False,
         year=year,
         paper_code=paper_code,
     )
@@ -165,11 +177,13 @@ def test_chunk_source_metadata_and_review_readiness() -> None:
                         document_type=SourceDocumentType.SYLLABUS,
                         year=None,
                         paper_code=None,
-                    )
+                    ),
+                    scalar_response=PageTextCandidateModel(id=CANDIDATE_ID),
                 ),
             )
         )
-        await chunk_service._validate_source(knowledge_chunk())
+        _, candidate = await chunk_service._validate_source(knowledge_chunk())
+        assert candidate.id == CANDIDATE_ID
 
     asyncio.run(exercise())
 

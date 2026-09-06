@@ -17,6 +17,7 @@ RUN apt-get update \
         tesseract-ocr \
         tesseract-ocr-eng \
         tesseract-ocr-sin \
+        tesseract-ocr-tam=1:4.1.0-2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/.python-version ./

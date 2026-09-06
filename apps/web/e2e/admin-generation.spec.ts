@@ -8,10 +8,16 @@ import {
 } from "@playwright/test";
 
 import { openAdvancedArea } from "./helpers/advanced-navigation";
+import {
+  assertVerifiedRecord,
+  confirmSyntheticPage,
+  readSyntheticSource,
+  seedAdmittedScope,
+  syntheticTextPdf,
+  SYNTHETIC_WORKFLOW_EVIDENCE,
+} from "./helpers/teacher-content-studio";
 
-type Exam = components["schemas"]["ExamConfigurationResponse"];
 type Medium = components["schemas"]["MediumResponse"];
-type Subject = components["schemas"]["SubjectResponse"];
 type Curriculum = components["schemas"]["CurriculumVersionResponse"];
 type TaxonomyNode = components["schemas"]["TaxonomyNodeResponse"];
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
@@ -28,10 +34,12 @@ type BlueprintSlot = components["schemas"]["BlueprintSlotResponse"];
 type BlueprintRequest = components["schemas"]["BlueprintCreateRequest"];
 type QuestionType = components["schemas"]["QuestionType"];
 type GenerationRun = components["schemas"]["GenerationRunResponse"];
-type GenerationRunSummary = components["schemas"]["GenerationRunSummaryResponse"];
+type GenerationRunSummary =
+  components["schemas"]["GenerationRunSummaryResponse"];
 type GenerationRequest = components["schemas"]["GenerationRunCreateRequest"];
 type ValidationReport = components["schemas"]["ValidationRunResponse"];
-type ValidationReportSummary = components["schemas"]["ValidationRunSummaryResponse"];
+type ValidationReportSummary =
+  components["schemas"]["ValidationRunSummaryResponse"];
 type ValidationFinding = components["schemas"]["ValidationFindingResponse"];
 type ValidationRequest = components["schemas"]["ValidationRunCreateRequest"];
 type ReviewCandidate = components["schemas"]["ReviewCandidateResponse"];
@@ -67,33 +75,6 @@ const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   short_answer: "Short answer",
   structured: "Structured",
 };
-
-function syntheticPdf(marker: string): Buffer {
-  const stream = `BT\n/F1 12 Tf\n72 720 Td\n(${marker}) Tj\nET`;
-  const objects = [
-    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n",
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
-    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-  ];
-  let body = "%PDF-1.4\n";
-  const offsets = objects.map((object) => {
-    const offset = Buffer.byteLength(body, "ascii");
-    body += object;
-    return offset;
-  });
-  const xrefOffset = Buffer.byteLength(body, "ascii");
-  const xref = [
-    `xref\n0 ${objects.length + 1}\n`,
-    "0000000000 65535 f \n",
-    ...offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`),
-  ].join("");
-  return Buffer.from(
-    `${body}${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
-    "ascii",
-  );
-}
 
 async function login(page: Page, role: "admin" | "reviewer") {
   await page.goto("/admin/login");
@@ -151,12 +132,20 @@ async function createReviewedHistoricalQuestion({
   year: number;
 }): Promise<ReviewedHistoricalEvidence> {
   const questionText = `Historical choice ${year} ${marker}: A three; B four; answer B.`;
+  const fixture = syntheticTextPdf([questionText]);
   const upload = await request.post("/api/v1/admin/source-documents", {
     multipart: {
       curriculum_version_id: curriculum.id,
       document_type: "past_paper",
+      intake_metadata: JSON.stringify({
+        candidate_grade: 5,
+        medium_label: "English",
+        subject_label: "Mathematics",
+        year,
+        evidence: [SYNTHETIC_WORKFLOW_EVIDENCE],
+      } satisfies components["schemas"]["SourceIntakeMetadata"]),
       file: {
-        buffer: syntheticPdf(questionText),
+        buffer: fixture.bytes,
         mimeType: "application/pdf",
         name: `historical-${year}-${marker}.pdf`,
       },
@@ -168,7 +157,11 @@ async function createReviewedHistoricalQuestion({
   const uploadedSource = (await upload.json()) as SourceDocument;
 
   expect(
-    (await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/extract`)).status(),
+    (
+      await request.post(
+        `/api/v1/admin/source-documents/${uploadedSource.id}/extract`,
+      )
+    ).status(),
   ).toBe(202);
   await expect
     .poll(
@@ -177,15 +170,31 @@ async function createReviewedHistoricalQuestion({
           request,
           "/api/v1/admin/source-documents",
         );
-        return documents.find((document) => document.id === uploadedSource.id)?.extraction_status;
+        return documents.find((document) => document.id === uploadedSource.id)
+          ?.extraction_status;
       },
       { timeout: 30_000 },
     )
     .toBe("extracted");
 
-  const review = await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/review`);
+  const review = await request.post(
+    `/api/v1/admin/source-documents/${uploadedSource.id}/review`,
+  );
   expect(review.ok()).toBe(true);
-  const trust = await request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/trust`);
+  const candidate = await readSyntheticSource(
+    request,
+    uploadedSource,
+    fixture.text,
+  );
+  const verifiedPage = await confirmSyntheticPage(
+    request,
+    uploadedSource.id,
+    candidate,
+    fixture.text,
+  );
+  const trust = await request.post(
+    `/api/v1/admin/source-documents/${uploadedSource.id}/trust`,
+  );
   expect(trust.ok()).toBe(true);
   const source = (await trust.json()) as SourceDocument;
   expect(source).toMatchObject({
@@ -203,12 +212,14 @@ async function createReviewedHistoricalQuestion({
     request,
     `/api/v1/admin/source-documents/${source.id}/pages`,
   );
-  if (!sourcePage) throw new Error(`Historical ${year} source page was not extracted`);
+  if (!sourcePage)
+    throw new Error(`Historical ${year} source page was not extracted`);
   const [sourceBlock] = await getJson<ExtractedBlock[]>(
     request,
     `/api/v1/admin/source-documents/${source.id}/pages/${sourcePage.page_number}/blocks`,
   );
-  if (!sourceBlock) throw new Error(`Historical ${year} source block was not extracted`);
+  if (!sourceBlock)
+    throw new Error(`Historical ${year} source block was not extracted`);
   expect(sourceBlock).toMatchObject({
     page_number: sourcePage.page_number,
     source_document_id: source.id,
@@ -237,6 +248,13 @@ async function createReviewedHistoricalQuestion({
       text: sourceBlock.reviewed_text ?? sourceBlock.raw_text,
       year,
     } satisfies components["schemas"]["HistoricalQuestionImportRequest"],
+  );
+  await assertVerifiedRecord(
+    request,
+    "historical_question",
+    question,
+    verifiedPage,
+    fixture.text,
   );
   const classifiedResponse = await request.patch(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/questions/${question.id}/classification`,
@@ -326,9 +344,13 @@ function blueprintRequest(
         subject_id: curriculum.subject_id,
         unit_ids: [],
       },
-      difficulty_allocations: [{ difficulty: "medium", exact_marks: 6, exact_slots: 3 }],
+      difficulty_allocations: [
+        { difficulty: "medium", exact_marks: 6, exact_slots: 3 },
+      ],
       generation_policy: {
-        answer_requirements: ["Provide one unambiguous answer with marking guidance."],
+        answer_requirements: [
+          "Provide one unambiguous answer with marking guidance.",
+        ],
         instructions: ["Use age-appropriate Grade 5 language."],
         response_language: medium.code,
         retrieval_query_hints: ["reviewed even number knowledge"],
@@ -474,7 +496,10 @@ function assertRepresentativeBlueprint(
       ordinal: 1,
       sectionId: "A",
       sectionOrdinal: 1,
-      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      taxonomy: expect.objectContaining({
+        competency_id: competency.id,
+        skill_id: skill.id,
+      }),
       type: "multiple_choice",
     },
     {
@@ -482,7 +507,10 @@ function assertRepresentativeBlueprint(
       ordinal: 2,
       sectionId: "B",
       sectionOrdinal: 1,
-      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      taxonomy: expect.objectContaining({
+        competency_id: competency.id,
+        skill_id: skill.id,
+      }),
       type: "short_answer",
     },
     {
@@ -490,7 +518,10 @@ function assertRepresentativeBlueprint(
       ordinal: 3,
       sectionId: "C",
       sectionOrdinal: 1,
-      taxonomy: expect.objectContaining({ competency_id: competency.id, skill_id: skill.id }),
+      taxonomy: expect.objectContaining({
+        competency_id: competency.id,
+        skill_id: skill.id,
+      }),
       type: "structured",
     },
   ]);
@@ -525,7 +556,9 @@ async function generateSlotThroughUi(
 ): Promise<GeneratedSlot> {
   const expectedStem = DETERMINISTIC_STEMS[slot.question_type];
   await page.getByLabel("Exact blueprint slot").selectOption(slot.slot_id);
-  await expect(page.getByLabel("Exact blueprint slot")).toHaveValue(slot.slot_id);
+  await expect(page.getByLabel("Exact blueprint slot")).toHaveValue(
+    slot.slot_id,
+  );
   const contextChoice = page.getByRole("checkbox", {
     name: `Select knowledge chunk ${context.id}`,
   });
@@ -533,19 +566,18 @@ async function generateSlotThroughUi(
   await contextChoice.check();
   await page.getByRole("button", { name: "Create generation run" }).click();
   await expect(page.getByText("Generation run queued.")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Generation run overview" })).toContainText(
-    "Succeeded",
-    { timeout: 45_000 },
-  );
+  await expect(
+    page.getByRole("region", { name: "Generation run overview" }),
+  ).toContainText("Succeeded", { timeout: 45_000 });
   await expect(
     page.getByRole("region", { name: "Immutable blueprint and slot snapshot" }),
   ).toContainText(slot.slot_id);
-  await expect(page.getByRole("region", { name: "Persisted generation context" })).toContainText(
-    context.text,
-  );
-  await expect(page.getByRole("region", { name: "Generated candidate" })).toContainText(
-    expectedStem,
-  );
+  await expect(
+    page.getByRole("region", { name: "Persisted generation context" }),
+  ).toContainText(context.text);
+  await expect(
+    page.getByRole("region", { name: "Generated candidate" }),
+  ).toContainText(expectedStem);
   await expect(page.getByText("REQUIRES VALIDATION")).toBeVisible();
 
   const run = await loadGenerationRunForSlot(
@@ -602,19 +634,25 @@ async function validateSlotThroughUi(
   expectedDuplicateReferenceCount: number,
 ): Promise<ValidatedSlot> {
   await page.getByLabel("Generation run").selectOption(generated.run.id);
-  await page.getByRole("button", { name: "Run deterministic validation" }).click();
-  const reportMetadata = page.getByRole("region", { name: "Validation report metadata" });
+  await page
+    .getByRole("button", { name: "Run deterministic validation" })
+    .click();
+  const reportMetadata = page.getByRole("region", {
+    name: "Validation report metadata",
+  });
   await expect(reportMetadata).toContainText(generated.run.id);
   await expect(reportMetadata).toContainText("Deterministic result: Warn");
-  await expect(page.getByRole("region", { name: "Grounding provenance" })).toContainText(
-    source.id,
-  );
+  await expect(
+    page.getByRole("region", { name: "Grounding provenance" }),
+  ).toContainText(source.id);
 
   const summaries = await getJson<ValidationReportSummary[]>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/validation-runs`,
   );
-  const matching = summaries.filter((report) => report.generation_run_id === generated.run.id);
+  const matching = summaries.filter(
+    (report) => report.generation_run_id === generated.run.id,
+  );
   expect(matching).toHaveLength(1);
   const validation = await getJson<ValidationReport>(
     page.request,
@@ -624,7 +662,9 @@ async function validateSlotThroughUi(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/validation-runs/${validation.id}/findings?limit=100&offset=0`,
   );
-  const duplicateFindings = findings.filter((finding) => finding.code.startsWith("duplicate."));
+  const duplicateFindings = findings.filter((finding) =>
+    finding.code.startsWith("duplicate."),
+  );
   const lexicalFinding = duplicateFindings.find(
     (finding) => finding.code === "duplicate.lexical_similarity_indicator",
   );
@@ -632,20 +672,29 @@ async function validateSlotThroughUi(
     item.observed?.includes("score_basis_points="),
   );
   const lexicalScore = Number(
-    lexicalEvidence?.observed.match(/score_basis_points=(\d+)/)?.[1] ?? Number.NaN,
+    lexicalEvidence?.observed.match(/score_basis_points=(\d+)/)?.[1] ??
+      Number.NaN,
   );
 
   expect(validation.overall_status).toBe("warn");
-  expect(validation.duplicate_reference_count).toBe(expectedDuplicateReferenceCount);
+  expect(validation.duplicate_reference_count).toBe(
+    expectedDuplicateReferenceCount,
+  );
   expect(duplicateFindings).toHaveLength(3);
-  expect(duplicateFindings.map((finding) => finding.status)).toEqual(["pass", "pass", "pass"]);
+  expect(duplicateFindings.map((finding) => finding.status)).toEqual([
+    "pass",
+    "pass",
+    "pass",
+  ]);
   expect(lexicalScore).toBeLessThan(8_000);
   expect(findings).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ code: "subject.unregistered", status: "warn" }),
     ]),
   );
-  expect(validation.limitations.join(" ").toLowerCase()).toContain("human review");
+  expect(validation.limitations.join(" ").toLowerCase()).toContain(
+    "human review",
+  );
   return { ...generated, validation };
 }
 
@@ -656,20 +705,24 @@ async function reviewSlotThroughUi(
   validated: ValidatedSlot,
   editStem: string | null,
 ): Promise<ReviewedSlot> {
-  await page.getByLabel("Eligible validation run").selectOption(validated.validation.id);
+  await page
+    .getByLabel("Eligible validation run")
+    .selectOption(validated.validation.id);
   await page.getByRole("button", { name: "Create review candidate" }).click();
   await expect(
-    page.getByText("Review candidate created from persisted non-failing validation evidence."),
+    page.getByText(
+      "Review candidate created from persisted non-failing validation evidence.",
+    ),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Generated revision 1 evidence" })).toContainText(
-    validated.expectedStem,
-  );
-  await expect(page.getByRole("region", { name: "Generation blueprint evidence" })).toContainText(
-    validated.slot.slot_id,
-  );
-  await expect(page.getByRole("region", { name: "Generation context provenance" })).toContainText(
-    context.id,
-  );
+  await expect(
+    page.getByRole("region", { name: "Generated revision 1 evidence" }),
+  ).toContainText(validated.expectedStem);
+  await expect(
+    page.getByRole("region", { name: "Generation blueprint evidence" }),
+  ).toContainText(validated.slot.slot_id);
+  await expect(
+    page.getByRole("region", { name: "Generation context provenance" }),
+  ).toContainText(context.id);
   await expect(
     page.getByRole("region", { name: "P8 validation report and findings" }),
   ).toContainText(validated.validation.pipeline_version);
@@ -681,10 +734,14 @@ async function reviewSlotThroughUi(
 
   if (editStem !== null) {
     await page.getByLabel("Question stem").fill(editStem);
-    await page.getByLabel("Edit reason").fill("Clarify the reviewed context wording.");
+    await page
+      .getByLabel("Edit reason")
+      .fill("Clarify the reviewed context wording.");
     await page.getByRole("button", { name: "Save revision" }).click();
     await expect(
-      page.getByText("Revision 2 saved. Automated validation still applies only to revision 1."),
+      page.getByText(
+        "Revision 2 saved. Automated validation still applies only to revision 1.",
+      ),
     ).toBeVisible();
     await expect(page.getByLabel("Question stem")).toHaveValue(editStem);
   }
@@ -692,17 +749,24 @@ async function reviewSlotThroughUi(
   const approvalNote = `Human checked ${validated.slot.question_type} source, answer, and marking.`;
   await page.getByLabel("Approval note (optional)").fill(approvalNote);
   await page.getByRole("button", { name: "Approve candidate" }).click();
-  await expect(page.getByText("Candidate approved. This is not a publish action.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Approved terminal state" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Candidate revisions and events" })).toContainText(
-    "Approved",
-  );
+  await expect(
+    page.getByText("Candidate approved. This is not a publish action."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Approved terminal state" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Candidate revisions and events" }),
+  ).toContainText("Approved");
 
   const candidate = await getJson<ReviewCandidate>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/review-candidates/${validated.run.id}`,
   );
-  const expectedActions = editStem === null ? ["started", "approved"] : ["started", "edited", "approved"];
+  const expectedActions =
+    editStem === null
+      ? ["started", "approved"]
+      : ["started", "edited", "approved"];
   expect(candidate).toMatchObject({
     blueprint_slot_id: validated.slot.slot_id,
     current_content: {
@@ -719,7 +783,9 @@ async function reviewSlotThroughUi(
     },
   });
   expect(candidate.current_revision).toBe(editStem === null ? 1 : 2);
-  expect(candidate.events.map((event) => event.action)).toEqual(expectedActions);
+  expect(candidate.events.map((event) => event.action)).toEqual(
+    expectedActions,
+  );
   return {
     ...validated,
     candidate,
@@ -746,37 +812,17 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     .slice(-9)
     .replaceAll(/\d/g, (digit) => String.fromCharCode(97 + Number(digit)));
   const code = unique.toUpperCase();
-  const curriculumTitle = `Generation curriculum ${unique}`;
   const boundary = `Corrected even number knowledge ${unique}`;
   const forbiddenBoundary = `Forbidden unreviewed knowledge ${unique}`;
   const forbiddenMarker = `uncorrected-odd-${unique}`;
   const retrievalMarker = `human-even-correction-${unique}`;
   const correctedText = `Human correction ${retrievalMarker}: Four is an even number.`;
+  const forbiddenText = `Incorrect example: Four is odd. ${forbiddenMarker}`;
+  const fixture = syntheticTextPdf([correctedText, forbiddenText]);
   await login(page, "admin");
 
-  const exam = await postCreated<Exam>(page.request, "/api/v1/admin/exam-configurations", {
-    code: `GE${code}`,
-    grade: 5,
-    name: `Generation exam ${unique}`,
-  });
-  const medium = await postCreated<Medium>(page.request, "/api/v1/admin/media", {
-    code: `en-${unique.slice(-7)}`,
-    name: `Generation English ${unique}`,
-  });
-  const subject = await postCreated<Subject>(page.request, "/api/v1/admin/subjects", {
-    code: `M${code}`,
-    name: `Generation mathematics ${unique}`,
-  } satisfies components["schemas"]["SubjectCreate"]);
-  const curriculum = await postCreated<Curriculum>(
+  const { curriculum, exam, medium, subject } = await seedAdmittedScope(
     page.request,
-    "/api/v1/admin/curriculum-versions",
-    {
-      code: `GC-${code}`,
-      exam_configuration_id: exam.id,
-      medium_id: medium.id,
-      subject_id: subject.id,
-      title: curriculumTitle,
-    } satisfies components["schemas"]["CurriculumVersionCreate"],
   );
   const competency = await postCreated<TaxonomyNode>(
     page.request,
@@ -819,8 +865,14 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     multipart: {
       curriculum_version_id: curriculum.id,
       document_type: "syllabus",
+      intake_metadata: JSON.stringify({
+        candidate_grade: 5,
+        medium_label: "English",
+        subject_label: "Mathematics",
+        evidence: [SYNTHETIC_WORKFLOW_EVIDENCE],
+      } satisfies components["schemas"]["SourceIntakeMetadata"]),
       file: {
-        buffer: syntheticPdf(`Four is incorrectly odd ${forbiddenMarker}`),
+        buffer: fixture.bytes,
         mimeType: "application/pdf",
         name: `generation-source-${unique}.pdf`,
       },
@@ -829,7 +881,11 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   expect(upload.status()).toBe(201);
   const uploadedSource = (await upload.json()) as SourceDocument;
   expect(
-    (await page.request.post(`/api/v1/admin/source-documents/${uploadedSource.id}/extract`)).status(),
+    (
+      await page.request.post(
+        `/api/v1/admin/source-documents/${uploadedSource.id}/extract`,
+      )
+    ).status(),
   ).toBe(202);
   await expect
     .poll(
@@ -838,7 +894,8 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
           page.request,
           "/api/v1/admin/source-documents",
         );
-        return documents.find((document) => document.id === uploadedSource.id)?.extraction_status;
+        return documents.find((document) => document.id === uploadedSource.id)
+          ?.extraction_status;
       },
       { timeout: 30_000 },
     )
@@ -848,8 +905,11 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     page.request,
     "/api/v1/admin/source-documents",
   );
-  const extractedSource = extractedSources.find((document) => document.id === uploadedSource.id);
-  if (!extractedSource) throw new Error("Generation source was not retained after extraction");
+  const extractedSource = extractedSources.find(
+    (document) => document.id === uploadedSource.id,
+  );
+  if (!extractedSource)
+    throw new Error("Generation source was not retained after extraction");
   expect(extractedSource).toMatchObject({
     extraction_config: { mode: "native" },
     extraction_status: "extracted",
@@ -864,21 +924,86 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     `/api/v1/admin/source-documents/${uploadedSource.id}/pages`,
   );
   if (!sourcePage) throw new Error("Generation source page was not extracted");
-  const [sourceBlock] = await getJson<ExtractedBlock[]>(
+  const sourceBlocks = await getJson<ExtractedBlock[]>(
     page.request,
     `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}/blocks`,
   );
-  if (!sourceBlock) throw new Error("Generation source block was not extracted");
+  const sourceBlock = sourceBlocks.find((block) =>
+    block.raw_text.includes(correctedText),
+  );
+  const forbiddenSourceBlock = sourceBlocks.find((block) =>
+    block.raw_text.includes(forbiddenText),
+  );
+  if (!sourceBlock || !forbiddenSourceBlock)
+    throw new Error(
+      "Both printed source spans must retain extracted block provenance",
+    );
+  expect(sourcePage.raw_text).toBe(fixture.text);
   expect(sourcePage.raw_text).toContain(forbiddenMarker);
   expect(sourcePage.reviewed_text).toBeNull();
-  expect(sourceBlock.raw_text).toContain(forbiddenMarker);
+  expect(forbiddenSourceBlock.raw_text).toContain(forbiddenMarker);
   expect(sourceBlock.reviewed_text).toBeNull();
 
   const reviewResponse = await page.request.post(
     `/api/v1/admin/source-documents/${uploadedSource.id}/review`,
   );
   expect(reviewResponse.ok()).toBe(true);
-  const correctionResponse = await page.request.patch(
+  const nativeCandidate = await readSyntheticSource(
+    page.request,
+    uploadedSource,
+    fixture.text,
+  );
+  const pagePath = `/api/v1/admin/materials/${uploadedSource.id}/pages/${sourcePage.page_number}`;
+  const workspacePath = `/api/v1/admin/materials/${uploadedSource.id}/review-workspace`;
+  // A deliberate bad candidate exercises correction lineage; the PDF itself already contains the exact correct span.
+  const misreadResponse = await page.request.post(`${pagePath}/edit`, {
+    data: {
+      expected_version: nativeCandidate.version,
+      text: `Four is incorrectly odd ${forbiddenMarker}`,
+      reason: `Deliberate bad reading for ${SYNTHETIC_WORKFLOW_EVIDENCE}`,
+    } satisfies components["schemas"]["PageEditRequest"],
+  });
+  expect(misreadResponse.status()).toBe(200);
+  const misread =
+    (await misreadResponse.json()) as components["schemas"]["PageReviewMutationResponse"];
+  expect(misread).toMatchObject({
+    state: "needs_review",
+    version: nativeCandidate.version + 1,
+  });
+  expect(misread.candidate_id).not.toBe(nativeCandidate.candidate_id);
+  const correctionResponse = await page.request.post(`${pagePath}/edit`, {
+    data: {
+      expected_version: misread.version,
+      text: fixture.text,
+      reason: `Restored the exact printed source: ${SYNTHETIC_WORKFLOW_EVIDENCE}`,
+    } satisfies components["schemas"]["PageEditRequest"],
+  });
+  expect(correctionResponse.status()).toBe(200);
+  const corrected =
+    (await correctionResponse.json()) as components["schemas"]["PageReviewMutationResponse"];
+  expect(corrected.version).toBe(misread.version + 1);
+  expect(corrected.candidate_id).not.toBe(misread.candidate_id);
+  const correctedWorkspace = await getJson<
+    components["schemas"]["PageReviewWorkspaceResponse"]
+  >(page.request, workspacePath);
+  const fetchedCorrectedPage = correctedWorkspace.page;
+  if (!fetchedCorrectedPage)
+    throw new Error("Corrected generation page could not be fetched");
+  expect(fetchedCorrectedPage).toMatchObject({
+    candidate_id: corrected.candidate_id,
+    system_text: fixture.text,
+    version: corrected.version,
+    state: "needs_review",
+  });
+  expect(fetchedCorrectedPage.history.map((candidate) => candidate.id)).toEqual(
+    expect.arrayContaining([
+      nativeCandidate.candidate_id,
+      misread.candidate_id,
+      corrected.candidate_id,
+    ]),
+  );
+  expect(correctedWorkspace.ready_for_ai).toBe(false);
+  const rejectedLegacyEdit = await page.request.patch(
     `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}`,
     {
       data: {
@@ -887,36 +1012,48 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
       } satisfies components["schemas"]["ReviewedTextUpdate"],
     },
   );
-  expect(correctionResponse.ok()).toBe(true);
-  const correctedPage = (await correctionResponse.json()) as SourcePage;
-  expect(correctedPage.raw_text).toBe(sourcePage.raw_text);
-  expect(correctedPage.reviewed_text).toBe(correctedText);
-  expect(correctedPage.version).toBe(sourcePage.version + 1);
-
-  const [fetchedCorrectedPage] = await getJson<SourcePage[]>(
+  expect(rejectedLegacyEdit.status()).toBe(409);
+  expect(await rejectedLegacyEdit.json()).toMatchObject({
+    detail: { code: "page_review_workspace_required" },
+  });
+  const [immutablePage] = await getJson<SourcePage[]>(
     page.request,
     `/api/v1/admin/source-documents/${uploadedSource.id}/pages`,
   );
-  if (!fetchedCorrectedPage) throw new Error("Corrected generation page could not be fetched");
-  expect(fetchedCorrectedPage).toMatchObject({
+  expect(immutablePage).toMatchObject({
     id: sourcePage.id,
     raw_text: sourcePage.raw_text,
-    reviewed_text: correctedText,
-    version: sourcePage.version + 1,
+    reviewed_text: null,
+    version: sourcePage.version,
   });
-  const [fetchedSourceBlock] = await getJson<ExtractedBlock[]>(
+  const retainedBlocks = await getJson<ExtractedBlock[]>(
     page.request,
     `/api/v1/admin/source-documents/${uploadedSource.id}/pages/${sourcePage.page_number}/blocks`,
   );
-  if (!fetchedSourceBlock) throw new Error("Corrected generation block provenance was lost");
+  const fetchedSourceBlock = retainedBlocks.find(
+    (block) => block.id === sourceBlock.id,
+  );
+  if (!fetchedSourceBlock)
+    throw new Error("Corrected generation block provenance was lost");
   expect(fetchedSourceBlock).toMatchObject({
     id: sourceBlock.id,
     page_number: fetchedCorrectedPage.page_number,
     raw_text: sourceBlock.raw_text,
     reviewed_text: null,
     source_document_id: uploadedSource.id,
-    source_page_id: fetchedCorrectedPage.id,
+    source_page_id: sourcePage.id,
   });
+  const originalResponse = await page.request.get(
+    `/api/v1/admin/materials/${uploadedSource.id}/original`,
+  );
+  expect(originalResponse.status()).toBe(200);
+  expect(await originalResponse.body()).toEqual(fixture.bytes);
+  const verifiedPage = await confirmSyntheticPage(
+    page.request,
+    uploadedSource.id,
+    fetchedCorrectedPage,
+    fixture.text,
+  );
 
   const trustResponse = await page.request.post(
     `/api/v1/admin/source-documents/${uploadedSource.id}/trust`,
@@ -939,9 +1076,9 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
       educational_boundary: forbiddenBoundary,
       page_number: fetchedCorrectedPage.page_number,
       sequence: 99,
-      source_block_id: fetchedSourceBlock.id,
+      source_block_id: forbiddenSourceBlock.id,
       source_document_id: source.id,
-      text: fetchedSourceBlock.raw_text,
+      text: forbiddenText,
     } satisfies components["schemas"]["KnowledgeChunkImportRequest"],
   );
   const forbiddenClassificationResponse = await page.request.patch(
@@ -961,9 +1098,7 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     (await forbiddenClassificationResponse.json()) as KnowledgeChunk;
   expect(classifiedForbiddenDraft.review_state).toBe("draft");
 
-  if (fetchedCorrectedPage.reviewed_text === null) {
-    throw new Error("The human correction was not retained for knowledge import");
-  }
+  expect(fetchedCorrectedPage.system_text).toContain(correctedText);
   const importedChunk = await postCreated<KnowledgeChunk>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks`,
@@ -974,9 +1109,18 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
       sequence: 1,
       source_block_id: fetchedSourceBlock.id,
       source_document_id: source.id,
-      text: fetchedCorrectedPage.reviewed_text,
+      text: correctedText,
     } satisfies components["schemas"]["KnowledgeChunkImportRequest"],
   );
+  for (const record of [forbiddenDraft, importedChunk]) {
+    await assertVerifiedRecord(
+      page.request,
+      "knowledge_chunk",
+      record,
+      verifiedPage,
+      fixture.text,
+    );
+  }
   expect(importedChunk).toMatchObject({
     provenance: {
       page_number: fetchedCorrectedPage.page_number,
@@ -998,7 +1142,8 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     },
   );
   expect(classificationResponse.ok()).toBe(true);
-  const classifiedChunk = (await classificationResponse.json()) as KnowledgeChunk;
+  const classifiedChunk =
+    (await classificationResponse.json()) as KnowledgeChunk;
   const inReviewResponse = await page.request.post(
     `/api/v1/admin/curricula/${curriculum.id}/knowledge/chunks/${classifiedChunk.id}/review`,
     {
@@ -1056,8 +1201,12 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     year: 2020,
   });
   const historicalEvidence = [historical2019, historical2020];
-  expect(new Set(historicalEvidence.map((item) => item.question.year)).size).toBe(2);
-  expect(new Set(historicalEvidence.map((item) => item.source.id)).size).toBe(2);
+  expect(
+    new Set(historicalEvidence.map((item) => item.question.year)).size,
+  ).toBe(2);
+  expect(new Set(historicalEvidence.map((item) => item.source.id)).size).toBe(
+    2,
+  );
   expect(
     historicalEvidence.every(
       (item) =>
@@ -1069,9 +1218,16 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   ).toBe(true);
 
   await page.goto("/admin/analytics");
-  await expect(page.getByRole("heading", { name: "Analytics Report Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active analytics curriculum"), curriculum.id);
-  await expect(page.getByRole("heading", { name: "No analytics runs yet" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Analytics Report Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active analytics curriculum"),
+    curriculum.id,
+  );
+  await expect(
+    page.getByRole("heading", { name: "No analytics runs yet" }),
+  ).toBeVisible();
   await page.getByLabel("Minimum training years").fill("1");
   await page.getByLabel("Top skills to evaluate").fill("1");
   await page.getByLabel("Meaningful improvement numerator").fill("1");
@@ -1087,19 +1243,29 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const createdAnalytics = (await analyticsResponse.json()) as AnalyticsRun;
 
   await expect(page.getByText("Analysis run created.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Analysis report" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Rolling held-out windows" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Holdout 2020" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Analysis report" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Rolling held-out windows" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Holdout 2020" }),
+  ).toBeVisible();
   await expect(page.getByText("Training years: 2019")).toBeVisible();
   await expect(page.getByText("Leakage audit passed")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Baseline comparison" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Baseline comparison" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Syllabus-balanced practice fallback" }),
   ).toBeVisible();
   await expect(
     page.getByText(/safer syllabus-balanced practice method is selected/i),
   ).toBeVisible();
-  await expect(page.getByText(/does not predict future exam questions/i)).toBeVisible();
+  await expect(
+    page.getByText(/does not predict future exam questions/i),
+  ).toBeVisible();
 
   const analyticsSummaries = await getJson<AnalyticsRunSummary[]>(
     page.request,
@@ -1107,7 +1273,8 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   );
   expect(analyticsSummaries).toHaveLength(1);
   const [analyticsSummary] = analyticsSummaries;
-  if (!analyticsSummary) throw new Error("The persisted analytics run ID was not returned");
+  if (!analyticsSummary)
+    throw new Error("The persisted analytics run ID was not returned");
   const analyticsRunId = analyticsSummary.id;
   expect(analyticsRunId).toBe(createdAnalytics.id);
   await expect(page.getByText(analyticsRunId, { exact: true })).toBeVisible();
@@ -1135,8 +1302,13 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   });
 
   await page.goto("/admin/knowledge");
-  await expect(page.getByRole("heading", { name: "Knowledge Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active curriculum"), curriculum.id);
+  await expect(
+    page.getByRole("heading", { name: "Knowledge Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active curriculum"),
+    curriculum.id,
+  );
   const chunkEmbeddingSelection = page.getByRole("checkbox", {
     name: `Select knowledge chunk ${boundary.toLowerCase()} / sequence 1`,
   });
@@ -1188,20 +1360,27 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     failure_code: null,
     status: "succeeded",
   });
-  await expect(page.getByText("Embedding job succeeded.")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByText("Embedding job succeeded.")).toBeVisible({
+    timeout: 120_000,
+  });
   await page.getByRole("button", { name: "Refresh embedding data" }).click();
   const embeddedChunkRow = page.getByRole("listitem", {
     name: `Knowledge chunk ${boundary} / Sequence 1`,
   });
   const embeddingConfigurationLabel = `${completedEmbeddingJob.configuration.provider} / ${completedEmbeddingJob.configuration.model} / ${completedEmbeddingJob.configuration.version} / ${completedEmbeddingJob.configuration.dimension}d`;
-  await expect(embeddedChunkRow.getByText("Embedded", { exact: true })).toBeVisible();
+  await expect(
+    embeddedChunkRow.getByText("Embedded", { exact: true }),
+  ).toBeVisible();
   await expect(
     embeddedChunkRow.getByText(embeddingConfigurationLabel, { exact: true }),
   ).toBeVisible();
   await expect(
-    embeddedChunkRow.getByText(completedEmbeddingJob.configuration.config_fingerprint, {
-      exact: true,
-    }),
+    embeddedChunkRow.getByText(
+      completedEmbeddingJob.configuration.config_fingerprint,
+      {
+        exact: true,
+      },
+    ),
   ).toBeVisible();
   const refreshedChunk = await getJson<KnowledgeChunk>(
     page.request,
@@ -1218,9 +1397,16 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   expect(refreshedForbiddenDraft.embedding_status).toBe("not_embedded");
 
   await openAdvancedArea(page, "Knowledge / RAG");
-  await expect(page.getByRole("heading", { name: "RAG Explorer" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active retrieval curriculum"), curriculum.id);
-  const competencySelect = page.locator(`select:has(option[value="${competency.id}"])`);
+  await expect(
+    page.getByRole("heading", { name: "RAG Explorer" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active retrieval curriculum"),
+    curriculum.id,
+  );
+  const competencySelect = page.locator(
+    `select:has(option[value="${competency.id}"])`,
+  );
   const skillSelect = page.locator(`select:has(option[value="${skill.id}"])`);
   const embeddingSelect = page.locator(
     `select:has(option[value="${completedEmbeddingJob.configuration.config_fingerprint}"])`,
@@ -1228,17 +1414,24 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   await expect(embeddingSelect).toBeVisible();
   await competencySelect.selectOption(competency.id);
   await skillSelect.selectOption(skill.id);
-  await embeddingSelect.selectOption(completedEmbeddingJob.configuration.config_fingerprint);
+  await embeddingSelect.selectOption(
+    completedEmbeddingJob.configuration.config_fingerprint,
+  );
   await page.getByLabel("Retrieval query").fill(retrievalMarker);
   const retrievalResponsePromise = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" && response.url().endsWith("/admin/retrieval/explore"),
+      response.request().method() === "POST" &&
+      response.url().endsWith("/admin/retrieval/explore"),
   );
   await page.getByRole("button", { name: "Run retrieval" }).click();
   const retrievalResponse = await retrievalResponsePromise;
   expect(retrievalResponse.status()).toBe(200);
-  const retrievalRequest = retrievalResponse.request().postDataJSON() as components["schemas"]["RetrievalExploreRequest"];
-  expect(retrievalRequest.embedding_config).toEqual(completedEmbeddingJob.configuration);
+  const retrievalRequest = retrievalResponse
+    .request()
+    .postDataJSON() as components["schemas"]["RetrievalExploreRequest"];
+  expect(retrievalRequest.embedding_config).toEqual(
+    completedEmbeddingJob.configuration,
+  );
   expect(retrievalRequest.query).toBe(retrievalMarker);
   expect(retrievalRequest.scope).toEqual({
     curriculum_version_id: curriculum.id,
@@ -1263,9 +1456,14 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   expect(retrieval.context.character_count).toBeGreaterThan(0);
   expect(retrieval.context.trust).toBe("untrusted_source_data");
   expect(retrieval.diagnostics.hard_scope_filter_applied).toBe(true);
-  expect(retrieval.embedding_config).toEqual(completedEmbeddingJob.configuration);
+  expect(retrieval.embedding_config).toEqual(
+    completedEmbeddingJob.configuration,
+  );
   expect(retrieval.scope).toEqual(retrievalRequest.scope);
-  for (const candidate of [...retrieval.channels.lexical, ...retrieval.channels.vector]) {
+  for (const candidate of [
+    ...retrieval.channels.lexical,
+    ...retrieval.channels.vector,
+  ]) {
     expect(candidate).toMatchObject({
       chunk_id: reviewedChunk.id,
       provenance: {
@@ -1305,7 +1503,9 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     expect(item.trust).toBe("untrusted_source_data");
   }
   expect(JSON.stringify(retrieval)).not.toContain(classifiedForbiddenDraft.id);
-  expect(JSON.stringify(retrieval)).not.toContain(classifiedForbiddenDraft.text);
+  expect(JSON.stringify(retrieval)).not.toContain(
+    classifiedForbiddenDraft.text,
+  );
   expect(JSON.stringify(retrieval)).not.toContain(forbiddenMarker);
 
   const lexicalSection = page
@@ -1327,15 +1527,31 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   await expect(vectorSection.locator("ol > li").first()).toBeVisible();
   await expect(fusedSection.locator("ol > li").first()).toBeVisible();
   await expect(contextSection.locator("ol > li").first()).toBeVisible();
-  await expect(contextSection.getByRole("list", { name: "Source provenance" }).first()).toBeVisible();
-  await expect(diagnosticsSection.getByText("Yes", { exact: true })).toBeVisible();
+  await expect(
+    contextSection.getByRole("list", { name: "Source provenance" }).first(),
+  ).toBeVisible();
+  await expect(
+    diagnosticsSection.getByText("Yes", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Untrusted source data").first()).toBeVisible();
-  await expect(page.getByText(correctedText, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(reviewedChunk.id, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(source.id, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(fetchedSourceBlock.id, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(classifiedForbiddenDraft.id, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(classifiedForbiddenDraft.text, { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText(correctedText, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(reviewedChunk.id, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(source.id, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(fetchedSourceBlock.id, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(classifiedForbiddenDraft.id, { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(classifiedForbiddenDraft.text, { exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByText(forbiddenMarker, { exact: true })).toHaveCount(0);
 
   const createBlueprintRequest = blueprintRequest(
@@ -1347,9 +1563,12 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     analyticsRunId,
   );
   expect(createBlueprintRequest.analytics_run_id).toBe(analyticsRunId);
-  expect(Object.keys(createBlueprintRequest.specification.taxonomy_requirements[0]?.priority ?? {})).toEqual(
-    ["baseline_evidence_refs", "baseline_score", "baseline_version"],
-  );
+  expect(
+    Object.keys(
+      createBlueprintRequest.specification.taxonomy_requirements[0]?.priority ??
+        {},
+    ),
+  ).toEqual(["baseline_evidence_refs", "baseline_score", "baseline_version"]);
   expect(JSON.stringify(createBlueprintRequest)).not.toContain("forecast_");
   const blueprint = await postCreated<Blueprint>(
     page.request,
@@ -1368,9 +1587,12 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const analyticsEvidenceRef = `analytics:persisted-run:${analyticsRunId}`;
   expect(blueprint.analytics_run_id).toBe(analyticsRunId);
   expect(
-    blueprint.specification.taxonomy_requirements[0]?.priority.forecast_evidence_refs,
+    blueprint.specification.taxonomy_requirements[0]?.priority
+      .forecast_evidence_refs,
   ).toContain(analyticsEvidenceRef);
-  expect(blueprint.specification.taxonomy_requirements[0]?.priority.forecast_score).not.toBeNull();
+  expect(
+    blueprint.specification.taxonomy_requirements[0]?.priority.forecast_score,
+  ).not.toBeNull();
   for (const slot of blueprint.blueprint.slots) {
     expect(slot.evidence.evidence_refs).toContain(analyticsEvidenceRef);
     expect(slot.rationale.priority_mode).toBe("baseline_fallback");
@@ -1383,17 +1605,30 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const exactSlots = blueprint.blueprint.slots;
 
   await page.goto("/admin/generation");
-  await expect(page.getByRole("heading", { name: "Generation Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
+  await expect(
+    page.getByRole("heading", { name: "Generation Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active Grade 5 curriculum"),
+    curriculum.id,
+  );
   await page.getByLabel("Immutable blueprint").selectOption(blueprint.id);
   const generatedSlots: GeneratedSlot[] = [];
   for (const slot of exactSlots) {
     generatedSlots.push(
-      await generateSlotThroughUi(page, curriculum, blueprint, slot, reviewedChunk),
+      await generateSlotThroughUi(
+        page,
+        curriculum,
+        blueprint,
+        slot,
+        reviewedChunk,
+      ),
     );
   }
   await expect(page.getByText(/No publish action is available/i)).toBeVisible();
-  expect(generatedSlots.map((item) => item.run.slot_id)).toEqual(exactSlots.map((slot) => slot.slot_id));
+  expect(generatedSlots.map((item) => item.run.slot_id)).toEqual(
+    exactSlots.map((slot) => slot.slot_id),
+  );
   expect(generatedSlots.map((item) => item.run.provider)).toEqual([
     "deterministic-fake",
     "deterministic-fake",
@@ -1401,8 +1636,13 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   ]);
 
   await page.goto("/admin/validation");
-  await expect(page.getByRole("heading", { name: "Validation Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
+  await expect(
+    page.getByRole("heading", { name: "Validation Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active Grade 5 curriculum"),
+    curriculum.id,
+  );
   const validatedSlots: ValidatedSlot[] = [];
   for (const [index, generated] of generatedSlots.entries()) {
     validatedSlots.push(
@@ -1422,12 +1662,23 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "reviewer");
   await page.goto("/admin/review");
-  await expect(page.getByRole("heading", { name: "Reviewer Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
+  await expect(
+    page.getByRole("heading", { name: "Reviewer Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active Grade 5 curriculum"),
+    curriculum.id,
+  );
   const reviewedSlots: ReviewedSlot[] = [];
   for (const validated of validatedSlots) {
     reviewedSlots.push(
-      await reviewSlotThroughUi(page, curriculum, reviewedChunk, validated, null),
+      await reviewSlotThroughUi(
+        page,
+        curriculum,
+        reviewedChunk,
+        validated,
+        null,
+      ),
     );
   }
   expect(reviewedSlots.map((item) => item.candidate.state)).toEqual([
@@ -1435,10 +1686,13 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     "approved",
     "approved",
   ]);
-  expect(reviewedSlots.every((item) => item.candidate.current_revision === 1)).toBe(true);
+  expect(
+    reviewedSlots.every((item) => item.candidate.current_revision === 1),
+  ).toBe(true);
 
   const approvedCandidate = reviewedSlots[0]?.candidate;
-  if (!approvedCandidate) throw new Error("The representative paper did not retain an approval");
+  if (!approvedCandidate)
+    throw new Error("The representative paper did not retain an approval");
   const terminalPayload: ReviewEditRequest = {
     content: approvedCandidate.current_content,
     expected_version: approvedCandidate.version,
@@ -1449,7 +1703,9 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     { data: terminalPayload },
   );
   expect(terminalMutation.status()).toBe(409);
-  expect((await terminalMutation.json()).detail.code).toBe("review_candidate_state_conflict");
+  expect((await terminalMutation.json()).detail.code).toBe(
+    "review_candidate_state_conflict",
+  );
 
   const candidateAudit = await getJson<AuditEvent[]>(
     page.request,
@@ -1464,13 +1720,16 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
         "question_candidate.created",
         "question_candidate.review_started",
         "question_candidate.approved",
-        ...(reviewed.candidate.current_revision === 2 ? ["question_candidate.edited"] : []),
+        ...(reviewed.candidate.current_revision === 2
+          ? ["question_candidate.edited"]
+          : []),
       ]),
     );
   }
 
   const [firstReviewed] = reviewedSlots;
-  if (!firstReviewed) throw new Error("The representative paper has no reviewed slot");
+  if (!firstReviewed)
+    throw new Error("The representative paper has no reviewed slot");
   const reviewerValidationPayload: ValidationRequest = {
     generation_run_id: firstReviewed.run.id,
   };
@@ -1512,8 +1771,13 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   ]);
 
   await page.goto("/admin/papers");
-  await expect(page.getByRole("heading", { name: "Paper Studio" })).toBeVisible();
-  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
+  await expect(
+    page.getByRole("heading", { name: "Paper Studio" }),
+  ).toBeVisible();
+  await selectOptionIfNeeded(
+    page.getByLabel("Active Grade 5 curriculum"),
+    curriculum.id,
+  );
   await page.getByLabel("Immutable paper blueprint").selectOption(blueprint.id);
   const slotRows = page.getByTestId("exact-blueprint-slot");
   await expect(slotRows).toHaveCount(3);
@@ -1530,14 +1794,16 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const paperTitle = `Published generation paper ${unique}`;
   await page.getByLabel("Paper title").fill(paperTitle);
   await page.getByRole("button", { name: "Create immutable draft" }).click();
-  await expect(page.getByText("Immutable draft version 1 created.")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
-    "Draft",
-  );
+  await expect(
+    page.getByText("Immutable draft version 1 created."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Selected paper lifecycle" }),
+  ).toContainText("Draft");
   for (const reviewed of reviewedSlots) {
-    await expect(page.getByRole("region", { name: "Immutable draft versions" })).toContainText(
-      reviewed.candidate.id,
-    );
+    await expect(
+      page.getByRole("region", { name: "Immutable draft versions" }),
+    ).toContainText(reviewed.candidate.id);
   }
 
   const papers = await getJson<PaperSummary[]>(
@@ -1545,7 +1811,10 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     `/api/v1/admin/curricula/${curriculum.id}/papers`,
   );
   const persistedPaper = papers.find((paper) => paper.title === paperTitle);
-  if (!persistedPaper) throw new Error("Paper Studio did not persist the reviewer-assembled draft");
+  if (!persistedPaper)
+    throw new Error(
+      "Paper Studio did not persist the reviewer-assembled draft",
+    );
   const [paperDraft] = await getJson<PaperDraft[]>(
     page.request,
     `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}/draft-versions`,
@@ -1568,33 +1837,56 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     { data: reviewerPublishPayload },
   );
   expect(reviewerPublishDenied.status()).toBe(403);
-  await expect(page.getByRole("button", { name: "Publish current draft" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Archive paper terminally" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Publish current draft" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Archive paper terminally" }),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await login(page, "admin");
   await page.goto("/admin/papers");
-  await selectOptionIfNeeded(page.getByLabel("Active Grade 5 curriculum"), curriculum.id);
-  await page.getByRole("button", { name: `Select paper ${persistedPaper.id}` }).click();
-  await expect(page.getByRole("region", { name: "Selected paper lifecycle" })).toContainText(
-    "Draft",
+  await selectOptionIfNeeded(
+    page.getByLabel("Active Grade 5 curriculum"),
+    curriculum.id,
   );
+  await page
+    .getByRole("button", { name: `Select paper ${persistedPaper.id}` })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Selected paper lifecycle" }),
+  ).toContainText("Draft");
   await page.getByRole("button", { name: "Publish current draft" }).click();
   await expect(
-    page.getByText("Publication version 1 created as an immutable verified snapshot."),
+    page.getByText(
+      "Publication version 1 created as an immutable verified snapshot.",
+    ),
   ).toBeVisible();
 
   const snapshotRegion = page.getByRole("region", {
     name: "Verified immutable publication snapshot",
   });
-  await expect(snapshotRegion).toContainText("Student serving requires no live LLM or provider call");
-  await expect(snapshotRegion).toContainText("Immutable, hash-verified snapshot");
+  await expect(snapshotRegion).toContainText(
+    "Student serving requires no live LLM or provider call",
+  );
+  await expect(snapshotRegion).toContainText(
+    "Immutable, hash-verified snapshot",
+  );
   await expect(snapshotRegion).toContainText("deterministic-fake");
   await expect(snapshotRegion).toContainText(reviewedChunk.id);
-  await expect(snapshotRegion.getByRole("heading", { name: "Validation evidence" })).toHaveCount(3);
-  await expect(snapshotRegion.getByRole("heading", { name: "Reviewer revisions" })).toHaveCount(3);
-  await expect(snapshotRegion.getByRole("heading", { name: "Review history" })).toHaveCount(3);
-  await expect(snapshotRegion.getByRole("heading", { name: "Review decision" })).toHaveCount(3);
+  await expect(
+    snapshotRegion.getByRole("heading", { name: "Validation evidence" }),
+  ).toHaveCount(3);
+  await expect(
+    snapshotRegion.getByRole("heading", { name: "Reviewer revisions" }),
+  ).toHaveCount(3);
+  await expect(
+    snapshotRegion.getByRole("heading", { name: "Review history" }),
+  ).toHaveCount(3);
+  await expect(
+    snapshotRegion.getByRole("heading", { name: "Review decision" }),
+  ).toHaveCount(3);
   await expect(snapshotRegion).toContainText("Validated revision");
   await expect(snapshotRegion).toContainText("Approved");
   for (const reviewed of reviewedSlots) {
@@ -1612,16 +1904,22 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     exactSlots.map((slot) => slot.slot_id),
   );
   expect(immutablePublication.snapshot.questions).toHaveLength(3);
-  expect(immutablePublication.snapshot.questions.map((question) => question.slot_id)).toEqual(
-    exactSlots.map((slot) => slot.slot_id),
-  );
   expect(
-    immutablePublication.snapshot.questions.map((question) => question.content.question_type),
+    immutablePublication.snapshot.questions.map((question) => question.slot_id),
+  ).toEqual(exactSlots.map((slot) => slot.slot_id));
+  expect(
+    immutablePublication.snapshot.questions.map(
+      (question) => question.content.question_type,
+    ),
   ).toEqual(exactSlots.map((slot) => slot.question_type));
 
-  for (const [index, question] of immutablePublication.snapshot.questions.entries()) {
+  for (const [
+    index,
+    question,
+  ] of immutablePublication.snapshot.questions.entries()) {
     const reviewed = reviewedSlots[index];
-    if (!reviewed) throw new Error(`Published question ${index + 1} has no reviewed source`);
+    if (!reviewed)
+      throw new Error(`Published question ${index + 1} has no reviewed source`);
     expect(question).toMatchObject({
       candidate_id: reviewed.candidate.id,
       content: {
@@ -1657,7 +1955,9 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
         ? ["started", "edited", "approved"]
         : ["started", "approved"],
     );
-    expect(question.revisions).toHaveLength(reviewed.candidate.current_revision);
+    expect(question.revisions).toHaveLength(
+      reviewed.candidate.current_revision,
+    );
   }
 
   const generationStateAfterPublication = await getJson<GenerationRunSummary[]>(
@@ -1670,5 +1970,9 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
     `/api/v1/admin/curricula/${curriculum.id}/papers/${persistedPaper.id}`,
   );
   expect(finalPaper.state).toBe("published");
-  expect(browserErrors.filter((error) => !error.includes("eval() is not supported in this environment"))).toEqual([]);
+  expect(
+    browserErrors.filter(
+      (error) => !error.includes("eval() is not supported in this environment"),
+    ),
+  ).toEqual([]);
 });

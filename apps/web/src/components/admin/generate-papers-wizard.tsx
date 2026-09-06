@@ -45,9 +45,14 @@ type JsonObject = Record<string, unknown>;
 
 const MAX_QUESTIONS = 50;
 const MAX_DURATION_MINUTES = 600;
-const POLL_DELAYS_MS = [0, 150, 300, 600, 1_000, 2_000, 4_000, 5_000, 5_000, 5_000] as const;
+const POLL_DELAYS_MS = [
+  0, 150, 300, 600, 1_000, 2_000, 4_000, 5_000, 5_000, 5_000,
+] as const;
 const POLL_MAX_DURATION_MS = 60_000;
-const TERMINAL_JOB_STATUSES = new Set<PaperJob["status"]>(["ready_for_review", "failed"]);
+const TERMINAL_JOB_STATUSES = new Set<PaperJob["status"]>([
+  "ready_for_review",
+  "failed",
+]);
 
 const fieldClass = "grid gap-1.5 text-sm font-semibold text-slate-800";
 const inputClass =
@@ -72,7 +77,31 @@ function firstFailure(outcomes: readonly ApiOutcome[]): ApiOutcome | undefined {
   return outcomes.find((outcome) => outcome.error !== undefined);
 }
 
-function generationError(error: unknown, response: Response, surface: "selection" | "create" | "poll" | "retry"): UiError {
+function sameCurriculum(
+  left: CurriculumLabel | undefined,
+  right: CurriculumLabel,
+): boolean {
+  return Boolean(
+    left &&
+    left.source_scope_fingerprint === right.source_scope_fingerprint &&
+    left.code === right.code &&
+    left.assessment_programme === right.assessment_programme,
+  );
+}
+
+function catalogueChanged(code: string): boolean {
+  return [
+    "paper_generation_catalogue_changed",
+    "paper_generation_scope_mismatch",
+    "paper_generation_curriculum_not_found",
+  ].includes(code);
+}
+
+function generationError(
+  error: unknown,
+  response: Response,
+  surface: "selection" | "create" | "poll" | "retry",
+): UiError {
   const code = detailCode(error);
   const status = response.status;
   if (status === 401) {
@@ -102,7 +131,19 @@ function generationError(error: unknown, response: Response, surface: "selection
           ? "This paper is no longer available. Your generation choices are still here."
           : "No matching curriculum content is available for these choices. Choose another target or ask a curriculum administrator to add reviewed material.",
       retryable: surface === "poll",
-      title: surface === "poll" ? "Paper not found" : "No matching curriculum content",
+      title:
+        surface === "poll"
+          ? "Paper not found"
+          : "No matching curriculum content",
+    };
+  }
+  if (code === "paper_generation_catalogue_changed") {
+    return {
+      code,
+      message:
+        "Curriculum approval or lesson choices have changed. Refresh the curriculum choices and select the scope again. No new paper was generated.",
+      retryable: false,
+      title: "Curriculum choices changed",
     };
   }
   if (status === 409) {
@@ -158,15 +199,18 @@ function generationError(error: unknown, response: Response, surface: "selection
         title: "Reviewed material is needed",
       },
       paper_generation_curriculum_content_missing: {
-        message: "No reviewed lesson content is available for this subject yet.",
+        message:
+          "No reviewed lesson content is available for this subject yet.",
         title: "No content available",
       },
       paper_generation_lesson_range_invalid: {
-        message: "Choose an inclusive lesson range with the first lesson before the last lesson.",
+        message:
+          "Choose an inclusive lesson range with the first lesson before the last lesson.",
         title: "Check the lesson range",
       },
       paper_generation_lesson_range_not_found: {
-        message: "One or more lessons in that range are not available in this curriculum.",
+        message:
+          "One or more lessons in that range are not available in this curriculum.",
         title: "Lesson range unavailable",
       },
       paper_generation_lesson_unmapped: {
@@ -184,11 +228,13 @@ function generationError(error: unknown, response: Response, surface: "selection
         title: "Scholarship policy is not ready",
       },
       paper_generation_term_policy_unavailable: {
-        message: "The selected term does not yet have reviewed curriculum coverage.",
+        message:
+          "The selected term does not yet have reviewed curriculum coverage.",
         title: "Term coverage is not ready",
       },
       paper_generation_scope_invalid: {
-        message: "The selected curriculum scope is not valid. Review the lesson choices and try again.",
+        message:
+          "The selected curriculum scope is not valid. Review the lesson choices and try again.",
         title: "Check the curriculum scope",
       },
       paper_generation_slot_lesson_mapping_missing: {
@@ -238,11 +284,14 @@ function generationError(error: unknown, response: Response, surface: "selection
         ? "Progress could not be checked. The paper may still be running; check again without starting a duplicate request."
         : "The request could not be completed. Your choices have been kept so you can try again safely.",
     retryable: true,
-    title: surface === "poll" ? "Progress check paused" : "Paper request failed",
+    title:
+      surface === "poll" ? "Progress check paused" : "Paper request failed",
   };
 }
 
-function networkError(surface: "selection" | "create" | "poll" | "retry"): UiError {
+function networkError(
+  surface: "selection" | "create" | "poll" | "retry",
+): UiError {
   return {
     code: "network_error",
     message:
@@ -250,11 +299,14 @@ function networkError(surface: "selection" | "create" | "poll" | "retry"): UiErr
         ? "Progress could not be checked. The paper may still be running; check again without starting a duplicate request."
         : "The service could not be reached. Your choices have been kept so you can try the same request safely.",
     retryable: true,
-    title: surface === "poll" ? "Progress check paused" : "Connection unavailable",
+    title:
+      surface === "poll" ? "Progress check paused" : "Connection unavailable",
   };
 }
 
-function secureOperationKey(prefix: "teacher-paper" | "teacher-paper-retry"): string {
+function secureOperationKey(
+  prefix: "teacher-paper" | "teacher-paper-retry",
+): string {
   const cryptoObject = globalThis.crypto;
   let random: string;
   if (typeof cryptoObject?.randomUUID === "function") {
@@ -262,21 +314,34 @@ function secureOperationKey(prefix: "teacher-paper" | "teacher-paper-retry"): st
   } else if (typeof cryptoObject?.getRandomValues === "function") {
     const bytes = new Uint8Array(16);
     cryptoObject.getRandomValues(bytes);
-    random = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+    random = [...bytes]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
   } else {
     throw new Error("Secure browser randomness is unavailable");
   }
   const key = `${prefix}-${random}`;
-  if (key.length > 128 || /\s/.test(key)) throw new Error("Unsafe operation key");
+  if (key.length > 128 || /\s/.test(key))
+    throw new Error("Unsafe operation key");
   return key;
 }
 
-function Panel({ children, description, title }: { children: ReactNode; description: string; title: string }) {
+function Panel({
+  children,
+  description,
+  title,
+}: {
+  children: ReactNode;
+  description: string;
+  title: string;
+}) {
   return (
     <section className="rounded-2xl border border-slate-300 bg-white p-5 shadow-sm sm:p-6">
       <header className="border-b border-slate-200 pb-4">
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+          {description}
+        </p>
       </header>
       <div className="mt-5">{children}</div>
     </section>
@@ -285,7 +350,10 @@ function Panel({ children, description, title }: { children: ReactNode; descript
 
 function ErrorPanel({ error, action }: { error: UiError; action?: ReactNode }) {
   return (
-    <section className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-950" role="alert">
+    <section
+      className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-950"
+      role="alert"
+    >
       <h3 className="font-semibold">{error.title}</h3>
       <p className="mt-1 text-sm leading-6">{error.message}</p>
       {action ? <div className="mt-3">{action}</div> : null}
@@ -297,9 +365,13 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
-function stageIsReached(job: PaperJob, stage: "preparing" | "generating" | "checking_answers" | "ready_for_review") {
+function stageIsReached(
+  job: PaperJob,
+  stage: "preparing" | "generating" | "checking_answers" | "ready_for_review",
+) {
   if (job.progress.includes(stage)) return true;
-  if (stage === "generating" && job.progress.includes("generating_questions")) return true;
+  if (stage === "generating" && job.progress.includes("generating_questions"))
+    return true;
   const rank: Record<PaperJob["status"], number> = {
     checking_answers: 3,
     failed: 0,
@@ -307,7 +379,12 @@ function stageIsReached(job: PaperJob, stage: "preparing" | "generating" | "chec
     preparing: 1,
     ready_for_review: 4,
   };
-  const target = { checking_answers: 3, generating: 2, preparing: 1, ready_for_review: 4 }[stage];
+  const target = {
+    checking_answers: 3,
+    generating: 2,
+    preparing: 1,
+    ready_for_review: 4,
+  }[stage];
   return job.status !== "failed" && rank[job.status] >= target;
 }
 
@@ -324,18 +401,26 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   const [paperType, setPaperType] = useState<PaperType | "">("");
   const [subject, setSubject] = useState("");
   const [term, setTerm] = useState<SchoolTerm | "">("");
-  const [scholarshipMode, setScholarshipMode] = useState<ScholarshipMode | "">("");
+  const [scholarshipMode, setScholarshipMode] = useState<ScholarshipMode | "">(
+    "",
+  );
   const [curriculum, setCurriculum] = useState<CurriculumLabel | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionError, setSelectionError] = useState<UiError | null>(null);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [scopeKind, setScopeKind] = useState<
-    "full_subject" | "full_term" | "programme" | "lesson_range" | "selected_lessons"
+    | "full_subject"
+    | "full_term"
+    | "programme"
+    | "lesson_range"
+    | "selected_lessons"
   >("full_subject");
   const [firstLesson, setFirstLesson] = useState("");
   const [lastLesson, setLastLesson] = useState("");
-  const [selectedLessonNumbers, setSelectedLessonNumbers] = useState<number[]>([]);
+  const [selectedLessonNumbers, setSelectedLessonNumbers] = useState<number[]>(
+    [],
+  );
   const [paperName, setPaperName] = useState("Grade 5 practice paper");
   const [mcqCount, setMcqCount] = useState(5);
   const [writtenCount, setWrittenCount] = useState(5);
@@ -357,18 +442,37 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
 
   const availableSubjects = useMemo(() => {
     if (!options || !grade || !medium) return [];
-    const deduplicated = new Map<string, GenerationOptions["subjects"][number]>();
+    const deduplicated = new Map<
+      string,
+      GenerationOptions["subjects"][number]
+    >();
     for (const item of options.subjects) {
-      if (item.grade === Number(grade) && item.medium === medium && !deduplicated.has(item.code)) {
+      if (
+        item.grade === Number(grade) &&
+        item.medium === medium &&
+        !deduplicated.has(item.code)
+      ) {
         deduplicated.set(item.code, item);
       }
     }
     return [...deduplicated.values()];
   }, [grade, medium, options]);
 
-  const availablePaperTypes = useMemo(
-    () => options?.paper_types.filter((item) => item.grade === Number(grade)) ?? [],
+  const availableMedia = useMemo(
+    () =>
+      options?.media.filter((item) => item.grades.includes(Number(grade))) ??
+      [],
     [grade, options],
+  );
+  const availablePaperTypes = useMemo(
+    () =>
+      options?.paper_types.filter(
+        (item) => item.grade === Number(grade) && item.medium === medium,
+      ) ?? [],
+    [grade, medium, options],
+  );
+  const selectedPaperType = availablePaperTypes.find(
+    (item) => item.code === paperType,
   );
 
   const selectedSubject = useMemo(
@@ -379,12 +483,17 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   const scholarshipSelected = paperType === "scholarship_practice";
   const targetReady = Boolean(
     grade &&
-      medium &&
-      paperType &&
-      (scholarshipSelected ? scholarshipMode : subject) &&
-      (paperType !== "term_test" || term),
+    availableMedia.some((item) => item.code === medium) &&
+    selectedPaperType &&
+    (scholarshipSelected
+      ? scholarshipMode && selectedPaperType.source_scope_fingerprint
+      : selectedSubject) &&
+    (paperType !== "term_test" || term),
   );
-  const lessonNumbers = useMemo(() => new Set(lessons.map((lesson) => lesson.number)), [lessons]);
+  const lessonNumbers = useMemo(
+    () => new Set(lessons.map((lesson) => lesson.number)),
+    [lessons],
+  );
   const rangeStart = Number(firstLesson);
   const rangeEnd = Number(lastLesson);
   const rangeValid =
@@ -392,19 +501,23 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     (Number.isInteger(rangeStart) &&
       Number.isInteger(rangeEnd) &&
       rangeStart <= rangeEnd &&
-      Array.from({ length: rangeEnd - rangeStart + 1 }, (_, index) => rangeStart + index).every(
-        (number) => lessonNumbers.has(number),
-      ));
+      Array.from(
+        { length: rangeEnd - rangeStart + 1 },
+        (_, index) => rangeStart + index,
+      ).every((number) => lessonNumbers.has(number)));
   const selectedLessonsValid =
     scopeKind !== "selected_lessons" ||
     (selectedLessonNumbers.length > 0 &&
       selectedLessonNumbers.every((number) => lessonNumbers.has(number)));
   const scopeValid = rangeValid && selectedLessonsValid;
   const totalQuestions = mcqCount + writtenCount + structuredCount;
+  const catalogueNeedsRefresh =
+    requestError !== null && catalogueChanged(requestError.code);
   const settingsValid =
     Boolean(paperName.trim()) &&
     [mcqCount, writtenCount, structuredCount].every(
-      (count) => Number.isInteger(count) && count >= 0 && count <= MAX_QUESTIONS,
+      (count) =>
+        Number.isInteger(count) && count >= 0 && count <= MAX_QUESTIONS,
     ) &&
     totalQuestions >= 1 &&
     totalQuestions <= MAX_QUESTIONS &&
@@ -416,11 +529,30 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     const requestId = ++optionsRequest.current;
     setOptionsLoading(true);
     setOptionsError(null);
+    setOptions(null);
+    setGrade("");
+    setMedium("");
+    setPaperType("");
+    setSubject("");
+    setTerm("");
+    setScholarshipMode("");
+    setCurriculum(null);
+    setLessons([]);
+    setSelectedLessonNumbers([]);
+    setSelectionError(null);
+    setSelectionLoading(false);
+    setRequestError(null);
+    setFormError("");
+    setStep(1);
+    selectionRequest.current += 1;
+    submission.current = null;
     try {
       const outcome = await api.GET("/api/v1/admin/paper-generation/options");
       if (requestId !== optionsRequest.current) return;
       if (outcome.error !== undefined) {
-        setOptionsError(generationError(outcome.error, outcome.response, "selection"));
+        setOptionsError(
+          generationError(outcome.error, outcome.response, "selection"),
+        );
         return;
       }
       const data = outcome.data;
@@ -442,7 +574,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       setDifficulty(data.defaults.difficulty);
       setTeacherInstruction(data.defaults.teacher_instruction ?? "");
     } catch {
-      if (requestId === optionsRequest.current) setOptionsError(networkError("selection"));
+      if (requestId === optionsRequest.current)
+        setOptionsError(networkError("selection"));
     } finally {
       if (requestId === optionsRequest.current) setOptionsLoading(false);
     }
@@ -472,62 +605,78 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         subject,
       };
       void (async () => {
-      try {
-        const outcomes = await Promise.all([
-          api.GET("/api/v1/admin/paper-generation/curricula", { params: { query } }),
-          api.GET("/api/v1/admin/paper-generation/lessons", { params: { query } }),
-        ]);
-        if (requestId !== selectionRequest.current) return;
-        const failure = firstFailure(outcomes);
-        if (failure?.error !== undefined) {
-          setSelectionError(generationError(failure.error, failure.response, "selection"));
-          return;
-        }
-        const curricula = outcomes[0].data?.items ?? [];
-        const lessonResponse = outcomes[1].data;
-        if (!curricula.length || !lessonResponse) {
-          setSelectionError({
-            code: "paper_generation_curriculum_not_found",
-            message:
-              "No matching curriculum content is available for these choices. Choose another target or ask a curriculum administrator to add reviewed material.",
-            retryable: true,
-            title: "No matching curriculum content",
-          });
-          return;
-        }
-        if (curricula.length > 1) {
-          setSelectionError({
-            code: "paper_generation_curriculum_ambiguous",
-            message:
-              "More than one curriculum matches these choices. Ask a curriculum administrator to resolve the duplicate active curriculum before generating.",
-            retryable: true,
-            title: "More than one curriculum matches",
-          });
-          return;
-        }
-        if (
-          lessonResponse.grade !== Number(grade) ||
-          lessonResponse.medium !== medium ||
-          lessonResponse.subject !== subject
-        ) {
-          setSelectionError({
-            code: "paper_generation_scope_mismatch",
-            message: "The returned lesson choices do not match the selected target. Reload before continuing.",
-            retryable: true,
-            title: "Curriculum choices changed",
-          });
-          return;
-        }
-        const nextLessons = [...lessonResponse.lessons].sort((left, right) => left.number - right.number);
-        setCurriculum(curricula[0] ?? null);
-        setLessons(nextLessons);
-        setSelectedLessonNumbers([]);
-        setFirstLesson(String(nextLessons[0]?.number ?? ""));
-        setLastLesson(String(nextLessons.at(-1)?.number ?? ""));
+        try {
+          const outcomes = await Promise.all([
+            api.GET("/api/v1/admin/paper-generation/curricula", {
+              params: { query },
+            }),
+            api.GET("/api/v1/admin/paper-generation/lessons", {
+              params: { query },
+            }),
+          ]);
+          if (requestId !== selectionRequest.current) return;
+          const failure = firstFailure(outcomes);
+          if (failure?.error !== undefined) {
+            setSelectionError(
+              generationError(failure.error, failure.response, "selection"),
+            );
+            return;
+          }
+          const curricula = outcomes[0].data?.items ?? [];
+          const lessonResponse = outcomes[1].data;
+          if (!curricula.length || !lessonResponse) {
+            setSelectionError({
+              code: "paper_generation_curriculum_not_found",
+              message:
+                "No matching curriculum content is available for these choices. Choose another target or ask a curriculum administrator to add reviewed material.",
+              retryable: true,
+              title: "No matching curriculum content",
+            });
+            return;
+          }
+          if (curricula.length > 1) {
+            setSelectionError({
+              code: "paper_generation_curriculum_ambiguous",
+              message:
+                "More than one curriculum matches these choices. Ask a curriculum administrator to resolve the duplicate active curriculum before generating.",
+              retryable: true,
+              title: "More than one curriculum matches",
+            });
+            return;
+          }
+          if (
+            lessonResponse.grade !== Number(grade) ||
+            lessonResponse.medium !== medium ||
+            lessonResponse.subject !== subject ||
+            !sameCurriculum(curricula[0], lessonResponse.curriculum) ||
+            !sameCurriculum(
+              selectedSubject?.curriculum,
+              lessonResponse.curriculum,
+            )
+          ) {
+            setSelectionError({
+              code: "paper_generation_scope_mismatch",
+              message:
+                "The returned lesson choices do not match the selected target. Reload before continuing.",
+              retryable: true,
+              title: "Curriculum choices changed",
+            });
+            return;
+          }
+          const nextLessons = [...lessonResponse.lessons].sort(
+            (left, right) => left.number - right.number,
+          );
+          setCurriculum(curricula[0] ?? null);
+          setLessons(nextLessons);
+          setSelectedLessonNumbers([]);
+          setFirstLesson(String(nextLessons[0]?.number ?? ""));
+          setLastLesson(String(nextLessons.at(-1)?.number ?? ""));
         } catch {
-          if (requestId === selectionRequest.current) setSelectionError(networkError("selection"));
+          if (requestId === selectionRequest.current)
+            setSelectionError(networkError("selection"));
         } finally {
-          if (requestId === selectionRequest.current) setSelectionLoading(false);
+          if (requestId === selectionRequest.current)
+            setSelectionLoading(false);
         }
       })();
     }, 0);
@@ -535,7 +684,16 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       window.clearTimeout(timeout);
       selectionRequest.current += 1;
     };
-  }, [api, grade, medium, scholarshipSelected, subject, targetReady, term]);
+  }, [
+    api,
+    grade,
+    medium,
+    scholarshipSelected,
+    selectedSubject,
+    subject,
+    targetReady,
+    term,
+  ]);
 
   const pollJob = useCallback(
     async (initialJob: PaperJob) => {
@@ -557,7 +715,9 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
           );
           if (requestId !== pollRequest.current) return;
           if (outcome.error !== undefined) {
-            setRequestError(generationError(outcome.error, outcome.response, "poll"));
+            setRequestError(
+              generationError(outcome.error, outcome.response, "poll"),
+            );
             setBusy("");
             setPollingStopped(true);
             return;
@@ -587,9 +747,18 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   );
 
   function buildIntent(): PaperIntent | null {
+    if (catalogueNeedsRefresh) return null;
     setFormError("");
-    if (!targetReady || (!scholarshipSelected && !curriculum)) {
-      setFormError("Choose an available Grade 5 paper target before continuing.");
+    const sourceScopeFingerprint = scholarshipSelected
+      ? selectedPaperType?.source_scope_fingerprint
+      : curriculum?.source_scope_fingerprint;
+    if (
+      !targetReady ||
+      !sourceScopeFingerprint ||
+      selectionLoading ||
+      selectionError
+    ) {
+      setFormError("Choose an approved paper target before continuing.");
       return null;
     }
     if (!scopeValid) {
@@ -608,7 +777,11 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
     }
     const scope: PaperIntent["scope"] =
       scopeKind === "lesson_range"
-        ? { end_lesson: rangeEnd, kind: "lesson_range", start_lesson: rangeStart }
+        ? {
+            end_lesson: rangeEnd,
+            kind: "lesson_range",
+            start_lesson: rangeStart,
+          }
         : scopeKind === "selected_lessons"
           ? { kind: "selected_lessons", lesson_numbers: selectedLessonNumbers }
           : { kind: scopeKind };
@@ -621,6 +794,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       ...(scholarshipMode ? { scholarship_mode: scholarshipMode } : {}),
     };
     return {
+      source_scope_fingerprint: sourceScopeFingerprint,
       scope,
       settings: {
         difficulty,
@@ -649,7 +823,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         } catch {
           setRequestError({
             code: "secure_randomness_unavailable",
-            message: "This browser cannot create a safe paper request. Reload in a supported browser.",
+            message:
+              "This browser cannot create a safe paper request. Reload in a supported browser.",
             retryable: false,
             title: "Safe request unavailable",
           });
@@ -667,13 +842,16 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
           params: { header: { "Idempotency-Key": stored.idempotencyKey } },
         });
         if (outcome.error !== undefined) {
-          setRequestError(generationError(outcome.error, outcome.response, "create"));
+          setRequestError(
+            generationError(outcome.error, outcome.response, "create"),
+          );
           return;
         }
         if (!outcome.data) {
           setRequestError({
             code: "paper_generation_response_empty",
-            message: "The service accepted no readable paper job. Try the same request safely.",
+            message:
+              "The service accepted no readable paper job. Try the same request safely.",
             retryable: true,
             title: "Paper response unavailable",
           });
@@ -709,7 +887,11 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   async function retryFailedQuestions() {
     if (!job || busy || job.status !== "failed") return;
     let stored = failedRetry.current;
-    if (!stored || stored.jobId !== job.job_id || stored.version !== job.version) {
+    if (
+      !stored ||
+      stored.jobId !== job.job_id ||
+      stored.version !== job.version
+    ) {
       try {
         stored = {
           idempotencyKey: secureOperationKey("teacher-paper-retry"),
@@ -719,7 +901,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
       } catch {
         setRequestError({
           code: "secure_randomness_unavailable",
-          message: "This browser cannot create a safe retry. Reload in a supported browser.",
+          message:
+            "This browser cannot create a safe retry. Reload in a supported browser.",
           retryable: false,
           title: "Safe retry unavailable",
         });
@@ -741,7 +924,9 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         },
       );
       if (outcome.error !== undefined) {
-        setRequestError(generationError(outcome.error, outcome.response, "retry"));
+        setRequestError(
+          generationError(outcome.error, outcome.response, "retry"),
+        );
         return;
       }
       if (!outcome.data) return;
@@ -756,6 +941,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   }
 
   function resetAfterTargetChange() {
+    selectionRequest.current += 1;
     setStep(1);
     setJob(null);
     setCurriculum(null);
@@ -771,8 +957,10 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
   }
 
   const scholarshipLabel =
-    options?.scholarship_modes.find((item) => item.code === scholarshipMode)?.label ?? "Scholarship";
-  const termLabel = options?.terms.find((item) => item.code === term)?.label ?? "Term";
+    options?.scholarship_modes.find((item) => item.code === scholarshipMode)
+      ?.label ?? "Scholarship";
+  const termLabel =
+    options?.terms.find((item) => item.code === term)?.label ?? "Term";
   const selectedLessonsLabel =
     selectedLessonNumbers.length === 1
       ? String(selectedLessonNumbers[0])
@@ -798,15 +986,21 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
         <p className="text-xs font-semibold tracking-[0.18em] text-amber-300 uppercase">
           Teacher paper builder
         </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Generate Papers</h1>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+          Generate Papers
+        </h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-base">
-          Choose who the paper is for, select the curriculum scope, and set simple paper details.
-          Blueprint, source selection, generation, and answer checks happen safely behind the scenes.
+          Choose who the paper is for, select the curriculum scope, and set
+          simple paper details. Blueprint, source selection, generation, and
+          answer checks happen safely behind the scenes.
         </p>
       </header>
 
       {optionsLoading ? (
-        <section className="rounded-2xl border border-slate-300 bg-white p-6" aria-live="polite">
+        <section
+          className="rounded-2xl border border-slate-300 bg-white p-6"
+          aria-live="polite"
+        >
           Loading paper choices…
         </section>
       ) : optionsError ? (
@@ -814,14 +1008,43 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
           error={optionsError}
           action={
             optionsError.retryable ? (
-              <button className={secondaryButton} onClick={() => void loadOptions()} type="button">
+              <button
+                className={secondaryButton}
+                onClick={() => void loadOptions()}
+                type="button"
+              >
                 Load choices again
               </button>
             ) : undefined
           }
         />
+      ) : options && options.grades.length === 0 ? (
+        <section
+          className="rounded-2xl border border-slate-300 bg-white p-6"
+          role="status"
+        >
+          <h2 className="text-xl font-semibold">
+            No approved curriculum is available yet
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ask a curriculum reviewer to review and approve the grade, medium,
+            subject, and curriculum before generating papers. Materials and
+            earlier papers are still available.
+          </p>
+          <button
+            className={`${secondaryButton} mt-4`}
+            onClick={() => void loadOptions()}
+            type="button"
+          >
+            Refresh curriculum choices
+          </button>
+        </section>
       ) : options ? (
-        <form aria-label="Generate a paper" className="space-y-6" onSubmit={(event) => void submit(event)}>
+        <form
+          aria-label="Generate a paper"
+          className="space-y-6"
+          onSubmit={(event) => void submit(event)}
+        >
           <Panel
             description="Start with teacher-readable curriculum choices. No internal curriculum or generation identifiers are needed."
             title="1. Choose the paper target"
@@ -833,6 +1056,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   className={inputClass}
                   onChange={(event) => {
                     setGrade(event.target.value);
+                    setMedium("");
                     setPaperType("");
                     setSubject("");
                     setTerm("");
@@ -854,6 +1078,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                 Medium
                 <select
                   className={inputClass}
+                  disabled={!grade}
                   onChange={(event) => {
                     setMedium(event.target.value);
                     setPaperType("");
@@ -865,7 +1090,7 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   value={medium}
                 >
                   <option value="">Choose medium</option>
-                  {options.media.map((item) => (
+                  {availableMedia.map((item) => (
                     <option key={item.code} value={item.code}>
                       {item.label}
                     </option>
@@ -875,7 +1100,9 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             </div>
 
             <fieldset className="mt-5 space-y-3">
-              <legend className="text-sm font-semibold text-slate-800">Paper type</legend>
+              <legend className="text-sm font-semibold text-slate-800">
+                Paper type
+              </legend>
               <div className="grid gap-3 md:grid-cols-3">
                 {availablePaperTypes.map((item) => (
                   <label
@@ -958,9 +1185,12 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
 
             {scholarshipSelected ? (
               <fieldset className="mt-5 space-y-3">
-                <legend className="text-sm font-semibold text-slate-800">Scholarship paper</legend>
+                <legend className="text-sm font-semibold text-slate-800">
+                  Scholarship paper
+                </legend>
                 <p className="text-sm leading-6 text-slate-600">
-                  Uses the reviewed Grade 5 Scholarship coverage configured for this exam.
+                  Uses the reviewed Grade 5 Scholarship coverage configured for
+                  this exam.
                 </p>
                 <div className="grid gap-3 md:grid-cols-3">
                   {options.scholarship_modes.map((item) => (
@@ -993,7 +1223,21 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             ) : null}
             {selectionError ? (
               <div className="mt-4">
-                <ErrorPanel error={selectionError} />
+                <ErrorPanel
+                  error={selectionError}
+                  action={
+                    selectionError.retryable ||
+                    catalogueChanged(selectionError.code) ? (
+                      <button
+                        className={secondaryButton}
+                        onClick={() => void loadOptions()}
+                        type="button"
+                      >
+                        Refresh curriculum choices
+                      </button>
+                    ) : undefined
+                  }
+                />
               </div>
             ) : null}
             {curriculum ? (
@@ -1029,23 +1273,41 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             >
               {scholarshipSelected ? (
                 <section className="rounded-xl border border-slate-300 bg-slate-50 p-4">
-                  <h3 className="font-semibold">Scholarship programme coverage</h3>
+                  <h3 className="font-semibold">
+                    Scholarship programme coverage
+                  </h3>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    The selected Paper I, Paper II, or full Scholarship policy controls coverage. No
-                    ordinary single-subject lesson picker is needed.
+                    The selected Paper I, Paper II, or full Scholarship policy
+                    controls coverage. No ordinary single-subject lesson picker
+                    is needed.
                   </p>
                 </section>
               ) : (
                 <fieldset className="space-y-4">
-                  <legend className="text-sm font-semibold text-slate-800">Paper coverage</legend>
+                  <legend className="text-sm font-semibold text-slate-800">
+                    Paper coverage
+                  </legend>
                   <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 focus-within:ring-2 focus-within:ring-amber-500">
                     <input
-                      aria-label={paperType === "term_test" ? "All lessons for this term" : "Full subject"}
-                      checked={scopeKind === (paperType === "term_test" ? "full_term" : "full_subject")}
+                      aria-label={
+                        paperType === "term_test"
+                          ? "All lessons for this term"
+                          : "Full subject"
+                      }
+                      checked={
+                        scopeKind ===
+                        (paperType === "term_test"
+                          ? "full_term"
+                          : "full_subject")
+                      }
                       className="mt-1 size-4 accent-slate-950"
                       name="scope"
                       onChange={() => {
-                        setScopeKind(paperType === "term_test" ? "full_term" : "full_subject");
+                        setScopeKind(
+                          paperType === "term_test"
+                            ? "full_term"
+                            : "full_subject",
+                        );
                         setFormError("");
                         submission.current = null;
                       }}
@@ -1053,7 +1315,9 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                     />
                     <span>
                       <span className="block font-semibold">
-                        {paperType === "term_test" ? "All lessons for this term" : "Full subject"}
+                        {paperType === "term_test"
+                          ? "All lessons for this term"
+                          : "Full subject"}
                       </span>
                       <span className="mt-1 block text-sm text-slate-600">
                         Use all reviewed content within this exact scope.
@@ -1074,9 +1338,12 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                       type="radio"
                     />
                     <span>
-                      <span className="block font-semibold">Choose specific lessons</span>
+                      <span className="block font-semibold">
+                        Choose specific lessons
+                      </span>
                       <span className="mt-1 block text-sm text-slate-600">
-                        Include every lesson from the first through the last selected lesson.
+                        Include every lesson from the first through the last
+                        selected lesson.
                       </span>
                     </span>
                   </label>
@@ -1094,9 +1361,12 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                       type="radio"
                     />
                     <span>
-                      <span className="block font-semibold">Pick individual lessons</span>
+                      <span className="block font-semibold">
+                        Pick individual lessons
+                      </span>
                       <span className="mt-1 block text-sm text-slate-600">
-                        Choose only the lessons you want, even when they are not next to each other.
+                        Choose only the lessons you want, even when they are not
+                        next to each other.
                       </span>
                     </span>
                   </label>
@@ -1147,7 +1417,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   <ErrorPanel
                     error={{
                       code: "paper_generation_lessons_empty",
-                      message: "No active lessons are available for a lesson-range paper.",
+                      message:
+                        "No active lessons are available for a lesson-range paper.",
                       retryable: false,
                       title: "No lessons available",
                     }}
@@ -1169,13 +1440,19 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                         >
                           <input
                             aria-label={lesson.label}
-                            checked={selectedLessonNumbers.includes(lesson.number)}
+                            checked={selectedLessonNumbers.includes(
+                              lesson.number,
+                            )}
                             className="mt-1 size-4 accent-slate-950"
                             onChange={(event) => {
                               setSelectedLessonNumbers((current) =>
                                 event.target.checked
-                                  ? [...current, lesson.number].sort((left, right) => left - right)
-                                  : current.filter((number) => number !== lesson.number),
+                                  ? [...current, lesson.number].sort(
+                                      (left, right) => left - right,
+                                    )
+                                  : current.filter(
+                                      (number) => number !== lesson.number,
+                                    ),
                               );
                               setFormError("");
                               submission.current = null;
@@ -1183,8 +1460,12 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                             type="checkbox"
                           />
                           <span>
-                            <span className="block font-semibold">{lesson.label}</span>
-                            <span className="mt-1 block text-xs text-slate-600">{lesson.unit}</span>
+                            <span className="block font-semibold">
+                              {lesson.label}
+                            </span>
+                            <span className="mt-1 block text-xs text-slate-600">
+                              {lesson.unit}
+                            </span>
                           </span>
                         </label>
                       ))}
@@ -1194,7 +1475,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   <ErrorPanel
                     error={{
                       code: "paper_generation_lessons_empty",
-                      message: "No active lessons are available for individual selection.",
+                      message:
+                        "No active lessons are available for individual selection.",
                       retryable: false,
                       title: "No lessons available",
                     }}
@@ -1214,7 +1496,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   <p className="mt-2 text-sm text-red-800">
                     Choose a complete range in which every lesson is available.
                   </p>
-                ) : scopeKind === "selected_lessons" && !selectedLessonsValid ? (
+                ) : scopeKind === "selected_lessons" &&
+                  !selectedLessonsValid ? (
                   <p className="mt-2 text-sm text-red-800">
                     Choose at least one available lesson.
                   </p>
@@ -1222,14 +1505,19 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
               </section>
 
               <div className="mt-5 flex flex-wrap justify-between gap-3">
-                <button className={secondaryButton} onClick={() => setStep(1)} type="button">
+                <button
+                  className={secondaryButton}
+                  onClick={() => setStep(1)}
+                  type="button"
+                >
                   Back to target
                 </button>
                 <button
                   className={primaryButton}
                   disabled={
                     !scopeValid ||
-                    ((scopeKind === "lesson_range" || scopeKind === "selected_lessons") &&
+                    ((scopeKind === "lesson_range" ||
+                      scopeKind === "selected_lessons") &&
                       !lessons.length)
                   }
                   onClick={() => setStep(3)}
@@ -1260,13 +1548,19 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                 />
               </label>
               <fieldset className="mt-4">
-                <legend className="text-sm font-semibold text-slate-800">Question counts</legend>
+                <legend className="text-sm font-semibold text-slate-800">
+                  Question counts
+                </legend>
                 <div className="mt-2 grid gap-4 sm:grid-cols-3">
                   {(
                     [
                       ["MCQ questions", mcqCount, setMcqCount],
                       ["Written questions", writtenCount, setWrittenCount],
-                      ["Structured questions", structuredCount, setStructuredCount],
+                      [
+                        "Structured questions",
+                        structuredCount,
+                        setStructuredCount,
+                      ],
                     ] as const
                   ).map(([label, value, update]) => (
                     <label className={fieldClass} key={label}>
@@ -1286,7 +1580,9 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                     </label>
                   ))}
                 </div>
-                <p className="mt-2 text-sm text-slate-600">Total questions: {totalQuestions}</p>
+                <p className="mt-2 text-sm text-slate-600">
+                  Total questions: {totalQuestions}
+                </p>
               </fieldset>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className={fieldClass}>
@@ -1337,11 +1633,15 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
 
               {role !== "admin" ? (
                 <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-                  You can prepare these choices, but an administrator must start generation.
+                  You can prepare these choices, but an administrator must start
+                  generation.
                 </p>
               ) : null}
               {formError ? (
-                <p className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-950" role="alert">
+                <p
+                  className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-950"
+                  role="alert"
+                >
                   {formError}
                 </p>
               ) : null}
@@ -1350,7 +1650,16 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                   <ErrorPanel
                     error={requestError}
                     action={
-                      requestError.retryable ? (
+                      catalogueChanged(requestError.code) ? (
+                        <button
+                          className={secondaryButton}
+                          disabled={Boolean(busy)}
+                          onClick={() => void loadOptions()}
+                          type="button"
+                        >
+                          Refresh curriculum choices
+                        </button>
+                      ) : requestError.retryable ? (
                         <button
                           className={secondaryButton}
                           disabled={Boolean(busy)}
@@ -1369,12 +1678,21 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
               ) : null}
 
               <div className="mt-5 flex flex-wrap justify-between gap-3">
-                <button className={secondaryButton} onClick={() => setStep(2)} type="button">
+                <button
+                  className={secondaryButton}
+                  onClick={() => setStep(2)}
+                  type="button"
+                >
                   Back to scope
                 </button>
                 <button
                   className={primaryButton}
-                  disabled={!settingsValid || role !== "admin" || Boolean(busy)}
+                  disabled={
+                    !settingsValid ||
+                    role !== "admin" ||
+                    Boolean(busy) ||
+                    catalogueNeedsRefresh
+                  }
                   type="submit"
                 >
                   {busy === "create" ? "Starting paper…" : "Generate paper"}
@@ -1481,7 +1799,8 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
                 error={requestError}
                 action={
                   requestError.retryable ? (
-                    job.status === "failed" && job.counts.failed > 0 ? undefined : (
+                    job.status === "failed" &&
+                    job.counts.failed > 0 ? undefined : (
                       <button
                         className={secondaryButton}
                         disabled={Boolean(busy)}
@@ -1497,11 +1816,18 @@ export function GeneratePapersWizard({ role }: { role: Role }) {
             </div>
           ) : pollingStopped && !TERMINAL_JOB_STATUSES.has(job.status) ? (
             <section className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
-              <h3 className="font-semibold">The paper is still being prepared</h3>
+              <h3 className="font-semibold">
+                The paper is still being prepared
+              </h3>
               <p className="mt-1 text-sm leading-6">
-                Automatic checks paused after a bounded wait. This does not start another paper.
+                Automatic checks paused after a bounded wait. This does not
+                start another paper.
               </p>
-              <button className={`${secondaryButton} mt-3`} onClick={() => void checkProgress()} type="button">
+              <button
+                className={`${secondaryButton} mt-3`}
+                onClick={() => void checkProgress()}
+                type="button"
+              >
                 Check progress again
               </button>
             </section>

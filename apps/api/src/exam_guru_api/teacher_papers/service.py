@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from pydantic import TypeAdapter
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from exam_guru_api.auth.domain import AdminRole, Permission, Principal, authoriz
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.blueprints.service import BlueprintGenerationService
+from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.models import GenerationRunModel, GenerationRunStatus
 from exam_guru_api.generation.run_service import GenerationRunService
@@ -56,7 +58,6 @@ from exam_guru_api.teacher_papers.domain import (
     ResolvedProgrammeMapping,
     ResolvedProgrammeSelection,
     ScholarshipPaperMode,
-    SchoolTerm,
     SlotLessonAssignment,
     TeacherPaperType,
     TeacherScopeKind,
@@ -120,7 +121,6 @@ from exam_guru_api.teacher_papers.schemas import (
     TeacherPaperSlotProgressResponse,
     TeacherPaperStatus,
     TechnicalValidationFindingResponse,
-    TermOption,
     UnitOption,
 )
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
@@ -146,6 +146,10 @@ class ProgrammePolicyVersionConflictError(RuntimeError):
 
 
 class TeacherPaperCurriculumAmbiguousError(RuntimeError):
+    pass
+
+
+class TeacherPaperCatalogueChangedError(RuntimeError):
     pass
 
 
@@ -256,13 +260,92 @@ def _settings(request: TeacherPaperJobCreateRequest) -> PaperSettings:
     )
 
 
+_CURRICULA_ADAPTER = TypeAdapter(tuple[ResolvedCurriculum, ...])
+
+
+def _source_scope_fingerprint(
+    curricula: tuple[ResolvedCurriculum, ...],
+    programme: StoredProgrammePolicy | None = None,
+) -> str:
+    return _fingerprint(
+        {
+            "schema": "teacher-generation-catalogue.v1",
+            "curricula": _CURRICULA_ADAPTER.dump_python(
+                tuple(sorted(curricula, key=lambda item: item.curriculum_version_id)), mode="json"
+            ),
+            "programme": None if programme is None else _programme_policy_snapshot(programme),
+        }
+    )
+
+
 def _curriculum_label(curriculum: ResolvedCurriculum) -> CurriculumLabelResponse:
     return CurriculumLabelResponse(
         assessment_programme=curriculum.assessment_code,
         assessment_label=curriculum.assessment_label,
         code=curriculum.curriculum_code,
         label=curriculum.curriculum_title,
+        source_scope_fingerprint=_source_scope_fingerprint((curriculum,)),
     )
+
+
+def _programme_curriculum_ids(policy: StoredProgrammePolicy) -> tuple[UUID, ...]:
+    return tuple(
+        sorted(
+            {
+                policy.policy.anchor_curriculum_version_id,
+                *(scope.source_curriculum_version_id for scope in policy.scopes),
+            }
+        )
+    )
+
+
+async def _programme_curricula(
+    repository: TeacherPaperRepository, policy: StoredProgrammePolicy, *, lock: bool
+) -> tuple[ResolvedCurriculum, ...]:
+    result: list[ResolvedCurriculum] = []
+    for curriculum_id in _programme_curriculum_ids(policy):
+        curricula = await repository.list_curricula(curriculum_id=curriculum_id, lock=lock)
+        if len(curricula) != 1:
+            raise TeacherPaperCurriculumNotFoundError
+        result.append(curricula[0])
+    resolved = tuple(result)
+    _require_current_programme_scope(policy, resolved)
+    return resolved
+
+
+def _require_current_programme_scope(
+    policy: StoredProgrammePolicy, curricula: tuple[ResolvedCurriculum, ...]
+) -> None:
+    by_id = {item.curriculum_version_id: item for item in curricula}
+    anchor = by_id.get(policy.policy.anchor_curriculum_version_id)
+    if (
+        policy.policy.state != "reviewed"
+        or anchor is None
+        or anchor.exam_configuration_id != policy.policy.programme_exam_configuration_id
+        or anchor.medium_id != policy.policy.medium_id
+    ):
+        raise PaperScopeError("paper_generation_programme_policy_unavailable")
+    _resolve_programme_scope(policy, anchor, ScholarshipPaperMode.FULL)
+    for scope in policy.scopes:
+        source = by_id.get(scope.source_curriculum_version_id)
+        if source is None or (
+            source.grade,
+            source.exam_configuration_id,
+            source.medium_id,
+            source.subject_id,
+        ) != (
+            scope.source_grade,
+            scope.source_exam_configuration_id,
+            scope.source_medium_id,
+            scope.source_subject_id,
+        ):
+            raise PaperScopeError("paper_generation_programme_policy_unavailable")
+        if scope.source_unit_id is not None and not any(
+            lesson.unit_id == scope.source_unit_id
+            and (scope.source_lesson_id is None or lesson.id == scope.source_lesson_id)
+            for lesson in source.lessons
+        ):
+            raise PaperScopeError("paper_generation_programme_policy_unavailable")
 
 
 def _lesson_options(curriculum: ResolvedCurriculum) -> tuple[LessonOption, ...]:
@@ -665,14 +748,51 @@ class TeacherPaperQueryService:
         self._repository = TeacherPaperRepository(session)
 
     async def options(self) -> TeacherPaperOptionsResponse:
-        curricula = await self._repository.list_curricula(grade=5)
+        curricula = await self._repository.list_curricula()
         media = {curriculum.medium_code: curriculum.medium_label for curriculum in curricula}
+        targets = sorted({(item.grade, item.medium_code) for item in curricula})
+        paper_types = [
+            PaperTypeOption(
+                code=TeacherPaperType.SUBJECT_PRACTICE,
+                grade=grade,
+                medium=medium,
+                label="Subject Practice",
+            )
+            for grade, medium in targets
+        ]
+        by_id = {item.curriculum_version_id: item for item in curricula}
+        for grade, medium in targets:
+            if grade != 5:
+                continue
+            policy = await self._repository.active_programme_policy(
+                code=_GRADE5_SCHOLARSHIP_POLICY_CODE, grade=grade, medium=medium
+            )
+            if policy is None:
+                continue
+            scope_ids = _programme_curriculum_ids(policy)
+            if any(curriculum_id not in by_id for curriculum_id in scope_ids):
+                continue
+            programme_curricula = tuple(by_id[curriculum_id] for curriculum_id in scope_ids)
+            try:
+                _require_current_programme_scope(policy, programme_curricula)
+            except PaperScopeError:
+                continue
+            paper_types.append(
+                PaperTypeOption(
+                    code=TeacherPaperType.SCHOLARSHIP_PRACTICE,
+                    grade=grade,
+                    medium=medium,
+                    label="Grade 5 Scholarship Practice",
+                    source_scope_fingerprint=_source_scope_fingerprint(programme_curricula, policy),
+                )
+            )
         subjects = tuple(
             SubjectOption(
                 code=curriculum.subject_code,
                 grade=curriculum.grade,
                 medium=curriculum.medium_code,
                 label=curriculum.subject_label,
+                curriculum=_curriculum_label(curriculum),
                 units=tuple(
                     UnitOption(code=code, label=label)
                     for code, label in dict.fromkeys(
@@ -684,23 +804,16 @@ class TeacherPaperQueryService:
             for curriculum in curricula
         )
         return TeacherPaperOptionsResponse(
-            grades=(5,),
+            grades=tuple(sorted({item.grade for item in curricula})),
             media=tuple(
-                MediumOption(code=code, label=label) for code, label in sorted(media.items())
+                MediumOption(
+                    code=code,
+                    label=label,
+                    grades=tuple(grade for grade, medium in targets if medium == code),
+                )
+                for code, label in sorted(media.items())
             ),
-            paper_types=(
-                PaperTypeOption(
-                    code=TeacherPaperType.SUBJECT_PRACTICE,
-                    grade=5,
-                    label="Subject Practice",
-                ),
-                PaperTypeOption(code=TeacherPaperType.TERM_TEST, grade=5, label="Term Test"),
-                PaperTypeOption(
-                    code=TeacherPaperType.SCHOLARSHIP_PRACTICE,
-                    grade=5,
-                    label="Grade 5 Scholarship Practice",
-                ),
-            ),
+            paper_types=tuple(paper_types),
             scholarship_modes=(
                 ScholarshipModeOption(
                     code=ScholarshipPaperMode.PAPER_I,
@@ -714,13 +827,12 @@ class TeacherPaperQueryService:
                     code=ScholarshipPaperMode.FULL,
                     label="Full Scholarship Practice — Paper I + Paper II",
                 ),
-            ),
+            )
+            if any(item.code is TeacherPaperType.SCHOLARSHIP_PRACTICE for item in paper_types)
+            else (),
             subjects=subjects,
-            terms=(
-                TermOption(code=SchoolTerm.TERM_1, label="1st Term"),
-                TermOption(code=SchoolTerm.TERM_2, label="2nd Term"),
-                TermOption(code=SchoolTerm.TERM_3, label="3rd Term"),
-            ),
+            # Term generation already fails closed until a reviewed term policy exists.
+            terms=(),
         )
 
     async def curricula(
@@ -774,6 +886,7 @@ class TeacherPaperQueryService:
             medium=medium,
             subject=subject,
             assessment_programme=assessment_programme,
+            lock=True,
         )
         if not records:
             raise TeacherPaperCurriculumNotFoundError
@@ -810,11 +923,18 @@ class TeacherPaperJobService:
                 code=_GRADE5_SCHOLARSHIP_POLICY_CODE,
                 grade=target.grade,
                 medium=target.medium,
+                lock=True,
             )
             if programme_policy is None:
                 raise PaperScopeError("paper_generation_programme_policy_unavailable")
-            curricula = await self._repository.list_curricula(
-                curriculum_id=programme_policy.policy.anchor_curriculum_version_id
+            source_curricula = await _programme_curricula(
+                self._repository, programme_policy, lock=True
+            )
+            curricula = tuple(
+                item
+                for item in source_curricula
+                if item.curriculum_version_id
+                == programme_policy.policy.anchor_curriculum_version_id
             )
         else:
             if target.paper_type is TeacherPaperType.TERM_TEST:
@@ -823,12 +943,18 @@ class TeacherPaperJobService:
                 grade=target.grade,
                 medium=target.medium,
                 subject=cast(str, target.subject),
+                lock=True,
             )
+            source_curricula = curricula
         if not curricula:
             raise TeacherPaperCurriculumNotFoundError
         if len(curricula) != 1:
             raise TeacherPaperCurriculumAmbiguousError
         curriculum = curricula[0]
+        if request.source_scope_fingerprint != _source_scope_fingerprint(
+            source_curricula, programme_policy
+        ):
+            raise TeacherPaperCatalogueChangedError
         scope = (
             _resolve_programme_scope(
                 programme_policy,
@@ -842,6 +968,7 @@ class TeacherPaperJobService:
         active_generation = self._runtime.active_config
         teacher_intent = {
             "schema": "teacher-paper-intent.v2",
+            "source_scope_fingerprint": request.source_scope_fingerprint,
             "target": request.target.model_dump(mode="json", exclude_none=True),
             "scope": request.scope.model_dump(mode="json"),
         }
@@ -1142,7 +1269,7 @@ async def _resolved_job_scope(
     repository: TeacherPaperRepository,
     job: TeacherPaperJobModel,
 ) -> tuple[ResolvedCurriculum, ResolvedPaperScope, PaperSettings]:
-    curricula = await repository.list_curricula(curriculum_id=job.curriculum_version_id)
+    curricula = await repository.list_curricula(curriculum_id=job.curriculum_version_id, lock=True)
     curriculum = next(
         (
             item
@@ -1172,8 +1299,11 @@ async def _resolved_job_scope(
             != expected_mapping_ids
         ):
             raise PaperScopeError("paper_generation_programme_snapshot_invalid")
+        source_curricula = await _programme_curricula(repository, policy, lock=True)
+        fingerprint = _source_scope_fingerprint(source_curricula, policy)
         scope = _resolve_programme_scope(policy, curriculum, mode)
     else:
+        fingerprint = _source_scope_fingerprint((curriculum,))
         raw_scope = cast(dict[str, object], job.teacher_intent["scope"])
         kind = TeacherScopeKind(cast(str, raw_scope["kind"]))
         selection = TeacherScopeSelection(
@@ -1183,6 +1313,8 @@ async def _resolved_job_scope(
             lesson_numbers=tuple(cast(list[int], raw_scope.get("lesson_numbers", []))),
         )
         scope = translate_teacher_scope(curriculum, selection)
+    if job.teacher_intent.get("source_scope_fingerprint") != fingerprint:
+        raise PaperScopeError("paper_generation_catalogue_changed")
     if job.paper_settings.get("schema") == "teacher-paper-settings.v2":
         settings = PaperSettings(
             paper_name=cast(str, job.paper_settings["paper_name"]),
@@ -1293,6 +1425,13 @@ class TeacherPaperWorkerService:
                     await self._collect_generation(record.job, token)
             elif claimed.status == PaperJobStatus.CHECKING_ANSWERS.value:
                 await self._validate(claimed, token)
+        except (TeacherPaperCurriculumNotFoundError, CurriculumNotAdmittedError):
+            await self._fail(
+                job_id,
+                token,
+                code="paper_generation_catalogue_changed",
+                detail="The selected curriculum is no longer approved for new generation.",
+            )
         except TeacherPaperContextUnavailableError:
             await self._fail(
                 job_id,

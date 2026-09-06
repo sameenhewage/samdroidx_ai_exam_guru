@@ -268,6 +268,7 @@ class ResolvedLesson:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedCurriculum:
+    admission_version: int
     curriculum_version_id: UUID
     exam_configuration_id: UUID
     assessment_code: str

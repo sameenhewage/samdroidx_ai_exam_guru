@@ -2,8 +2,9 @@ import asyncio
 import hashlib
 import threading
 from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -84,6 +85,19 @@ class ContentStorage:
         if isinstance(self.value, Exception):
             raise self.value
         return self.value
+
+    def open_source(self, key: str) -> AbstractContextManager[BinaryIO]:
+        raise AssertionError("legacy preview fixture must not use streaming reads")
+
+    def put_stream_immutable(
+        self,
+        key: str,
+        stream: BinaryIO,
+        *,
+        content_type: str,
+        expected_size: int,
+    ) -> StoredObject:
+        raise AssertionError("legacy preview fixture must not use streaming writes")
 
     def list_source_objects(
         self,

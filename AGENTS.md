@@ -1,6 +1,7 @@
 # AI Exam Guru — Engineering Agent Instructions
 
 ## Authoritative system architecture
+
 Before changing storage, deployment, networking, RAG data location, publishing, hosted/student boundaries, backup strategy, multi-grade core hierarchy, or other architecture-level behavior, read **`docs/SYSTEM_ARCHITECTURE.md` in full**.
 
 `docs/SYSTEM_ARCHITECTURE.md` is the authoritative whole-system architecture contract. The current bootstrap architecture is a **private/local Exam Guru Studio** plus a **hosted Exam Guru Student platform**. Raw educational source material, RAG/vector state, AI generation history and private content-production data remain in the local/private Studio by default. Only human-approved, validated, immutable/versioned student-ready content crosses the explicit publication boundary to the hosted platform.
@@ -8,6 +9,7 @@ Before changing storage, deployment, networking, RAG data location, publishing, 
 Do not silently reintroduce cloud bulk source storage, make MinIO/S3 mandatory, expose the local Studio publicly, or couple student exam serving to live RAG/LLM generation unless the architecture contract is intentionally changed and documented in the same engineering change.
 
 ## Mission
+
 Build V1 of AI Exam Guru as a production-quality Grade 5 Scholarship examination platform for Sri Lanka. V1 has two strict priorities:
 
 1. **Priority 1 — Admin + Content Intelligence + RAG + LLM**
@@ -36,6 +38,7 @@ Build V1 of AI Exam Guru as a production-quality Grade 5 Scholarship examination
 For P1 admin acceptance, preserve the authentication port, role/permission enforcement, append-only auditing and secure deterministic development/test identity adapter. Defer production OAuth/OIDC/external identity-provider integration to P10 production hardening; do not let it block proving the core Priority 1 content-intelligence system.
 
 ## Execution model
+
 This project is **not developed by feeding one implementation prompt per phase**. Work as a continuous engineering loop:
 
 `inspect -> plan -> write failing tests -> implement -> run tests -> inspect failures -> fix -> refactor -> re-run full gates -> update change log/tracker -> commit -> push -> verify remote -> continue`
@@ -43,9 +46,11 @@ This project is **not developed by feeding one implementation prompt per phase**
 Phases in `docs/v1/PHASE_TRACKER.md` are acceptance/status gates, not isolated prompt-driven implementation units.
 
 ## Agent Skills — mandatory automatic routing
+
 Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the Agent Skills `SKILL.md` format.
 
 ### Mandatory trigger rules
+
 1. **For every engineering turn, always read and apply:**
    - `.agents/skills/loop-engineering/SKILL.md`
    - `.agents/skills/tdd-eval-engineering/SKILL.md`
@@ -58,6 +63,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 8. At the end of an execution session, report which repo skills materially governed the work.
 
 ### Available repository skills
+
 - **loop-engineering** — `.agents/skills/loop-engineering/SKILL.md`  
   Always use for implementation, refactors, bug fixes, integration, acceptance and documentation work. Drives the continuous loop, mandatory change logging, authorized post-commit pushes and Priority 1 lock.
 - **tdd-eval-engineering** — `.agents/skills/tdd-eval-engineering/SKILL.md`  
@@ -86,6 +92,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
   Use only after P10 is DONE, for Priority 2 student identity/entitlements, exam runner, autosave/resume, marking, analytics, progress and recommendations.
 
 ### Task-to-skill examples
+
 - Bootstrap backend/API/database → always-on skills + `fastapi-domain-engineering`.
 - Build teacher/admin UI → always-on skills + `nextjs-product-engineering` + `teacher-content-studio-ux` + `priority1-admin-acceptance`.
 - Upload/extract/OCR → always-on skills + `document-ingestion-ocr` + `fastapi-domain-engineering` + security when handling untrusted files.
@@ -98,6 +105,7 @@ Repository skills live under `.agents/skills/<skill-name>/SKILL.md` and use the 
 - After P10 only, build student product → always-on skills + `student-exam-product` + `nextjs-product-engineering` + `fastapi-domain-engineering` + security as relevant.
 
 ## TDD is mandatory
+
 Use RED -> GREEN -> REFACTOR for application behavior.
 
 - Write or update a failing test before changing behavior.
@@ -108,6 +116,7 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 - Never weaken/delete a valid test merely to make CI pass.
 
 ### Required test layers
+
 - unit tests for deterministic domain logic
 - integration tests against real PostgreSQL + pgvector and Valkey containers
 - API contract tests for FastAPI/OpenAPI
@@ -119,6 +128,7 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 - student end-to-end tests only after Priority 1 closes
 
 ## Quality rules
+
 - Do not use LLM output as source-of-truth without validation.
 - Do not let the LLM decide deterministic exam rules that can be encoded in domain logic.
 - For subject-specific correctness, use the strongest available path: `deterministic rule/tool -> grounded subject checker -> structured semantic verifier -> human review`.
@@ -134,7 +144,21 @@ Use RED -> GREEN -> REFACTOR for application behavior.
 - Keep the LLM provider replaceable. OpenAI is the initial provider, not an architectural dependency.
 - Keep RAG/data ownership inside our application/database and respect the local/private Studio boundary defined by `docs/SYSTEM_ARCHITECTURE.md`.
 
+## Source fidelity and corpus safety
+
+- Preserve originals, fixed benchmark membership/baselines and every per-page candidate's raw UTF-8 evidence, separate NFC view, source/page hashes, engine/model/configuration versions and append-only review events. Never use NFKC to rewrite source text, silently apply legacy-font mappings, or ask an LLM to author the source transcription.
+- An OCR/native result, `can_confirm` diagnostic, model agreement, legacy reviewed/trusted flag or successful job is not human ground truth. Corrections create unverified child candidates; confirmation binds explicit original-page comparison to the current candidate and review version. Whole-document rereads must preserve verified, excluded and human-edited work.
+- Catalogue/metadata admission and page fidelity are independent gates. Admit only evidence-backed, current active curriculum scope; never derive authority from folders, filenames or generated text. Metadata review does not create page ground truth, and page confirmation does not approve metadata.
+- New knowledge/history, embedding, RAG-context, generation, validation, review-approval and publication writes must use current verified candidate lineage and exact nonblank NFC source spans, with admitted metadata/scope and the applicable record/taxonomy review checks. Recheck freshness at write boundaries. Preserve existing published versions and historical evidence; do not retrofit lineage or trust onto legacy rows to make them eligible.
+- Keep legacy byte upload/extraction limits separate from the 4 MiB resumable upload and eight-page `SourceReadJob` pipelines described in `docs/SYSTEM_ARCHITECTURE.md`. Staging defaults (8 GiB/owner, 32 GiB/global, eight active sessions/owner) are operational quotas, not PDF product limits. Retained staging remains accounted; browser checkpoint removal is not cleanup. Preserve owner-scoped request identity and receipt-prefix verification on resume; unsupported S3 streaming must fail explicitly.
+- Original files, `.source-uploads` staging and schema-versioned `fidelity-page-images` artifacts belong under durable private `STORAGE_ROOT`. Verify image hash/size/source identity; a missing declared artifact is not a cache miss. Do not restore whole-PDF buffering, public static source serving, relaxed filesystem permissions or unbounded render/OCR work.
+- Inspect persisted reading configuration before reporting budgets. The current page-reader default is 30 seconds per Tesseract command; the controlled comparison benchmark uses 60 seconds, and legacy Compose OCR uses five seconds. No timing profile proves accuracy. Source-semantic diagnostics are optional, disabled by default and not wired into general corpus reading; they cannot transcribe, confirm, trust or publish.
+- Migrate the persistent Studio forward without reset. Quarantine fixtures only through the audited API using exact source/checksum/upload-audit/constructor evidence, not label heuristics. Preserve missing-fixture findings, real sources, legacy corrections and published history; do not delete or recreate originals to make counts match. Keep raw corpus, private evidence, model caches and backups out of Git.
+- Report latest whole-document job status separately from retained failed attempts and current page-review states. Completed reading and inventory/footer totals are not verification, ground truth, catalogue admission or educational coverage. Preserve prior failures and pending human gates even when every latest reading job completes.
+- Read `docs/ops/BACKUP_RESTORE.md` in full before recovery work. Coordinate PostgreSQL with original `sources/`, private sidecars, retained `.source-uploads/` and `fidelity-page-images/`; restore only to a new isolated empty database/filesystem with correct ownership/modes. Never purge retained staging, overwrite the source, fabricate ground truth or replace lost historical artifacts to pass a restore. Resume PostgreSQL-backed source-reading/upload-finalization and legacy recovery actors only after all integrity/lineage checks, never by replaying stale Valkey messages.
+
 ## V1 technology baseline
+
 Use the versions selected at bootstrap time after verifying current stable/security-patched releases.
 
 - Web: Next.js + React + TypeScript
@@ -155,9 +179,11 @@ Use the versions selected at bootstrap time after verifying current stable/secur
 Do not add GraphQL, microservices, Kubernetes, a separate vector database, fine-tuning, mandatory cloud object storage, or a broad agent framework unless a documented requirement proves the need.
 
 ## LangChain / LangGraph policy
+
 LangChain is allowed selectively when it provides measurable value, but it must not own our domain architecture. The V1 deterministic RAG, curriculum rules, forecasting, blueprinting, validation, and publishing workflow remain first-party code. LangGraph may be introduced later if a genuinely stateful/agentic workflow requires durable orchestration.
 
 ## Repository discipline
+
 - Treat `docs/SYSTEM_ARCHITECTURE.md` as the authoritative whole-system architecture and update it in the same change whenever architecture boundaries change.
 - Treat `docs/v1/` as the V1 product/acceptance contract beneath that architecture.
 - Treat `docs/v1/06_SUBJECT_QUALITY_VALIDATION_ENGINE.md` as the V1 contract for subject-aware correctness/tooling and reviewer-learning behavior.
@@ -172,11 +198,16 @@ LangChain is allowed selectively when it provides measurable value, but it must 
 - Keep the default branch green; a successful push is not evidence that remote CI passed.
 
 ## Definition of Priority 1 complete
+
 Priority 1 is complete only when an admin can ingest real Grade 5 source content, review extraction, produce a structured knowledge base, retrieve grounded context, run historical analysis/backtests, generate a complete paper from a deterministic blueprint, validate every question including applicable subject-specific correctness/grounding checks, review/edit/approve it, publish it, and reproduce the process with automated tests/evals and documented evidence.
 
 Until then, do not implement student-facing product functionality beyond minimal technical scaffolding required to support Priority 1.
 
 ## Local verification environment
+
 - The workstation's default shell can resolve obsolete Node 10. Before npm gates, select the repository-pinned Node 24.19.0 runtime; the installed path is `/home/sameen/.nvm/versions/node/v24.19.0/bin`. Do not relax the engine requirement to accommodate the shell default.
-- Local Playwright runs use `PLAYWRIGHT_BROWSERS_PATH=/tmp/exam-guru-browser-cache`; verify that cache exists before reuse, or install the repository-pinned browser. A missing default-cache executable is an environment setup failure, not a failed product journey.
+- Local Playwright runs use `PLAYWRIGHT_BROWSERS_PATH=/tmp/exam-guru-browser-cache`; verify that cache exists before reuse, or install the repository-pinned browser. A missing default-cache executable is an environment setup failure, not a failed product journey. Run browser acceptance only through `npm run test:e2e:isolated`, never against the persistent Studio; use Chrome DevTools MCP for interactive runtime inspection, not an IDE/browser preview unless explicitly requested.
+- After each coherent documentation edit batch, run Prettier write and check on touched Markdown only. Use the pinned Node runtime and the available CLI (`npm exec --no -- prettier --write <files>`, then `--check`); do not add a dependency or format unrelated files solely to format documentation. README contains the canonical backend/frontend/backup-check commands; report actual runs, skips and pending work rather than copied success counts.
+- Host ShellCheck may be absent. Run the guarded static gate without installing a system package: `REQUIRE_SHELLCHECK=1 uv run --no-project --with shellcheck-py==0.11.0.1 -- bash scripts/ops/check_backup_restore.sh`. A syntax-only fallback is not a ShellCheck pass.
+- For authorized PostgreSQL backups, use the known configured local identity through a secure helper and a temporary mode-0600 `PGPASSFILE`; never discover, print or log credentials, use password arguments, enable tracing, or bypass the scripts' `PGPASSWORD` rejection. A local dump/dry-run is not an off-host backup or proof of restoring the persistent Studio.
 - `docker compose exec` does not run the container entrypoint that selects the application UID. Run storage diagnostics as the actual API process owner (inspect `docker compose top api`; currently `10001:10001`), not the default root exec user. The local storage adapter intentionally rejects owner mismatches; do not change source-directory permissions to bypass that protection.

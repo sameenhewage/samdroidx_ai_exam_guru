@@ -33,6 +33,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     ExamConfigurationModel,
     MediumModel,
+    SubjectModel,
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
@@ -83,6 +84,10 @@ from exam_guru_api.validation import (
 )
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.service import _fingerprint, _request_fingerprint_payload
+from tests.integration.test_verified_knowledge_lineage_postgres import (
+    approve_synthetic_curriculum,
+    verify_synthetic_page,
+)
 from tests.test_blueprint_domain import (
     COMPETENCY_A,
     CURRICULUM_VERSION_ID,
@@ -101,6 +106,7 @@ OTHER_CURRICULUM_ID = UUID(int=920_006)
 OTHER_EXAM_ID = UUID(int=920_007)
 OTHER_MEDIUM_ID = UUID(int=920_008)
 OTHER_COMPETENCY_ID = UUID(int=920_009)
+SUBJECT_ID = UUID(int=920_011)
 ALLOWED_CHUNK_ID = UUID(int=920_101)
 ALLOWED_QUESTION_ID = UUID(int=920_102)
 DRAFT_CHUNK_ID = UUID(int=920_103)
@@ -185,6 +191,14 @@ def payload(
 async def seed_curricula(session: AsyncSession) -> None:
     session.add_all(
         [
+            SubjectModel(
+                id=SUBJECT_ID,
+                code="SCHOLARSHIP",
+                name="General scholarship skills",
+                active=True,
+                created_by=ADMIN_ID,
+                updated_by=ADMIN_ID,
+            ),
             ExamConfigurationModel(
                 id=EXAM_ID,
                 code="GEN-G5",
@@ -228,6 +242,7 @@ async def seed_curricula(session: AsyncSession) -> None:
                 id=CURRICULUM_VERSION_ID,
                 exam_configuration_id=EXAM_ID,
                 medium_id=MEDIUM_ID,
+                subject_id=SUBJECT_ID,
                 code="GEN-CUR",
                 title="Generation curriculum",
                 active=True,
@@ -238,6 +253,7 @@ async def seed_curricula(session: AsyncSession) -> None:
                 id=OTHER_CURRICULUM_ID,
                 exam_configuration_id=OTHER_EXAM_ID,
                 medium_id=OTHER_MEDIUM_ID,
+                subject_id=SUBJECT_ID,
                 code="GEN-CUR-OTHER",
                 title="Other generation curriculum",
                 active=True,
@@ -300,6 +316,8 @@ async def seed_curricula(session: AsyncSession) -> None:
         ]
     )
     await session.flush()
+    for curriculum_id in (CURRICULUM_VERSION_ID, OTHER_CURRICULUM_ID):
+        await approve_synthetic_curriculum(session, curriculum_id, actor_id=ADMIN_ID)
 
 
 async def seed_source(
@@ -311,7 +329,7 @@ async def seed_source(
     document_type: SourceDocumentType = SourceDocumentType.SYLLABUS,
     year: int | None = None,
     paper_code: str | None = None,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID, UUID, UUID]:
     document_id = UUID(int=921_000 + offset)
     page_id = UUID(int=922_000 + offset)
     block_id = UUID(int=923_000 + offset)
@@ -330,6 +348,8 @@ async def seed_source(
         paper_code=paper_code,
         extraction_attempt_count=1,
         extraction_started_at=now,
+        original_page_count=1,
+        metadata_review_required=False,
         created_by=ADMIN_ID,
         updated_by=ADMIN_ID,
     )
@@ -388,17 +408,21 @@ async def seed_source(
     await session.flush()
     document.extraction_status = ExtractionStatus.TRUSTED
     await session.flush()
-    return document_id, block_id
+    candidate_id = await verify_synthetic_page(session, document_id, text, actor_id=ADMIN_ID)
+    return document_id, block_id, candidate_id
 
 
 async def seed_context(session: AsyncSession) -> None:
-    document_id, block_id = await seed_source(
+    document_id, block_id, candidate_id = await seed_source(
         session,
         offset=1,
         curriculum_version_id=CURRICULUM_VERSION_ID,
-        text="Four is an even number because it is divisible by two.",
+        text=(
+            "Four is an even number. It is divisible by two.\n"
+            "Unreviewed draft text.\nReviewed but outside the blueprint target."
+        ),
     )
-    question_document_id, question_block_id = await seed_source(
+    question_document_id, question_block_id, question_candidate_id = await seed_source(
         session,
         offset=3,
         curriculum_version_id=CURRICULUM_VERSION_ID,
@@ -419,6 +443,7 @@ async def seed_context(session: AsyncSession) -> None:
                 source_document_id=document_id,
                 page_number=1,
                 source_block_id=block_id,
+                source_candidate_id=candidate_id,
                 review_state=ReviewState.REVIEWED,
                 competency_id=COMPETENCY_A,
                 skill_id=SKILL_A,
@@ -437,6 +462,7 @@ async def seed_context(session: AsyncSession) -> None:
                 source_document_id=question_document_id,
                 page_number=1,
                 source_block_id=question_block_id,
+                source_candidate_id=question_candidate_id,
                 review_state=ReviewState.REVIEWED,
                 competency_id=COMPETENCY_A,
                 skill_id=SKILL_A,
@@ -453,6 +479,7 @@ async def seed_context(session: AsyncSession) -> None:
                 source_document_id=document_id,
                 page_number=1,
                 source_block_id=block_id,
+                source_candidate_id=candidate_id,
                 review_state=ReviewState.DRAFT,
                 competency_id=COMPETENCY_A,
                 skill_id=SKILL_A,
@@ -469,6 +496,7 @@ async def seed_context(session: AsyncSession) -> None:
                 source_document_id=document_id,
                 page_number=1,
                 source_block_id=block_id,
+                source_candidate_id=candidate_id,
                 review_state=ReviewState.REVIEWED,
                 competency_id=WRONG_COMPETENCY_ID,
                 created_by=ADMIN_ID,
@@ -476,7 +504,7 @@ async def seed_context(session: AsyncSession) -> None:
             ),
         ]
     )
-    other_document_id, other_block_id = await seed_source(
+    other_document_id, other_block_id, other_candidate_id = await seed_source(
         session,
         offset=2,
         curriculum_version_id=OTHER_CURRICULUM_ID,
@@ -493,13 +521,14 @@ async def seed_context(session: AsyncSession) -> None:
             source_document_id=other_document_id,
             page_number=1,
             source_block_id=other_block_id,
+            source_candidate_id=other_candidate_id,
             review_state=ReviewState.REVIEWED,
             competency_id=OTHER_COMPETENCY_ID,
             created_by=ADMIN_ID,
             updated_by=ADMIN_ID,
         )
     )
-    cross_question_document_id, cross_question_block_id = await seed_source(
+    cross_question_document_id, cross_question_block_id, cross_candidate_id = await seed_source(
         session,
         offset=4,
         curriculum_version_id=OTHER_CURRICULUM_ID,
@@ -521,6 +550,7 @@ async def seed_context(session: AsyncSession) -> None:
             source_document_id=cross_question_document_id,
             page_number=1,
             source_block_id=cross_question_block_id,
+            source_candidate_id=cross_candidate_id,
             review_state=ReviewState.REVIEWED,
             competency_id=OTHER_COMPETENCY_ID,
             created_by=ADMIN_ID,
@@ -559,6 +589,9 @@ def generation_seed() -> Iterator[GenerationSeed]:
                     specification = make_uniform_specification((1,), 1)
                     specification = replace(
                         specification,
+                        curriculum_scope=replace(
+                            specification.curriculum_scope, subject_id=SUBJECT_ID
+                        ),
                         generation_policy=replace(
                             specification.generation_policy,
                             response_language="en-LK",
@@ -2040,8 +2073,8 @@ def test_validation_report_is_transactional_idempotent_audited_readable_and_immu
         "trust": "server_owned",
         "grade": 5,
         "medium": "en",
-        "subject_id": "00000000-0000-5000-8000-000000000023",
-        "subject_code": "LEGACY_UNCLASSIFIED",
+        "subject_id": str(SUBJECT_ID),
+        "subject_code": "SCHOLARSHIP",
         "curriculum_version_id": str(CURRICULUM_VERSION_ID),
         "unit_ids": [],
         "lesson_ids": [],

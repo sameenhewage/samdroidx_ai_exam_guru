@@ -15,7 +15,8 @@ from exam_guru_api.core.config import (
     EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS,
     MIN_EMBEDDING_WORKER_LEASE_SECONDS,
 )
-from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+from exam_guru_api.knowledge.domain import HistoricalQuestion, KnowledgeChunk, ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingSourceRecord,
     StoredEmbeddingJob,
@@ -59,9 +60,11 @@ from exam_guru_api.knowledge.repository import (
     SqlAlchemyKnowledgeRepository,
 )
 from exam_guru_api.knowledge.service import (
+    ActiveKnowledgeSourceRequiredError,
     EmbeddingRequiresReviewedRecordError,
     KnowledgePersistenceService,
     StoredEmbedding,
+    TrustedKnowledgeSourceRequiredError,
 )
 from exam_guru_api.retrieval.embeddings import (
     EmbeddingProviderRegistry,
@@ -72,6 +75,12 @@ from exam_guru_api.retrieval.openai_embedding_adapter import (
     OPENAI_EMBEDDING_MAX_JOB_RECORDS,
     OPENAI_EMBEDDING_MODEL,
     OPENAI_EMBEDDING_PROVIDER,
+)
+from tests.test_knowledge_service_boundaries import (
+    CANDIDATE_ID,
+    historical_question,
+    knowledge_chunk,
+    source_document,
 )
 from tests.test_operational_telemetry import telemetry
 
@@ -130,6 +139,12 @@ def _record(
         review_state=state,
         text=text,
         version=2,
+        active_for_ai=True,
+        source_candidate_id=UUID(int=1_832_008),
+        source_candidate_sha256="c" * 64,
+        source_fidelity_current=True,
+        metadata_resolved=True,
+        catalogue_admitted=True,
     )
 
 
@@ -673,6 +688,8 @@ def test_read_service_rejects_missing_curriculum_and_delegates_reads() -> None:
         (EmbeddingSourceNotFoundError(), "embedding_source_invalid"),
         (EmbeddingSourceNotReviewedError(), "embedding_source_invalid"),
         (EmbeddingSourceRemovedError(), "embedding_source_invalid"),
+        (ActiveKnowledgeSourceRequiredError(QUESTION_ID), "embedding_source_invalid"),
+        (TrustedKnowledgeSourceRequiredError(QUESTION_ID), "embedding_source_invalid"),
         (
             EmbeddingRequiresReviewedRecordError(QUESTION_ID, ReviewState.DRAFT),
             "embedding_source_invalid",
@@ -883,15 +900,27 @@ def test_embedding_worker_emits_terminal_counts_after_commit() -> None:
 def test_scoped_existence_checks_default_to_unlocked_and_forward_worker_lock() -> None:
     async def exercise() -> None:
         lock_values: list[tuple[str, bool]] = []
-        record = SimpleNamespace(
+        question = replace(
+            historical_question(),
             id=QUESTION_ID,
+            curriculum_version_id=CURRICULUM_ID,
             review_state=ReviewState.REVIEWED,
-            text="authoritative source",
+            competency_id=UUID(int=1_832_009),
+        )
+        chunk = replace(
+            knowledge_chunk(),
+            id=CHUNK_ID,
+            curriculum_version_id=CURRICULUM_ID,
+            review_state=ReviewState.REVIEWED,
+            competency_id=UUID(int=1_832_009),
         )
 
         class Model:
-            def to_domain(self) -> object:
-                return record
+            def __init__(self, record: HistoricalQuestion | KnowledgeChunk) -> None:
+                self.record = record
+
+            def to_domain(self) -> HistoricalQuestion | KnowledgeChunk:
+                return self.record
 
         class Repository:
             async def get_question(
@@ -903,7 +932,7 @@ def test_scoped_existence_checks_default_to_unlocked_and_forward_worker_lock() -
             ) -> Model:
                 assert curriculum_version_id == CURRICULUM_ID
                 lock_values.append(("question", for_update))
-                return Model()
+                return Model(question)
 
             async def get_chunk(
                 self,
@@ -914,12 +943,15 @@ def test_scoped_existence_checks_default_to_unlocked_and_forward_worker_lock() -
             ) -> Model:
                 assert curriculum_version_id == CURRICULUM_ID
                 lock_values.append(("chunk", for_update))
-                return Model()
+                return Model(chunk)
 
             async def find_embedding(self, **_kwargs: object) -> None:
                 return None
 
-        persistence = KnowledgePersistenceService(cast(AsyncSession, object()))
+        session = AsyncMock(spec=AsyncSession)
+        session.get.return_value = source_document(curriculum_version_id=CURRICULUM_ID)
+        session.scalar.side_effect = [PageTextCandidateModel(id=CANDIDATE_ID), True] * 4
+        persistence = KnowledgePersistenceService(cast(AsyncSession, session))
         persistence._repository = cast(object, Repository())  # type: ignore[assignment]
         assert not await persistence.question_embedding_exists(
             CURRICULUM_ID,

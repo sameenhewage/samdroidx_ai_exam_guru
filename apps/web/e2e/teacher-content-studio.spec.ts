@@ -19,11 +19,17 @@ async function authenticatedFixture(
 
 async function openGradeFiveMaths(page: Page) {
   await page.goto("/admin/materials");
-  await expect(page.getByRole("heading", { level: 1, name: "Materials" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Materials" }),
+  ).toBeVisible();
   const overview = page.getByRole("region", { name: "Materials by grade" });
   await overview.getByRole("button", { name: /Grade 5/i }).click();
-  await page.getByRole("combobox", { name: "Subject", exact: true }).selectOption({ label: "Maths" });
-  await expect(page.getByRole("region", { name: "Uploaded materials" })).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Subject", exact: true })
+    .selectOption({ label: "Maths" });
+  await expect(
+    page.getByRole("region", { name: "Uploaded materials" }),
+  ).toBeVisible();
 }
 
 async function continueUpload(dialog: Locator) {
@@ -39,7 +45,9 @@ async function openUploadAtPdf(page: Page): Promise<Locator> {
   await continueUpload(dialog);
   await dialog.getByLabel("Medium").selectOption({ label: "English" });
   await continueUpload(dialog);
-  await dialog.getByRole("combobox", { name: "Subject", exact: true }).selectOption({ label: "Maths" });
+  await dialog
+    .getByRole("combobox", { name: "Subject", exact: true })
+    .selectOption({ label: "Maths" });
   await continueUpload(dialog);
   await dialog.getByLabel("Material type").selectOption("past_paper");
   await continueUpload(dialog);
@@ -52,12 +60,16 @@ async function chooseGradeFiveMaths(page: Page) {
   await page.getByLabel("Grade").selectOption("5");
   await page.getByLabel("Medium").selectOption("si");
   await page.getByRole("radio", { name: "Subject Practice" }).check();
-  await page.getByRole("combobox", { name: "Subject", exact: true }).selectOption("MATHEMATICS");
+  await page
+    .getByRole("combobox", { name: "Subject", exact: true })
+    .selectOption("MATHEMATICS");
   await page.getByRole("button", { name: "Continue to scope" }).click();
 }
 
 async function choosePaperSettings(page: Page) {
-  await page.getByRole("button", { name: "Continue to paper settings" }).click();
+  await page
+    .getByRole("button", { name: "Continue to paper settings" })
+    .click();
   await page.getByLabel("MCQ questions").fill("12");
   await page.getByLabel("Written questions").fill("0");
   await page.getByLabel("Duration in minutes").fill("50");
@@ -67,15 +79,20 @@ async function choosePaperSettings(page: Page) {
 
 function generationIntent(fixture: TeacherStudioFixture) {
   const value = fixture.generationIntents[0];
-  if (!value || typeof value !== "object") throw new Error("Expected one generation intent");
+  if (!value || typeof value !== "object")
+    throw new Error("Expected one generation intent");
   return value;
 }
 
-test("contract 1: Materials overview shows Grades 1–13 with useful counts", async ({ page }) => {
+test("contract 1: Materials overview shows Grades 1–13 with useful counts", async ({
+  page,
+}) => {
   await authenticatedFixture(page, "reviewer");
   await page.goto("/admin/materials");
 
-  await expect(page.getByRole("heading", { level: 1, name: "Materials" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Materials" }),
+  ).toBeVisible();
   const overview = page.getByRole("region", { name: "Materials by grade" });
   await expect(overview).toBeVisible();
   for (let grade = 1; grade <= 13; grade += 1) {
@@ -83,10 +100,18 @@ test("contract 1: Materials overview shows Grades 1–13 with useful counts", as
       overview.getByRole("button", { name: new RegExp(`Grade ${grade}\\b`) }),
     ).toBeVisible();
   }
-  await expect(overview.getByRole("button", { name: /Grade 5/i })).toContainText("4 materials");
-  await expect(overview.getByRole("button", { name: /Grade 5/i })).toContainText("1 subject");
-  await expect(overview.getByRole("button", { name: /Grade 5/i })).toContainText("1 Ready");
-  await expect(overview.getByRole("button", { name: /Grade 5/i })).toContainText("1 Needs review");
+  await expect(
+    overview.getByRole("button", { name: /Grade 5/i }),
+  ).toContainText("4 materials");
+  await expect(
+    overview.getByRole("button", { name: /Grade 5/i }),
+  ).toContainText("1 subject");
+  await expect(
+    overview.getByRole("button", { name: /Grade 5/i }),
+  ).toContainText("1 Ready");
+  await expect(
+    overview.getByRole("button", { name: /Grade 5/i }),
+  ).toContainText("1 Needs review");
 });
 
 test("contract 2: Grade 5 opens a searchable, filtered uploaded-material list", async ({
@@ -127,18 +152,21 @@ test("contract 2: Grade 5 opens a searchable, filtered uploaded-material list", 
     )
     .toBe(true);
 
-  const syllabus = list.locator("article").filter({ hasText: "grade-5-maths-syllabus.pdf" });
+  const syllabus = list
+    .locator("article")
+    .filter({ hasText: "grade-5-maths-syllabus.pdf" });
   const previewResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/content") && response.request().method() === "GET",
+    (response) =>
+      response.url().endsWith("/original") &&
+      response.request().method() === "GET",
   );
   await syllabus.getByRole("link", { name: "View", exact: true }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "grade-5-maths-syllabus.pdf" }),
   ).toBeVisible();
-  await expect(page.getByTitle("Original PDF: grade-5-maths-syllabus.pdf")).toHaveAttribute(
-    "src",
-    /\/api\/v1\/admin\/source-documents\/.+\/content$/,
-  );
+  await expect(
+    page.getByTitle("Original PDF: grade-5-maths-syllabus.pdf"),
+  ).toHaveAttribute("src", /\/api\/v1\/admin\/materials\/.+\/original$/);
   const response = await previewResponse;
   expect(response.status()).toBe(200);
   expect(response.headers()["content-type"]).toContain("application/pdf");
@@ -173,12 +201,33 @@ test("contract 3: an exact duplicate upload is stopped and links to the existing
   );
   expect(
     fixture.requests.filter(
-      (request) => request.method === "POST" && request.path.endsWith("/source-documents"),
+      (request) =>
+        request.method === "POST" && request.path.endsWith("/source-uploads"),
     ),
   ).toHaveLength(1);
+  expect(
+    fixture.requests.filter(
+      (request) => request.method === "PUT" && request.path.endsWith("/chunks"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    fixture.requests.filter(
+      (request) =>
+        request.method === "POST" && request.path.endsWith("/complete"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    fixture.requests.some(
+      (request) =>
+        request.method === "POST" &&
+        /\/(extract|read|trust)$/.test(request.path),
+    ),
+  ).toBe(false);
 
   await existingMaterial.click();
-  await expect(page).toHaveURL(new RegExp(`/admin/materials/${fixture.materialIds.duplicate}$`));
+  await expect(page).toHaveURL(
+    new RegExp(`/admin/materials/${fixture.materialIds.duplicate}$`),
+  );
   await expect(
     page.getByRole("heading", { level: 1, name: "grade-5-maths-syllabus.pdf" }),
   ).toBeVisible();
@@ -193,11 +242,28 @@ test("contract 4: an untrusted wrong-grade material is corrected out of Grade 5 
 
   const list = page.getByRole("region", { name: "Uploaded materials" });
   await expect(list.getByText("grade-11-algebra-paper.pdf")).toBeVisible();
-  await page.getByRole("button", { name: "Edit metadata: grade-11-algebra-paper.pdf" }).click();
+  await page
+    .getByRole("button", { name: "Edit metadata: grade-11-algebra-paper.pdf" })
+    .click();
   const editor = page.getByRole("dialog", {
     name: "Edit grade-11-algebra-paper.pdf",
   });
-  await editor.getByLabel("Curriculum version").selectOption(fixture.curriculumIds.gradeEleven);
+  await expect(editor.getByLabel("Curriculum version")).toHaveCount(0);
+  await editor
+    .getByRole("button", { name: "Change curriculum assignment" })
+    .click();
+  await editor
+    .getByRole("combobox", { name: "Grade", exact: true })
+    .selectOption("11");
+  await editor
+    .getByRole("combobox", { name: "Medium", exact: true })
+    .selectOption({ label: "English" });
+  await editor
+    .getByRole("combobox", { name: "Subject", exact: true })
+    .selectOption({ label: "Maths" });
+  await editor
+    .getByLabel("Curriculum version")
+    .selectOption(fixture.curriculumIds.gradeEleven);
   await editor.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Moved to Grade 11.")).toBeVisible();
   await expect(list.getByText("grade-11-algebra-paper.pdf")).toHaveCount(0);
@@ -205,7 +271,9 @@ test("contract 4: an untrusted wrong-grade material is corrected out of Grade 5 
   const correction = fixture.requests.find(
     (request) =>
       request.method === "PATCH" &&
-      request.path.endsWith(`/materials/${fixture.materialIds.wrongGrade}/scope`),
+      request.path.endsWith(
+        `/materials/${fixture.materialIds.wrongGrade}/scope`,
+      ),
   );
   expect(correction?.body).toEqual({
     confirm_intake_metadata: false,
@@ -215,17 +283,23 @@ test("contract 4: an untrusted wrong-grade material is corrected out of Grade 5 
     unit_id: null,
   });
   expect(
-    fixture.materials.find((material) => material.id === fixture.materialIds.wrongGrade),
+    fixture.materials.find(
+      (material) => material.id === fixture.materialIds.wrongGrade,
+    ),
   ).toMatchObject({ grade: 11, metadata_scope_version: 2 });
   expect(
-    fixture.sourceDocuments.find((source) => source.id === fixture.materialIds.wrongGrade),
+    fixture.sourceDocuments.find(
+      (source) => source.id === fixture.materialIds.wrongGrade,
+    ),
   ).toMatchObject({
     curriculum_version_id: fixture.curriculumIds.gradeEleven,
     metadata_scope_version: 2,
   });
 });
 
-test("contract 5: text correction compares immutable and editable extraction", async ({ page }) => {
+test("contract 5: text correction compares immutable and editable extraction", async ({
+  page,
+}) => {
   const fixture = await authenticatedFixture(page, "admin");
   await openGradeFiveMaths(page);
 
@@ -237,73 +311,168 @@ test("contract 5: text correction compares immutable and editable extraction", a
   await expect(page).toHaveURL(
     new RegExp(`/admin/materials/${fixture.materialIds.ocr}/review-text$`),
   );
-  await expect(page.getByRole("region", { name: "Original PDF" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Original page", exact: true }),
+  ).toBeVisible();
   const originalPreview = page.getByRole("img", {
-    name: "Original PDF page 1",
+    name: "Original page 1",
+    exact: true,
   });
   await expect(originalPreview).toHaveJSProperty(
     "src",
-    new URL(`/api/v1/admin/source-documents/${fixture.materialIds.ocr}/pages/1/preview`, page.url())
-      .href,
+    new URL(
+      `/api/v1/admin/materials/${fixture.materialIds.ocr}/pages/1/image`,
+      page.url(),
+    ).href,
   );
   await expect
-    .poll(() => originalPreview.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .poll(() =>
+      originalPreview.evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
     .toBeGreaterThan(0);
-  await expect(page.getByRole("region", { name: "Original PDF" }).locator("iframe")).toHaveCount(0);
-  await page.getByRole("button", { name: "Next page" }).click();
-  const secondPreview = page.getByRole("img", { name: "Original PDF page 2" });
+  await expect(
+    page
+      .getByRole("region", { name: "Original page", exact: true })
+      .locator("iframe"),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  const secondPreview = page.getByRole("img", {
+    name: "Original page 2",
+    exact: true,
+  });
   await expect(secondPreview).toHaveJSProperty(
     "src",
-    new URL(`/api/v1/admin/source-documents/${fixture.materialIds.ocr}/pages/2/preview`, page.url())
-      .href,
+    new URL(
+      `/api/v1/admin/materials/${fixture.materialIds.ocr}/pages/2/image`,
+      page.url(),
+    ).href,
   );
   await expect
-    .poll(() => secondPreview.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .poll(() =>
+      secondPreview.evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
     .toBeGreaterThan(0);
-  await expect(page.getByRole("link", { name: "Open original PDF" })).toHaveAttribute(
+  await expect(
+    page.getByRole("link", { name: "Open original page" }),
+  ).toHaveAttribute(
     "href",
-    `/api/v1/admin/source-documents/${fixture.materialIds.ocr}/content#page=2&view=FitH`,
+    `/api/v1/admin/materials/${fixture.materialIds.ocr}/pages/2/image`,
   );
-  await page.getByRole("button", { name: "Previous page" }).click();
+  await page
+    .getByRole("button", { name: "Previous page", exact: true })
+    .click();
   await expect(originalPreview).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open original PDF" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Extracted and corrected text" })).toBeVisible();
-  await expect(page.getByText("Page 1 of 2")).toBeVisible();
-  await page.getByRole("button", { name: "Begin text review" }).click();
-
-  const text = page.getByLabel("Corrected text for page 1");
+  await expect(
+    page.getByRole("region", { name: "System-read text", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("spinbutton", { name: "Page number", exact: true }),
+  ).toHaveValue("1");
+  await expect(page.getByText("of 2", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Correction", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Correct the text", exact: true })
+    .click();
+  const text = page.getByRole("textbox", { name: "Correction", exact: true });
   await expect(text).toHaveValue("Thre equal parts are shaded.");
   await text.fill("Three equal parts are shaded.");
-  await page.getByRole("button", { name: "Next page" }).click();
-  await expect(page.getByLabel("Corrected text for page 2")).toHaveValue("Answer B");
-  await page.getByRole("button", { name: "Previous page" }).click();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(text).toHaveValue("Three equal parts are shaded.");
-  await page.getByRole("button", { name: "Save correction" }).click();
-  await expect(page.getByText("Page 1 correction saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Next page" }).click();
-  await expect(page.getByLabel("Corrected text for page 2")).toHaveValue("Answer B");
-  await page.getByRole("button", { name: "Previous page" }).click();
-  await expect(text).toHaveValue("Three equal parts are shaded.");
-  await page.getByRole("button", { name: "Mark reviewed / Ready for AI" }).click();
-  await expect(page.getByText("Ready for AI").first()).toBeVisible();
+  await expect(originalPreview).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Reason for correction" })
+    .fill("Compared the synthetic printed sentence");
+  await page
+    .getByRole("button", { name: "Save correction", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Correction saved. Compare it with the original before confirming.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByTestId("system-page-text")).toHaveText(
+    "Three equal parts are shaded.",
+  );
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  await expect(page.getByTestId("system-page-text")).toHaveText("Answer B");
+  await page
+    .getByRole("button", { name: "Previous page", exact: true })
+    .click();
+  await expect(page.getByTestId("system-page-text")).toHaveText(
+    "Three equal parts are shaded.",
+  );
+  for (const pageNumber of [1, 2]) {
+    if (pageNumber === 2)
+      await page
+        .getByRole("button", { name: "Next page", exact: true })
+        .click();
+    await page
+      .getByRole("button", { name: "Text is correct", exact: true })
+      .click();
+    const confirmation = page.getByRole("dialog", {
+      name: "Confirm this page",
+    });
+    await expect(
+      confirmation.getByRole("button", { name: "Confirm compared text" }),
+    ).toBeDisabled();
+    await confirmation.getByRole("checkbox").check();
+    await confirmation
+      .getByRole("button", { name: "Confirm compared text" })
+      .click();
+    await expect(
+      page.getByText("Confirmed against the original."),
+    ).toBeVisible();
+    if (pageNumber === 1)
+      await expect(page.getByText("Ready for AI", { exact: true })).toHaveCount(
+        0,
+      );
+  }
+  await expect(page.getByText("Ready for AI", { exact: true })).toBeVisible();
   expect(fixture.corrections).toEqual(["Three equal parts are shaded."]);
+  expect(
+    fixture.sourceDocuments.find(
+      (source) => source.id === fixture.materialIds.ocr,
+    )?.extraction_status,
+  ).toBe("extracted");
+  expect(
+    fixture.requests.filter(
+      (request) =>
+        request.method === "POST" && request.path.endsWith("/confirm"),
+    ),
+  ).toHaveLength(2);
+  expect(
+    fixture.requests.some(
+      (request) =>
+        request.method === "PATCH" &&
+        request.path.includes("/source-documents/"),
+    ),
+  ).toBe(false);
 });
 
-test("contract 6: Grade 5 Maths Lessons 1–3 generation uses teacher intent", async ({ page }) => {
+test("contract 6: Grade 5 Maths Lessons 1–3 generation uses teacher intent", async ({
+  page,
+}) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
-  await expect(page.getByRole("heading", { level: 1, name: "Generate Papers" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Generate Papers" }),
+  ).toBeVisible();
 
   await chooseGradeFiveMaths(page);
   await page.getByRole("radio", { name: "Choose specific lessons" }).check();
   await page.getByLabel("First lesson").selectOption("1");
   await page.getByLabel("Last lesson").selectOption("3");
-  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 5 Maths · Lessons 1–3",
-  );
+  await expect(
+    page.getByRole("region", { name: "Selected scope" }),
+  ).toContainText("Grade 5 Maths · Lessons 1–3");
   await choosePaperSettings(page);
 
-  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  await expect
+    .poll(() => fixture.generationIntents.length, { timeout: 5_000 })
+    .toBe(1);
   expect(generationIntent(fixture)).toMatchObject({
     scope: { end_lesson: 3, kind: "lesson_range", start_lesson: 1 },
     settings: {
@@ -321,17 +490,25 @@ test("contract 6: Grade 5 Maths Lessons 1–3 generation uses teacher intent", a
     },
   });
   const createRequest = fixture.requests.find(
-    (request) => request.method === "POST" && request.path.endsWith("/paper-generation/jobs"),
+    (request) =>
+      request.method === "POST" &&
+      request.path.endsWith("/paper-generation/jobs"),
   );
-  expect(createRequest?.headers["idempotency-key"]).toMatch(/^teacher-paper-\S+$/);
+  expect(createRequest?.headers["idempotency-key"]).toMatch(
+    /^teacher-paper-\S+$/,
+  );
   expect(
     fixture.requests.some(
-      (request) => request.method === "GET" && request.path.endsWith("/paper-generation/curricula"),
+      (request) =>
+        request.method === "GET" &&
+        request.path.endsWith("/paper-generation/curricula"),
     ),
   ).toBe(true);
   expect(
     fixture.requests.some(
-      (request) => request.method === "GET" && request.path.endsWith("/paper-generation/lessons"),
+      (request) =>
+        request.method === "GET" &&
+        request.path.endsWith("/paper-generation/lessons"),
     ),
   ).toBe(true);
   const progress = page.getByRole("region", { name: "Paper progress" });
@@ -341,37 +518,49 @@ test("contract 6: Grade 5 Maths Lessons 1–3 generation uses teacher intent", a
   await expect(progress).toContainText("Ready for review");
 });
 
-test("contract 6b: Grade 5 Maths can select non-contiguous lessons", async ({ page }) => {
+test("contract 6b: Grade 5 Maths can select non-contiguous lessons", async ({
+  page,
+}) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
   await chooseGradeFiveMaths(page);
   await page.getByRole("radio", { name: "Pick individual lessons" }).check();
-  await page.getByRole("checkbox", { name: "Lesson 1 — Whole numbers" }).check();
+  await page
+    .getByRole("checkbox", { name: "Lesson 1 — Whole numbers" })
+    .check();
   await page.getByRole("checkbox", { name: "Lesson 3 — Fractions" }).check();
-  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 5 Maths · Lessons 1 and 3",
-  );
+  await expect(
+    page.getByRole("region", { name: "Selected scope" }),
+  ).toContainText("Grade 5 Maths · Lessons 1 and 3");
   await choosePaperSettings(page);
 
-  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  await expect
+    .poll(() => fixture.generationIntents.length, { timeout: 5_000 })
+    .toBe(1);
   expect(generationIntent(fixture)).toMatchObject({
     scope: { kind: "selected_lessons", lesson_numbers: [1, 3] },
   });
 });
 
-test("contract 7: Grade 5 Maths supports full-subject generation", async ({ page }) => {
+test("contract 7: Grade 5 Maths supports full-subject generation", async ({
+  page,
+}) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
-  await expect(page.getByRole("heading", { level: 1, name: "Generate Papers" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Generate Papers" }),
+  ).toBeVisible();
 
   await chooseGradeFiveMaths(page);
   await page.getByRole("radio", { name: "Full subject" }).check();
-  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 5 Maths · Full subject",
-  );
+  await expect(
+    page.getByRole("region", { name: "Selected scope" }),
+  ).toContainText("Grade 5 Maths · Full subject");
   await choosePaperSettings(page);
 
-  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  await expect
+    .poll(() => fixture.generationIntents.length, { timeout: 5_000 })
+    .toBe(1);
   expect(generationIntent(fixture)).toMatchObject({
     scope: { kind: "full_subject" },
     target: {
@@ -383,28 +572,42 @@ test("contract 7: Grade 5 Maths supports full-subject generation", async ({ page
   });
 });
 
-test("contract 7b: Grade 5 Scholarship modes submit without a subject", async ({ page }) => {
+test("contract 7b: Grade 5 Scholarship modes submit without a subject", async ({
+  page,
+}) => {
   const fixture = await authenticatedFixture(page, "admin");
   await page.goto("/admin/generate-papers");
   await page.getByLabel("Grade").selectOption("5");
   await page.getByLabel("Medium").selectOption("si");
-  await page.getByRole("radio", { name: "Grade 5 Scholarship Practice" }).check();
-  await expect(page.getByRole("radio", { name: "Paper I — Ability & Reasoning" })).toBeVisible();
-  await expect(page.getByRole("radio", { name: "Paper II — Curriculum Knowledge" })).toBeVisible();
+  await page
+    .getByRole("radio", { name: "Grade 5 Scholarship Practice" })
+    .check();
+  await expect(
+    page.getByRole("radio", { name: "Paper I — Ability & Reasoning" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: "Paper II — Curriculum Knowledge" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("radio", {
       name: "Full Scholarship Practice — Paper I + Paper II",
     }),
   ).toBeVisible();
-  await page.getByRole("radio", { name: "Paper II — Curriculum Knowledge" }).check();
-  await expect(page.getByRole("combobox", { name: "Subject", exact: true })).toHaveCount(0);
+  await page
+    .getByRole("radio", { name: "Paper II — Curriculum Knowledge" })
+    .check();
+  await expect(
+    page.getByRole("combobox", { name: "Subject", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Continue to scope" }).click();
-  await expect(page.getByRole("region", { name: "Selected scope" })).toContainText(
-    "Grade 5 Scholarship · Paper II — Curriculum Knowledge",
-  );
+  await expect(
+    page.getByRole("region", { name: "Selected scope" }),
+  ).toContainText("Grade 5 Scholarship · Paper II — Curriculum Knowledge");
   await choosePaperSettings(page);
 
-  await expect.poll(() => fixture.generationIntents.length, { timeout: 5_000 }).toBe(1);
+  await expect
+    .poll(() => fixture.generationIntents.length, { timeout: 5_000 })
+    .toBe(1);
   expect(generationIntent(fixture)).toMatchObject({
     scope: { kind: "programme" },
     target: {
@@ -422,7 +625,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
 }) => {
   const fixture = await authenticatedFixture(page, "reviewer");
   await page.goto("/admin/review-approve");
-  await expect(page.getByRole("heading", { level: 1, name: "Review & Approve" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Review & Approve" }),
+  ).toBeVisible();
 
   const overview = page.getByRole("region", {
     name: "Questions in this paper",
@@ -433,7 +638,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   await expect(question).toContainText(
     "What fraction of the four equal parts is shaded when three parts are shaded?",
   );
-  await expect(question.getByRole("list", { name: "Answer options" })).toContainText("B 3/4");
+  await expect(
+    question.getByRole("list", { name: "Answer options" }),
+  ).toContainText("B 3/4");
   await expect(question).toContainText("Proposed answer");
   await expect(question).toContainText("B — 3/4");
   await expect(question).toContainText(
@@ -443,7 +650,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   await expect(question).toContainText(
     "Marks not confirmed — suggested marking requires teacher confirmation",
   );
-  await expect(question).toContainText("Grade 5 Maths · Lessons 1–3 · Fractions");
+  await expect(question).toContainText(
+    "Grade 5 Maths · Lessons 1–3 · Fractions",
+  );
   await expect(question).toContainText("Grade 5 Maths Teacher Guide — page 18");
   await expect(question).toContainText("Ready");
   await expect(question).toContainText("Answer check: Passed");
@@ -465,10 +674,14 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
     await expect(question.getByRole("button", { name: action })).toBeVisible();
   }
 
-  await expect(question.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await expect(
+    question.getByRole("button", { name: "Approve" }),
+  ).toBeDisabled();
   await question.getByRole("button", { name: "Start review" }).click();
   await expect(page.getByText("Review started.")).toBeVisible();
-  await expect(question.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await expect(
+    question.getByRole("button", { name: "Approve" }),
+  ).toBeDisabled();
   await question
     .getByRole("checkbox", {
       name: "I checked these marks and marking guidance",
@@ -500,7 +713,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
   });
   await expect(draftReady).toBeVisible();
   await draftReady.getByRole("button", { name: "Create draft" }).click();
-  await expect(page.getByText("Draft created. It is ready in Published Papers.")).toBeVisible();
+  await expect(
+    page.getByText("Draft created. It is ready in Published Papers."),
+  ).toBeVisible();
   const publishedLink = page.getByRole("link", {
     name: "Go to Published Papers",
   });
@@ -509,7 +724,9 @@ test("contract 8: Review & Approve shows the generated question, answer, and mar
     /\/admin\/published-papers\?curriculum=.+&paper=/,
   );
   await publishedLink.click();
-  await expect(page.getByRole("heading", { level: 1, name: "Published Papers" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Published Papers" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("article", {
       name: "Grade 5 Maths Lessons 1–3 practice paper",
@@ -530,31 +747,46 @@ test("contract 9: a correction can become approved review evidence without autom
   await editor
     .getByRole("textbox", { name: "Question", exact: true })
     .fill("What fraction is shaded when three of four equal parts are shaded?");
-  await editor.getByLabel("Why are you changing this question?").selectOption("ambiguous_wording");
-  await editor.getByLabel("Optional note").fill("The original had two possible readings.");
+  await editor
+    .getByLabel("Why are you changing this question?")
+    .selectOption("ambiguous_wording");
+  await editor
+    .getByLabel("Optional note")
+    .fill("The original had two possible readings.");
   await editor.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByText("Question changes saved. A fresh check is required.")).toBeVisible();
+  await expect(
+    page.getByText("Question changes saved. A fresh check is required."),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Add to quality examples" }).click();
   const promotion = page.getByRole("dialog", {
     name: "Add review evidence to quality examples",
   });
-  await expect(promotion).toContainText("does not train or automatically change the model");
+  await expect(promotion).toContainText(
+    "does not train or automatically change the model",
+  );
   await expect(promotion.locator("details")).not.toHaveAttribute("open", "");
   await promotion.getByLabel("Expected check result").selectOption("warn");
-  await promotion.getByLabel("Defect category").selectOption("language_clarity");
-  await promotion.getByRole("button", { name: "Create draft quality example" }).click();
+  await promotion
+    .getByLabel("Defect category")
+    .selectOption("language_clarity");
+  await promotion
+    .getByRole("button", { name: "Create draft quality example" })
+    .click();
   await expect(
     page.getByText(
       "Draft quality example created. A second reviewer or administrator must approve it.",
     ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Approve quality example" }).click();
-  await expect(page.getByText("Quality example approved for offline evaluation.")).toBeVisible();
+  await expect(
+    page.getByText("Quality example approved for offline evaluation."),
+  ).toBeVisible();
 
   const edit = fixture.requests.find(
     (request) =>
-      request.method === "PATCH" && request.path.endsWith(`/questions/${fixture.reviewQuestionId}`),
+      request.method === "PATCH" &&
+      request.path.endsWith(`/questions/${fixture.reviewQuestionId}`),
   );
   expect(edit?.body).toMatchObject({
     note: "The original had two possible readings.",
@@ -570,7 +802,8 @@ test("contract 9: a correction can become approved review evidence without autom
   });
   expect(
     fixture.requests.some(
-      (request) => request.method === "POST" && request.path.endsWith("/approve"),
+      (request) =>
+        request.method === "POST" && request.path.endsWith("/approve"),
     ),
   ).toBe(true);
 });
@@ -580,7 +813,9 @@ test("contract 10: technical diagnostics stay hidden until Advanced or Technical
 }) => {
   await authenticatedFixture(page, "admin");
   await page.goto("/admin/materials");
-  await expect(page.getByRole("heading", { level: 1, name: "Materials" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Materials" }),
+  ).toBeVisible();
 
   const primary = page.getByRole("navigation", {
     name: "Primary admin navigation",
@@ -594,28 +829,50 @@ test("contract 10: technical diagnostics stay hidden until Advanced or Technical
   ]);
   await expect(primary).not.toContainText("RAG");
   await expect(primary).not.toContainText("Blueprints");
-  const advancedSummary = page.locator("summary").filter({ hasText: /^Advanced$/ });
+  const advancedSummary = page
+    .locator("summary")
+    .filter({ hasText: /^Advanced$/ });
   const advanced = advancedSummary.locator("xpath=..");
   await expect(advanced).not.toHaveAttribute("open", "");
-  await expect(advanced.getByRole("link", { name: /Generation diagnostics/i })).toBeHidden();
+  await expect(
+    advanced.getByRole("link", { name: /Generation diagnostics/i }),
+  ).toBeHidden();
   await advancedSummary.click();
-  await expect(advanced.getByRole("link", { name: /Curriculum/i })).toBeVisible();
+  await expect(
+    advanced.getByRole("link", { name: /Curriculum/i }),
+  ).toBeVisible();
   await expect(advanced).toContainText(/Knowledge\s*\/\s*RAG/);
-  await expect(advanced.getByRole("link", { name: /Generation diagnostics/i })).toBeVisible();
-  await expect(advanced.getByRole("link", { name: /Validation details/i })).toBeVisible();
-  await expect(advanced.getByRole("link", { name: /Operations/i })).toBeVisible();
+  await expect(
+    advanced.getByRole("link", { name: /Generation diagnostics/i }),
+  ).toBeVisible();
+  await expect(
+    advanced.getByRole("link", { name: /Validation details/i }),
+  ).toBeVisible();
+  await expect(
+    advanced.getByRole("link", { name: /Operations/i }),
+  ).toBeVisible();
 
   await page.goto("/admin/review-approve");
-  const technicalSummary = page.locator("summary").filter({ hasText: /^Technical details$/ });
+  const technicalSummary = page
+    .locator("summary")
+    .filter({ hasText: /^Technical details$/ });
   const technical = technicalSummary.locator("xpath=..");
   await expect(technical).not.toHaveAttribute("open", "");
-  await expect(technical.getByText("deterministic-fixture-provider")).toBeHidden();
+  await expect(
+    technical.getByText("deterministic-fixture-provider"),
+  ).toBeHidden();
   await technicalSummary.click();
-  await expect(technical.getByText("deterministic-fixture-provider")).toBeVisible();
+  await expect(
+    technical.getByText("deterministic-fixture-provider"),
+  ).toBeVisible();
 
   await page.goto("/admin/published-papers");
-  await expect(page.getByRole("heading", { level: 1, name: "Published Papers" })).toBeVisible();
-  await page.getByLabel("Curriculum").selectOption({ label: "Grade 7 Maths 2026" });
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Published Papers" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Curriculum")
+    .selectOption({ label: "Grade 7 Maths 2026" });
   const published = page.getByRole("article", {
     name: "Grade 5 Maths Lessons 1–3 practice paper",
   });
@@ -626,5 +883,7 @@ test("contract 10: technical diagnostics stay hidden until Advanced or Technical
   });
   const publishedTechnical = publishedTechnicalSummary.locator("xpath=..");
   await expect(publishedTechnical).not.toHaveAttribute("open", "");
-  await expect(publishedTechnical.getByText(/00000000-0000-0000-0000-000000002005/)).toBeHidden();
+  await expect(
+    publishedTechnical.getByText(/00000000-0000-0000-0000-000000002005/),
+  ).toBeHidden();
 });

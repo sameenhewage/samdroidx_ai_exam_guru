@@ -39,6 +39,7 @@ CREATE_DRAFT_PATH = f"{REVIEW_DETAIL_PATH}/create-draft"
 
 def valid_request() -> dict[str, object]:
     return {
+        "source_scope_fingerprint": "sha256:" + "a" * 64,
         "target": {
             "grade": 5,
             "medium": "si",
@@ -163,7 +164,7 @@ def test_grade_five_pilot_request_accepts_subject_term_and_scholarship_targets(
     scope: dict[str, object],
 ) -> None:
     request = TeacherPaperJobCreateRequest.model_validate(
-        {"target": target, "scope": scope, "settings": pilot_settings()}
+        {**valid_request(), "target": target, "scope": scope, "settings": pilot_settings()}
     )
 
     assert request.target.grade == 5
@@ -280,7 +281,7 @@ def test_grade_five_pilot_request_rejects_inconsistent_target_combinations(
 ) -> None:
     with pytest.raises(ValidationError):
         TeacherPaperJobCreateRequest.model_validate(
-            {"target": target, "scope": scope, "settings": settings}
+            {**valid_request(), "target": target, "scope": scope, "settings": settings}
         )
 
 
@@ -311,6 +312,19 @@ def test_teacher_generation_request_accepts_only_teacher_codes_scope_and_simple_
         payload[forbidden] = "client-controlled"
         with pytest.raises(ValidationError):
             TeacherPaperJobCreateRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("fingerprint", [None, "", "sha256:short", "client-controlled"])
+def test_teacher_generation_requires_a_bounded_current_scope_fingerprint(
+    fingerprint: str | None,
+) -> None:
+    payload = valid_request()
+    if fingerprint is None:
+        payload.pop("source_scope_fingerprint")
+    else:
+        payload["source_scope_fingerprint"] = fingerprint
+    with pytest.raises(ValidationError):
+        TeacherPaperJobCreateRequest.model_validate(payload)
 
 
 def test_teacher_generation_request_accepts_exact_selected_lessons() -> None:
@@ -520,7 +534,13 @@ def test_openapi_exposes_async_teacher_generation_review_actions_and_security() 
 
     request_schema = schema["components"]["schemas"]["TeacherPaperJobCreateRequest"]
     assert request_schema["additionalProperties"] is False
-    assert set(request_schema["properties"]) == {"target", "scope", "settings"}
+    assert set(request_schema["properties"]) == {
+        "target",
+        "scope",
+        "settings",
+        "source_scope_fingerprint",
+    }
+    assert "source_scope_fingerprint" in request_schema["required"]
     target_schema = schema["components"]["schemas"]["TeacherPaperTargetRequest"]
     assert set(target_schema["properties"]) == {
         "grade",

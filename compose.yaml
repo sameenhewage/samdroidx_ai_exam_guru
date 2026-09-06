@@ -7,6 +7,9 @@ x-api-environment: &api-environment
   EXAM_GURU_STORAGE_BACKEND: ${EXAM_GURU_STORAGE_BACKEND:-local}
   EXAM_GURU_STORAGE_ROOT: /data
   EXAM_GURU_MAX_UPLOAD_BYTES: ${EXAM_GURU_MAX_UPLOAD_BYTES:-268435456}
+  EXAM_GURU_SOURCE_UPLOAD_MAX_OWNER_STAGED_BYTES: ${EXAM_GURU_SOURCE_UPLOAD_MAX_OWNER_STAGED_BYTES:-8589934592}
+  EXAM_GURU_SOURCE_UPLOAD_MAX_STAGED_BYTES: ${EXAM_GURU_SOURCE_UPLOAD_MAX_STAGED_BYTES:-34359738368}
+  EXAM_GURU_SOURCE_UPLOAD_MAX_ACTIVE_SESSIONS_PER_OWNER: ${EXAM_GURU_SOURCE_UPLOAD_MAX_ACTIVE_SESSIONS_PER_OWNER:-8}
   EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL: ${EXAM_GURU_OBJECT_STORAGE_ENDPOINT_URL:-}
   EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY: ${EXAM_GURU_OBJECT_STORAGE_ACCESS_KEY:-}
   EXAM_GURU_OBJECT_STORAGE_SECRET_KEY: ${EXAM_GURU_OBJECT_STORAGE_SECRET_KEY:-}
@@ -100,7 +103,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres18-data:/var/lib/postgresql
 
@@ -113,7 +116,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "${VALKEY_PORT:-56379}:6379"
+      - "127.0.0.1:${VALKEY_PORT:-56379}:6379"
     volumes:
       - valkey-data:/data
 
@@ -125,8 +128,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-exam-guru-local-secret}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-exam-guru-local}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
 
@@ -164,29 +167,57 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      <<: [*api-environment, *generation-provider-environment, *semantic-verifier-environment, *embedding-provider-environment]
+      <<:
+        [
+          *api-environment,
+          *generation-provider-environment,
+          *semantic-verifier-environment,
+          *embedding-provider-environment,
+        ]
+      EXAM_GURU_TEST_RUNTIME_ID: ${EXAM_GURU_TEST_RUNTIME_ID:-}
     volumes: *studio-storage
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 5s
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
 
   worker:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    command: ["dramatiq", "--processes", "1", "--threads", "4", "exam_guru_api.worker:broker"]
+    command:
+      [
+        "dramatiq",
+        "--processes",
+        "1",
+        "--threads",
+        "4",
+        "exam_guru_api.worker:broker",
+      ]
     depends_on:
       migrate:
         condition: service_completed_successfully
       valkey:
         condition: service_healthy
     environment:
-      <<: [*api-environment, *ocr-worker-environment, *generation-provider-environment, *semantic-verifier-environment, *embedding-provider-environment]
+      <<:
+        [
+          *api-environment,
+          *ocr-worker-environment,
+          *generation-provider-environment,
+          *semantic-verifier-environment,
+          *embedding-provider-environment,
+        ]
     volumes: *studio-storage
 
   maintenance:
@@ -230,13 +261,19 @@ services:
       ADMIN_COOKIE_SECURE: "false"
       WEB_IDENTITY_PROVIDER: deterministic
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 5s
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
 
 volumes:
   minio-data:
