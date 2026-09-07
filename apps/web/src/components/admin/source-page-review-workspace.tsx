@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
 } from "react";
 import {
@@ -20,6 +21,8 @@ import {
   Modal,
   ModalOverlay,
 } from "react-aria-components";
+
+import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
 
@@ -42,7 +45,10 @@ type Props = {
 
 const buttonClass =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
-const primaryButton = `${buttonClass} border-slate-950 bg-slate-950 text-white hover:bg-slate-800`;
+const primaryButton = cn(
+  buttonClass,
+  "border-slate-950 bg-slate-950 text-white hover:bg-slate-800 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100",
+);
 const inputClass =
   "rounded-lg border border-slate-400 bg-white px-3 py-2 text-slate-950 outline-none focus-visible:ring-2 focus-visible:ring-amber-600 disabled:opacity-60";
 const alertClass =
@@ -268,6 +274,24 @@ const sinhala: Copy = {
   diagnostics: "කියවීමේ තාක්ෂණික විස්තර",
 };
 
+type ReviewLanguage = "en" | "si";
+const reviewLanguageKey = "exam-guru:review-language:v1";
+
+function savedReviewLanguage(): ReviewLanguage {
+  try {
+    return window.localStorage.getItem(reviewLanguageKey) === "si"
+      ? "si"
+      : "en";
+  } catch {
+    return "en";
+  }
+}
+
+function subscribeReviewLanguage(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
+
 function textLanguage(language: string): "si" | "ta" | "en" {
   const code = language.toLowerCase().split(/[-_]/)[0];
   if (["si", "sin", "sinhala"].includes(code)) return "si";
@@ -453,8 +477,16 @@ function ReviewSession({
   const mutationLock = useRef(false);
   const correctionFormId = useId();
   const pageInputId = useId();
+  const storedLanguage = useSyncExternalStore<ReviewLanguage>(
+    subscribeReviewLanguage,
+    savedReviewLanguage,
+    () => "en",
+  );
+  const [languageChoice, setLanguageChoice] = useState<ReviewLanguage | null>(
+    null,
+  );
   const workspace = loaded?.data;
-  const language = textLanguage(workspace?.language ?? "en");
+  const language = languageChoice ?? storedLanguage;
   const copy: Copy = language === "si" ? sinhala : english;
   const page =
     workspace?.page?.page_number === requestedPage ? workspace.page : null;
@@ -929,6 +961,15 @@ function ReviewSession({
     if (!conflict) setActionError(null);
   }
 
+  function changeLanguage(language: ReviewLanguage) {
+    setLanguageChoice(language);
+    try {
+      window.localStorage.setItem(reviewLanguageKey, language);
+    } catch {
+      return;
+    }
+  }
+
   const progress = workspace?.progress;
   const status =
     page?.state === "verified"
@@ -945,7 +986,7 @@ function ReviewSession({
     <section
       className="mx-auto flex min-h-0 w-full max-w-[100rem] flex-col gap-3 p-4 font-sans lg:h-[calc(100dvh-15rem)] lg:flex-1 lg:overflow-hidden"
       data-testid="source-page-workspace"
-      lang={language === "si" ? "si" : "en"}
+      lang={language}
     >
       <header className="shrink-0">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -972,7 +1013,30 @@ function ReviewSession({
             </p>
           )}
         </div>
-        <h1 className="mt-2 text-xl font-semibold sm:text-2xl">{copy.title}</h1>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold sm:text-2xl">{copy.title}</h1>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <span>
+              <span lang="en">Review language</span>
+              {" / "}
+              <span lang="si">භාෂාව</span>
+            </span>
+            <select
+              className={cn(inputClass, "min-h-10 py-1 text-sm")}
+              onChange={(event) =>
+                changeLanguage(event.currentTarget.value === "si" ? "si" : "en")
+              }
+              value={language}
+            >
+              <option lang="en" value="en">
+                English
+              </option>
+              <option lang="si" value="si">
+                සිංහල
+              </option>
+            </select>
+          </label>
+        </div>
         <p className="mt-1 text-sm leading-6 text-slate-700">
           {copy.instruction}
         </p>
@@ -1442,10 +1506,7 @@ function ReviewSession({
         }}
       >
         <Modal className="max-h-[90dvh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
-          <Dialog
-            className="font-sans outline-none"
-            lang={language === "si" ? "si" : "en"}
-          >
+          <Dialog className="font-sans outline-none" lang={language}>
             {decision && (
               <Form className="space-y-4" onSubmit={submitDecision}>
                 <Heading className="text-xl font-semibold" slot="title">

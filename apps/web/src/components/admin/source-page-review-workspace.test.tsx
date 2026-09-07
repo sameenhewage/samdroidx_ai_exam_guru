@@ -8,7 +8,8 @@ import {
   within,
 } from "@testing-library/react";
 import axe from "axe-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderToString } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SourcePageReviewWorkspace } from "./source-page-review-workspace";
 
@@ -194,13 +195,260 @@ function count(label: string, value: number) {
   );
 }
 
+const reviewLanguageLabel = "Review language / භාෂාව";
+const reviewLanguageKey = "exam-guru:review-language:v1";
+
+beforeEach(() => localStorage.clear());
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
+describe("review language preference", () => {
+  it("keeps English controls when detected page languages change and the page is refreshed", async () => {
+    const api = await renderWorkspace((pageNumber) => {
+      const language = pageNumber === 1 ? "en" : "si";
+      return workspace(pageNumber, { language }, { language });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+        "lang",
+        "si",
+      ),
+    );
+    expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+      "lang",
+      "en",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Check the system-read text" }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh page status" }),
+    );
+    await screen.findByRole("img", { name: "Original page 2" });
+    expect(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("en");
+    expect(systemText().textContent).toBe(unicodeText);
+    expect(api.pages()).toEqual([1, 2, 2]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it("remembers Sinhala across English and Tamil source pages and review-session remounts", async () => {
+    const api = await renderWorkspace((pageNumber) => {
+      const language = pageNumber === 1 ? "en" : "ta";
+      return workspace(pageNumber, { language }, { language });
+    });
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "si" },
+      },
+    );
+    expect(localStorage.getItem(reviewLanguageKey)).toBe("si");
+    expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+      "lang",
+      "en",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "ඊළඟ පිටුව" }));
+    await screen.findByRole("img", { name: "මුල් පිටුව 2" });
+    expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+      "lang",
+      "ta",
+    );
+    expect(screen.getByTestId("system-page-text").textContent).toBe(
+      unicodeText,
+    );
+    api.unmount();
+    render(
+      <SourcePageReviewWorkspace
+        documentId={documentId}
+        initialPageNumber={2}
+        role="reviewer"
+      />,
+    );
+    await screen.findByRole("img", { name: "මුල් පිටුව 2" });
+    expect(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("si");
+    expect(
+      screen.getByRole("button", { name: "පෙළ නිවැරදියි" }),
+    ).toBeDisabled();
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "en" },
+      },
+    );
+    expect(screen.getByRole("img", { name: "Original page 2" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Text is correct" }),
+    ).toBeDisabled();
+    expect(localStorage.getItem(reviewLanguageKey)).toBe("en");
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it("does not reset the image, zoom, unsaved Unicode correction or reason when switching language", async () => {
+    const api = await renderWorkspace((pageNumber) =>
+      workspace(pageNumber, { language: "si" }),
+    );
+    await loadPreview();
+    const original = screen.getByRole("img", { name: "Original page 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Correct the text" }));
+    const draft = `${unicodeText}\nUnconfirmed correction`;
+    fireEvent.change(screen.getByRole("textbox", { name: "Correction" }), {
+      target: { value: draft },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+      {
+        target: { value: "Original-page comparison in progress" },
+      },
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "si" },
+      },
+    );
+    expect(screen.getByRole("textbox", { name: "නිවැරදි කළ පෙළ" })).toHaveValue(
+      draft,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "නිවැරදි කිරීමට හේතුව" }),
+    ).toHaveValue("Original-page comparison in progress");
+    expect(screen.getByRole("img", { name: "මුල් පිටුව 1" })).toBe(original);
+    expect(screen.getByLabelText("පිටුවේ විශාලත්වය")).toHaveTextContent("125%");
+    expect(
+      screen.getByRole("button", { name: "නිවැරදි කළ පෙළ සුරකින්න" }),
+    ).toBeEnabled();
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "en" },
+      },
+    );
+    expect(screen.getByRole("textbox", { name: "Correction" })).toHaveValue(
+      draft,
+    );
+    expect(screen.getByRole("textbox", { name: "Correction" })).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeEnabled();
+    expect(api.pages()).toEqual([1]);
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it("keeps a language choice made while the next page request is pending", async () => {
+    const response = deferred<Response>();
+    const api = await renderWorkspace(undefined, (request) => {
+      if (new URL(request.url).searchParams.get("page_number") === "2")
+        return response.promise;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(api.pages()).toEqual([1, 2]));
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "si" },
+      },
+    );
+    expect(screen.getByText("පිටුව පූරණය වෙමින් පවතී…")).toBeVisible();
+    await act(async () => response.resolve(Response.json(workspace(2))));
+    expect(screen.getByRole("img", { name: "මුල් පිටුව 2" })).toBeVisible();
+    expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+      "lang",
+      "en",
+    );
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it.each(["", "ta", "unknown", "<script>si</script>"])(
+    "ignores an unsupported saved preference %s instead of using the source language",
+    async (saved) => {
+      localStorage.setItem(reviewLanguageKey, saved);
+      await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, { language: "si" }, { language: "si" }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      ).toHaveValue("en");
+      expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+        "lang",
+        "en",
+      );
+      expect(systemText()).toHaveAttribute("lang", "si");
+    },
+  );
+
+  it("still changes language when browser preference storage is unavailable", async () => {
+    for (const method of ["getItem", "setItem"] as const) {
+      vi.spyOn(Storage.prototype, method).mockImplementation(() => {
+        throw new DOMException("Storage unavailable", "SecurityError");
+      });
+    }
+    const api = await renderWorkspace();
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "si" },
+      },
+    );
+    expect(
+      screen.getByRole("heading", { name: "පද්ධතිය කියවූ පෙළ පරීක්ෂා කරන්න" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "ඊළඟ පිටුව" }));
+    await screen.findByRole("img", { name: "මුල් පිටුව 2" });
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "en" },
+      },
+    );
+    expect(screen.getByRole("img", { name: "Original page 2" })).toBeVisible();
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it("hydrates saved Sinhala preferences without mismatching server markup", async () => {
+    localStorage.setItem(reviewLanguageKey, "si");
+    fixtureApi();
+    const element = (
+      <SourcePageReviewWorkspace documentId={documentId} role="admin" />
+    );
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(element);
+    expect(
+      container.querySelector('[data-testid="source-page-workspace"]'),
+    ).toHaveAttribute("lang", "en");
+    document.body.append(container);
+    const onRecoverableError = vi.fn();
+    render(element, { container, hydrate: true, onRecoverableError });
+    await screen.findByRole("img", { name: "මුල් පිටුව 1" });
+    expect(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("si");
+    expect(onRecoverableError).not.toHaveBeenCalled();
+  });
+});
+
 describe("faithful source comparison", () => {
-  it("uses the approved Sinhala wording and preserves conjuncts, Tamil, Latin and maths exactly", async () => {
+  it("uses the selected Sinhala wording and preserves conjuncts, Tamil, Latin and maths exactly", async () => {
+    localStorage.setItem(reviewLanguageKey, "si");
     fixtureApi((pageNumber) =>
       workspace(
         pageNumber,
@@ -250,7 +498,12 @@ describe("faithful source comparison", () => {
     ["en", "en"],
     ["und", "en"],
     ["unknown", "en"],
+    ["si", "si"],
+    ["si-LK", "si"],
+    ["Sinhala", "si"],
     ["ta", "ta"],
+    ["ta_LK", "ta"],
+    ["tam", "ta"],
   ])(
     "uses English UI for %s while retaining the appropriate text language",
     async (language, textLanguage) => {
@@ -267,6 +520,37 @@ describe("faithful source comparison", () => {
       ).not.toBeInTheDocument();
     },
   );
+
+  it("gives confirmation and save actions non-conflicting primary and disabled colors", async () => {
+    const api = await renderWorkspace();
+    await loadPreview();
+    const confirm = screen.getByRole("button", { name: "Text is correct" });
+    expect(confirm).toHaveClass("bg-slate-950", "text-white");
+    expect(confirm).not.toHaveClass("bg-white");
+    expect(confirm).not.toHaveClass("text-slate-950");
+    fireEvent.click(confirm);
+    const submit = screen.getByRole("button", {
+      name: "Confirm compared text",
+    });
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveClass(
+      "disabled:bg-slate-200",
+      "disabled:text-slate-600",
+    );
+    expect(submit).not.toHaveClass("bg-white");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Correct the text" }));
+    const save = screen.getByRole("button", { name: "Save correction" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveClass(
+      "bg-slate-950",
+      "text-white",
+      "disabled:bg-slate-200",
+      "disabled:text-slate-600",
+    );
+    expect(save).not.toHaveClass("bg-white");
+    expect(api.mutations()).toEqual([]);
+  });
 
   it("does not call a raw corrupt native reading reviewed or allow readability to grant trust", async () => {
     const corrupt = "wkd ñ\uFFFD\uE001";

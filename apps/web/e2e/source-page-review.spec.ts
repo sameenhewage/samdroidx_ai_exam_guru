@@ -1,5 +1,11 @@
 import type { components } from "@exam-guru/api-client";
-import { expect, test, type APIResponse, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 import { requireIsolatedE2ERuntime } from "../playwright-runtime";
@@ -95,6 +101,41 @@ async function benchmark(page: Page, id: string) {
   return json<Benchmark>(
     await page.request.get(`/api/v1/admin/source-benchmarks/${id}`),
   );
+}
+
+async function expectReadableButton(button: Locator) {
+  await expect(button).toBeVisible();
+  const contrast = await button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d")!;
+    const luminance = (color: string) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      const channels = context.getImageData(0, 0, 1, 1).data;
+      if (channels[3] !== 255)
+        throw new Error("Primary button colors must be opaque");
+      const [red, green, blue] = Array.from(channels)
+        .slice(0, 3)
+        .map((value) => {
+          const channel = value / 255;
+          return channel <= 0.04045
+            ? channel / 12.92
+            : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    };
+    const foreground = luminance(style.color);
+    const background = luminance(style.backgroundColor);
+    return (
+      (Math.max(foreground, background) + 0.05) /
+      (Math.min(foreground, background) + 0.05)
+    );
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
+  await expect(button).toHaveCSS("opacity", "1");
 }
 
 test("real APIs: private page comparison, versioned drafts, explicit decisions and honest 40-page reference counts", async ({
@@ -226,6 +267,15 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
     .getByRole("link", { name: `Compare page 1 of ${filename}`, exact: true })
     .click();
   await imageReady(page, 1);
+  await expectReadableButton(
+    page.getByRole("button", { name: "Text is correct", exact: true }),
+  );
+  await expect(
+    page.getByRole("button", { name: "Next page", exact: true }),
+  ).toHaveCSS("cursor", "pointer");
+  await expect(
+    page.getByRole("button", { name: "First page", exact: true }),
+  ).toHaveCSS("cursor", "not-allowed");
   await expect(
     page.getByRole("textbox", { name: "Correction", exact: true }),
   ).toHaveCount(0);
@@ -302,6 +352,13 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   await page
     .getByRole("button", { name: "Correct the text", exact: true })
     .click();
+  const saveButton = page.getByRole("button", {
+    name: "Save correction",
+    exact: true,
+  });
+  await expect(saveButton).toBeDisabled();
+  await expectReadableButton(saveButton);
+  await expect(saveButton).toHaveCSS("cursor", "not-allowed");
   await page
     .getByRole("textbox", { name: "Correction", exact: true })
     .fill("A draft to discard");
@@ -322,6 +379,37 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   await page
     .getByRole("textbox", { name: "Reason for correction" })
     .fill("Synthetic Unicode preservation test; not confirmed");
+  await expect(saveButton).toBeEnabled();
+  await expectReadableButton(saveButton);
+  await expect(saveButton).toHaveCSS("cursor", "pointer");
+  await saveButton.hover();
+  await expectReadableButton(saveButton);
+  await page.mouse.move(0, 0);
+  await saveButton.focus();
+  await expect(saveButton).toBeFocused();
+  await expectReadableButton(saveButton);
+  const languageControl = page.getByRole("combobox", {
+    name: "Review language / භාෂාව",
+  });
+  await expect(languageControl).toHaveValue("en");
+  await languageControl.selectOption("si");
+  await expect(page.getByTestId("source-page-workspace")).toHaveAttribute(
+    "lang",
+    "si",
+  );
+  await expect(
+    page.getByRole("textbox", { name: "නිවැරදි කළ පෙළ", exact: true }),
+  ).toHaveValue(draft);
+  await expect(
+    page.getByRole("textbox", { name: "නිවැරදි කිරීමට හේතුව" }),
+  ).toHaveValue("Synthetic Unicode preservation test; not confirmed");
+  await expectReadableButton(
+    page.getByRole("button", { name: "නිවැරදි කළ පෙළ සුරකින්න", exact: true }),
+  );
+  await languageControl.selectOption("en");
+  await expect(
+    page.getByRole("textbox", { name: "Correction", exact: true }),
+  ).toHaveValue(draft);
   const current = await workspace(page, source.id);
   await json(
     await page.request.post(
@@ -390,6 +478,31 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   expect(fontUrls.every((url) => new URL(url).origin === runtime.baseURL)).toBe(
     true,
   );
+
+  const reviewUrl = page.url();
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  await languageControl.selectOption("si");
+  await page.getByRole("button", { name: "ඊළඟ පිටුව", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "මුල් පිටුව 2", exact: true }),
+  ).toBeVisible();
+  await expect(languageControl).toHaveValue("si");
+  await page.reload();
+  await expect(
+    page.getByRole("img", { name: "මුල් පිටුව 1", exact: true }),
+  ).toBeVisible();
+  await expect(languageControl).toHaveValue("si");
+  await page.getByRole("link", { name: "Materials", exact: true }).click();
+  await page.goto(reviewUrl);
+  await expect(
+    page.getByRole("img", { name: "මුල් පිටුව 1", exact: true }),
+  ).toBeVisible();
+  await expect(languageControl).toHaveValue("si");
+  await languageControl.selectOption("en");
+  await imageReady(page, 1);
+  expect(await page.getByTestId("system-page-text").textContent()).toBe(draft);
+  expect(browserErrors).toEqual([]);
 
   await jump(page, 2);
   await page
@@ -520,4 +633,28 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   await expect(
     page.getByRole("button", { name: "Next page", exact: true }),
   ).toBeEnabled();
+});
+
+test("enabled native and React Aria buttons consistently show a pointer across Studio", async ({
+  page,
+}) => {
+  await page.goto("/admin/login");
+  await expect(
+    page.getByRole("button", { name: "Continue as admin", exact: true }),
+  ).toHaveCSS("cursor", "pointer");
+  await login(page, "admin");
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toHaveCSS("cursor", "pointer");
+  await page.getByRole("link", { name: "Materials", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Upload material", exact: true }),
+  ).toHaveCSS("cursor", "pointer");
+  await expect(page.getByRole("button", { name: /^Grade 1 —/ })).toHaveCSS(
+    "cursor",
+    "pointer",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Material type", exact: true }),
+  ).toHaveCSS("cursor", "pointer");
 });

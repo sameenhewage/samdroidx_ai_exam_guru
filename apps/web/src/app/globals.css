@@ -1,5 +1,29 @@
 @import "tailwindcss";
 
+@layer base {
+  :where(
+    button,
+    [role="button"],
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    input[type="checkbox"],
+    input[type="radio"],
+    select,
+    summary
+  ):not(:disabled, [aria-disabled="true"], [data-disabled]) {
+    cursor: pointer;
+  }
+
+  :where(button, [role="button"], input, select, summary):is(
+    :disabled,
+    [aria-disabled="true"],
+    [data-disabled]
+  ) {
+    cursor: not-allowed;
+  }
+}
+
 :root {
   color-scheme: light;
   --background: #f3f4ef;
@@ -9,7 +33,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Inter", "Noto Sans Sinhala", "Noto Sans Tamil", system-ui, sans-serif;
+  --font-sans:
+    "Inter", "Noto Sans Sinhala", "Noto Sans Tamil", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "Noto Sans Mono", monospace;
 }
 
