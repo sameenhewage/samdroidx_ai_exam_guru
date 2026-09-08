@@ -35,6 +35,13 @@ from exam_guru_api.documents.page_images import (
     observe_page_image,
     render_page_image,
 )
+from exam_guru_api.documents.source_math_fidelity import (
+    MAX_ENCODED_MATH_REFERENCE_BYTES,
+    MAX_ENCODED_MATH_WORD_BYTES,
+    assess_math_fidelity,
+    encode_math_evidence,
+    extract_math_layout,
+)
 from exam_guru_api.documents.tesseract_ocr import (
     CommandRunner,
     RenderedPageImage,
@@ -120,6 +127,7 @@ class NativePageText:
     raw_text: str = field(repr=False)
     font_names: tuple[str, ...] = ()
     image_coverage: float = 0.0
+    font_metadata: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +142,7 @@ class PageReadingResult:
     page_number: int
     candidates: tuple[PageReadingCandidate, ...]
     failure_code: str | None = None
+    preferred_index: int | None = None
 
 
 class PageReadingSession(Protocol):
@@ -169,7 +178,237 @@ def extract_native_page(document: pymupdf.Document, page_number: int) -> NativeP
         rectangle = pymupdf.Rect(image["bbox"]) & page.rect
         image_area += max(0.0, float(rectangle.width) * float(rectangle.height))
     coverage = min(1.0, image_area / area) if area > 0 and math.isfinite(image_area) else 0.0
-    return NativePageText(raw_text=text, font_names=font_names, image_coverage=coverage)
+    metadata: list[dict[str, object]] = []
+    for font in page.get_fonts()[:128]:
+        item = {
+            "xref": int(font[0]),
+            "name": str(font[3])[:256],
+            "type": str(font[2])[:64],
+            "encoding": str(font[5])[:128],
+            "embedded": font[1] != "n/a",
+            "has_to_unicode": document.xref_get_key(int(font[0]), "ToUnicode")[0] != "null"
+            if font[0]
+            else False,
+            "mapping_status": "not_applied",
+        }
+        metadata.append(item)
+    if len(json.dumps(metadata, ensure_ascii=True).encode()) > 12 * 1024:
+        metadata = [{"failure_code": "font_metadata_limit", **_metadata_summary(metadata)}]
+    return NativePageText(
+        raw_text=text, font_names=font_names, image_coverage=coverage, font_metadata=tuple(metadata)
+    )
+
+
+def _math_reference(page: pymupdf.Page) -> dict[str, object]:
+    reference = extract_math_layout(page)
+    try:
+        encoded = encode_math_evidence(reference)
+        if len(json.dumps(encoded, ensure_ascii=True).encode()) <= MAX_ENCODED_MATH_REFERENCE_BYTES:
+            return cast(dict[str, object], encoded)
+    except ValueError:
+        pass
+    digest = hashlib.sha256(json.dumps(reference, sort_keys=True).encode()).hexdigest()
+    omitted = {
+        key: _metadata_summary(reference[key])
+        for key in ("anchors", "tables", "images", "unsupported_layouts")
+    }
+    reference.update(
+        anchors=[],
+        tables=[],
+        images=[],
+        unsupported_layouts=[],
+        complete=False,
+        risk_codes=["math_metadata_limit"],
+        full_evidence_sha256=digest,
+        omitted_metadata=omitted,
+    )
+    return reference
+
+
+def _candidate_evidence(
+    candidate: PageReadingCandidate,
+    languages: tuple[str, ...],
+    reference: dict[str, object],
+    words: list[tuple[str, tuple[float, float, float, float]]] | None,
+) -> dict[str, object]:
+    provenance = candidate.provenance
+    provenance.setdefault("raw_character_count", len(candidate.raw_text))
+    provenance.setdefault(
+        "raw_sha256",
+        hashlib.sha256(candidate.raw_text.encode("utf-8", errors="surrogatepass")).hexdigest(),
+    )
+    assessment = assess_page(
+        candidate.raw_text,
+        expected_languages=languages,
+        font_names=tuple(cast(list[str], provenance.get("fonts", []))),
+        image_coverage=cast(float, provenance.get("image_coverage", 0.0)),
+        method=candidate.method,
+    )
+    maths = assess_math_fidelity(reference, candidate.raw_text, words)
+    word_evidence = [[text, list(box)] for text, box in (words or [])]
+    try:
+        encoded_words = encode_math_evidence(word_evidence)
+        if len(json.dumps(encoded_words, ensure_ascii=True).encode()) > MAX_ENCODED_MATH_WORD_BYTES:
+            raise ValueError("math word evidence exceeds its storage bound")
+    except ValueError:
+        provenance["omitted_metadata"] = {"maths_words": _metadata_summary(word_evidence)}
+        provenance.setdefault("failure_code", "math_word_evidence_limit")
+        encoded_words = []
+        maths = {
+            **maths,
+            "can_confirm": False,
+            "risk_codes": sorted(
+                set(cast(list[str], maths["risk_codes"])) | {"math_word_evidence_limit"}
+            ),
+        }
+    for font in cast(list[dict[str, object]], provenance.get("font_metadata", [])):
+        if font.get("failure_code") == "font_metadata_limit":
+            provenance.setdefault("failure_code", "font_metadata_limit")
+    provenance["maths_reference"] = reference
+    provenance["maths_words"] = encoded_words
+    provenance["maths_fidelity"] = {
+        "can_confirm": maths["can_confirm"],
+        "risk_codes": maths["risk_codes"],
+        **{
+            f"{key}_count": len(cast(list[object], maths.get(key, [])))
+            for key in ("preserved", "lost", "changed", "added")
+        },
+    }
+    readable = assessment.can_confirm and "failure_code" not in provenance
+    local = assessment.script_counts["sinhala"] + assessment.script_counts["tamil"]
+    info: dict[str, object] = {
+        "text_readable": readable,
+        "can_confirm": readable and maths["can_confirm"] is True,
+        "script_share": local / max(1, local + assessment.script_counts["latin"]),
+        "risk_count": len(assessment.risk_codes) + len(cast(list[str], maths["risk_codes"])),
+        "algorithm_version": assessment.algorithm_version,
+    }
+    provenance["languages"] = list(assessment.languages)
+    provenance["risk_codes"] = list(assessment.risk_codes)
+    provenance["algorithm_version"] = assessment.algorithm_version
+    provenance["candidate_selection"] = info
+    return info
+
+
+def _metadata_summary(value: object) -> dict[str, object]:
+    # Nonfinite evidence is rejected by the codec; hash its representation only.
+    # No invalid float is retained in the persisted omission summary.
+    encoded = json.dumps(value, ensure_ascii=True, sort_keys=True).encode()
+    count = len(value) if isinstance(value, (dict, list, tuple, str)) else 1
+    if isinstance(value, dict) and isinstance(value.get("total_count"), int):
+        count = value["total_count"]
+    return {
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "byte_count": len(encoded),
+        "item_count": count,
+    }
+
+
+def _bound_candidate_metadata(candidate: PageReadingCandidate) -> None:
+    provenance = candidate.provenance
+    # Leave room for the service/job's source checksum, job ID and final selection fields.
+    limit = 60 * 1024
+    if len(json.dumps(provenance, ensure_ascii=True, allow_nan=False).encode()) <= limit:
+        return
+    original_summary = _metadata_summary(provenance)
+    omitted = dict(cast(dict[str, object], provenance.get("omitted_metadata", {})))
+    for key in ("maths_reference", "maths_words", "font_metadata", "fonts", "blocks"):
+        if key in provenance:
+            omitted.setdefault(key, _metadata_summary(provenance.pop(key)))
+    provenance["omitted_metadata"] = omitted
+    if "failure_code" in provenance:
+        provenance["prior_failure_code"] = provenance["failure_code"]
+    provenance["failure_code"] = "candidate_metadata_limit"
+    provenance["maths_fidelity"] = {
+        "can_confirm": False,
+        "risk_codes": ["candidate_metadata_limit"],
+    }
+    cast(dict[str, object], provenance["candidate_selection"]).update(
+        can_confirm=False, text_readable=False
+    )
+    # Config/probe strings are caller/provider controlled. In the exceptional case that
+    # they alone exceed storage, retain their digest identity rather than losing the text.
+    for key in sorted(provenance, key=lambda key: len(json.dumps(provenance[key])), reverse=True):
+        if len(json.dumps(provenance, ensure_ascii=True, allow_nan=False).encode()) <= limit:
+            break
+        if key in {"omitted_metadata", "candidate_selection", "maths_fidelity"}:
+            continue
+        value = provenance[key]
+        if len(json.dumps(value, ensure_ascii=True).encode()) > 1024:
+            omitted[key] = _metadata_summary(value)
+            provenance[key] = {"omitted": True, **cast(dict[str, object], omitted[key])}
+    if len(json.dumps(provenance, ensure_ascii=True, allow_nan=False).encode()) > limit:
+        # Many individually small extensions, or an existing omission/selection payload,
+        # can exhaust the loop without fitting. Keep identity and a digest of the full
+        # original metadata instead of passing an oversized failed candidate to storage.
+        retained: dict[str, object] = {
+            key: provenance[key]
+            for key in (
+                "engine",
+                "engine_version",
+                "page_number",
+                "source_checksum_sha256",
+                "source_languages",
+                "languages",
+                "config",
+                "ocr_languages",
+                "traineddata_sha256",
+                "model_family",
+                "page_image",
+                "page_image_use",
+                "raw_sha256",
+                "raw_character_count",
+                "prior_failure_code",
+            )
+            if key in provenance
+        }
+        selection = cast(dict[str, object], provenance["candidate_selection"])
+        retained["candidate_selection"] = {
+            "can_confirm": False,
+            "text_readable": False,
+            "script_share": selection["script_share"],
+            "risk_count": selection["risk_count"],
+            "algorithm_version": selection["algorithm_version"],
+        }
+        retained.update(
+            failure_code="candidate_metadata_limit",
+            automatic_verification=False,
+            mappings_applied=[],
+            maths_fidelity={"can_confirm": False, "risk_codes": ["candidate_metadata_limit"]},
+            omitted_metadata={"full_provenance": original_summary},
+        )
+        provenance.clear()
+        provenance.update(retained)
+
+
+def _selected_result(page_number: int, candidates: list[PageReadingCandidate]) -> PageReadingResult:
+    for candidate in candidates:
+        _bound_candidate_metadata(candidate)
+
+    def rank(index: int) -> tuple[bool, bool, bool, float, int, int]:
+        selection = cast(dict[str, object], candidates[index].provenance["candidate_selection"])
+        return (
+            selection["can_confirm"] is True,
+            selection["text_readable"] is True,
+            candidates[index].method == "native" and selection["can_confirm"] is True,
+            cast(float, selection["script_share"]),
+            -cast(int, selection["risk_count"]),
+            index,
+        )
+
+    selected = max(range(len(candidates)), key=rank)
+    for index, candidate in enumerate(candidates):
+        cast(dict[str, object], candidate.provenance["candidate_selection"]).update(
+            selected=index == selected,
+            candidate_count=len(candidates),
+            strategy="source-fidelity-ranked-v2",
+        )
+    chosen = candidates[selected]
+    safe = cast(dict[str, object], chosen.provenance["candidate_selection"])["can_confirm"] is True
+    failure = (
+        None if safe else str(chosen.provenance.get("failure_code") or "source_fidelity_failed")
+    )
+    return PageReadingResult(page_number, tuple(candidates), failure, selected)
 
 
 def _failure_code(error: Exception) -> str:
@@ -269,6 +508,7 @@ class _OpenPageReader:
             "engine": "pymupdf",
             "engine_version": pymupdf.VersionBind,
             "page_number": page_number,
+            "source_languages": list(self._configuration.expected_languages or ("und",)),
             "config": {"text_mode": "text", "sort": True, "input_mode": "file"},
             "mappings_applied": [],
             "automatic_verification": False,
@@ -296,9 +536,12 @@ class _OpenPageReader:
                     ),
                 ),
                 failure_code="native_text_limit",
+                preferred_index=0,
             )
         assessment = assess_page(
-            native.raw_text, font_names=native.font_names, image_coverage=native.image_coverage
+            native.raw_text,
+            font_names=native.font_names,
+            image_coverage=native.image_coverage,
         )
         if assessment.languages == ("und",) and self._configuration.expected_languages:
             assessment = assess_page(
@@ -307,9 +550,16 @@ class _OpenPageReader:
                 image_coverage=native.image_coverage,
                 expected_languages=self._configuration.expected_languages,
             )
+        reference = _math_reference(self._document[page_number - 1])
+        native_words = [
+            (str(word[4]), tuple(float(value) for value in word[:4]))
+            for word in self._document[page_number - 1].get_text("words", sort=True)
+        ]
         native_provenance.update(
             fonts=list(native.font_names),
+            font_metadata=list(native.font_metadata),
             image_coverage=native.image_coverage,
+            source_languages=list(assessment.languages),
             languages=list(assessment.languages),
             risk_codes=list(assessment.risk_codes),
             algorithm_version=assessment.algorithm_version,
@@ -323,19 +573,62 @@ class _OpenPageReader:
             ),
         )
         native_candidate = PageReadingCandidate(native.raw_text, "native", native_provenance)
-        if assessment.recommended_route != "ocr_review" and not self._configuration.force_ocr:
+        native_info = _candidate_evidence(
+            native_candidate,
+            assessment.languages,
+            reference,
+            cast(list[tuple[str, tuple[float, float, float, float]]], native_words),
+        )
+        if (
+            assessment.recommended_route != "ocr_review"
+            and native_info["can_confirm"]
+            and not self._configuration.force_ocr
+        ):
             image_failure = self._native_comparison_image(page_number, native_provenance)
             if image_failure is not None:
                 native_provenance["failure_code"] = image_failure
-            return PageReadingResult(page_number, (native_candidate,), failure_code=image_failure)
+                native_info.update(can_confirm=False, text_readable=False)
+            return _selected_result(page_number, [native_candidate])
         requested = select_ocr_languages(assessment, available_languages=("sin", "tam", "eng"))
+        plans = [requested]
+        if "si" in assessment.languages and "ta" not in assessment.languages:
+            plans.append(("sin",))
+        candidates = [native_candidate]
+        candidates.extend(
+            self._ocr_candidate(
+                page_number, languages, assessment.languages, native_provenance, reference
+            )
+            for languages in plans
+        )
+        # A probe failure can occur before OCR renders anything. Only then render a
+        # separate comparison; never retry a declared missing/failed image as quality repair.
+        if "page_image" not in native_provenance and native_info["can_confirm"]:
+            self._native_comparison_image(page_number, native_provenance)
+        comparison = native_provenance.get("page_image")
+        if isinstance(comparison, dict) and comparison.get("failure_code"):
+            native_provenance["failure_code"] = comparison["failure_code"]
+            native_info.update(can_confirm=False, text_readable=False)
+        return _selected_result(page_number, candidates)
+
+    def _ocr_candidate(
+        self,
+        page_number: int,
+        requested: tuple[str, ...],
+        source_languages: tuple[str, ...],
+        native_provenance: dict[str, object],
+        reference: dict[str, object],
+    ) -> PageReadingCandidate:
         config_snapshot = cast(dict[str, object], self._configuration.to_dict()["ocr"])
         config_snapshot["language"] = "+".join(requested)
         provenance: dict[str, object] = {
             "engine": "tesseract-cli",
             "engine_version": None,
             "page_number": page_number,
-            "languages": list(assessment.languages),
+            "source_languages": list(source_languages),
+            "languages": list(source_languages),
+            "fonts": native_provenance.get("fonts", []),
+            "font_metadata": native_provenance.get("font_metadata", []),
+            "mappings_applied": [],
             "ocr_languages": list(requested),
             "available_languages": [],
             "traineddata_sha256": {},
@@ -348,14 +641,23 @@ class _OpenPageReader:
         failure: str | None = None
         probe: TesseractProbe | None = None
         image_failure = None
+        raster_size: tuple[int, int] | None = None
+        words: list[tuple[str, tuple[float, float, float, float]]] = []
 
         def rendered(image: RenderedPageImage) -> None:
-            nonlocal image_failure
+            nonlocal image_failure, raster_size
+            raster_size = image.width, image.height
             metadata, image_failure = observe_page_image(image, self._on_render)
             provenance["page_image"] = metadata
             provenance["page_image_use"] = "ocr_input"
-            native_provenance["page_image"] = metadata
-            native_provenance["page_image_use"] = "source_comparison"
+            comparison = native_provenance.get("page_image")
+            if comparison is None or (
+                isinstance(comparison, dict)
+                and comparison.get("failure_code")
+                and image_failure is None
+            ):
+                native_provenance["page_image"] = dict(metadata)
+                native_provenance["page_image_use"] = "source_comparison"
 
         try:
             selected_config = replace(self._configuration.ocr, language="+".join(requested))
@@ -372,7 +674,6 @@ class _OpenPageReader:
             )
             if missing:
                 raise MissingOCRLanguagesError(missing)
-            select_ocr_languages(assessment, available_languages=probe.available_languages)
             probe = adapter.probe(hash_traineddata=True)
             provenance.update(
                 traineddata_sha256=dict(probe.traineddata_sha256), probe_status="verified"
@@ -381,6 +682,25 @@ class _OpenPageReader:
                 self._source, page_numbers=(page_number,), probe=probe, on_render=rendered
             )
             text = result.pages[0].text
+            if raster_size is not None:
+                rectangle = self._document[page_number - 1].rect
+                scale_x, scale_y = (
+                    rectangle.width / raster_size[0],
+                    rectangle.height / raster_size[1],
+                )
+                words = [
+                    (
+                        word.text,
+                        (
+                            word.bbox[0] * scale_x,
+                            word.bbox[1] * scale_y,
+                            word.bbox[2] * scale_x,
+                            word.bbox[3] * scale_y,
+                        ),
+                    )
+                    for word in result.pages[0].words
+                    if word.bbox is not None
+                ]
             if len(text) > MAX_TEXT_CHARACTERS:
                 provenance["raw_character_count"] = len(text)
                 provenance["raw_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -415,11 +735,9 @@ class _OpenPageReader:
         failure = failure or image_failure
         if failure is not None:
             provenance["failure_code"] = failure
-        return PageReadingResult(
-            page_number,
-            (native_candidate, PageReadingCandidate(text, "ocr", provenance)),
-            failure_code=failure,
-        )
+        candidate = PageReadingCandidate(text, "ocr", provenance)
+        _candidate_evidence(candidate, source_languages, reference, words or None)
+        return candidate
 
 
 class FilePageReader:

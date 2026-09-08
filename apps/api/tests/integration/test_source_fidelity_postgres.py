@@ -79,6 +79,273 @@ async def fidelity_session(url: str) -> AsyncIterator[AsyncSession]:
         await engine.dispose()
 
 
+async def add_sql_candidate(
+    session: AsyncSession,
+    document_id: UUID,
+    *,
+    method: str,
+    diagnostics: dict[str, object],
+    normalized_text: str | None = "Read the original",
+    can_confirm: bool = True,
+    provenance: dict[str, object] | None = None,
+) -> PageTextCandidateModel:
+    raw = (normalized_text if normalized_text is not None else "Unsafe original").encode()
+    candidate = PageTextCandidateModel(
+        id=uuid4(),
+        document_id=document_id,
+        page_number=1,
+        method=method,
+        raw_text_utf8=raw,
+        normalized_text=normalized_text,
+        text_sha256=hashlib.sha256(raw).hexdigest(),
+        can_confirm=can_confirm,
+        provenance=provenance if provenance is not None else {"engine": "sql-fixture"},
+        diagnostics=diagnostics,
+        created_by=ACTOR,
+    )
+    session.add(candidate)
+    await session.commit()
+    return candidate
+
+
+async def confirm_sql_candidate(
+    session: AsyncSession,
+    candidate: PageTextCandidateModel,
+    *,
+    action: str = "confirmed",
+    payload: dict[str, object] | None = None,
+) -> PageReviewEventModel:
+    state = await session.get(PageReviewStateModel, (candidate.document_id, candidate.page_number))
+    if state is None:
+        state = PageReviewStateModel(
+            document_id=candidate.document_id,
+            page_number=candidate.page_number,
+            version=0,
+            state="pending",
+        )
+        session.add(state)
+        await session.flush()
+    event = PageReviewEventModel(
+        id=uuid4(),
+        document_id=candidate.document_id,
+        page_number=candidate.page_number,
+        version=state.version + 1,
+        candidate_id=candidate.id,
+        action=action,
+        state="verified",
+        actor_id=ACTOR,
+        reason="Explicit original comparison in an isolated SQL fixture",
+        payload=payload
+        if payload is not None
+        else {"compared_with_original": True, "text_sha256": candidate.text_sha256},
+    )
+    session.add(event)
+    await session.flush()
+    state.version = event.version
+    state.state = event.state
+    state.current_candidate_id = candidate.id
+    state.event_id = event.id
+    await session.commit()
+    return event
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("method", ["native", "legacy", "ocr", "human"])
+@pytest.mark.parametrize(
+    "diagnostics",
+    [{"algorithm_version": "source-fidelity-v1/14.0.0"}, {}, {"algorithm_version": None}],
+    ids=["v1", "missing_version", "null_version"],
+)
+def test_sql_confirmation_rejects_stale_or_unversioned_candidates(
+    fidelity_database_url: str, method: str, diagnostics: dict[str, object]
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            document_id = await add_source(session)
+            candidate = await add_sql_candidate(
+                session, document_id, method=method, diagnostics=diagnostics
+            )
+            candidate_id = candidate.id
+            with pytest.raises(IntegrityError, match="exact candidate confirmation"):
+                await confirm_sql_candidate(session, candidate)
+            await session.rollback()
+            assert (
+                await session.scalar(
+                    text("SELECT public.source_candidate_is_confirmable(:candidate)"),
+                    {"candidate": candidate_id},
+                )
+                is False
+            )
+            assert (
+                await session.scalar(
+                    text("SELECT public.source_page_fidelity_is_current(:source, 1, :candidate)"),
+                    {"source": document_id, "candidate": candidate_id},
+                )
+                is False
+            )
+            retained = await session.get(PageTextCandidateModel, candidate_id)
+            assert retained is not None
+            assert retained.can_confirm is True
+            assert retained.diagnostics == diagnostics
+            assert retained.raw_text_utf8 == b"Read the original"
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == document_id)
+                )
+                == 0
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("method", ["native", "legacy", "ocr", "human"])
+def test_sql_v2_candidate_requires_confirmation_before_it_is_current(
+    fidelity_database_url: str, method: str
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            document_id = await add_source(session)
+            candidate = await add_sql_candidate(
+                session,
+                document_id,
+                method=method,
+                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+            )
+            assert (
+                await session.scalar(
+                    text("SELECT public.source_candidate_is_confirmable(:candidate)"),
+                    {"candidate": candidate.id},
+                )
+                is True
+            )
+            current = text("SELECT public.source_page_fidelity_is_current(:source, 1, :candidate)")
+            identity = {"source": document_id, "candidate": candidate.id}
+            assert await session.scalar(current, identity) is False
+            await confirm_sql_candidate(session, candidate)
+            assert await session.scalar(current, identity) is True
+            assert await session.scalar(current, {**identity, "candidate": None}) is True
+            assert await session.scalar(current, {**identity, "candidate": uuid4()}) is False
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(PageGroundTruthModel)
+                    .where(PageGroundTruthModel.document_id == document_id)
+                )
+                == 0
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("invalid_evidence", ["action", "hash", "comparison", "reference"])
+def test_sql_v2_confirmation_retains_original_evidence_guards(
+    fidelity_database_url: str, invalid_evidence: str
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            document_id = await add_source(session)
+            candidate = await add_sql_candidate(
+                session,
+                document_id,
+                method="human",
+                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+            )
+            payload: dict[str, object] = {
+                "compared_with_original": invalid_evidence != "comparison",
+                "text_sha256": "0" * 64 if invalid_evidence == "hash" else candidate.text_sha256,
+            }
+            action = "confirmed"
+            if invalid_evidence == "action":
+                action = "edited"
+            elif invalid_evidence == "reference":
+                action = "reference_verified"
+                payload["ground_truth_id"] = str(uuid4())
+            with pytest.raises(IntegrityError, match=r"confirmation|adjudicated reference"):
+                await confirm_sql_candidate(session, candidate, action=action, payload=payload)
+            await session.rollback()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("normalized_text", "can_confirm", "provenance"),
+    [
+        ("Read the original", False, {}),
+        (None, False, {}),
+        ("", False, {}),
+        (" \t\n", True, {}),
+        ("\u00a0\u2007\u202f", True, {}),
+        ("Read the original", True, {"failure_code": "render_failed"}),
+        ("Read the original", True, {"failure_code": None}),
+        ("Read the original", True, {"failure_code": ""}),
+    ],
+    ids=[
+        "blocked",
+        "unsafe",
+        "empty",
+        "whitespace",
+        "nonbreaking_whitespace",
+        "failure",
+        "null_failure",
+        "empty_failure",
+    ],
+)
+def test_sql_v2_candidate_gate_fails_closed_for_unusable_evidence(
+    fidelity_database_url: str,
+    normalized_text: str | None,
+    can_confirm: bool,
+    provenance: dict[str, object],
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            document_id = await add_source(session)
+            candidate = await add_sql_candidate(
+                session,
+                document_id,
+                method="human",
+                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                normalized_text=normalized_text,
+                can_confirm=can_confirm,
+                provenance=provenance,
+            )
+            assert (
+                await session.scalar(
+                    text("SELECT public.source_candidate_is_confirmable(:candidate)"),
+                    {"candidate": candidate.id},
+                )
+                is False
+            )
+            with pytest.raises(IntegrityError, match="exact candidate confirmation"):
+                await confirm_sql_candidate(session, candidate)
+            await session.rollback()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+def test_sql_candidate_gate_returns_false_for_missing_identity_in_readonly_transaction(
+    fidelity_database_url: str,
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+            for candidate_id in (None, uuid4()):
+                assert (
+                    await session.scalar(
+                        text("SELECT public.source_candidate_is_confirmable(:candidate)"),
+                        {"candidate": candidate_id},
+                    )
+                    is False
+                )
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.integration
 def test_page_confirmation_is_versioned_and_edits_invalidate_it(fidelity_database_url: str) -> None:
     async def scenario() -> None:
@@ -713,7 +980,7 @@ def test_invalid_utf8_candidate_is_displayed_safely_and_remains_immutable_and_un
                 principal=Principal(ACTOR, frozenset({AdminRole.ADMIN})),
             )
             assert view.candidate_id == candidate_id
-            assert view.state == "needs_review"
+            assert view.state == "failed"
             assert not view.can_confirm
             assert "surrogate" in view.risk_codes
             assert "\\udcff" in view.system_text
@@ -728,6 +995,16 @@ def test_invalid_utf8_candidate_is_displayed_safely_and_remains_immutable_and_un
                 == raw
             )
             assert await session.get(PageReviewStateModel, (document_id, 1)) is None
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == document_id)
+                )
+                == 0
+            )
+            assert not session.new
+            assert not session.dirty
 
     asyncio.run(scenario())
 

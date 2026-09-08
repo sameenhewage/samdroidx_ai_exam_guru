@@ -237,7 +237,7 @@ def test_forward_migration_preserves_every_preexisting_value_and_never_classifie
                 assert document is not None
                 assert document.quarantined_for_teacher_use is False
             assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0038_upload_request_identity"
+                "0039_source_fidelity_v2"
             )
 
     asyncio.run(scenario())
@@ -649,6 +649,30 @@ def test_normal_restore_refreshes_a_source_quarantined_after_it_was_cached(
     asyncio.run(scenario())
 
 
+async def downgrade_snapshot(url: str) -> dict[str, object]:
+    async with database_session(url) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        snapshot = await session.scalar(
+            text("""
+            SELECT jsonb_build_object(
+                'head', (SELECT version_num FROM alembic_version),
+                'sources', (SELECT jsonb_agg(to_jsonb(d) ORDER BY d.id) FROM source_documents d),
+                'audit', (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM admin_audit_events a),
+                'candidates', (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id)
+                    FROM source_page_text_candidates c),
+                'reviews', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id)
+                    FROM source_page_review_events e),
+                'states', (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.document_id, s.page_number)
+                    FROM source_page_review_states s),
+                'ground_truth', (SELECT jsonb_agg(to_jsonb(g) ORDER BY g.id)
+                    FROM source_page_ground_truth g)
+            )
+        """)
+        )
+        assert isinstance(snapshot, dict)
+        return snapshot
+
+
 def test_clean_downgrade_preserves_0036_sources_and_scope_guards() -> None:
     with pytest.MonkeyPatch.context() as environment:
         environment.delenv("EXAM_GURU_DATABASE_URL", raising=False)
@@ -691,14 +715,37 @@ def test_clean_downgrade_preserves_0036_sources_and_scope_guards() -> None:
             command.upgrade(config, "head")
             command.check(config)
 
+            async def quarantine_history() -> None:
+                async with database_session(url) as session:
+                    evidence = await add_source(session)
+                    await change(session, evidence)
+                    await change(session, evidence, restore=True, version=1)
+
+            asyncio.run(quarantine_history())
+            history = asyncio.run(downgrade_snapshot(url))
+            assert history["head"] == "0039_source_fidelity_v2"
+            assert history["candidates"] is None
+            with pytest.raises(
+                IntegrityError, match="cannot discard source fixture quarantine history"
+            ):
+                command.downgrade(config, "0036_resumable_source_uploads")
+            assert asyncio.run(downgrade_snapshot(url)) == history
+            command.check(config)
+
 
 def test_downgrade_refuses_to_discard_quarantine_history(safety_database: SafetyDatabase) -> None:
     async def scenario() -> None:
         async with database_session(safety_database.url) as session:
+            await seed(session, trusted=True)
             evidence = await add_source(session)
             await change(session, evidence)
             await change(session, evidence, restore=True, version=1)
 
     asyncio.run(scenario())
-    with pytest.raises(IntegrityError, match="cannot discard source fixture quarantine history"):
+    history = asyncio.run(downgrade_snapshot(safety_database.url))
+    assert history["head"] == "0039_source_fidelity_v2"
+    assert history["candidates"]
+    with pytest.raises(IntegrityError, match="cannot discard source fidelity v2 protections"):
         command.downgrade(migration_config(safety_database.url), "0036_resumable_source_uploads")
+    assert asyncio.run(downgrade_snapshot(safety_database.url)) == history
+    command.check(migration_config(safety_database.url))

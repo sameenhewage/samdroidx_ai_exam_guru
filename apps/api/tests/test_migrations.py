@@ -8,7 +8,8 @@ from uuid import UUID
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import text
+from alembic.script import ScriptDirectory
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
@@ -16,7 +17,16 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.blueprints import generate_blueprint
 from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.blueprints.serialization import serialize_blueprint, serialize_specification
-from exam_guru_api.documents.models import ExtractedBlockModel, SourcePageModel
+from exam_guru_api.documents.fidelity_models import (
+    PageGroundTruthModel,
+    PageReviewEventModel,
+    PageReviewStateModel,
+    PageTextCandidateModel,
+    SourceBenchmarkModel,
+    SourceBenchmarkPageModel,
+)
+from exam_guru_api.documents.fidelity_service import PageFidelityService
+from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
 from exam_guru_api.generation.repository import SqlAlchemyGenerationRepository
 from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
@@ -24,8 +34,229 @@ from exam_guru_api.infrastructure.migrations import (
 )
 from exam_guru_api.knowledge.embedding_job_repository import SqlAlchemyEmbeddingJobRepository
 from exam_guru_api.knowledge.models import EmbeddingJobModel
+from tests.integration.test_source_fidelity_postgres import (
+    ACTOR,
+    add_source,
+    add_sql_candidate,
+    confirm_sql_candidate,
+    fidelity_session,
+)
 from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_specification
 from tests.test_generation_repository import ACTOR_ID, run_write
+
+
+def test_0039_source_fidelity_v2_is_the_single_bounded_revision_head() -> None:
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["0039_source_fidelity_v2"]
+    revision = scripts.get_revision("0039_source_fidelity_v2")
+    assert revision is not None
+    assert revision.down_revision == "0038_upload_request_identity"
+    assert len(revision.revision) <= 32
+
+
+@pytest.mark.integration
+def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence() -> None:
+    with PostgresContainer(
+        image="pgvector/pgvector:0.8.6-pg18-trixie",
+        username="exam_guru",
+        password="isolated-fidelity-migration",
+        dbname="source_fidelity_migration_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        config = _config_for_database(database_url)
+        command.upgrade(config, "0038_upload_request_identity")
+        identities: list[tuple[UUID, UUID]] = []
+        models = (
+            SourceDocumentModel,
+            PageTextCandidateModel,
+            PageReviewEventModel,
+            PageReviewStateModel,
+            SourceBenchmarkModel,
+            SourceBenchmarkPageModel,
+            PageGroundTruthModel,
+        )
+
+        async def snapshot() -> dict[str, list[object]]:
+            async with fidelity_session(database_url) as session:
+                return {
+                    model.__tablename__: list(
+                        (
+                            await session.execute(
+                                select(model.__table__).order_by(*model.__table__.primary_key)
+                            )
+                        ).mappings()
+                    )
+                    for model in models
+                }
+
+        async def seed_history() -> None:
+            diagnostic_cases: tuple[dict[str, object], ...] = (
+                {"algorithm_version": "source-fidelity-v1/14.0.0"},
+                {},
+                {"algorithm_version": None},
+            )
+            async with fidelity_session(database_url) as session:
+                for method in ("native", "legacy", "ocr", "human"):
+                    for diagnostics in diagnostic_cases:
+                        document_id = await add_source(session)
+                        benchmark_id = await PageFidelityService(session).create_benchmark(
+                            name=f"Historical {document_id}",
+                            pages=((document_id, 1, ("sql-contract-fixture",)),),
+                            actor_id=ACTOR,
+                            selection={"purpose": "immutable migration regression"},
+                        )
+                        candidate = await add_sql_candidate(
+                            session, document_id, method=method, diagnostics=diagnostics
+                        )
+                        event = await confirm_sql_candidate(session, candidate)
+                        source = await session.get(SourceDocumentModel, document_id)
+                        assert source is not None
+                        session.add(
+                            PageGroundTruthModel(
+                                id=UUID(int=39_000 + len(identities)),
+                                benchmark_id=benchmark_id,
+                                document_id=document_id,
+                                page_number=1,
+                                candidate_id=candidate.id,
+                                review_event_id=event.id,
+                                source_checksum_sha256=source.checksum_sha256,
+                                text_sha256=candidate.text_sha256,
+                                reviewer_id=ACTOR,
+                            )
+                        )
+                        await session.commit()
+                        assert (
+                            await session.scalar(
+                                text("SELECT public.source_page_fidelity_is_current(:source, 1)"),
+                                {"source": document_id},
+                            )
+                            is True
+                        )
+                        identities.append((document_id, candidate.id))
+
+        asyncio.run(seed_history())
+        before = asyncio.run(snapshot())
+        command.upgrade(config, "head")
+        assert asyncio.run(snapshot()) == before
+
+        async def verify_stale_history_is_ineligible_and_immutable() -> None:
+            async with fidelity_session(database_url) as session:
+                for document_id, candidate_id in identities:
+                    assert (
+                        await session.scalar(
+                            text("SELECT public.source_page_fidelity_is_current(:source, 1)"),
+                            {"source": document_id},
+                        )
+                        is False
+                    )
+                    assert (
+                        await session.scalar(
+                            text("SELECT public.source_candidate_is_confirmable(:candidate)"),
+                            {"candidate": candidate_id},
+                        )
+                        is False
+                    )
+                    candidate = await session.get(PageTextCandidateModel, candidate_id)
+                    assert candidate is not None
+                    with pytest.raises(DBAPIError, match="exact candidate confirmation"):
+                        await confirm_sql_candidate(session, candidate)
+                    await session.rollback()
+                for model in (PageTextCandidateModel, PageReviewEventModel, PageGroundTruthModel):
+                    for statement in (update(model).values(id=model.id), delete(model)):
+                        with pytest.raises(DBAPIError, match="append only"):
+                            await session.execute(statement)
+                        await session.rollback()
+                for sql_statement in (
+                    "TRUNCATE public.source_page_text_candidates",
+                    "TRUNCATE public.source_page_review_events",
+                    "TRUNCATE public.source_page_ground_truth",
+                ):
+                    with pytest.raises(
+                        DBAPIError, match=r"append only|cannot truncate a table referenced"
+                    ):
+                        await session.execute(text(sql_statement))
+                    await session.rollback()
+
+        asyncio.run(verify_stale_history_is_ineligible_and_immutable())
+        assert asyncio.run(snapshot()) == before
+        with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):
+            command.downgrade(config, "0038_upload_request_identity")
+        assert asyncio.run(snapshot()) == before
+        asyncio.run(verify_stale_history_is_ineligible_and_immutable())
+
+
+@pytest.mark.integration
+def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrade() -> None:
+    with PostgresContainer(
+        image="pgvector/pgvector:0.8.6-pg18-trixie",
+        username="exam_guru",
+        password="isolated-fidelity-downgrade",
+        dbname="source_fidelity_downgrade_test",
+        driver="asyncpg",
+    ) as postgres:
+        database_url = postgres.get_connection_url()
+        config = _config_for_database(database_url)
+        command.upgrade(config, "head")
+        command.downgrade(config, "0038_upload_request_identity")
+
+        async def check_empty_downgrade() -> None:
+            async with fidelity_session(database_url) as session:
+                assert (
+                    await session.scalar(
+                        text(
+                            "SELECT to_regprocedure('public.source_candidate_is_confirmable(uuid)')"
+                        )
+                    )
+                    is None
+                )
+                assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
+                    "0038_upload_request_identity"
+                )
+                for name in (
+                    "public.source_page_fidelity_is_current(uuid,integer,uuid)",
+                    "public.validate_page_review_evidence()",
+                ):
+                    definition = await session.scalar(
+                        text("SELECT pg_get_functiondef(to_regprocedure(:name))"), {"name": name}
+                    )
+                    assert definition is not None
+                    assert "source_candidate_is_confirmable" not in definition
+
+        asyncio.run(check_empty_downgrade())
+        command.upgrade(config, "head")
+
+        async def seed_v2_evidence() -> None:
+            async with fidelity_session(database_url) as session:
+                document_id = await add_source(session)
+                await add_sql_candidate(
+                    session,
+                    document_id,
+                    method="human",
+                    diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                )
+
+        asyncio.run(seed_v2_evidence())
+        with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):
+            command.downgrade(config, "0038_upload_request_identity")
+
+        async def check_failed_downgrade() -> None:
+            async with fidelity_session(database_url) as session:
+                assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
+                    "0039_source_fidelity_v2"
+                )
+                assert (
+                    await session.scalar(
+                        text(
+                            "SELECT public.source_candidate_is_confirmable(id) "
+                            "FROM public.source_page_text_candidates"
+                        )
+                    )
+                    is True
+                )
+
+        asyncio.run(check_failed_downgrade())
 
 
 def test_0026_does_not_fabricate_feedback_from_historical_review_events() -> None:

@@ -748,7 +748,7 @@ def test_api_stale_versions_unsafe_confirmation_and_reviewer_edit_boundary(
         },
     )
     assert edited.status_code == 200
-    assert edited.json()["state"] == "needs_review"
+    assert edited.json()["state"] == "failed"
     stale = workspace_client.post(
         page_path + "/confirm",
         headers=ADMIN_HEADERS,
@@ -778,6 +778,25 @@ def test_api_stale_versions_unsafe_confirmation_and_reviewer_edit_boundary(
             page_path + "/confirm", headers=REVIEWER_HEADERS, json=body
         ).status_code
         == 403
+    )
+    assert (
+        workspace_client.post(page_path + "/confirm", headers=ADMIN_HEADERS, json=body).status_code
+        == 409
+    )
+    assert "source_script_missing" in current["risk_codes"]
+    corrected = workspace_client.post(
+        page_path + "/edit",
+        headers=REVIEWER_HEADERS,
+        json={
+            "expected_version": current["version"],
+            "text": "ගණිතය 2 + 3 = 5",
+            "reason": "Restore the original Sinhala transcription",
+        },
+    )
+    assert corrected.status_code == 200
+    assert corrected.json()["state"] == "needs_review"
+    body.update(
+        expected_version=corrected.json()["version"], candidate_id=corrected.json()["candidate_id"]
     )
     assert (
         workspace_client.post(page_path + "/confirm", headers=ADMIN_HEADERS, json=body).status_code
@@ -996,6 +1015,214 @@ def test_legacy_trusted_flag_does_not_make_an_unverified_material_ready(
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {"failure_code": None},
+        {"failure_code": "ocr_timeout"},
+        {"maths_fidelity": {"can_confirm": False, "risk_codes": ["maths_anchor_missing"]}},
+    ],
+)
+def test_failure_candidates_stay_failed_and_unconfirmable_in_workspace_and_service(
+    workspace_database_url: str, provenance: dict[str, object]
+) -> None:
+    from exam_guru_api.documents.fidelity_service import PageVerificationBlockedError
+
+    async def scenario() -> None:
+        async with database_session(workspace_database_url) as session:
+            document_id = await add_source(session, total=1)
+            service = PageFidelityService(session)
+            state = await service.record_candidate(
+                document_id,
+                1,
+                raw_text="ගණිතය 2 + 3 = 5",
+                method="ocr",
+                actor_id=ADMIN.subject_id,
+                provenance={"languages": ["si"], **provenance},
+            )
+            assert state.state == "failed"
+            candidate = await session.get(PageTextCandidateModel, state.current_candidate_id)
+            assert candidate is not None
+            assert not candidate.can_confirm
+            assert candidate.raw_text_utf8 == "ගණිතය 2 + 3 = 5".encode()
+            before = await evidence_counts(session)
+            workspace = await get_review_workspace(session, document_id, principal=ADMIN)
+            assert workspace.page is not None
+            assert workspace.page.state == "failed"
+            assert not workspace.page.can_confirm
+            assert workspace.progress.remaining_pages == 1
+            assert not workspace.ready_for_ai
+            assert not await service.document_is_verified(document_id)
+            with pytest.raises(
+                PageVerificationBlockedError, match="source_candidate_not_confirmable"
+            ):
+                await confirm_state(session, state)
+            assert await evidence_counts(session) == before
+            original_id = candidate.id
+            edited = await service.edit_page(
+                document_id,
+                1,
+                text="ගණිතය 2 + 3 = 5.0",
+                expected_version=state.version,
+                actor_id=ADMIN.subject_id,
+                reason="Corrected the source transcription",
+            )
+            child = await session.get(PageTextCandidateModel, edited.current_candidate_id)
+            assert child is not None
+            assert child.parent_candidate_id == original_id
+            if provenance.get("failure_code") == "ocr_timeout":
+                assert edited.state == "needs_review"
+                assert "failure_code" not in child.provenance
+                assert child.provenance["superseded_ocr_failure_code"] == "ocr_timeout"
+                await confirm_state(session, edited)
+                assert await service.document_is_verified(document_id)
+            else:
+                assert edited.state == "failed"
+                with pytest.raises(PageVerificationBlockedError):
+                    await confirm_state(session, edited)
+            await session.refresh(candidate)
+            for key, value in provenance.items():
+                assert candidate.provenance[key] == value
+
+    asyncio.run(scenario())
+
+
+def test_v1_verified_history_is_preserved_but_not_counted_as_current_readiness() -> None:
+    from typing import cast
+
+    from alembic import command
+
+    from exam_guru_api.documents.fidelity_service import PageVerificationBlockedError
+    from exam_guru_api.documents.schemas import MaterialStatus
+    from exam_guru_api.documents.service import SourceDocumentService
+    from exam_guru_api.infrastructure.migrations import _config_for_database
+    from exam_guru_api.infrastructure.object_storage import ObjectStorage
+
+    with pytest.MonkeyPatch.context() as environment:
+        environment.delenv("EXAM_GURU_DATABASE_URL", raising=False)
+        with PostgresContainer(
+            image="pgvector/pgvector:0.8.6-pg18-trixie",
+            username="exam_guru",
+            password=uuid4().hex,
+            dbname="source_fidelity_stale_workspace_test",
+            driver="asyncpg",
+        ) as postgres:
+            database_url = postgres.get_connection_url()
+            command.upgrade(_config_for_database(database_url), "0038_upload_request_identity")
+
+            async def seed() -> tuple[UUID, UUID]:
+                async with database_session(database_url) as session:
+                    curriculum_id = await add_curriculum(session)
+                    await admit_curriculum(session, curriculum_id)
+                    document_id = await add_source(session, total=3, curriculum_id=curriculum_id)
+                    candidate = PageTextCandidateModel(
+                        id=uuid4(),
+                        document_id=document_id,
+                        page_number=1,
+                        method="human",
+                        raw_text_utf8="ගණිතය 2 + 3 = 5".encode(),
+                        normalized_text="ගණිතය 2 + 3 = 5",
+                        text_sha256=hashlib.sha256("ගණිතය 2 + 3 = 5".encode()).hexdigest(),
+                        can_confirm=True,
+                        provenance={"languages": ["si"]},
+                        diagnostics={"algorithm_version": "source-fidelity-v1/ucd-14.0.0"},
+                        created_by=ADMIN.subject_id,
+                    )
+                    session.add(candidate)
+                    await session.flush()
+                    service = PageFidelityService(session)
+                    state = await service._state(document_id, 1)
+                    await service._advance(
+                        state,
+                        candidate_id=candidate.id,
+                        action="confirmed",
+                        target="verified",
+                        actor_id=ADMIN.subject_id,
+                        reason="Historical original comparison",
+                        payload={
+                            "compared_with_original": True,
+                            "text_sha256": candidate.text_sha256,
+                        },
+                    )
+                    await session.commit()
+                    await service.exclude_page(
+                        document_id,
+                        3,
+                        expected_version=0,
+                        actor_id=ADMIN.subject_id,
+                        reason="Original is blank",
+                    )
+                    return document_id, candidate.id
+
+            document_id, stale_id = asyncio.run(seed())
+            upgrade_database(database_url)
+
+            async def scenario() -> None:
+                async with database_session(database_url) as session:
+                    service = PageFidelityService(session)
+                    await confirm_state(session, await record_page(session, document_id, 2))
+                    before = await evidence_counts(session)
+                    await session.commit()
+                    await session.execute(text("SET TRANSACTION READ ONLY"))
+                    workspace = await get_review_workspace(
+                        session, document_id, page_number=2, principal=ADMIN
+                    )
+                    assert workspace.progress.verified_pages == 1
+                    assert workspace.progress.excluded_pages == 1
+                    assert workspace.progress.remaining_pages == 1
+                    assert workspace.previous_flagged_page == 1
+                    assert workspace.next_flagged_page is None
+                    assert not workspace.ready_for_ai
+                    assert not await service.document_is_verified(document_id)
+                    stale = await get_source_page_candidate(
+                        session, document_id, 1, stale_id, principal=ADMIN
+                    )
+                    assert stale.state == "failed"
+                    assert not stale.can_confirm
+                    assert "source_reprocessing_required" in stale.risk_codes
+                    excluded = await get_review_workspace(
+                        session, document_id, page_number=3, principal=ADMIN
+                    )
+                    assert excluded.page is not None
+                    assert excluded.page.state == "excluded"
+                    materials = await SourceDocumentService(
+                        session,
+                        cast(ObjectStorage, object()),
+                        max_upload_bytes=1024,
+                    ).list_materials(document_id=document_id)
+                    assert materials[0].status is MaterialStatus.NEEDS_REVIEW
+                    state = await session.get(PageReviewStateModel, (document_id, 1))
+                    assert state is not None
+                    assert state.state == "verified"
+                    assert state.version == 1
+                    candidate = await session.get(PageTextCandidateModel, stale_id)
+                    assert candidate is not None
+                    assert candidate.can_confirm
+                    assert (
+                        candidate.diagnostics["algorithm_version"]
+                        == "source-fidelity-v1/ucd-14.0.0"
+                    )
+                    assert await evidence_counts(session) == before
+                    await session.commit()
+                    edited = await service.edit_page(
+                        document_id,
+                        1,
+                        text="ගණිතය 2 + 3 = 5.0",
+                        expected_version=1,
+                        actor_id=ADMIN.subject_id,
+                        reason="Manual edit does not replace current source assessment",
+                    )
+                    assert edited.state == "failed"
+                    child = await session.get(PageTextCandidateModel, edited.current_candidate_id)
+                    assert child is not None
+                    assert child.parent_candidate_id == stale_id
+                    assert child.provenance["source_reprocessing_required"] is True
+                    with pytest.raises(PageVerificationBlockedError):
+                        await confirm_state(session, edited)
+
+            asyncio.run(scenario())
 
 
 def test_fully_verified_workspace_supports_a_read_only_database_transaction(

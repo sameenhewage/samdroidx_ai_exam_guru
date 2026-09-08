@@ -167,7 +167,7 @@ async function renderWorkspace(
       {...props}
     />,
   );
-  await screen.findByRole("region", { name: "Original page" });
+  await screen.findByRole("region", { name: /^(Original page|මුල් පිටුව)$/ });
   return { ...api, ...view };
 }
 
@@ -206,34 +206,101 @@ afterEach(() => {
 });
 
 describe("review language preference", () => {
-  it("keeps English controls when detected page languages change and the page is refreshed", async () => {
+  it("follows detected page languages across navigation and refresh without persisting an automatic English default", async () => {
     const api = await renderWorkspace((pageNumber) => {
       const language = pageNumber === 1 ? "en" : "si";
       return workspace(pageNumber, { language }, { language });
     });
+    expect(localStorage.getItem(reviewLanguageKey)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+    await screen.findByRole("img", { name: "මුල් පිටුව 2" });
+    expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(
+      screen.getByRole("heading", { name: "පද්ධතිය කියවූ පෙළ පරීක්ෂා කරන්න" }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "පිටුවේ තත්ත්වය යාවත්කාලීන කරන්න" }),
+    );
+    await screen.findByRole("img", { name: "මුල් පිටුව 2" });
+    expect(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("si");
+    expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(screen.getByTestId("system-page-text").textContent).toBe(
+      unicodeText,
+    );
+    expect(localStorage.getItem(reviewLanguageKey)).toBeNull();
+    expect(api.pages()).toEqual([1, 2, 2]);
+    fireEvent.click(screen.getByRole("button", { name: "පෙර පිටුව" }));
+    await screen.findByRole("img", { name: "Original page 1" });
+    expect(api.mutations()).toEqual([]);
+  });
+
+  it.each([
+    { language: "si" },
+    { language: "si-LK" },
+    { language: "Sinhala" },
+    { language: "mul", diagnostics: { languages: ["en", "si"] } },
+    { language: "und", diagnostics: { detected_language: "si" } },
+  ] satisfies Partial<Page>[])(
+    "defaults to Sinhala from detected page signals: %j",
+    async (page) => {
+      const api = await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, page),
+      );
+      expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
         "lang",
         "si",
+      );
+      expect(
+        screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      ).toHaveValue("si");
+      expect(localStorage.getItem(reviewLanguageKey)).toBeNull();
+      expect(api.mutations()).toEqual([]);
+    },
+  );
+
+  it("uses the Sinhala source language when a page has no useful language detection", async () => {
+    await renderWorkspace((pageNumber) =>
+      workspace(
+        pageNumber,
+        { language: "und", diagnostics: { languages: [null, 42] } },
+        { language: "si" },
       ),
     );
     expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
       "lang",
-      "en",
+      "si",
+    );
+  });
+
+  it("preserves a teacher's explicit English choice on Sinhala pages across remounts", async () => {
+    const api = await renderWorkspace((pageNumber) =>
+      workspace(pageNumber, { language: "si" }, { language: "si" }),
     );
     expect(
-      screen.getByRole("heading", { name: "Check the system-read text" }),
-    ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Refresh page status" }),
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("si");
+    fireEvent.change(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+      {
+        target: { value: "en" },
+      },
     );
-    await screen.findByRole("img", { name: "Original page 2" });
+    expect(localStorage.getItem(reviewLanguageKey)).toBe("en");
+    api.unmount();
+    render(<SourcePageReviewWorkspace documentId={documentId} role="admin" />);
+    await screen.findByRole("img", { name: "Original page 1" });
     expect(
       screen.getByRole("combobox", { name: reviewLanguageLabel }),
     ).toHaveValue("en");
-    expect(systemText().textContent).toBe(unicodeText);
-    expect(api.pages()).toEqual([1, 2, 2]);
+    expect(systemText()).toHaveAttribute("lang", "si");
     expect(api.mutations()).toEqual([]);
   });
 
@@ -296,6 +363,7 @@ describe("review language preference", () => {
   });
 
   it("does not reset the image, zoom, unsaved Unicode correction or reason when switching language", async () => {
+    localStorage.setItem(reviewLanguageKey, "en");
     const api = await renderWorkspace((pageNumber) =>
       workspace(pageNumber, { language: "si" }),
     );
@@ -379,7 +447,7 @@ describe("review language preference", () => {
   });
 
   it.each(["", "ta", "unknown", "<script>si</script>"])(
-    "ignores an unsupported saved preference %s instead of using the source language",
+    "ignores an unsupported saved preference %s and uses the detected source language",
     async (saved) => {
       localStorage.setItem(reviewLanguageKey, saved);
       await renderWorkspace((pageNumber) =>
@@ -387,12 +455,15 @@ describe("review language preference", () => {
       );
       expect(
         screen.getByRole("combobox", { name: reviewLanguageLabel }),
-      ).toHaveValue("en");
+      ).toHaveValue("si");
       expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
         "lang",
-        "en",
+        "si",
       );
-      expect(systemText()).toHaveAttribute("lang", "si");
+      expect(screen.getByTestId("system-page-text")).toHaveAttribute(
+        "lang",
+        "si",
+      );
     },
   );
 
@@ -422,6 +493,18 @@ describe("review language preference", () => {
     );
     expect(screen.getByRole("img", { name: "Original page 2" })).toBeVisible();
     expect(api.mutations()).toEqual([]);
+  });
+
+  it("defaults to detected Sinhala when browser preference storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage unavailable", "SecurityError");
+    });
+    await renderWorkspace((pageNumber) =>
+      workspace(pageNumber, { language: "si" }),
+    );
+    expect(
+      screen.getByRole("combobox", { name: reviewLanguageLabel }),
+    ).toHaveValue("si");
   });
 
   it("hydrates saved Sinhala preferences without mismatching server markup", async () => {
@@ -505,8 +588,9 @@ describe("faithful source comparison", () => {
     ["ta_LK", "ta"],
     ["tam", "ta"],
   ])(
-    "uses English UI for %s while retaining the appropriate text language",
+    "uses an explicitly chosen English UI for %s while retaining the appropriate text language",
     async (language, textLanguage) => {
+      localStorage.setItem(reviewLanguageKey, "en");
       await renderWorkspace((pageNumber) =>
         workspace(pageNumber, { language }, { language }),
       );
@@ -562,25 +646,259 @@ describe("faithful source comparison", () => {
       }),
     );
     await loadPreview();
-    expect(systemText().textContent).toBe(corrupt);
+    expect(screen.queryByTestId("system-page-text")).not.toBeInTheDocument();
+    expect(screen.getByTestId("failed-page-text").textContent).toBe(corrupt);
+    expect(screen.getByTestId("failed-page-text")).not.toBeVisible();
     expect(screen.queryByText(/reviewed text/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Text is correct" }),
     ).toBeDisabled();
-    expect(
-      screen.getByText(
-        "The text on this page appears to have been read incorrectly.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The page could not be read. Try again or correct the text against the original.",
+    );
     const details = screen.getByText("Technical details").closest("details");
     expect(details).not.toHaveAttribute("open");
     expect(details).toHaveTextContent("fixture-engine");
     expect(screen.getByText(/fixture-engine/)).not.toBeVisible();
     expect(
-      screen.getByText("Not yet checked against the original."),
-    ).toBeVisible();
+      screen.queryByText("Not yet checked against the original."),
+    ).not.toBeInTheDocument();
     expect(api.mutations()).toEqual([]);
   });
+
+  it.each([
+    { state: "failed", can_confirm: false, language: "si", risk_codes: [] },
+    {
+      state: "needs_review",
+      can_confirm: false,
+      language: "mul",
+      diagnostics: { languages: ["en", "si"] },
+      risk_codes: [],
+    },
+    {
+      state: "needs_review",
+      can_confirm: false,
+      language: "si",
+      risk_codes: ["maths_source_fidelity_failed"],
+    },
+    { state: "failed", can_confirm: true, language: "si", risk_codes: [] },
+  ] satisfies Partial<Page>[])(
+    "presents unsafe Sinhala readings as failures with reread primary regardless of risk codes: %j",
+    async (overrides) => {
+      const corrupt = "wkd ñ\uFFFD\uE001 <script>bad candidate</script> 1 + =";
+      const api = await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, { ...overrides, system_text: corrupt }),
+      );
+      await act(async () =>
+        fireEvent.load(screen.getByRole("img", { name: "මුල් පිටුව 1" })),
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.",
+      );
+      expect(screen.queryByTestId("system-page-text")).not.toBeInTheDocument();
+      const failedText = screen.getByTestId("failed-page-text");
+      expect(failedText.textContent).toBe(corrupt);
+      expect(failedText).not.toBeVisible();
+      const details = screen.getByText("තාක්ෂණික විස්තර").closest("details")!;
+      expect(details).not.toHaveAttribute("open");
+      expect(details).toContainElement(failedText);
+      expect(details).toHaveTextContent(candidateId);
+      expect(details).toHaveTextContent("fixture-engine");
+      expect(api.container.querySelector("script")).toBeNull();
+      const actions = within(
+        screen.getByRole("group", { name: "පිටුව සඳහා ක්‍රියා" }),
+      );
+      const buttons = actions.getAllByRole("button");
+      expect(buttons.map((button) => button.textContent)).toEqual([
+        "නැවත කියවන්න",
+        "පෙළ නිවැරදි කරන්න",
+        "මෙම පිටුව භාවිත නොකරන්න",
+        "පෙළ නිවැරදියි",
+      ]);
+      expect(buttons[0]).toBeEnabled();
+      expect(buttons[0]).toHaveClass("bg-slate-950", "text-white");
+      expect(buttons[0]).not.toHaveClass("bg-white");
+      for (const button of buttons.slice(1))
+        expect(button).not.toHaveClass("bg-slate-950");
+      expect(buttons[1]).toBeEnabled();
+      expect(buttons[2]).toBeEnabled();
+      expect(buttons[3]).toBeDisabled();
+      fireEvent.click(buttons[3]);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(api.mutations()).toEqual([]);
+      fireEvent.click(screen.getByText("තාක්ෂණික විස්තර"));
+      expect(failedText).toBeVisible();
+    },
+  );
+
+  it.each(["failed", "needs_review"] as const)(
+    "shows the single readable Sinhala recovery with a warning, never confirmation, for %s maths failure",
+    async (state) => {
+      const raw = "wkd ñ\uFFFD\uE001 raw rejected candidate";
+      const api = await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, {
+          state,
+          can_confirm: false,
+          language: "si",
+          system_text: unicodeText,
+          risk_codes: ["math_grid_fidelity_failed"],
+          diagnostics: { text_readable: true, raw_native_text: raw },
+        }),
+      );
+      const recovery = screen.getByRole("region", {
+        name: "නැවත කියවූ පෙළ — තහවුරු කිරීමට සූදානම් නැත",
+      });
+      expect(recovery).toBeVisible();
+      expect(
+        within(recovery).getByText(/අංක, සංකේත සහ වගු තවමත් වැරදි විය හැක/),
+      ).toBeVisible();
+      expect(
+        within(recovery).getByTestId("recovered-page-text").textContent,
+      ).toBe(unicodeText);
+      expect(screen.getAllByTestId("recovered-page-text")).toHaveLength(1);
+      expect(screen.queryByTestId("system-page-text")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("failed-page-text")).not.toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.",
+      );
+      expect(
+        screen.queryByText("මුල් පිටුව සමඟ සසඳා තහවුරු කර ඇත."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("AI භාවිතයට සූදානම්", { exact: true }),
+      ).not.toBeInTheDocument();
+      const details = screen.getByText("තාක්ෂණික විස්තර").closest("details")!;
+      expect(details).not.toHaveAttribute("open");
+      expect(details).toHaveTextContent(raw);
+      expect(details).toHaveTextContent(candidateId);
+      expect(screen.getByText(/raw rejected candidate/)).not.toBeVisible();
+      expect(api.container.querySelector("script")).toBeNull();
+      const confirm = screen.getByRole("button", { name: "පෙළ නිවැරදියි" });
+      expect(confirm).toBeDisabled();
+      await act(async () =>
+        fireEvent.load(screen.getByRole("img", { name: "මුල් පිටුව 1" })),
+      );
+      expect(confirm).toBeDisabled();
+      const buttons = within(
+        screen.getByRole("group", { name: "පිටුව සඳහා ක්‍රියා" }),
+      ).getAllByRole("button");
+      expect(buttons.map((button) => button.textContent)).toEqual([
+        "නැවත කියවන්න",
+        "පෙළ නිවැරදි කරන්න",
+        "මෙම පිටුව භාවිත නොකරන්න",
+        "පෙළ නිවැරදියි",
+      ]);
+      expect(buttons[0]).toBeEnabled();
+      expect(buttons[0]).toHaveClass("bg-slate-950", "text-white");
+      expect(buttons[1]).toBeEnabled();
+      expect(buttons[2]).toBeEnabled();
+      fireEvent.click(confirm);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(api.mutations()).toEqual([]);
+      fireEvent.change(
+        screen.getByRole("combobox", { name: reviewLanguageLabel }),
+        { target: { value: "en" } },
+      );
+      expect(
+        screen.getByRole("region", {
+          name: "Re-read text — not ready for confirmation",
+        }),
+      ).toBeVisible();
+      expect(
+        screen.getByText(/Numbers, symbols and tables may still be incorrect/),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Text is correct" }),
+      ).toBeDisabled();
+      await act(async () => {
+        const result = await axe.run(api.container, {
+          rules: { "color-contrast": { enabled: false } },
+        });
+        expect(result.violations).toEqual([]);
+      });
+    },
+  );
+
+  it.each([false, undefined, null, "true", 1, [true], { value: true }])(
+    "keeps failed text in closed technical details unless text_readable is strictly true: %j",
+    async (textReadable) => {
+      const api = await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, {
+          state: "failed",
+          can_confirm: false,
+          language: "si",
+          diagnostics: { text_readable: textReadable },
+        }),
+      );
+      expect(
+        screen.queryByTestId("recovered-page-text"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("system-page-text")).not.toBeInTheDocument();
+      expect(screen.getByTestId("failed-page-text").textContent).toBe(
+        unicodeText,
+      );
+      expect(screen.getByTestId("failed-page-text")).not.toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "පෙළ නිවැරදියි" }),
+      ).toBeDisabled();
+      expect(api.mutations()).toEqual([]);
+    },
+  );
+
+  it.each([
+    { system_text: "" },
+    { system_text: "  \n\t" },
+    { candidate_id: null },
+  ])(
+    "does not show a missing or blank recovery despite text_readable true: %j",
+    async (overrides) => {
+      await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, {
+          state: "failed",
+          can_confirm: false,
+          diagnostics: { text_readable: true },
+          ...overrides,
+        }),
+      );
+      expect(
+        screen.queryByTestId("recovered-page-text"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Text is correct" }),
+      ).toBeDisabled();
+    },
+  );
+
+  it.each(["", "  \n\t"])(
+    "never enables confirmation of blank text %j even if the server flag is true",
+    async (text) => {
+      const api = await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, { system_text: text }),
+      );
+      await loadPreview();
+      expect(
+        screen.getByRole("button", { name: "Text is correct" }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Read again" })).toHaveClass(
+        "bg-slate-950",
+      );
+      expect(api.mutations()).toEqual([]);
+    },
+  );
+
+  it.each(["verified", "excluded", "processing"] as const)(
+    "does not mislabel a %s page as a failed reading just because confirmation is unavailable",
+    async (state) => {
+      await renderWorkspace((pageNumber) =>
+        workspace(pageNumber, { state, can_confirm: false }),
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("failed-page-text")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Text is correct" }),
+      ).toBeDisabled();
+    },
+  );
 
   it("shows only server progress and bounds a 371-page book to two independently scrolling panels", async () => {
     const api = await renderWorkspace();
@@ -896,6 +1214,97 @@ describe("page navigation", () => {
 });
 
 describe("explicit versioned decisions", () => {
+  it.each([false, true])(
+    "preserves correction recovery from a Sinhala failure and waits for server validation (%s)",
+    async (canConfirm) => {
+      const corrupt = "wkd ñ\uFFFD\uE001";
+      const corrected = "ශ්‍රී ලංකාව — ½ × 2 = 1";
+      let current = workspace(1, {
+        state: "failed",
+        can_confirm: false,
+        language: "si",
+        system_text: corrupt,
+      });
+      const api = await renderWorkspace(
+        () => current,
+        (request) => {
+          if (request.method === "POST" && request.url.endsWith("/edit")) {
+            current = workspace(1, {
+              state: "needs_review",
+              language: "si",
+              can_confirm: canConfirm,
+              system_text: corrected,
+              version: 8,
+              candidate_id: secondCandidateId,
+            });
+            return Response.json({
+              document_id: documentId,
+              page_number: 1,
+              state: "needs_review",
+              version: 8,
+              candidate_id: secondCandidateId,
+            });
+          }
+        },
+      );
+      const leave = vi.spyOn(window, "confirm").mockReturnValue(false);
+      fireEvent.click(
+        screen.getByRole("button", { name: "පෙළ නිවැරදි කරන්න" }),
+      );
+      const editor = screen.getByRole("textbox", { name: "නිවැරදි කළ පෙළ" });
+      expect(editor).toHaveValue(corrupt);
+      fireEvent.change(editor, { target: { value: corrected } });
+      expect(
+        screen.getByRole("button", { name: "නිවැරදි කළ පෙළ සුරකින්න" }),
+      ).toBeDisabled();
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "නිවැරදි කිරීමට හේතුව" }),
+        {
+          target: { value: "මුල් පිටුව සමඟ සැසඳුවෙමි" },
+        },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "ඊළඟ පිටුව" }));
+      expect(leave).toHaveBeenCalled();
+      expect(editor).toHaveValue(corrected);
+      expect(api.pages()).toEqual([1]);
+      fireEvent.click(
+        screen.getByRole("button", { name: "නිවැරදි කළ පෙළ සුරකින්න" }),
+      );
+      await screen.findByText(
+        "නිවැරදි කළ පෙළ සුරැකුණි. තහවුරු කිරීමට පෙර එය මුල් පිටුව සමඟ සසඳන්න.",
+      );
+      expect(api.mutations()).toHaveLength(1);
+      expect(await api.mutations()[0].json()).toEqual({
+        expected_version: 7,
+        text: corrected,
+        reason: "මුල් පිටුව සමඟ සැසඳුවෙමි",
+      });
+      expect(
+        screen.getByRole("button", { name: "පෙළ නිවැරදියි" }),
+      ).toBeDisabled();
+      await act(async () =>
+        fireEvent.load(screen.getByRole("img", { name: "මුල් පිටුව 1" })),
+      );
+      const confirm = screen.getByRole("button", { name: "පෙළ නිවැරදියි" });
+      if (canConfirm) {
+        expect(confirm).toBeEnabled();
+        expect(screen.getByTestId("system-page-text").textContent).toBe(
+          corrected,
+        );
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      } else {
+        expect(confirm).toBeDisabled();
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.",
+        );
+        expect(
+          screen.queryByTestId("system-page-text"),
+        ).not.toBeInTheDocument();
+      }
+      expect(api.mutations()).toHaveLength(1);
+    },
+  );
+
   it("requires Edit, a reason and Save; Cancel restores the unmodified system reading", async () => {
     const api = await renderWorkspace();
     expect(
@@ -1223,6 +1632,68 @@ describe("explicit versioned decisions", () => {
     count("Excluded pages", 2);
   });
 
+  it("sends the primary Sinhala reread action with the failed page's version, never a confirmation", async () => {
+    let current = workspace(1, {
+      state: "failed",
+      language: "si",
+      can_confirm: false,
+    });
+    const response = deferred<Response>();
+    const api = await renderWorkspace(
+      () => current,
+      (request) => {
+        if (request.method === "POST") return response.promise;
+      },
+    );
+    const reread = screen.getByRole("button", { name: "නැවත කියවන්න" });
+    fireEvent.click(reread);
+    fireEvent.click(reread);
+    await waitFor(() => expect(api.mutations()).toHaveLength(1));
+    expect(reread).toBeDisabled();
+    expect(reread).toHaveClass(
+      "disabled:bg-slate-200",
+      "disabled:text-slate-600",
+    );
+    expect(api.mutations()[0].url).toContain(`${pagePath}/1/reread`);
+    expect(await api.mutations()[0].json()).toEqual({ expected_version: 7 });
+    current = workspace(1, {
+      state: "processing",
+      language: "si",
+      can_confirm: false,
+      version: 8,
+    });
+    await act(async () =>
+      response.resolve(Response.json({ status: "accepted" }, { status: 202 })),
+    );
+    await screen.findByText("මෙම පිටුව කියවමින් පවතී…");
+    expect(
+      screen.getByRole("button", { name: "පෙළ නිවැරදියි" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "නැවත කියවන්න" })).toBeDisabled();
+    expect(api.mutations()).toHaveLength(1);
+  });
+
+  it("keeps all failed-page mutation actions disabled for a reviewer", async () => {
+    const api = await renderWorkspace(
+      (pageNumber) =>
+        workspace(pageNumber, {
+          state: "failed",
+          language: "si",
+          can_confirm: false,
+        }),
+      undefined,
+      { role: "reviewer" },
+    );
+    const actions = within(
+      screen.getByRole("group", { name: "පිටුව සඳහා ක්‍රියා" }),
+    );
+    for (const button of actions.getAllByRole("button")) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(api.mutations()).toEqual([]);
+  });
+
   it("queues a real reread once, then displays the reloaded server processing/failure state", async () => {
     const queued = deferred<Response>();
     let current = workspace();
@@ -1326,6 +1797,182 @@ describe("explicit versioned decisions", () => {
     expect(
       screen.getByRole("button", { name: "Save correction" }),
     ).toBeDisabled();
+  });
+
+  it.each([true, false, "true", undefined])(
+    "rechecks the latest failed candidate's readability after a correction conflict: %j",
+    async (textReadable) => {
+      let current = workspace(1, {
+        state: "failed",
+        can_confirm: false,
+        system_text: "Previous recovery",
+        diagnostics: { text_readable: textReadable !== true },
+      });
+      let edits = 0;
+      const latestText = "ශ්‍රී ලංකාව — නව කියවීම ½ × 2 = 1";
+      const api = await renderWorkspace(
+        () => current,
+        (request) => {
+          if (request.method !== "POST") return;
+          edits += 1;
+          if (edits === 1) {
+            current = workspace(1, {
+              state: "failed",
+              can_confirm: false,
+              system_text: latestText,
+              version: 9,
+              candidate_id: secondCandidateId,
+              diagnostics: { text_readable: textReadable },
+            });
+            return Response.json(
+              { detail: { code: "source_page_version_conflict" } },
+              { status: 409 },
+            );
+          }
+          return Response.json({
+            document_id: documentId,
+            page_number: 1,
+            state: "failed",
+            version: 10,
+            candidate_id: secondCandidateId,
+          });
+        },
+      );
+      if (textReadable !== true)
+        expect(screen.getByTestId("recovered-page-text")).toHaveTextContent(
+          "Previous recovery",
+        );
+      fireEvent.click(screen.getByRole("button", { name: "Correct the text" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Correction" }), {
+        target: { value: "My unsaved correction" },
+      });
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Reason for correction" }),
+        { target: { value: "Compared the original" } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+      await screen.findByText(/This page changed in another session/);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Reload latest page, keeping correction",
+        }),
+      );
+      const latest = await screen.findByRole("region", {
+        name: "Latest system text",
+      });
+      if (textReadable === true) {
+        expect(
+          within(latest).getByRole("region", {
+            name: "Re-read text — not ready for confirmation",
+          }),
+        ).toBeVisible();
+        expect(
+          within(latest).getByTestId("recovered-page-text").textContent,
+        ).toBe(latestText);
+        expect(
+          screen.queryByTestId("failed-page-text"),
+        ).not.toBeInTheDocument();
+      } else {
+        expect(
+          screen.queryByTestId("recovered-page-text"),
+        ).not.toBeInTheDocument();
+        expect(latest).not.toHaveTextContent(latestText);
+        expect(screen.getByTestId("failed-page-text").textContent).toBe(
+          latestText,
+        );
+        expect(screen.getByTestId("failed-page-text")).not.toBeVisible();
+      }
+      expect(screen.getByRole("textbox", { name: "Correction" })).toHaveValue(
+        "My unsaved correction",
+      );
+      expect(
+        screen.getByRole("textbox", { name: "Reason for correction" }),
+      ).toHaveValue("Compared the original");
+      expect(
+        screen.getByRole("button", { name: "Save correction" }),
+      ).toBeDisabled();
+      expect(api.mutations()).toHaveLength(1);
+      fireEvent.click(
+        within(latest).getByRole("button", {
+          name: "Use this version for my correction",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+      await waitFor(() => expect(api.mutations()).toHaveLength(2));
+      expect(await api.mutations()[1].json()).toEqual({
+        expected_version: 9,
+        text: "My unsaved correction",
+        reason: "Compared the original",
+      });
+      expect(
+        api.mutations().every((request) => request.url.endsWith("/edit")),
+      ).toBe(true);
+    },
+  );
+
+  it("keeps a failed latest candidate in technical details when rebasing an unsaved correction", async () => {
+    const corrupt = "wkd ñ\uFFFD\uE001 latest failed reading";
+    let current = workspace();
+    const api = await renderWorkspace(
+      () => current,
+      (request) => {
+        if (request.method === "POST") {
+          current = workspace(1, {
+            state: "failed",
+            can_confirm: false,
+            system_text: corrupt,
+            version: 9,
+            candidate_id: secondCandidateId,
+          });
+          return Response.json(
+            { detail: { code: "source_page_version_conflict" } },
+            { status: 409 },
+          );
+        }
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Correct the text" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Correction" }), {
+      target: { value: "My correction" },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+      { target: { value: "Compared original" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await screen.findByText(/This page changed in another session/);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reload latest page, keeping correction",
+      }),
+    );
+    const latest = await screen.findByRole("region", {
+      name: "Latest system text",
+    });
+    expect(latest).not.toHaveTextContent(corrupt);
+    expect(screen.getByTestId("failed-page-text").textContent).toBe(corrupt);
+    expect(screen.getByTestId("failed-page-text")).not.toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Correction" })).toHaveValue(
+      "My correction",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+    ).toHaveValue("Compared original");
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use this version for my correction",
+      }),
+    );
+    expect(screen.getByRole("textbox", { name: "Correction" })).toHaveValue(
+      "My correction",
+    );
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeEnabled();
+    expect(api.mutations()).toHaveLength(1);
   });
 
   it("preserves correction and reason on conflict, and requires explicit rebasing after reloading the latest text", async () => {

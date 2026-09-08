@@ -1,15 +1,22 @@
 import hashlib
 import json
+import math
 import unicodedata
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import Boolean, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.models import AdminAuditEventModel
-from exam_guru_api.documents.fidelity import assess_page
+from exam_guru_api.documents.fidelity import (
+    MAX_TEXT_CHARACTERS,
+    PageAssessment,
+    assess_page,
+    normalize_source_text,
+)
 from exam_guru_api.documents.fidelity_models import (
     PageGroundTruthModel,
     PageReviewEventModel,
@@ -19,6 +26,7 @@ from exam_guru_api.documents.fidelity_models import (
     SourceBenchmarkPageModel,
 )
 from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.documents.source_math_fidelity import assess_math_fidelity, decode_math_evidence
 
 
 class PageFidelityConflictError(ValueError):
@@ -49,9 +57,90 @@ def _metadata(value: dict[str, object]) -> dict[str, object]:
 
 
 def _strings(value: object) -> tuple[str, ...]:
-    if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
-        return tuple(value)
-    return ()
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) > 128
+        or any(not isinstance(item, str) or len(item) > 256 for item in value)
+    ):
+        return ()
+    return tuple(value)
+
+
+def assess_candidate(text: str, method: str, provenance: dict[str, object]) -> PageAssessment:
+    evidence: dict[str, tuple[str, ...]] = {}
+    invalid_evidence: set[str] = set()
+    for field in ("source_languages", "languages", "fonts"):
+        value = provenance.get(field, ())
+        values = _strings(value)
+        if (
+            not isinstance(value, (list, tuple))
+            or len(values) != len(value)
+            or (field != "fonts" and not set(values) <= {"si", "ta", "en", "und"})
+        ):
+            invalid_evidence.add(f"invalid_{field}")
+            values = ()
+        evidence[field] = values
+    coverage = provenance.get("image_coverage", 0.0)
+    invalid_coverage = False
+    if (
+        not isinstance(coverage, (int, float))
+        or isinstance(coverage, bool)
+        or not math.isfinite(coverage)
+        or not 0 <= coverage <= 1
+    ):
+        coverage = 0.0
+        invalid_coverage = True
+    assessment = assess_page(
+        text,
+        expected_languages=evidence[
+            "source_languages" if "source_languages" in provenance else "languages"
+        ],
+        font_names=evidence["fonts"],
+        image_coverage=float(coverage),
+        method="manual" if method == "human" else "native" if method == "legacy" else method,
+    )
+    risks = set(assessment.risk_codes) | invalid_evidence
+    blocked = invalid_coverage or bool(invalid_evidence)
+    if invalid_coverage:
+        risks.add("invalid_image_coverage")
+    if "failure_code" in provenance:
+        blocked = True
+        risks.add("source_reading_failed")
+        failure = provenance["failure_code"]
+        if isinstance(failure, str) and 0 < len(failure) <= 256:
+            risks.add(failure)
+    if provenance.get("source_reprocessing_required") is True:
+        blocked = True
+        risks.add("source_reprocessing_required")
+    maths = provenance.get("maths_fidelity")
+    reference = provenance.get("maths_reference")
+    if isinstance(reference, dict):
+        try:
+            words = None if method == "human" else provenance.get("maths_words")
+            if words is not None:
+                words = decode_math_evidence(words)
+                if not isinstance(words, list):
+                    raise ValueError("invalid math word evidence")
+            maths = assess_math_fidelity(
+                reference,
+                text,
+                cast(list[tuple[str, tuple[float, float, float, float]]] | None, words),
+            )
+        except ValueError:
+            maths = {"can_confirm": False, "risk_codes": ["invalid_math_word_evidence"]}
+    elif "maths_reference" in provenance:
+        maths = {"can_confirm": False, "risk_codes": ["invalid_math_reference"]}
+    if isinstance(maths, dict):
+        risks.update(_strings(maths.get("risk_codes")))
+        if maths.get("can_confirm") is False:
+            blocked = True
+            risks.add("maths_fidelity_unconfirmed")
+    return replace(
+        assessment,
+        can_confirm=assessment.can_confirm and not blocked,
+        risk_codes=tuple(sorted(risks)),
+        recommended_route="ocr_review" if blocked else assessment.recommended_route,
+    )
 
 
 class PageFidelityService:
@@ -164,14 +253,7 @@ class PageFidelityService:
         if method not in {"native", "legacy", "ocr", "human"}:
             raise ValueError("unsupported reading method")
         provenance = _metadata({**provenance, "source_checksum_sha256": document.checksum_sha256})
-        coverage = provenance.get("image_coverage", 0.0)
-        assessment = assess_page(
-            raw_text,
-            expected_languages=_strings(provenance.get("languages")),
-            font_names=_strings(provenance.get("fonts")),
-            image_coverage=float(coverage) if isinstance(coverage, (int, float)) else 0.0,
-            method="manual" if method == "human" else "native" if method == "legacy" else method,
-        )
+        assessment = assess_candidate(raw_text, method, provenance)
         current = (
             await self._session.get(PageTextCandidateModel, state.current_candidate_id)
             if state.current_candidate_id
@@ -179,7 +261,9 @@ class PageFidelityService:
         )
         if (
             current is not None
-            and state.state == "needs_review"
+            and state.state == ("needs_review" if assessment.can_confirm else "failed")
+            and current.diagnostics.get("algorithm_version") == assessment.algorithm_version
+            and current.can_confirm == assessment.can_confirm
             and action == "candidate_recorded"
             and current.raw_text_utf8 == raw
             and current.method == method
@@ -220,7 +304,7 @@ class PageFidelityService:
             state,
             candidate_id=candidate.id,
             action=action,
-            target="needs_review",
+            target="needs_review" if assessment.can_confirm else "failed",
             actor_id=actor_id,
             reason=reason,
             payload={
@@ -250,7 +334,26 @@ class PageFidelityService:
         if candidate_id is None or state.current_candidate_id != candidate_id:
             raise PageFidelityConflictError("source_candidate_changed")
         candidate = await self._session.get(PageTextCandidateModel, candidate_id)
-        if not document.active_for_ai or candidate is None or not candidate.can_confirm:
+        if (
+            not document.active_for_ai
+            or document.quarantined_for_teacher_use
+            or candidate is None
+            or candidate.document_id != document_id
+            or candidate.page_number != page_number
+            or not candidate.can_confirm
+        ):
+            raise PageVerificationBlockedError("source_candidate_not_confirmable")
+        try:
+            assessment = assess_candidate(
+                candidate.raw_text_utf8.decode("utf-8", errors="surrogatepass"),
+                candidate.method,
+                candidate.provenance,
+            )
+        except (UnicodeError, ValueError) as error:
+            raise PageVerificationBlockedError("source_candidate_not_confirmable") from error
+        if not assessment.can_confirm or not await self._session.scalar(
+            select(func.public.source_candidate_is_confirmable(candidate.id))
+        ):
             raise PageVerificationBlockedError("source_candidate_not_confirmable")
         if state.state == "verified":
             await self._session.commit()
@@ -309,17 +412,59 @@ class PageFidelityService:
             if state.current_candidate_id
             else None
         )
+        provenance = dict(current.provenance) if current else {}
+        languages = set(_strings(provenance.get("languages")))
+        previous_text = ""
+        invalid_languages = False
+        if current:
+            languages.update(_strings(current.diagnostics.get("languages")))
+            try:
+                previous_text = current.raw_text_utf8.decode("utf-8", errors="surrogatepass")
+            except UnicodeDecodeError:
+                previous_text = current.raw_text_utf8.decode("utf-8", errors="surrogateescape")
+            assessment = assess_candidate(
+                normalize_source_text(previous_text[:MAX_TEXT_CHARACTERS])[:MAX_TEXT_CHARACTERS],
+                current.method,
+                provenance,
+            )
+            languages.update(assessment.languages)
+            invalid_languages = "invalid_languages" in assessment.risk_codes
+        if not invalid_languages:
+            provenance["languages"] = sorted(languages)
+        provenance.update(engine="human-edit", version="1", engine_version="1")
+        provenance.pop("maths_words", None)
+        provenance.pop("candidate_selection", None)
+        reference = provenance.get("maths_reference")
+        if isinstance(reference, dict):
+            maths = assess_math_fidelity(reference, text)
+            provenance["maths_fidelity"] = {
+                "can_confirm": maths["can_confirm"],
+                "risk_codes": maths["risk_codes"],
+            }
+        algorithm = current.diagnostics.get("algorithm_version") if current else None
+        if not isinstance(algorithm, str) or not algorithm.startswith("source-fidelity-v2/"):
+            provenance["source_reprocessing_required"] = True
+            provenance.setdefault("failure_code", "source_reprocessing_required")
+        elif current is not None and provenance.get("failure_code") in (
+            "ocr_timeout",
+            "ocr_unavailable",
+            "ocr_process_failed",
+            "ocr_output_limit",
+            "ocr_text_limit",
+            "ocr_output_invalid",
+            "ocr_failed",
+            "ocr_languages_unavailable",
+            "ocr_configuration_invalid",
+        ):
+            if normalize_source_text(text) != normalize_source_text(previous_text):
+                provenance["superseded_ocr_failure_code"] = provenance.pop("failure_code")
         return await self.record_candidate(
             document_id,
             page_number,
             raw_text=text,
             method="human",
             actor_id=actor_id,
-            provenance={
-                "languages": current.diagnostics.get("languages", []) if current else [],
-                "engine": "human-edit",
-                "version": "1",
-            },
+            provenance=provenance,
             expected_version=expected_version,
             reason=_reason(reason),
             action="edited",
@@ -360,17 +505,20 @@ class PageFidelityService:
 
     async def document_is_verified(self, document_id: UUID) -> bool:
         document = await self._session.get(SourceDocumentModel, document_id)
-        if document is None or not document.original_page_count or not document.active_for_ai:
+        if (
+            document is None
+            or not document.original_page_count
+            or not document.active_for_ai
+            or document.quarantined_for_teacher_use
+        ):
             return False
-        completed, verified = (
-            await self._session.execute(
+        return bool(
+            await self._session.scalar(
                 select(
-                    func.count().filter(PageReviewStateModel.state.in_(("verified", "excluded"))),
-                    func.count().filter(PageReviewStateModel.state == "verified"),
-                ).where(PageReviewStateModel.document_id == document_id)
+                    func.public.source_document_fidelity_is_current(document_id, type_=Boolean())
+                )
             )
-        ).one()
-        return bool(completed == document.original_page_count and verified > 0)
+        )
 
     async def create_benchmark(
         self,

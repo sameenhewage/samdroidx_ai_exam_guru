@@ -76,6 +76,99 @@ def test_fidelity_metadata_does_not_retain_mutable_provider_lists() -> None:
     assert fidelity_service._strings("si") == ()
 
 
+@pytest.mark.parametrize(
+    "value",
+    [None, "si", ["si", 1], ("en", None), ["si", "x" * 257], ["en"] * 128 + ["si"]],
+)
+def test_string_evidence_rejects_the_complete_malformed_array(value: object) -> None:
+    assert fidelity_service._strings(value) == ()
+
+
+@pytest.mark.parametrize("field", ["source_languages", "languages", "fonts"])
+@pytest.mark.parametrize(
+    "value",
+    [None, "si", ["en", 1], ["en", "x" * 257], ["en"] * 128 + ["si"]],
+)
+def test_malformed_provided_source_evidence_never_loses_constraints_to_become_confirmable(
+    field: str,
+    value: object,
+) -> None:
+    provenance = {"source_languages": ["en"], "languages": ["en"], field: value}
+    result = fidelity_service.assess_candidate("Read the original question", "native", provenance)
+    assert not result.can_confirm
+    assert f"invalid_{field}" in result.risk_codes
+    assert result.normalized_text == "Read the original question"
+    view = fidelity_queries._text_view(
+        "Read the original question", method="native", provenance=provenance, diagnostics={}
+    )
+    assert view.system_text == result.normalized_text
+    assert not view.can_confirm
+    assert f"invalid_{field}" in view.risk_codes
+
+
+@pytest.mark.parametrize("field", ["source_languages", "languages"])
+def test_unknown_language_codes_are_rejected_instead_of_silently_removed(field: str) -> None:
+    result = fidelity_service.assess_candidate(
+        "Read the original question", "human", {field: ["en", "invalid"]}
+    )
+    assert not result.can_confirm
+    assert f"invalid_{field}" in result.risk_codes
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_complete_evidence_arrays_keep_empty_and_exact_bound_values(container: type) -> None:
+    assert fidelity_service._strings(container()) == ()
+    fonts = container(["F" * 256] * 128)
+    assert fidelity_service._strings(fonts) == tuple(fonts)
+    result = fidelity_service.assess_candidate(
+        "Read the original question",
+        "native",
+        {"source_languages": container(["en"] * 128), "languages": container(), "fonts": fonts},
+    )
+    assert result.can_confirm
+    assert result.languages == ("en",)
+
+
+@pytest.mark.parametrize("reference", [None, "reference", [], {}, {"_math_evidence": "invalid"}])
+def test_malformed_math_references_override_cached_pass_and_keep_text_risks(
+    reference: object,
+) -> None:
+    result = fidelity_service.assess_candidate(
+        "Read the original question\x00",
+        "human",
+        {"maths_reference": reference, "maths_fidelity": {"can_confirm": True}},
+    )
+    assert not result.can_confirm
+    assert {"unsafe_control", "invalid_math_reference", "maths_fidelity_unconfirmed"} <= set(
+        result.risk_codes
+    )
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_wrong_decoded_math_word_kind_cannot_override_the_source_reference(
+    compressed: bool,
+) -> None:
+    import pymupdf
+
+    from exam_guru_api.documents.source_math_fidelity import (
+        encode_math_evidence,
+        extract_math_layout,
+    )
+
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((50, 70), "3 X 4 = 12")
+        reference = extract_math_layout(page)
+    words = encode_math_evidence({"padding": "x" * 5000}) if compressed else {}
+    result = fidelity_service.assess_candidate(
+        "3 X 4 = 12",
+        "ocr",
+        {"languages": ["en"], "maths_reference": reference, "maths_words": words},
+    )
+    assert not result.can_confirm
+    assert "invalid_math_word_evidence" in result.risk_codes
+
+
 @pytest.mark.parametrize("page_number", [0, -1, True, 1.0, "1", None])
 def test_fidelity_source_rejects_nonpositive_or_noninteger_pages(page_number: object) -> None:
     session = AsyncMock(spec=AsyncSession)
@@ -115,6 +208,24 @@ def test_fidelity_source_missing_document_has_a_typed_error_before_creating_stat
         )
     session.get.assert_awaited_once()
     session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "condition", ["missing", "unknown_pages", "zero_pages", "inactive", "quarantined"]
+)
+def test_document_verification_rejects_missing_or_ineligible_original_before_sql(
+    condition: str,
+) -> None:
+    document = source(
+        pages=None if condition == "unknown_pages" else 0 if condition == "zero_pages" else 2
+    )
+    document.active_for_ai = condition != "inactive"
+    document.quarantined_for_teacher_use = condition == "quarantined"
+    session = AsyncMock(spec=AsyncSession)
+    session.get.return_value = None if condition == "missing" else document
+    assert not asyncio.run(PageFidelityService(session).document_is_verified(DOCUMENT))
+    session.scalar.assert_not_awaited()
     session.commit.assert_not_awaited()
 
 
@@ -224,16 +335,19 @@ def test_benchmark_categories_are_bounded_before_any_benchmark_is_written(
 def test_readonly_text_view_distrusts_malformed_coverage_without_weakening_text_risks(
     coverage: object,
 ) -> None:
+    raw = "Read the original question: ගණිතය"
     safe = fidelity_queries._text_view(
-        "Read the original question",
+        raw,
         method="native",
         provenance={"image_coverage": coverage},
         diagnostics={},
     )
-    baseline = fidelity_queries._text_view(
-        "Read the original question", method="native", provenance={}, diagnostics={}
-    )
-    assert safe == baseline
+    baseline = fidelity_queries._text_view(raw, method="native", provenance={}, diagnostics={})
+    assert safe.system_text == baseline.system_text == raw
+    assert safe.language == baseline.language
+    assert baseline.can_confirm
+    assert not safe.can_confirm
+    assert "invalid_image_coverage" in safe.risk_codes
     unsafe = fidelity_queries._text_view(
         "broken\x00text",
         method="native",
@@ -241,7 +355,9 @@ def test_readonly_text_view_distrusts_malformed_coverage_without_weakening_text_
         diagnostics={"risk_codes": ["provider_warning"]},
     )
     assert not unsafe.can_confirm
-    assert {"unsafe_control", "provider_warning"} <= set(unsafe.risk_codes)
+    assert {"unsafe_control", "provider_warning", "invalid_image_coverage"} <= set(
+        unsafe.risk_codes
+    )
     assert "\x00" not in unsafe.system_text
 
 

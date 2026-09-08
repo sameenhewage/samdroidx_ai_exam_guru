@@ -1,13 +1,14 @@
 import asyncio
 import hashlib
 import threading
+import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import BinaryIO, cast
+from typing import BinaryIO, Literal, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,15 +17,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from testcontainers.community.postgres import PostgresContainer
 
 from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.documents import page_reading_jobs as reading_jobs
 from exam_guru_api.documents.domain import SourceDocumentType
 from exam_guru_api.documents.fidelity_models import (
+    PageGroundTruthModel,
     PageReviewEventModel,
     PageReviewStateModel,
     PageTextCandidateModel,
     SourceReadJobModel,
 )
-from exam_guru_api.documents.fidelity_queries import get_review_workspace
+from exam_guru_api.documents.fidelity_queries import confirm_source_page, get_review_workspace
+from exam_guru_api.documents.fidelity_schemas import PageConfirmRequest
 from exam_guru_api.documents.fidelity_service import (
     FidelitySourceNotFoundError,
     PageFidelityConflictError,
@@ -584,17 +588,18 @@ def test_large_file_backed_source_finishes_without_a_total_page_or_attempt_cap(
 
 
 @pytest.mark.integration
-def test_initial_read_skips_verified_and_excluded_pages_but_explicit_reread_is_allowed(
-    reading_database_url: str, tmp_path: Path
+@pytest.mark.parametrize("selected_page", [1, 2, 3], ids=["verified", "excluded", "human"])
+def test_whole_document_reprocessing_protects_reviewed_work_but_explicit_reread_keeps_history(
+    reading_database_url: str, tmp_path: Path, selected_page: int
 ) -> None:
     async def scenario() -> None:
-        path = source_pdf(tmp_path / "reviewed.pdf", pages=3)
-        reader = FixtureReader(3)
+        path = source_pdf(tmp_path / "reviewed.pdf", pages=4)
+        reader = FixtureReader(4)
         async with database(reading_database_url) as sessions, sessions() as session:
-            doc_id = await add_source(session, path, pages=3)
+            doc_id = await add_source(session, path, pages=4)
             fidelity = PageFidelityService(session)
-            versions = []
-            for number in (1, 2):
+            protected: dict[int, tuple[int, UUID | None, UUID | None, str]] = {}
+            for number in (1, 2, 3):
                 state = await fidelity.record_candidate(
                     doc_id,
                     number,
@@ -612,7 +617,7 @@ def test_initial_read_skips_verified_and_excluded_pages_but_explicit_reread_is_a
                         actor_id=ACTOR,
                         reason="Compared original",
                     )
-                else:
+                elif number == 2:
                     state = await fidelity.exclude_page(
                         doc_id,
                         number,
@@ -620,36 +625,141 @@ def test_initial_read_skips_verified_and_excluded_pages_but_explicit_reread_is_a
                         actor_id=ACTOR,
                         reason="Not educational content",
                     )
-                versions.append(state.version)
-            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
-            result = await run_source_read(
-                session, job_id, storage=SourceStore(path), reader=reader
-            )
-            assert result.status == "completed"
-            assert reader.calls == [3]
-            assert await candidate_count(session, doc_id) == 3
-            for number, expected in enumerate(versions, 1):
-                current_state = await session.get(
-                    PageReviewStateModel, (doc_id, number), populate_existing=True
+                else:
+                    state = await fidelity.edit_page(
+                        doc_id,
+                        number,
+                        text="Read the manually corrected question",
+                        expected_version=state.version,
+                        actor_id=ACTOR,
+                        reason="Corrected after original comparison",
+                    )
+                protected[number] = (
+                    state.version,
+                    state.current_candidate_id,
+                    state.event_id,
+                    state.state,
                 )
-                assert current_state is not None
-                assert current_state.version == expected
+            original_events = [
+                (
+                    event.id,
+                    event.candidate_id,
+                    event.version,
+                    event.state,
+                    event.action,
+                    event.payload,
+                )
+                for event in await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == doc_id)
+                    .order_by(PageReviewEventModel.page_number, PageReviewEventModel.version)
+                )
+            ]
+            for attempt in (1, 2):
+                job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+                result = await run_source_read(
+                    session, job_id, storage=SourceStore(path), reader=reader
+                )
+                assert result.status == "completed"
+                assert result.pages_processed == 1
+                assert reader.calls == [4] * attempt
+                assert await candidate_count(session, doc_id) == 4 + attempt
+                for number, expected in protected.items():
+                    current = await session.get(
+                        PageReviewStateModel, (doc_id, number), populate_existing=True
+                    )
+                    assert current is not None
+                    assert (
+                        current.version,
+                        current.current_candidate_id,
+                        current.event_id,
+                        current.state,
+                    ) == expected
+            version, previous_id, _, _ = protected[selected_page]
+            with pytest.raises(PageFidelityConflictError, match="source_page_version_conflict"):
+                await queue_source_read(
+                    session,
+                    doc_id,
+                    page_number=selected_page,
+                    expected_page_version=version - 1,
+                    actor_id=ACTOR,
+                )
             reread = await queue_source_read(
                 session,
                 doc_id,
-                page_number=2,
-                expected_page_version=versions[1],
+                page_number=selected_page,
+                expected_page_version=version,
                 actor_id=ACTOR,
-                reason="Include corrected page",
+                reason="Explicitly read the protected original again",
             )
+            duplicate = await queue_source_read(
+                session,
+                doc_id,
+                page_number=selected_page,
+                expected_page_version=version,
+                actor_id=ACTOR,
+            )
+            assert duplicate.id == reread.id
             assert reread.configuration["force_ocr"] is True
-            await run_source_read(session, reread.id, storage=SourceStore(path), reader=reader)
-            current_state = await session.get(
-                PageReviewStateModel, (doc_id, 2), populate_existing=True
+            current = await session.get(
+                PageReviewStateModel, (doc_id, selected_page), populate_existing=True
             )
-            assert current_state is not None
-            assert current_state.state == "needs_review"
-            assert reader.calls == [3, 2]
+            assert current is not None
+            assert current.state == "processing"
+            assert current.version == version + 1
+            assert current.current_candidate_id == previous_id
+            assert not await fidelity.page_is_verified(doc_id, selected_page)
+            result = await run_source_read(
+                session, reread.id, storage=SourceStore(path), reader=reader
+            )
+            assert result.status == "completed"
+            assert result.pages_processed == 1
+            await session.refresh(current)
+            assert current.state == "needs_review"
+            assert current.version == version + 2
+            assert current.current_candidate_id != previous_id
+            assert not await fidelity.page_is_verified(doc_id, selected_page)
+            assert reader.calls == [4, 4, selected_page]
+            assert await candidate_count(session, doc_id) == 7
+            replacement = await session.get(PageTextCandidateModel, current.current_candidate_id)
+            previous = await session.get(PageTextCandidateModel, previous_id)
+            assert replacement is not None
+            assert previous is not None
+            assert replacement.parent_candidate_id == previous_id
+            assert previous.method == ("human" if selected_page == 3 else "native")
+            retained_events = list(
+                await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(PageReviewEventModel.id.in_([event[0] for event in original_events]))
+                    .order_by(PageReviewEventModel.page_number, PageReviewEventModel.version)
+                )
+            )
+            assert [
+                (
+                    event.id,
+                    event.candidate_id,
+                    event.version,
+                    event.state,
+                    event.action,
+                    event.payload,
+                )
+                for event in retained_events
+            ] == original_events
+            page_events = list(
+                await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(
+                        PageReviewEventModel.document_id == doc_id,
+                        PageReviewEventModel.page_number == selected_page,
+                    )
+                    .order_by(PageReviewEventModel.version)
+                )
+            )
+            assert [event.action for event in page_events[-2:]] == [
+                "reread_requested",
+                "candidate_recorded",
+            ]
+            assert [event.version for event in page_events[-2:]] == [version + 1, version + 2]
 
     asyncio.run(scenario())
 
@@ -1265,10 +1375,223 @@ class ResultReader(FixtureReader):
         return self.result
 
 
+def ranked_reading(preferred_index: int) -> PageReadingResult:
+    safe_text = "Read the cafe\u0301 question carefully"
+    return PageReadingResult(
+        page_number=1,
+        candidates=(
+            PageReadingCandidate(
+                raw_text=safe_text if preferred_index == 0 else "\ufffd",
+                method="native",
+                provenance={"engine": "fixture", "engine_version": "1", "languages": ["en"]},
+            ),
+            PageReadingCandidate(
+                raw_text=safe_text if preferred_index == 1 else "\ufffd",
+                method="ocr",
+                provenance={
+                    "engine": "tesseract-cli",
+                    "engine_version": "5.4.1",
+                    "languages": ["en"],
+                    "page_segmentation_mode": 3,
+                },
+            ),
+            PageReadingCandidate(
+                raw_text="",
+                method="ocr",
+                provenance={
+                    "engine": "tesseract-cli",
+                    "engine_version": "5.4.1",
+                    "languages": ["en"],
+                    "page_segmentation_mode": 6,
+                    "failure_code": "ocr_timeout",
+                },
+            ),
+        ),
+        preferred_index=preferred_index,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("preferred_index", [0, 1], ids=["native-first", "ocr-middle"])
+def test_preferred_not_last_candidate_retains_all_evidence_and_requires_original_comparison(
+    reading_database_url: str, tmp_path: Path, preferred_index: int
+) -> None:
+    async def scenario() -> None:
+        path = source_pdf(tmp_path / "ranked-selection.pdf")
+        reading = ranked_reading(preferred_index)
+        reader = ResultReader(reading)
+        principal = Principal(ACTOR, frozenset({AdminRole.ADMIN}))
+        async with database(reading_database_url) as sessions, sessions() as session:
+            doc_id = await add_source(session, path, pages=1)
+            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+            result = await run_source_read(
+                session, job_id, storage=SourceStore(path), reader=reader
+            )
+            assert result.status == "completed"
+            assert result.failure_code is None
+            assert result.pages_processed == 1
+            assert result.next_page == 2
+            assert await candidate_count(session, doc_id) == 3
+            events = list(
+                await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == doc_id)
+                    .order_by(PageReviewEventModel.version)
+                )
+            )
+            assert [event.version for event in events] == [1, 2, 3, 4]
+            assert [event.action for event in events] == ["candidate_recorded"] * 4
+            candidate_ids = [event.candidate_id for event in events[:3]]
+            assert len(set(candidate_ids)) == 3
+            assert events[-1].candidate_id == candidate_ids[preferred_index]
+            assert [event.state for event in events[:3]] == [
+                "needs_review" if index == preferred_index else "failed" for index in range(3)
+            ]
+            document = await session.get(SourceDocumentModel, doc_id)
+            assert document is not None
+            for index, expected in enumerate(reading.candidates):
+                candidate = await session.get(PageTextCandidateModel, candidate_ids[index])
+                assert candidate is not None
+                assert candidate.raw_text_utf8 == expected.raw_text.encode("utf-8")
+                assert candidate.method == expected.method
+                assert candidate.parent_candidate_id == (
+                    candidate_ids[index - 1] if index else None
+                )
+                assert candidate.can_confirm is (index == preferred_index)
+                algorithm_version = candidate.diagnostics["algorithm_version"]
+                assert isinstance(algorithm_version, str)
+                assert algorithm_version.startswith("source-fidelity-v2/")
+                assert candidate.provenance == {
+                    **expected.provenance,
+                    "job_id": str(job_id),
+                    "attempt": 1,
+                    "page_number": 1,
+                    "automatic_verification": False,
+                    "source_checksum_sha256": document.checksum_sha256,
+                }
+            chosen = await session.get(PageTextCandidateModel, candidate_ids[preferred_index])
+            assert chosen is not None
+            normalized = unicodedata.normalize("NFC", reading.candidates[preferred_index].raw_text)
+            assert chosen.normalized_text == normalized
+            assert chosen.raw_text_utf8 != normalized.encode()
+            assert chosen.text_sha256 == hashlib.sha256(normalized.encode()).hexdigest()
+            assert events[-1].payload == {
+                "job_id": str(job_id),
+                "text_sha256": chosen.text_sha256,
+                "candidate_ids": [str(value) for value in candidate_ids],
+                "selection_strategy": "source-fidelity-ranked-v2",
+                "automatic_verification": False,
+            }
+            state = await session.get(PageReviewStateModel, (doc_id, 1))
+            assert state is not None
+            assert state.state == "needs_review"
+            assert state.version == 4
+            assert state.current_candidate_id == chosen.id
+            assert state.event_id == events[-1].id
+            selected_id, selected_version = chosen.id, state.version
+            fidelity = PageFidelityService(session)
+            assert not await fidelity.page_is_verified(doc_id, 1)
+            assert not await fidelity.document_is_verified(doc_id)
+            assert not await session.scalar(func.public.source_page_fidelity_is_current(doc_id, 1))
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(PageGroundTruthModel)
+                    .where(PageGroundTruthModel.document_id == doc_id)
+                )
+                == 0
+            )
+            workspace = await get_review_workspace(session, doc_id, principal=principal)
+            assert workspace.page is not None
+            assert workspace.page.state == "needs_review"
+            assert workspace.page.candidate_id == selected_id
+            assert workspace.page.system_text == normalized
+            assert workspace.page.can_confirm
+            assert {item.id for item in workspace.page.history} == set(candidate_ids)
+            assert [item.id for item in workspace.page.history if item.is_current] == [selected_id]
+            assert workspace.progress.verified_pages == 0
+            assert not workspace.ready_for_ai
+            repeated = await run_source_read(
+                session, job_id, storage=SourceStore(path), reader=reader
+            )
+            assert not repeated.claimed
+            assert repeated.pages_processed == 0
+            assert reader.calls == [1]
+            assert await candidate_count(session, doc_id) == 3
+            with pytest.raises(ValueError, match="explicit comparison with the original"):
+                await confirm_source_page(
+                    session,
+                    doc_id,
+                    1,
+                    PageConfirmRequest.model_construct(
+                        expected_version=selected_version,
+                        candidate_id=selected_id,
+                        compared_with_original=cast(Literal[True], False),
+                        reason="Selection alone is not original comparison",
+                    ),
+                    principal=principal,
+                )
+            with pytest.raises(PageFidelityConflictError, match="source_page_version_conflict"):
+                await fidelity.confirm_page(
+                    doc_id,
+                    1,
+                    candidate_id=selected_id,
+                    expected_version=selected_version - 1,
+                    actor_id=ACTOR,
+                    reason="The pre-selection review version must not confirm",
+                )
+            await session.rollback()
+            assert not await fidelity.page_is_verified(doc_id, 1)
+            confirmed = await confirm_source_page(
+                session,
+                doc_id,
+                1,
+                PageConfirmRequest(
+                    expected_version=selected_version,
+                    candidate_id=selected_id,
+                    compared_with_original=True,
+                    reason="Explicitly compared every line with the original page",
+                ),
+                principal=principal,
+            )
+            assert confirmed.state == "verified"
+            assert confirmed.version == selected_version + 1
+            assert confirmed.candidate_id == selected_id
+            assert await fidelity.page_is_verified(doc_id, 1)
+            assert await candidate_count(session, doc_id) == 3
+            final_events = list(
+                await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == doc_id)
+                    .order_by(PageReviewEventModel.version)
+                )
+            )
+            assert [event.action for event in final_events] == ["candidate_recorded"] * 4 + [
+                "confirmed"
+            ]
+            assert final_events[-1].payload["compared_with_original"] is True
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "invalid",
-    ["page", "empty", "excess", "method", "unicode_code", "punctuation_code", "long_code"],
+    [
+        "page",
+        "empty",
+        "excess",
+        "method",
+        "unicode_code",
+        "punctuation_code",
+        "long_code",
+        "preferred_true",
+        "preferred_false",
+        "preferred_negative",
+        "preferred_out_of_range",
+        "preferred_float",
+        "preferred_string",
+    ],
 )
 def test_worker_rejects_malformed_reader_results_before_any_candidate_or_cursor_is_committed(
     reading_database_url: str, tmp_path: Path, invalid: str
@@ -1279,11 +1602,19 @@ def test_worker_rejects_malformed_reader_results_before_any_candidate_or_cursor_
         invalid_result = {
             "page": replace(result, page_number=2),
             "empty": replace(result, candidates=()),
-            "excess": replace(result, candidates=result.candidates * 3),
+            "excess": replace(result, candidates=result.candidates * 4),
             "method": replace(result, candidates=(replace(result.candidates[0], method="human"),)),
             "unicode_code": replace(result, failure_code="වැරදි"),
             "punctuation_code": replace(result, failure_code="private/path"),
             "long_code": replace(result, failure_code="x" * 65),
+            "preferred_true": replace(
+                result, candidates=ranked_reading(0).candidates, preferred_index=True
+            ),
+            "preferred_false": replace(result, preferred_index=False),
+            "preferred_negative": replace(result, preferred_index=-1),
+            "preferred_out_of_range": replace(result, preferred_index=len(result.candidates)),
+            "preferred_float": replace(result, preferred_index=cast(int, 0.0)),
+            "preferred_string": replace(result, preferred_index=cast(int, "0")),
         }[invalid]
         reader = ResultReader(invalid_result)
         async with database(reading_database_url) as sessions, sessions() as session:
@@ -1301,6 +1632,153 @@ def test_worker_rejects_malformed_reader_results_before_any_candidate_or_cursor_
             assert job.failure_code is None
             assert job.attempts == 1
             assert reader.calls == [1]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("violation", "message", "written_count"),
+    [
+        ("missing_current", "source reader did not record its candidate", 2),
+        ("missing_preferred", "selected reading candidate is missing", 3),
+    ],
+)
+def test_candidate_persistence_contract_violations_roll_back_without_changing_source_or_trust(
+    reading_database_url: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    violation: str,
+    message: str,
+    written_count: int,
+) -> None:
+    original_record = cast(
+        Callable[..., Awaitable[PageReviewStateModel]], PageFidelityService.record_candidate
+    )
+
+    async def scenario() -> None:
+        path = source_pdf(tmp_path / "candidate-contract.pdf", pages=2)
+        original_bytes = await asyncio.to_thread(path.read_bytes)
+        reader = ResultReader(ranked_reading(1))
+        reader.page_count = 2
+        storage = SourceStore(path)
+        async with database(reading_database_url) as sessions, sessions() as session:
+            doc_id = await add_source(session, path, pages=2)
+            fidelity = PageFidelityService(session)
+            for number in (1, 2):
+                state = await fidelity.record_candidate(
+                    doc_id,
+                    number,
+                    raw_text=f"Read the original question {number}",
+                    method="native",
+                    actor_id=ACTOR,
+                    provenance={"languages": ["en"]},
+                )
+                if number == 2:
+                    await fidelity.confirm_page(
+                        doc_id,
+                        number,
+                        candidate_id=state.current_candidate_id,
+                        expected_version=state.version,
+                        actor_id=ACTOR,
+                        reason="Compared this unaffected page with the original",
+                    )
+            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+            queries = [
+                select(SourceDocumentModel.__table__).where(SourceDocumentModel.id == doc_id),
+                select(PageTextCandidateModel.__table__)
+                .where(PageTextCandidateModel.document_id == doc_id)
+                .order_by(PageTextCandidateModel.id),
+                select(PageReviewEventModel.__table__)
+                .where(PageReviewEventModel.document_id == doc_id)
+                .order_by(PageReviewEventModel.id),
+                select(PageReviewStateModel.__table__)
+                .where(PageReviewStateModel.document_id == doc_id)
+                .order_by(PageReviewStateModel.page_number),
+                select(PageGroundTruthModel.__table__)
+                .where(PageGroundTruthModel.document_id == doc_id)
+                .order_by(PageGroundTruthModel.id),
+                select(AdminAuditEventModel.__table__)
+                .where(AdminAuditEventModel.payload["document_id"].astext == str(doc_id))
+                .order_by(AdminAuditEventModel.id),
+            ]
+
+            async def snapshot(check: AsyncSession) -> list[list[dict[str, object]]]:
+                return [
+                    [dict(row) for row in (await check.execute(query)).mappings()]
+                    for query in queries
+                ]
+
+            before = await snapshot(session)
+            written: list[UUID] = []
+            injected: list[str] = []
+            original_get = cast(Callable[..., Awaitable[object]], session.get)
+
+            async def record_with_broken_head(
+                self: PageFidelityService, *args: object, **kwargs: object
+            ) -> PageReviewStateModel:
+                assert kwargs["commit"] is False
+                recorded = await original_record(self, *args, **kwargs)
+                assert recorded.current_candidate_id is not None
+                written.append(recorded.current_candidate_id)
+                assert await candidate_count(session, doc_id) == 2 + len(written)
+                if violation == "missing_current" and len(written) == 2:
+                    # Simulate a recorder losing its head after flushing real candidate evidence.
+                    recorded.current_candidate_id = None
+                    injected.append(violation)
+                return recorded
+
+            async def get_with_missing_preferred(
+                entity: object, ident: object, **kwargs: object
+            ) -> object:
+                value = await original_get(entity, ident, **kwargs)
+                if (
+                    violation == "missing_preferred"
+                    and entity is PageTextCandidateModel
+                    and len(written) == 3
+                    and ident == written[1]
+                ):
+                    # Only the final selection lookup fails; all candidate writes really occurred.
+                    assert isinstance(value, PageTextCandidateModel)
+                    injected.append(violation)
+                    return None
+                return value
+
+            with monkeypatch.context() as failure:
+                failure.setattr(PageFidelityService, "record_candidate", record_with_broken_head)
+                failure.setattr(session, "get", get_with_missing_preferred)
+                with pytest.raises(ValueError, match=message):
+                    await run_source_read(session, job_id, storage=storage, reader=reader)
+            assert not session.in_transaction()
+            assert injected == [violation]
+            assert len(written) == written_count
+            assert reader.calls == [1]
+            assert storage.opens == 1
+            # Check committed evidence through a fresh session, not the worker's identity map.
+            async with sessions() as check:
+                assert await snapshot(check) == before
+                for candidate_id in written:
+                    assert await check.get(PageTextCandidateModel, candidate_id) is None
+                checking_fidelity = PageFidelityService(check)
+                assert not await checking_fidelity.page_is_verified(doc_id, 1)
+                assert await checking_fidelity.page_is_verified(doc_id, 2)
+                assert not await checking_fidelity.document_is_verified(doc_id)
+                job = await check.get(SourceReadJobModel, job_id)
+                assert job is not None
+                assert job.status == "running"
+                assert job.next_page == 1
+                assert job.version == 1
+                assert job.attempts == 1
+                assert job.failure_code is None
+                assert job.lease_token is not None
+                repeated = await run_source_read(check, job_id, storage=storage, reader=reader)
+                assert not repeated.claimed
+                assert repeated.pages_processed == 0
+                assert repeated.next_page == 1
+                assert await snapshot(check) == before
+            assert reader.calls == [1]
+            assert storage.opens == 1
+            assert await asyncio.to_thread(path.read_bytes) == original_bytes
 
     asyncio.run(scenario())
 
@@ -1325,7 +1803,7 @@ def test_lease_expiry_during_candidate_persistence_rolls_back_candidates_state_a
             with monkeypatch.context() as expiry:
                 expiry.setattr(reading_jobs, "_now", clock)
                 current, accepted = await reading_jobs._commit_page(
-                    session, claim, FixtureReader(1).read_page(1), expected_version=0, last_page=1
+                    session, claim, ranked_reading(1), expected_version=0, last_page=1
                 )
             assert current is None
             assert not accepted

@@ -15,7 +15,7 @@ from typing import Any, cast
 import pymupdf
 import pytest
 
-from exam_guru_api.documents.ocr import OCRPort, OCRRequest
+from exam_guru_api.documents.ocr import OCRBlock, OCRContractError, OCRPage, OCRPort, OCRRequest
 from exam_guru_api.documents.tesseract_ocr import (
     CommandResult,
     SubprocessCommandRunner,
@@ -161,6 +161,57 @@ def adapter_with(
     return TesseractCliOCRAdapter(config=config, command_runner=runner)
 
 
+def test_ocr_page_existing_constructors_default_to_no_word_evidence() -> None:
+    block = OCRBlock(7, 0, "source", (1.0, 2.0, 3.0, 4.0), 0.9)
+    positional = OCRPage(7, "source", (block,), 0.9)
+    keyword = OCRPage(page_number=7, text="source", blocks=(block,), confidence=0.9)
+
+    assert positional == keyword
+    assert positional.blocks == (block,)
+    assert positional.confidence == 0.9
+    assert positional.words == ()
+    assert OCRPage(7, "source").words == ()
+    assert OCRPage(7, "").words == ()
+
+
+def test_ocr_page_accepts_separate_word_evidence_without_rewriting_text_or_blocks() -> None:
+    block = OCRBlock(7, 0, "12 + 3", (1.0, 2.0, 30.0, 12.0), 0.8)
+    words = (
+        OCRBlock(7, 0, " 12 ", (1.0, 2.0, 10.0, 12.0), 0.9),
+        OCRBlock(7, 1, "+", (12.0, 5.0, 18.0, 9.0), 0.8),
+        OCRBlock(7, 2, "3", (20.0, 2.0, 30.0, 12.0), 0.7),
+    )
+
+    page = OCRPage(7, block.text, (block,), 0.8, words=words)
+
+    assert page.text == "12 + 3"
+    assert page.blocks == (block,)
+    assert page.confidence == 0.8
+    assert page.words == words
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        None,
+        [],
+        [OCRBlock(7, 0, "private word")],
+        (object(),),
+        (OCRBlock(8, 0, "private word"),),
+        (OCRBlock(7, 1, "private word"),),
+        (OCRBlock(7, 0, "private word"), OCRBlock(7, 0, "private word")),
+        (OCRBlock(7, 0, "private word"), OCRBlock(7, 2, "private word")),
+        (OCRBlock(7, 1, "private word"), OCRBlock(7, 0, "private word")),
+    ],
+    ids=["none", "list", "word-list", "untyped", "page", "start", "duplicate", "gap", "order"],
+)
+def test_ocr_page_validates_word_evidence_type_page_and_reading_order(words: object) -> None:
+    with pytest.raises(OCRContractError) as error:
+        OCRPage(7, "private word", words=cast(tuple[OCRBlock, ...], words))
+
+    assert "private word" not in str(error.value)
+
+
 def test_adapter_source_ceiling_accepts_256_mib_but_not_unbounded() -> None:
     ceiling = 256 * 1024 * 1024
     assert TesseractOCRConfig(max_source_bytes=ceiling).max_source_bytes == ceiling
@@ -255,6 +306,13 @@ def test_adapter_implements_port_and_maps_tsv_blocks_with_reproducible_provenanc
     assert page.blocks[0].confidence == pytest.approx(0.8)
     assert page.blocks[1].bbox == (5.0, 80.0, 65.0, 90.0)
     assert page.blocks[1].confidence == pytest.approx(0.8)
+    assert page.words == (
+        OCRBlock(1, 0, "Question", (10.0, 20.0, 40.0, 30.0), 0.9),
+        OCRBlock(1, 1, "1", (45.0, 20.0, 55.0, 30.0), 0.8),
+        OCRBlock(1, 2, "Choose", (10.0, 40.0, 60.0, 50.0), 0.7),
+        OCRBlock(1, 3, "(A)", (5.0, 80.0, 20.0, 90.0), 0.6),
+        OCRBlock(1, 4, "answer", (25.0, 80.0, 65.0, 90.0), 1.0),
+    )
 
     assert [call.argv for call in runner.calls[:2]] == [
         ("fixture-tesseract", "--version"),
@@ -278,6 +336,127 @@ def test_adapter_implements_port_and_maps_tsv_blocks_with_reproducible_provenanc
     assert ocr_call.cwd.is_relative_to(tmp_path)
     assert not ocr_call.cwd.exists()
     assert not ocr_call.image_paths[0].exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tsv_retains_each_numeric_and_operator_word_box_in_encounter_order(
+    tmp_path: Path,
+) -> None:
+    tsv = (
+        TSV_HEADER
+        + "2\t1\t9\t0\t0\t0\t100\t40\t140\t70\t-1\tignored hierarchy text\n"
+        + "5\t1\t9\t1\t1\t1\t120\t60\t35\t12\t91\tCompute\n"
+        + "5\t1\t9\t1\t1\t2\t160\t60\t14\t12\t82\t12\n"
+        + "5\t1\t9\t1\t1\t0\t0\t0\t0\t0\t-1\t \n"
+        + "5\t1\t9\t1\t1\t3\t178\t63\t9\t3\t73\t\u2212\n"
+        + "5\t1\t9\t1\t1\t4\t193\t60\t24\t12\t64\t3.5\n"
+        + "5\t1\t9\t2\t1\t1\t120\t90\t8\t14\t55\t\u00d7\n"
+        + "5\t1\t9\t2\t1\t2\t132\t90\t14\t14\t46\t\uff12\n"
+        + "5\t1\t2\t1\t1\t1\t20\t10\t9\t14\t37\t÷\n"
+        + "5\t1\t2\t1\t1\t2\t35\t10\t9\t14\t28\t½\n"
+    ).encode()
+    adapter = adapter_with(RecordingRunner(tsv=tsv))
+
+    result = adapter.extract(request_for(pdf_bytes()), temporary_directory=tmp_path)
+    page = result.pages[0]
+
+    assert page.text == "Compute 12 \u2212 3.5\n\u00d7 \uff12\n÷ ½"
+    assert tuple(block.text for block in page.blocks) == (
+        "Compute 12 \u2212 3.5\n\u00d7 \uff12",
+        "÷ ½",
+    )
+    assert tuple(block.reading_order for block in page.blocks) == (0, 1)
+    assert tuple(block.bbox for block in page.blocks) == (
+        (120.0, 60.0, 217.0, 104.0),
+        (20.0, 10.0, 44.0, 24.0),
+    )
+    assert tuple(block.confidence for block in page.blocks) == pytest.approx((0.685, 0.325))
+    assert page.confidence == pytest.approx(0.505)
+    assert page.words == (
+        OCRBlock(1, 0, "Compute", (120.0, 60.0, 155.0, 72.0), 0.91),
+        OCRBlock(1, 1, "12", (160.0, 60.0, 174.0, 72.0), 0.82),
+        OCRBlock(1, 2, "\u2212", (178.0, 63.0, 187.0, 66.0), 0.73),
+        OCRBlock(1, 3, "3.5", (193.0, 60.0, 217.0, 72.0), 0.64),
+        OCRBlock(1, 4, "\u00d7", (120.0, 90.0, 128.0, 104.0), 0.55),
+        OCRBlock(1, 5, "\uff12", (132.0, 90.0, 146.0, 104.0), 0.46),
+        OCRBlock(1, 6, "÷", (20.0, 10.0, 29.0, 24.0), 0.37),
+        OCRBlock(1, 7, "½", (35.0, 10.0, 44.0, 24.0), 0.28),
+    )
+    assert adapter.extract(request_for(pdf_bytes()), temporary_directory=tmp_path).pages == (page,)
+
+
+@pytest.mark.parametrize("raw_text", ["  e\u0301²  ", "\t\uff11\uff12÷½\r\n", "  teh  "])
+def test_tsv_word_text_is_exact_while_existing_block_text_still_trims(
+    raw_text: str, tmp_path: Path
+) -> None:
+    result = adapter_with(RecordingRunner(tsv=single_word_tsv(raw_text))).extract(
+        request_for(pdf_bytes()), temporary_directory=tmp_path
+    )
+    page = result.pages[0]
+
+    assert page.text == raw_text.strip()
+    assert page.blocks == (OCRBlock(1, 0, raw_text.strip(), (0.0, 0.0, 10.0, 10.0), 0.9),)
+    assert page.words == (OCRBlock(1, 0, raw_text, (0.0, 0.0, 10.0, 10.0), 0.9),)
+    assert page.words[0].text.encode() == raw_text.encode()
+
+
+@pytest.mark.parametrize(
+    "tsv",
+    [
+        TSV_HEADER.encode(),
+        EMPTY_TSV,
+        (TSV_HEADER + "5\t1\t0\t0\t0\t0\t0\t0\t0\t0\t-1\t\n").encode(),
+        single_word_tsv(" \t\n\r "),
+    ],
+    ids=["header", "page-only", "empty-word", "whitespace-word"],
+)
+def test_blank_tsv_has_no_word_evidence(tsv: bytes, tmp_path: Path) -> None:
+    result = adapter_with(RecordingRunner(tsv=tsv)).extract(
+        request_for(pdf_bytes()), temporary_directory=tmp_path
+    )
+    page = result.pages[0]
+
+    assert page.text == ""
+    assert page.blocks == ()
+    assert page.confidence is None
+    assert page.words == ()
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        (2, "0"),
+        (3, "0"),
+        (4, "0"),
+        (5, "0"),
+        (6, "-1"),
+        (7, "-1"),
+        (6, "400"),
+        (7, "400"),
+        (8, "0"),
+        (9, "0"),
+        (10, "nan"),
+        (10, "inf"),
+        (10, "-0.5"),
+        (10, "101"),
+    ],
+)
+def test_tsv_rejects_invalid_word_evidence_without_partial_results_or_raw_text_logs(
+    column: int, value: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    row = ["5", "1", "1", "1", "1", "1", "10", "20", "30", "40", "90", "PRIVATE fixture"]
+    row[column] = value
+    tsv = VALID_TSV + ("\t".join(row) + "\n").encode()
+
+    with pytest.raises(TesseractMalformedOutputError) as error:
+        adapter_with(RecordingRunner(tsv=tsv)).extract(
+            request_for(pdf_bytes()), temporary_directory=tmp_path
+        )
+
+    assert "PRIVATE fixture" not in str(error.value)
+    assert "PRIVATE fixture" not in repr(error.value)
+    assert "PRIVATE fixture" not in caplog.text
+    assert error.value.__context__ is None
     assert list(tmp_path.iterdir()) == []
 
 
@@ -848,6 +1027,7 @@ def test_tsv_allows_safe_text_whitespace(
 
     assert result.pages[0].text == text
     assert result.pages[0].blocks[0].text == text
+    assert result.pages[0].words[0].text == text
 
 
 def test_tsv_preserves_sinhala_zero_width_joiner(tmp_path: Path) -> None:
@@ -860,6 +1040,7 @@ def test_tsv_preserves_sinhala_zero_width_joiner(tmp_path: Path) -> None:
 
     assert result.pages[0].text == sinhala_with_zwj
     assert result.pages[0].blocks[0].text == sinhala_with_zwj
+    assert result.pages[0].words[0].text == sinhala_with_zwj
 
 
 @pytest.mark.parametrize(

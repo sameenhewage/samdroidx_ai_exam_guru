@@ -231,6 +231,7 @@ class OCRPage:
     text: str
     blocks: tuple[OCRBlock, ...] = ()
     confidence: float | None = None
+    words: tuple[OCRBlock, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.page_number, int) or isinstance(self.page_number, bool):
@@ -253,6 +254,15 @@ class OCRPage:
         if self.blocks and self.text != "\n".join(block.text for block in self.blocks):
             raise OCRContractError("page text must match its ordered blocks")
         _validate_confidence(self.confidence)
+        if not isinstance(self.words, tuple) or any(
+            not isinstance(word, OCRBlock) for word in self.words
+        ):
+            raise OCRContractError("words must contain OCRBlock values")
+        if any(word.page_number != self.page_number for word in self.words):
+            raise OCRContractError("every word must reference its containing page")
+        word_reading_orders = tuple(word.reading_order for word in self.words)
+        if word_reading_orders != tuple(range(len(self.words))):
+            raise OCRContractError("word reading_order values must be contiguous and ascending")
 
 
 @dataclass(frozen=True, slots=True)

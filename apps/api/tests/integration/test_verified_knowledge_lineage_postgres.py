@@ -33,7 +33,11 @@ from exam_guru_api.curriculum.models import (
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
-from exam_guru_api.documents.fidelity_models import PageReviewStateModel
+from exam_guru_api.documents.fidelity_models import (
+    PageReviewEventModel,
+    PageReviewStateModel,
+    PageTextCandidateModel,
+)
 from exam_guru_api.documents.fidelity_service import PageFidelityService
 from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
 from exam_guru_api.documents.page_reading_jobs import queue_source_read
@@ -96,6 +100,7 @@ from tests.test_blueprint_domain import make_uniform_specification
 pytestmark = pytest.mark.integration
 ACTOR = Principal(UUID(int=35001), frozenset({AdminRole.ADMIN}))
 SOURCE_TEXT = "Fractions split a whole into equal parts.\nCafé uses NFC.\nWhich answer is correct?"
+SIBLING_TEXT = "A second page retained for this disposable fixture."
 CONFIG = EmbeddingConfig("deterministic", "lineage", 3, "v1", "lineage-v1")
 EVIDENCE = (
     "DISPOSABLE synthetic fixture evidence; pipeline mechanics only, not real educational approval."
@@ -257,7 +262,14 @@ async def seed_curriculum_scope(session: AsyncSession, *, admitted: bool = True)
     )
 
 
-async def seed(session: AsyncSession, *, admitted: bool = True, trusted: bool = False) -> Seed:
+async def seed(
+    session: AsyncSession,
+    *,
+    admitted: bool = True,
+    trusted: bool = False,
+    resolve_document: bool = True,
+    confirm_primary: bool = True,
+) -> Seed:
     scope = await seed_curriculum_scope(session, admitted=admitted)
     curriculum_id = scope.curriculum_version_id
     audit = {"created_by": ACTOR.subject_id, "updated_by": ACTOR.subject_id}
@@ -342,15 +354,98 @@ async def seed(session: AsyncSession, *, admitted: bool = True, trusted: bool = 
     )
     candidate_id = state.current_candidate_id
     assert candidate_id is not None
-    await fidelity.confirm_page(
-        document_id,
-        1,
+    if confirm_primary:
+        await fidelity.confirm_page(
+            document_id,
+            1,
+            candidate_id=candidate_id,
+            expected_version=state.version,
+            actor_id=ACTOR.subject_id,
+            reason=EVIDENCE,
+        )
+    if resolve_document:
+        await verify_synthetic_page(
+            session, document_id, SIBLING_TEXT, actor_id=ACTOR.subject_id, page_number=2
+        )
+    return Seed(document_id, candidate_id, block_id, scope)
+
+
+async def advance_sql_page(
+    session: AsyncSession,
+    document_id: UUID,
+    page_number: int,
+    *,
+    candidate_id: UUID | None,
+    target: str,
+    action: str,
+    payload: dict[str, object],
+) -> PageReviewStateModel:
+    state = await session.get(PageReviewStateModel, (document_id, page_number))
+    if state is None:
+        state = PageReviewStateModel(
+            document_id=document_id, page_number=page_number, state="pending", version=0
+        )
+        session.add(state)
+        await session.flush()
+    event = PageReviewEventModel(
+        id=uuid4(),
+        document_id=document_id,
+        page_number=page_number,
+        version=state.version + 1,
         candidate_id=candidate_id,
-        expected_version=state.version,
+        state=target,
+        action=action,
         actor_id=ACTOR.subject_id,
         reason=EVIDENCE,
+        payload=payload,
     )
-    return Seed(document_id, candidate_id, block_id, scope)
+    session.add(event)
+    await session.flush()
+    state.version = event.version
+    state.current_candidate_id = candidate_id
+    state.event_id = event.id
+    state.state = target
+    await session.commit()
+    return state
+
+
+async def unresolve_sibling(session: AsyncSession, source: Seed, problem: str) -> None:
+    state = await session.get(PageReviewStateModel, (source.document_id, 2), populate_existing=True)
+    if problem == "missing":
+        assert state is None
+        return
+    if problem == "pending":
+        assert state is None
+        session.add(
+            PageReviewStateModel(
+                document_id=source.document_id, page_number=2, state="pending", version=0
+            )
+        )
+        await session.commit()
+        return
+    provenance: dict[str, object] = {"engine": "synthetic-fixture", "evidence": EVIDENCE}
+    if problem == "failed":
+        provenance["failure_code"] = "render_failed"
+    recorded = await PageFidelityService(session).record_candidate(
+        source.document_id,
+        2,
+        raw_text=SIBLING_TEXT,
+        method="native",
+        actor_id=ACTOR.subject_id,
+        provenance=provenance,
+        expected_version=state.version if state is not None else None,
+    )
+    if problem == "processing":
+        await queue_source_read(
+            session,
+            source.document_id,
+            page_number=2,
+            expected_page_version=recorded.version,
+            actor_id=ACTOR.subject_id,
+            reason=EVIDENCE,
+        )
+    else:
+        assert recorded.state == problem
 
 
 async def admission(session: AsyncSession, curriculum_id: UUID, state: str) -> None:
@@ -395,7 +490,7 @@ def test_synthetic_scope_codes_do_not_randomly_match_reserved_markers(
     asyncio.run(scenario())
 
 
-def test_verified_page_can_supply_nfc_chunks_while_document_needs_review(
+def test_fully_resolved_document_can_supply_nfc_chunks_embeddings_and_rag(
     lineage_database_url: str,
 ) -> None:
     async def scenario() -> None:
@@ -410,9 +505,7 @@ def test_verified_page_can_supply_nfc_chunks_while_document_needs_review(
                     {"id": imported.record.id},
                 )
                 assert binding == source.candidate_id
-                assert not await PageFidelityService(session).document_is_verified(
-                    source.document_id
-                )
+                assert await PageFidelityService(session).document_is_verified(source.document_id)
                 nfc = await persistence.import_chunk(
                     source.chunk(sequence=1, content="Cafe\u0301 uses NFC."),
                     actor_id=ACTOR.subject_id,
@@ -443,6 +536,266 @@ def test_verified_page_can_supply_nfc_chunks_while_document_needs_review(
                 _, snapshot = _context_snapshot(validated, retrieval_filters=source.scope)
                 assert str(source.candidate_id) in str(snapshot)
                 assert hashlib.sha256(SOURCE_TEXT.encode()).hexdigest() in str(snapshot)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("problem", ["missing", "pending", "needs_review", "failed", "processing"])
+@pytest.mark.parametrize("boundary", ["service", "sql"])
+def test_unresolved_sibling_prevents_chunking_from_a_verified_page(
+    lineage_database_url: str, problem: str, boundary: str
+) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(lineage_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                source = await seed(session, resolve_document=False)
+                await unresolve_sibling(session, source, problem)
+                if boundary == "service":
+                    with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                        await KnowledgePersistenceService(session).import_chunk(
+                            source.chunk(), actor_id=ACTOR.subject_id
+                        )
+                else:
+                    model = KnowledgeChunkModel.from_domain(source.chunk(), ACTOR.subject_id)
+                    model.source_candidate_id = source.candidate_id
+                    session.add(model)
+                    with pytest.raises(IntegrityError, match="current verified page text"):
+                        await session.commit()
+                await session.rollback()
+                assert (
+                    await session.scalar(
+                        select(func.public.source_page_fidelity_is_current(source.document_id, 1))
+                    )
+                    is True
+                )
+                assert (
+                    await session.scalar(
+                        select(func.public.source_document_fidelity_is_current(source.document_id))
+                    )
+                    is False
+                )
+                assert (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(KnowledgeChunkModel)
+                        .where(KnowledgeChunkModel.source_document_id == source.document_id)
+                    )
+                    == 0
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "problem", ["unknown_source", "unknown_count", "all_excluded", "unbacked_exclusion"]
+)
+def test_document_gate_requires_actual_verified_content_and_explicit_exclusions(
+    lineage_database_url: str, problem: str
+) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(lineage_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                document_id = uuid4()
+                if problem == "unknown_count":
+                    checksum = hashlib.sha256(document_id.bytes).hexdigest()
+                    session.add(
+                        SourceDocumentModel(
+                            id=document_id,
+                            checksum_sha256=checksum,
+                            object_key=f"sources/{checksum}.pdf",
+                            original_filename="disposable-unknown-count.pdf",
+                            content_type="application/pdf",
+                            size_bytes=100,
+                            document_type=SourceDocumentType.TEACHER_GUIDE,
+                            created_by=ACTOR.subject_id,
+                            updated_by=ACTOR.subject_id,
+                        )
+                    )
+                    await session.commit()
+                elif problem != "unknown_source":
+                    source = await seed(session, resolve_document=False)
+                    document_id = source.document_id
+                    if problem == "unbacked_exclusion":
+                        await advance_sql_page(
+                            session,
+                            document_id,
+                            2,
+                            candidate_id=None,
+                            target="excluded",
+                            action="candidate_recorded",
+                            payload={},
+                        )
+                    else:
+                        service = PageFidelityService(session)
+                        for page_number in (1, 2):
+                            state = await session.get(
+                                PageReviewStateModel, (document_id, page_number)
+                            )
+                            await service.exclude_page(
+                                document_id,
+                                page_number,
+                                expected_version=state.version if state is not None else 0,
+                                actor_id=ACTOR.subject_id,
+                                reason=EVIDENCE,
+                            )
+                assert (
+                    await session.scalar(
+                        select(func.public.source_document_fidelity_is_current(document_id))
+                    )
+                    is False
+                )
+                assert (
+                    await session.scalar(
+                        select(func.public.source_document_fidelity_is_current(None))
+                    )
+                    is False
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("resolution", ["verified", "excluded"])
+def test_explicitly_resolving_sibling_enables_chunking_and_embeddings(
+    lineage_database_url: str, resolution: str
+) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(lineage_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                source = await seed(session, resolve_document=False)
+                await unresolve_sibling(session, source, "needs_review")
+                persistence = KnowledgePersistenceService(session)
+                with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                    await persistence.import_chunk(source.chunk(), actor_id=ACTOR.subject_id)
+                await session.rollback()
+                sibling = await session.get(PageReviewStateModel, (source.document_id, 2))
+                assert sibling is not None
+                service = PageFidelityService(session)
+                if resolution == "excluded":
+                    await service.exclude_page(
+                        source.document_id,
+                        2,
+                        expected_version=sibling.version,
+                        actor_id=ACTOR.subject_id,
+                        reason=EVIDENCE,
+                    )
+                else:
+                    await service.confirm_page(
+                        source.document_id,
+                        2,
+                        candidate_id=sibling.current_candidate_id,
+                        expected_version=sibling.version,
+                        actor_id=ACTOR.subject_id,
+                        reason=EVIDENCE,
+                    )
+                assert (
+                    await session.scalar(
+                        select(func.public.source_document_fidelity_is_current(source.document_id))
+                    )
+                    is True
+                )
+                imported = await persistence.import_chunk(source.chunk(), actor_id=ACTOR.subject_id)
+                await persistence.store_chunk_embedding(
+                    imported.record.id,
+                    EmbeddingResult(config=CONFIG, vector=(1.0, 0.0, 0.0)),
+                    actor_id=ACTOR.subject_id,
+                )
+                assert (
+                    len(
+                        await SqlAlchemyEmbeddingJobRepository(session).load_sources(
+                            (), (imported.record.id,)
+                        )
+                    )
+                    == 1
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("problem", ["needs_review", "failed", "processing"])
+def test_unresolved_sibling_disables_existing_embeddings_rag_and_new_writes(
+    lineage_database_url: str, problem: str
+) -> None:
+    async def scenario() -> None:
+        engine = create_async_engine(lineage_database_url)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                source = await seed(session)
+                persistence = KnowledgePersistenceService(session)
+                chunk = (
+                    await persistence.import_chunk(source.chunk(), actor_id=ACTOR.subject_id)
+                ).record
+                embedding = await persistence.store_chunk_embedding(
+                    chunk.id,
+                    EmbeddingResult(config=CONFIG, vector=(1.0, 0.0, 0.0)),
+                    actor_id=ACTOR.subject_id,
+                )
+                await unresolve_sibling(session, source, problem)
+                with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                    await persistence.store_chunk_embedding(
+                        chunk.id,
+                        EmbeddingResult(config=CONFIG, vector=(1.0, 0.0, 0.0)),
+                        actor_id=ACTOR.subject_id,
+                    )
+                await session.rollback()
+                with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                    await persistence.import_chunk(
+                        source.chunk(sequence=1), actor_id=ACTOR.subject_id
+                    )
+                await session.rollback()
+                assert (
+                    await session.scalar(
+                        select(func.public.source_page_fidelity_is_current(source.document_id, 1))
+                    )
+                    is True
+                )
+                assert (
+                    await SqlAlchemyEmbeddingJobRepository(session).load_sources((), (chunk.id,))
+                    == ()
+                )
+                found = await PostgresHybridRetrievalRepository(
+                    session, embedding_config=CONFIG
+                ).retrieve_candidates(
+                    query="Fractions", query_vector=(1.0, 0.0, 0.0), filters=source.scope
+                )
+                assert not found.lexical_candidates
+                assert not found.vector_candidates
+                configuration_id = uuid4()
+                session.add(
+                    EmbeddingConfigurationModel.from_domain(
+                        configuration_id, replace(CONFIG, version=uuid4().hex), ACTOR.subject_id
+                    )
+                )
+                await session.commit()
+                session.add(
+                    KnowledgeEmbeddingModel(
+                        id=uuid4(),
+                        knowledge_chunk_id=chunk.id,
+                        embedding_configuration_id=configuration_id,
+                        embedding_dimension=3,
+                        source_text_sha256=hashlib.sha256(chunk.text.encode()).hexdigest(),
+                        embedding=[1.0, 0.0, 0.0],
+                        created_by=ACTOR.subject_id,
+                    )
+                )
+                with pytest.raises(IntegrityError, match="current verified knowledge lineage"):
+                    await session.commit()
+                await session.rollback()
+                retained = await session.get(KnowledgeChunkModel, chunk.id)
+                assert retained is not None
+                assert retained.text == chunk.text
+                assert retained.source_candidate_id == source.candidate_id
+                assert await session.get(KnowledgeEmbeddingModel, embedding.id) is not None
         finally:
             await engine.dispose()
 
@@ -842,7 +1195,7 @@ def test_direct_generation_writes_cannot_bypass_invalidated_lineage(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("change", ["excluded", "unapproved"])
+@pytest.mark.parametrize("change", ["excluded", "unapproved", "sibling"])
 def test_generation_lineage_lock_serializes_page_and_catalogue_changes(
     lineage_database_url: str, change: str
 ) -> None:
@@ -869,6 +1222,18 @@ def test_generation_lineage_lock_serializes_page_and_catalogue_changes(
                             await admission(
                                 other, source.scope.curriculum_version_id, "quarantined"
                             )
+                        elif change == "sibling":
+                            sibling = await other.get(PageReviewStateModel, (source.document_id, 2))
+                            assert sibling is not None
+                            await advance_sql_page(
+                                other,
+                                source.document_id,
+                                2,
+                                candidate_id=sibling.current_candidate_id,
+                                target="processing",
+                                action="reread_requested",
+                                payload={},
+                            )
                         else:
                             await invalidate(other, source, change)
 
@@ -891,8 +1256,10 @@ def test_generation_lineage_lock_serializes_page_and_catalogue_changes(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("page_number", [1, 2])
 def test_embedding_insert_waits_for_page_edit_then_rechecks_lineage(
     lineage_database_url: str,
+    page_number: int,
 ) -> None:
     async def scenario() -> None:
         engine = create_async_engine(lineage_database_url)
@@ -940,7 +1307,10 @@ def test_embedding_insert_waits_for_page_edit_then_rechecks_lineage(
                     await asyncio.wait_for(started.wait(), timeout=5)
                     with pytest.raises(TimeoutError):
                         await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
-                    await invalidate(session, source, "excluded")
+                    if page_number == 1:
+                        await invalidate(session, source, "excluded")
+                    else:
+                        await unresolve_sibling(session, source, "needs_review")
                     await asyncio.wait_for(task, timeout=5)
                     assert (
                         await session.scalar(
@@ -1044,6 +1414,235 @@ def test_generation_worker_rechecks_lineage_before_provider_and_final_persist(
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_document_gate_empty_downgrade_and_upgrade_with_a_stale_verified_sibling() -> None:
+    with pytest.MonkeyPatch.context() as environment:
+        environment.delenv("EXAM_GURU_DATABASE_URL", raising=False)
+        with PostgresContainer(
+            image="pgvector/pgvector:0.8.6-pg18-trixie",
+            username="exam_guru",
+            password=uuid4().hex,
+            dbname="disposable_document_lineage",
+            driver="asyncpg",
+        ) as postgres:
+            url = postgres.get_connection_url()
+            config = _config_for_database(url)
+            command.upgrade(config, "0038_upload_request_identity")
+
+            async def old_functions() -> list[str]:
+                engine = create_async_engine(url)
+                try:
+                    async with engine.connect() as connection:
+                        definitions = []
+                        for name in (
+                            "public.knowledge_source_lineage_is_current(uuid,integer,uuid,uuid,text)",
+                            "public.lock_knowledge_source_lineage(uuid,integer,uuid)",
+                        ):
+                            definition = await connection.scalar(
+                                text("SELECT pg_get_functiondef(to_regprocedure(:name))"),
+                                {"name": name},
+                            )
+                            assert isinstance(definition, str)
+                            definitions.append(" ".join(definition.split()))
+                        return definitions
+                finally:
+                    await engine.dispose()
+
+            definitions = asyncio.run(old_functions())
+            command.upgrade(config, "head")
+            command.downgrade(config, "0038_upload_request_identity")
+            assert asyncio.run(old_functions()) == definitions
+
+            async def historical_fixture() -> tuple[Seed, UUID, UUID, UUID]:
+                engine = create_async_engine(url)
+                try:
+                    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                        assert (
+                            await session.scalar(
+                                text(
+                                    "SELECT to_regprocedure("
+                                    "'public.source_document_fidelity_is_current(uuid)')"
+                                )
+                            )
+                            is None
+                        )
+                        source = await seed(session, resolve_document=False, confirm_primary=False)
+                        primary = await session.get(PageTextCandidateModel, source.candidate_id)
+                        assert primary is not None
+                        await advance_sql_page(
+                            session,
+                            source.document_id,
+                            1,
+                            candidate_id=primary.id,
+                            target="verified",
+                            action="confirmed",
+                            payload={
+                                "compared_with_original": True,
+                                "text_sha256": primary.text_sha256,
+                            },
+                        )
+                        sibling = PageTextCandidateModel(
+                            id=uuid4(),
+                            document_id=source.document_id,
+                            page_number=2,
+                            method="human",
+                            raw_text_utf8=SIBLING_TEXT.encode(),
+                            normalized_text=SIBLING_TEXT,
+                            text_sha256=hashlib.sha256(SIBLING_TEXT.encode()).hexdigest(),
+                            can_confirm=True,
+                            provenance={"engine": "synthetic-fixture"},
+                            diagnostics={"algorithm_version": "source-fidelity-v1/ucd-14.0.0"},
+                            created_by=ACTOR.subject_id,
+                        )
+                        session.add(sibling)
+                        await session.commit()
+                        await advance_sql_page(
+                            session,
+                            source.document_id,
+                            2,
+                            candidate_id=sibling.id,
+                            target="verified",
+                            action="confirmed",
+                            payload={
+                                "compared_with_original": True,
+                                "text_sha256": sibling.text_sha256,
+                            },
+                        )
+                        persistence = KnowledgePersistenceService(session)
+                        chunk = (
+                            await persistence.import_chunk(
+                                source.chunk(), actor_id=ACTOR.subject_id
+                            )
+                        ).record
+                        embedding = await persistence.store_chunk_embedding(
+                            chunk.id,
+                            EmbeddingResult(config=CONFIG, vector=(1.0, 0.0, 0.0)),
+                            actor_id=ACTOR.subject_id,
+                        )
+                        return source, sibling.id, chunk.id, embedding.id
+                finally:
+                    await engine.dispose()
+
+            source, sibling_id, chunk_id, embedding_id = asyncio.run(historical_fixture())
+            command.upgrade(config, "head")
+
+            async def check_stale_document() -> None:
+                engine = create_async_engine(url)
+                try:
+                    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                        assert (
+                            await session.scalar(
+                                select(
+                                    func.public.knowledge_record_is_eligible(
+                                        "knowledge_chunk", chunk_id
+                                    )
+                                )
+                            )
+                            is False
+                        )
+                        assert (
+                            await session.scalar(
+                                select(
+                                    func.public.source_page_fidelity_is_current(
+                                        source.document_id, 1, source.candidate_id
+                                    )
+                                )
+                            )
+                            is True
+                        )
+                        assert (
+                            await session.scalar(
+                                select(
+                                    func.public.source_document_fidelity_is_current(
+                                        source.document_id
+                                    )
+                                )
+                            )
+                            is False
+                        )
+                        retained = await session.get(PageTextCandidateModel, sibling_id)
+                        assert retained is not None
+                        assert retained.raw_text_utf8 == SIBLING_TEXT.encode()
+                        assert retained.can_confirm is True
+                        assert retained.method == "human"
+                        assert retained.diagnostics == {
+                            "algorithm_version": "source-fidelity-v1/ucd-14.0.0"
+                        }
+                        sibling = await session.get(PageReviewStateModel, (source.document_id, 2))
+                        assert sibling is not None
+                        assert sibling.state == "verified"
+                        assert sibling.current_candidate_id == sibling_id
+                        assert (
+                            await session.scalar(
+                                select(func.count())
+                                .select_from(PageReviewEventModel)
+                                .where(PageReviewEventModel.document_id == source.document_id)
+                            )
+                            == 3
+                        )
+                        persistence = KnowledgePersistenceService(session)
+                        with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                            await persistence.import_chunk(
+                                source.chunk(sequence=1), actor_id=ACTOR.subject_id
+                            )
+                        await session.rollback()
+                        with pytest.raises(TrustedKnowledgeSourceRequiredError):
+                            await persistence.store_chunk_embedding(
+                                chunk_id,
+                                EmbeddingResult(config=CONFIG, vector=(1.0, 0.0, 0.0)),
+                                actor_id=ACTOR.subject_id,
+                            )
+                        await session.rollback()
+                        assert (
+                            await SqlAlchemyEmbeddingJobRepository(session).load_sources(
+                                (), (chunk_id,)
+                            )
+                            == ()
+                        )
+                        found = await PostgresHybridRetrievalRepository(
+                            session, embedding_config=CONFIG
+                        ).retrieve_candidates(
+                            query="Fractions", query_vector=(1.0, 0.0, 0.0), filters=source.scope
+                        )
+                        assert not found.lexical_candidates
+                        assert not found.vector_candidates
+                        sibling = await session.get(PageReviewStateModel, (source.document_id, 2))
+                        assert sibling is not None
+                        await PageFidelityService(session).exclude_page(
+                            source.document_id,
+                            2,
+                            expected_version=sibling.version,
+                            actor_id=ACTOR.subject_id,
+                            reason=EVIDENCE,
+                        )
+                        assert (
+                            await session.scalar(
+                                select(
+                                    func.public.source_document_fidelity_is_current(
+                                        source.document_id
+                                    )
+                                )
+                            )
+                            is True
+                        )
+                        assert (
+                            await session.scalar(
+                                select(
+                                    func.public.knowledge_record_is_eligible(
+                                        "knowledge_chunk", chunk_id
+                                    )
+                                )
+                            )
+                            is True
+                        )
+                        assert await session.get(KnowledgeChunkModel, chunk_id) is not None
+                        assert await session.get(KnowledgeEmbeddingModel, embedding_id) is not None
+                        assert await session.get(PageTextCandidateModel, sibling_id) is not None
+                finally:
+                    await engine.dispose()
+
+            asyncio.run(check_stale_document())
 
 
 def test_migration_keeps_legacy_chunks_and_vectors_unbound_and_ineligible() -> None:
@@ -1435,8 +2034,10 @@ def test_new_review_commands_cannot_reuse_invalidated_pass(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("change", ["source", "sibling"])
 def test_source_invalidation_preserves_publication_history_but_blocks_new_version(
     lineage_database_url: str,
+    change: str,
 ) -> None:
     async def scenario() -> None:
         engine = create_async_engine(lineage_database_url)
@@ -1471,7 +2072,10 @@ def test_source_invalidation_preserves_publication_history_but_blocks_new_versio
                     curriculum_id, paper_id, expected_version=1, principal=ACTOR
                 )
                 frozen_snapshot = deepcopy(published.record.publication.snapshot)
-                await invalidate(session, source, "excluded")
+                if change == "sibling":
+                    await unresolve_sibling(session, source, "needs_review")
+                else:
+                    await invalidate(session, source, "excluded")
                 historical = await publication.get_publication(
                     curriculum_id, paper_id, 1, principal=ACTOR
                 )

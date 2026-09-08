@@ -47,7 +47,7 @@ def test_normalization_is_nfc_only_and_idempotent(raw: str, expected: str) -> No
 
 def test_algorithm_version_identifies_the_actual_unicode_database() -> None:
     assert unicodedata.unidata_version == UNICODE_VERSION
-    assert f"source-fidelity-v1/ucd-{unicodedata.unidata_version}" == ALGORITHM_VERSION
+    assert f"source-fidelity-v2/ucd-{unicodedata.unidata_version}" == ALGORITHM_VERSION
     assert assess_page(SYNTHETIC_SINHALA).algorithm_version == ALGORITHM_VERSION
     assert measure_text_fidelity("a", "b").algorithm_version == ALGORITHM_VERSION
 
@@ -264,13 +264,13 @@ def test_language_evidence_combines_scripts_metadata_and_conservative_english_cu
 
 
 @pytest.mark.parametrize("language", ["si", "ta"])
-def test_expected_local_language_latin_gibberish_is_soft_routing_evidence(language: str) -> None:
+def test_expected_local_language_latin_gibberish_blocks_confirmation(language: str) -> None:
     page = assess_page(SYNTHETIC_LATIN_GIBBERISH, expected_languages=(language,))
     assert "latin_script_mismatch" in page.risk_codes
     assert "suspicious_encoding" in page.classifications
     assert page.recommended_route == "ocr_review"
     assert page.normalized_text == SYNTHETIC_LATIN_GIBBERISH
-    assert page.can_confirm
+    assert not page.can_confirm
 
 
 @pytest.mark.parametrize(
@@ -310,7 +310,7 @@ def test_general_legacy_font_risks_are_not_a_claim_of_a_proven_mapping(
     assert "legacy_encoded" in page.classifications
     assert page.recommended_route == "ocr_review"
     assert page.normalized_text == raw
-    assert page.can_confirm
+    assert not page.can_confirm
 
 
 @pytest.mark.parametrize(
@@ -330,7 +330,42 @@ def test_font_evidence_is_deduplicated_and_never_rewrites_valid_unicode() -> Non
     assert page.languages == ("si", "ta")
     assert page.risk_codes == ("legacy_font_sinhala", "legacy_font_tamil")
     assert page.recommended_route == "ocr_review"
-    assert page.can_confirm
+    assert not page.can_confirm
+
+
+@pytest.mark.parametrize("method", ["native", "ocr", "manual"])
+@pytest.mark.parametrize("expected", [("si",), ("si", "en")])
+def test_mixed_sinhala_and_legacy_latin_corruption_is_not_reviewable(
+    method: str, expected: tuple[str, ...]
+) -> None:
+    raw = SYNTHETIC_SINHALA + "\n" + SYNTHETIC_LATIN_GIBBERISH + "\nRead the answer."
+    page = assess_page(raw, expected_languages=expected, method=method)
+    assert page.normalized_text == raw
+    assert "si" in page.languages
+    assert "mixed_script_corruption" in page.risk_codes
+    assert "suspicious_encoding" in page.classifications
+    assert page.recommended_route == "ocr_review"
+    assert not page.can_confirm
+
+
+def test_accented_legacy_latin_inside_sinhala_is_not_treated_as_english() -> None:
+    page = assess_page("ගණිතය fhdackd ls\u00cdu", expected_languages=("si", "en"), method="manual")
+    assert "mixed_script_corruption" in page.risk_codes
+    assert not page.can_confirm
+
+
+@pytest.mark.parametrize(("expected", "raw"), [("si", SYNTHETIC_TAMIL), ("ta", SYNTHETIC_SINHALA)])
+def test_local_ocr_does_not_satisfy_a_different_source_script(expected: str, raw: str) -> None:
+    page = assess_page(raw, expected_languages=(expected,), method="ocr")
+    assert "source_script_missing" in page.risk_codes
+    assert not page.can_confirm
+
+
+@pytest.mark.parametrize("method", ["ocr", "manual"])
+def test_local_source_cannot_be_replaced_with_latin_only_prose(method: str) -> None:
+    page = assess_page(SYNTHETIC_ENGLISH, expected_languages=("si",), method=method)
+    assert "source_script_missing" in page.risk_codes
+    assert not page.can_confirm
 
 
 @pytest.mark.parametrize("raw", ["", " \r\n\t", "\u200b", "\u0301"])

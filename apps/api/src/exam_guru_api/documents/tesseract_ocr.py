@@ -1068,6 +1068,7 @@ class TesseractCliOCRAdapter:
             raise TesseractMalformedOutputError("tesseract TSV output is malformed")
 
         blocks: dict[int, _BlockAccumulator] = {}
+        ocr_words: list[OCRBlock] = []
         for row in rows[1:]:
             if len(row) != len(_TSV_COLUMNS):
                 raise TesseractMalformedOutputError("tesseract TSV output is malformed")
@@ -1137,6 +1138,15 @@ class TesseractCliOCRAdapter:
             ):
                 raise TesseractMalformedOutputError("tesseract TSV output is malformed")
 
+            ocr_words.append(
+                OCRBlock(
+                    page_number=rendered_page.page_number,
+                    reading_order=len(ocr_words),
+                    text=raw_text,
+                    bbox=(float(left), float(top), float(left + width), float(top + height)),
+                    confidence=confidence / 100.0,
+                )
+            )
             line_key = (paragraph_number, line_number)
             accumulator = blocks.get(block_number)
             if accumulator is None:
@@ -1185,4 +1195,5 @@ class TesseractCliOCRAdapter:
             confidence=(
                 sum(page_confidences) / len(page_confidences) if page_confidences else None
             ),
+            words=tuple(ocr_words),
         )

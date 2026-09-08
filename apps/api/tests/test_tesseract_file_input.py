@@ -11,6 +11,7 @@ from typing import Any, BinaryIO, Never, cast
 import pymupdf
 import pytest
 
+from exam_guru_api.documents.ocr import OCRBlock
 from exam_guru_api.documents.tesseract_ocr import (
     CommandResult,
     RenderedPageImage,
@@ -116,6 +117,7 @@ def test_file_input_reads_page_1001_without_a_whole_pdf_bytes_fallback(tmp_path:
         assert not source.closed
     assert result.pages[0].page_number == 1001
     assert result.pages[0].text == "Question"
+    assert result.pages[0].words == (OCRBlock(1001, 0, "Question", (1.0, 1.0, 11.0, 11.0), 0.95),)
     assert result.config["input_mode"] == "file"
     assert result.config["traineddata_eng_sha256"] == hashlib.sha256(b"fixture eng").hexdigest()
     assert result.config["available_languages"] == "eng+sin+tam"
@@ -140,6 +142,55 @@ def test_file_input_uses_actual_render_hash_and_cleans_temporary_artifacts(tmp_p
     assert (images[0].width, images[0].height, images[0].dpi) == (180, 180, 72)
     assert images[0].sha256 == runner.image_hashes[0]
     assert not images[0].path.exists()
+
+
+def test_file_input_retains_word_geometry_in_image_pixels_on_selected_source_page(
+    tmp_path: Path,
+) -> None:
+    path = source_pdf(tmp_path / "source.pdf", pages=2)
+    tsv = (
+        TSV.split(b"\n", maxsplit=1)[0]
+        + (
+            "\n5\t1\t1\t1\t1\t1\t190\t40\t20\t16\t80\t12\n"
+            "5\t1\t1\t1\t1\t2\t220\t44\t12\t4\t70\t\u2212\n"
+            "5\t1\t1\t1\t1\t3\t240\t40\t17\t16\t60\t3\n"
+        ).encode()
+    )
+    runner = FileCommandRunner(tmp_path / "models", tsv=tsv)
+    adapter = TesseractCliOCRAdapter(
+        config=replace(file_config(runner.models), dpi=144), command_runner=runner
+    )
+    images: list[RenderedPageImage] = []
+
+    with path.open("rb") as source:
+        result = adapter.extract_file(source, page_numbers=(2,), on_render=images.append)
+
+    page = result.pages[0]
+    assert (images[0].width, images[0].height, images[0].dpi) == (360, 360, 144)
+    assert page.page_number == 2
+    assert page.text == "12 \u2212 3"
+    assert page.blocks == (OCRBlock(2, 0, "12 \u2212 3", (190.0, 40.0, 257.0, 56.0), 0.7),)
+    assert page.words == (
+        OCRBlock(2, 0, "12", (190.0, 40.0, 210.0, 56.0), 0.8),
+        OCRBlock(2, 1, "\u2212", (220.0, 44.0, 232.0, 48.0), 0.7),
+        OCRBlock(2, 2, "3", (240.0, 40.0, 257.0, 56.0), 0.6),
+    )
+    assert not images[0].path.exists()
+
+
+def test_file_input_blank_tsv_does_not_invent_word_evidence(tmp_path: Path) -> None:
+    path = source_pdf(tmp_path / "source.pdf")
+    runner = FileCommandRunner(tmp_path / "models", tsv=TSV.replace(b"Question", b" "))
+    adapter = TesseractCliOCRAdapter(config=file_config(runner.models), command_runner=runner)
+
+    with path.open("rb") as source:
+        result = adapter.extract_file(source, page_numbers=(1,))
+
+    page = result.pages[0]
+    assert page.text == ""
+    assert page.blocks == ()
+    assert page.confidence is None
+    assert page.words == ()
 
 
 def test_file_timeout_still_exposes_actual_render_and_sanitizes_process_output(

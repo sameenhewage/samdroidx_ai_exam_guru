@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 UNICODE_VERSION = unicodedata.unidata_version
-ALGORITHM_VERSION = f"source-fidelity-v1/ucd-{UNICODE_VERSION}"
+ALGORITHM_VERSION = f"source-fidelity-v2/ucd-{UNICODE_VERSION}"
 MAX_TEXT_CHARACTERS = 100_000
 MAX_EDIT_CELLS = 4_000_000
 _LANGUAGE_ORDER = ("si", "en", "ta")
@@ -237,6 +237,22 @@ def _font_languages(font_names: tuple[str, ...]) -> set[str]:
     return languages
 
 
+def _latin_corruption(text: str) -> bool:
+    for carrier in re.findall(r"[A-Za-z\u00c0-\u024f][A-Za-z\u00c0-\u024f%<;^|=]*", text):
+        letters = "".join(character for character in carrier if character.isalpha())
+        if len(letters) < 3 or letters.isupper():
+            continue
+        if re.search(r"[A-Za-z][%<;^|][A-Za-z]", carrier):
+            return True
+        if any(character.isupper() and ord(character) > 127 for character in letters[1:]):
+            return True
+        if len(letters) >= 5 and not set(letters.casefold()) & set("aeiouy"):
+            return True
+        if len(letters) >= 5 and sum(character.isupper() for character in letters[1:]) >= 2:
+            return True
+    return False
+
+
 def assess_page(
     text: str,
     *,
@@ -272,12 +288,27 @@ def assess_page(
     if english:
         evidence.add("en")
     languages = tuple(language for language in _LANGUAGE_ORDER if language in evidence) or ("und",)
+    local_source = bool(evidence & {"si", "ta"})
+    latin_corruption = local_source and _latin_corruption(normalized)
+    mixed_corruption = bool(counts["sinhala"] + counts["tamil"]) and latin_corruption
     latin_mismatch = (
-        bool(evidence & {"si", "ta"})
+        local_source
         and not counts["sinhala"] + counts["tamil"]
         and counts["latin"] >= 16
         and sum(len(word) >= 3 for word in words) >= 3
-        and not english
+        and (not english or latin_corruption)
+    )
+    expected_local = set(expected_languages) & {"si", "ta"}
+    source_script_missing = (
+        method in {"ocr", "manual"}
+        and bool(expected_local)
+        and not any(
+            counts["sinhala" if language == "si" else "tamil"] for language in expected_local
+        )
+        and (
+            counts["sinhala"] + counts["tamil"] > 0
+            or (counts["latin"] >= 8 and any(len(word) >= 3 for word in words))
+        )
     )
     native_font_risk = method == "native" and bool(font_languages)
     sparse_overlay = (
@@ -293,34 +324,35 @@ def assess_page(
         risks.add("language_undetermined")
     if latin_mismatch:
         risks.add("latin_script_mismatch")
+    if mixed_corruption:
+        risks.add("mixed_script_corruption")
+    if source_script_missing:
+        risks.add("source_script_missing")
     if native_font_risk:
         for language, script in (("si", "sinhala"), ("ta", "tamil")):
             if language in font_languages:
                 risks.add(f"legacy_font_{script}")
         classifications.add("legacy_encoded")
-    if not structurally_safe or latin_mismatch:
+    fidelity_blocked = (
+        native_font_risk
+        or latin_mismatch
+        or mixed_corruption
+        or source_script_missing
+        or sparse_overlay
+    )
+    if not structurally_safe or latin_mismatch or mixed_corruption or source_script_missing:
         classifications.add("suspicious_encoding")
     if sparse_overlay:
         risks.add("sparse_native_overlay")
     if image_coverage > 0:
         scanned = not has_content or sparse_overlay or method == "ocr"
         classifications.add("scanned_image" if scanned else "native_image")
-    if (
-        method == "native"
-        and has_content
-        and structurally_safe
-        and not (native_font_risk or latin_mismatch or sparse_overlay)
-    ):
+    if method == "native" and has_content and structurally_safe and not fidelity_blocked:
         classifications.add("native_unicode")
     if len(languages) > 1:
         classifications.add("mixed_language")
     needs_ocr_review = (
-        method == "ocr"
-        or not has_content
-        or not structurally_safe
-        or native_font_risk
-        or latin_mismatch
-        or sparse_overlay
+        method == "ocr" or not has_content or not structurally_safe or fidelity_blocked
     )
     return PageAssessment(
         normalized_text=None if "\x00" in normalized or "surrogate" in risks else normalized,
@@ -330,7 +362,7 @@ def assess_page(
         risk_codes=tuple(sorted(risks)),
         classifications=tuple(sorted(classifications)),
         recommended_route="ocr_review" if needs_ocr_review else "native_review",
-        can_confirm=has_content and structurally_safe,
+        can_confirm=has_content and structurally_safe and not fidelity_blocked,
         algorithm_version=ALGORITHM_VERSION,
     )
 

@@ -40,7 +40,7 @@ from exam_guru_api.documents.domain import (
     SourceDocumentType,
     validate_pdf_upload,
 )
-from exam_guru_api.documents.fidelity_models import PageReviewStateModel, SourceReadJobModel
+from exam_guru_api.documents.fidelity_models import SourceReadJobModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.documents.schemas import (
     MaterialGradeSummaryResponse,
@@ -1036,21 +1036,9 @@ class SourceDocumentService:
 
     @staticmethod
     def _material_status_expression() -> ColumnElement[str]:
-        document, page, job = SourceDocumentModel, PageReviewStateModel, SourceReadJobModel
-        verified_pages = (
-            select(
-                and_(
-                    func.count() == document.original_page_count,
-                    func.count().filter(page.state == "verified") > 0,
-                )
-            )
-            .where(
-                page.document_id == document.id,
-                page.page_number.between(1, document.original_page_count),
-                page.state.in_(("verified", "excluded")),
-            )
-            .correlate(document)
-            .scalar_subquery()
+        document, job = SourceDocumentModel, SourceReadJobModel
+        verified_pages = func.public.source_document_fidelity_is_current(
+            document.id, type_=Boolean()
         )
         reading = (
             select(job.id)

@@ -483,8 +483,16 @@ async def _commit_page(
     if accepted and result is not None:
         if (
             result.page_number != claim.next_page
-            or not 1 <= len(result.candidates) <= 2
+            or not 1 <= len(result.candidates) <= 3
             or any(candidate.method not in {"native", "ocr"} for candidate in result.candidates)
+            or (
+                result.preferred_index is not None
+                and (
+                    isinstance(result.preferred_index, bool)
+                    or not isinstance(result.preferred_index, int)
+                    or not 0 <= result.preferred_index < len(result.candidates)
+                )
+            )
             or (
                 result.failure_code is not None
                 and (
@@ -496,6 +504,7 @@ async def _commit_page(
         ):
             raise ValueError("source page reader returned an invalid result")
         fidelity = PageFidelityService(session)
+        candidate_ids: list[UUID] = []
         for candidate in result.candidates:
             state = await fidelity.record_candidate(
                 claim.document_id,
@@ -514,6 +523,31 @@ async def _commit_page(
                 commit=False,
             )
             version = state.version
+            if state.current_candidate_id is None:
+                raise ValueError("source reader did not record its candidate")
+            candidate_ids.append(state.current_candidate_id)
+        selected_index = (
+            result.preferred_index if result.preferred_index is not None else len(candidate_ids) - 1
+        )
+        if state is not None and state.current_candidate_id != candidate_ids[selected_index]:
+            selected = await session.get(PageTextCandidateModel, candidate_ids[selected_index])
+            if selected is None:
+                raise ValueError("selected reading candidate is missing")
+            await fidelity._advance(
+                state,
+                candidate_id=selected.id,
+                action="candidate_recorded",
+                target="needs_review" if selected.can_confirm else "failed",
+                actor_id=claim.requested_by,
+                reason="Selected the highest-fidelity unverified reading",
+                payload={
+                    "job_id": str(claim.id),
+                    "text_sha256": selected.text_sha256,
+                    "candidate_ids": [str(value) for value in candidate_ids],
+                    "selection_strategy": "source-fidelity-ranked-v2",
+                    "automatic_verification": False,
+                },
+            )
         if result.failure_code is not None and state is not None:
             await fidelity._advance(
                 state,

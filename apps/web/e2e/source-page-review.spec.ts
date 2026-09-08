@@ -82,9 +82,13 @@ async function jump(page: Page, pageNumber: number) {
   ).toBeVisible();
 }
 
-async function imageReady(page: Page, pageNumber: number) {
+async function imageReady(
+  page: Page,
+  pageNumber: number,
+  label = "Original page",
+) {
   const image = page.getByRole("img", {
-    name: `Original page ${pageNumber}`,
+    name: `${label} ${pageNumber}`,
     exact: true,
   });
   await expect
@@ -105,7 +109,7 @@ async function benchmark(page: Page, id: string) {
 
 async function expectReadableButton(button: Locator) {
   await expect(button).toBeVisible();
-  const contrast = await button.evaluate((element) => {
+  const computed = await button.evaluate((element) => {
     const style = getComputedStyle(element);
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 1;
@@ -129,13 +133,19 @@ async function expectReadableButton(button: Locator) {
     };
     const foreground = luminance(style.color);
     const background = luminance(style.backgroundColor);
-    return (
-      (Math.max(foreground, background) + 0.05) /
-      (Math.min(foreground, background) + 0.05)
-    );
+    return {
+      contrast:
+        (Math.max(foreground, background) + 0.05) /
+        (Math.min(foreground, background) + 0.05),
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      cursor: style.cursor,
+      opacity: style.opacity,
+    };
   });
-  expect(contrast).toBeGreaterThanOrEqual(4.5);
+  expect(computed.contrast).toBeGreaterThanOrEqual(4.5);
   await expect(button).toHaveCSS("opacity", "1");
+  return computed;
 }
 
 test("real APIs: private page comparison, versioned drafts, explicit decisions and honest 40-page reference counts", async ({
@@ -371,8 +381,10 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   await page
     .getByRole("button", { name: "Correct the text", exact: true })
     .click();
-  const draft =
-    "ශ්‍රී ලංකාව — ක්‍රියා\nதமிழ் க்ஷேத்திரம்\n  ½ × 2 = 1; x² ≤ 4; √9 = 3; π ≠ Ω  ";
+  const draft = textBefore!
+    .replaceAll("Synthetic", "ශ්‍රී ලංකාව ක්‍රියා")
+    .replaceAll("page", "தமிழ் க்ஷேத்திரம்")
+    .replaceAll("line", "පේළිය");
   await page
     .getByRole("textbox", { name: "Correction", exact: true })
     .fill(draft);
@@ -418,7 +430,10 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
         headers,
         data: {
           expected_version: current.page!.version,
-          text: "Concurrent synthetic reading",
+          text: textBefore!.replaceAll(
+            "Synthetic",
+            "Concurrent synthetic reading",
+          ),
           reason: "Exercise real conflict recovery",
         },
       },
@@ -453,10 +468,12 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
       "Correction saved. Compare it with the original before confirming.",
     ),
   ).toBeVisible();
-  expect(await page.getByTestId("system-page-text").textContent()).toBe(draft);
   const saved = await workspace(page, source.id);
   expect(saved.page!.system_text).toBe(draft);
   expect(saved.page!.state).toBe("needs_review");
+  expect(saved.page!.can_confirm).toBe(true);
+  expect(saved.page!.diagnostics.text_readable).toBe(true);
+  expect(await page.getByTestId("system-page-text").textContent()).toBe(draft);
   expect((await benchmark(page, set.id)).adjudicated_pages).toBe(0);
   await page.evaluate(async () => {
     await document.fonts.load('400 16px "Noto Sans Sinhala"', "ශ්‍රී ලංකාව");
@@ -633,6 +650,333 @@ test("real APIs: private page comparison, versioned drafts, explicit decisions a
   await expect(
     page.getByRole("button", { name: "Next page", exact: true }),
   ).toBeEnabled();
+});
+
+test("real APIs: synthetic Sinhala failures and readable maths-blocked recovery never auto-confirm", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await login(page, "admin");
+  expect(
+    await json(
+      await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+    ),
+  ).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `Synthetic ${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const original = syntheticBook(marker, 1);
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker.replaceAll(" ", "-")}.pdf`,
+          mimeType: "application/pdf",
+          buffer: original,
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "English",
+          subject_label: "Mathematics",
+          document_type_label: "Synthetic failure workflow",
+          year: 2026,
+          evidence: [
+            "Disposable UI and rejection fixture; not Sinhala OCR or educational ground truth",
+          ],
+        }),
+      },
+    }),
+    201,
+  );
+  const read = await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(`/api/v1/admin/source-read-jobs/${read.id}`),
+          )
+        ).status,
+      {
+        timeout: 90_000,
+        intervals: [500, 1000, 2000],
+      },
+    )
+    .toBe("completed");
+  const initial = await workspace(page, source.id);
+  expect(initial.page).toMatchObject({
+    state: "needs_review",
+    can_confirm: true,
+  });
+  const corrupt = `ශ්‍රී ලංකාව — පරීක්ෂණ පෙළ\n${"\uFFFD".repeat(40)}\nwkd ñ`;
+  await json(
+    await page.request.post(
+      `/api/v1/admin/materials/${source.id}/pages/1/edit`,
+      {
+        headers,
+        data: {
+          expected_version: initial.page!.version,
+          text: corrupt,
+          reason:
+            "Synthetic unreadable candidate; must not become ground truth",
+        },
+      },
+    ),
+  );
+  const damaged = await workspace(page, source.id);
+  expect(damaged.page).toMatchObject({
+    state: "failed",
+    can_confirm: false,
+    diagnostics: { text_readable: false },
+  });
+  expect(damaged.progress.verified_pages).toBe(0);
+  await page.goto(`/admin/materials/${source.id}/review-text`);
+  await imageReady(page, 1, "මුල් පිටුව");
+  await expect(
+    page.getByRole("combobox", { name: "Review language / භාෂාව" }),
+  ).toHaveValue("si");
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("exam-guru:review-language:v1"),
+    ),
+  ).toBeNull();
+  const failure = page.getByText("මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.", {
+    exact: true,
+  });
+  await expect(failure).toBeVisible();
+  await expect(page.getByTestId("system-page-text")).toHaveCount(0);
+  await expect(page.getByTestId("recovered-page-text")).toHaveCount(0);
+  const details = page
+    .locator("details")
+    .filter({ has: page.getByText("තාක්ෂණික විස්තර", { exact: true }) });
+  await expect(details).not.toHaveAttribute("open", "");
+  await expect(page.getByTestId("failed-page-text")).toBeHidden();
+  expect(await page.getByTestId("failed-page-text").textContent()).toBe(
+    damaged.page!.system_text,
+  );
+  const actions = page.getByRole("group", { name: "පිටුව සඳහා ක්‍රියා" });
+  await expect(actions.getByRole("button")).toHaveText([
+    "නැවත කියවන්න",
+    "පෙළ නිවැරදි කරන්න",
+    "මෙම පිටුව භාවිත නොකරන්න",
+    "පෙළ නිවැරදියි",
+  ]);
+  const reread = page.getByRole("button", {
+    name: "නැවත කියවන්න",
+    exact: true,
+  });
+  const confirm = page.getByRole("button", {
+    name: "පෙළ නිවැරදියි",
+    exact: true,
+  });
+  await expect(reread).toBeEnabled();
+  await expect(reread).toHaveCSS("cursor", "pointer");
+  await expect(confirm).toBeDisabled();
+  await expect(confirm).toHaveCSS("cursor", "not-allowed");
+  const normalStyle = await expectReadableButton(reread);
+  await reread.hover();
+  const hoverStyle = await expectReadableButton(reread);
+  await page.mouse.move(0, 0);
+  await reread.focus();
+  await expect(reread).toBeFocused();
+  const focusStyle = await expectReadableButton(reread);
+  const disabledConfirmStyle = await confirm.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      cursor: style.cursor,
+      opacity: style.opacity,
+    };
+  });
+  console.log(
+    "SOURCE_REVIEW_STYLE_EVIDENCE",
+    JSON.stringify({
+      normalStyle,
+      hoverStyle,
+      focusStyle,
+      disabledConfirmStyle,
+    }),
+  );
+
+  const recovered = initial
+    .page!.system_text.replaceAll("Synthetic", "ශ්‍රී ලංකාව")
+    .replaceAll("page", "පිටුව")
+    .replaceAll("line", "පේළිය")
+    .replace("2 + 2 = 4", "2 + 2 = 5");
+  expect(recovered).not.toBe(initial.page!.system_text);
+  expect(recovered).toContain("2 + 2 = 5");
+  await page
+    .getByRole("button", { name: "පෙළ නිවැරදි කරන්න", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "නිවැරදි කළ පෙළ", exact: true })
+    .fill(recovered);
+  await page
+    .getByRole("textbox", { name: "නිවැරදි කිරීමට හේතුව" })
+    .fill(
+      "Synthetic readable Sinhala with one changed number; must remain blocked",
+    );
+  const editAccepted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/materials/${source.id}/pages/1/edit`),
+  );
+  await page
+    .getByRole("button", { name: "නිවැරදි කළ පෙළ සුරකින්න", exact: true })
+    .click();
+  const editResponse = await editAccepted;
+  expect(editResponse.status()).toBe(200);
+  expect(editResponse.request().postDataJSON()).toMatchObject({
+    expected_version: damaged.page!.version,
+    text: recovered,
+  });
+  const recoveredPanel = page.getByRole("region", {
+    name: "නැවත කියවූ පෙළ — තහවුරු කිරීමට සූදානම් නැත",
+  });
+  await expect(recoveredPanel).toBeVisible();
+  expect(await page.getByTestId("recovered-page-text").textContent()).toBe(
+    recovered,
+  );
+  await expect(
+    recoveredPanel.getByText(/අංක, සංකේත සහ වගු තවමත් වැරදි විය හැක/),
+  ).toBeVisible();
+  await expect(failure).toBeVisible();
+  await expect(page.getByTestId("system-page-text")).toHaveCount(0);
+  await imageReady(page, 1, "මුල් පිටුව");
+  await expect(confirm).toBeDisabled();
+  const blocked = await workspace(page, source.id);
+  expect(blocked.page).toMatchObject({
+    state: "failed",
+    can_confirm: false,
+    system_text: recovered,
+    diagnostics: { text_readable: true },
+  });
+  expect(blocked.page!.risk_codes).toContain("math_tokens_changed");
+  expect(blocked.page!.history).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: initial.page!.candidate_id,
+        is_current: false,
+      }),
+      expect.objectContaining({
+        id: damaged.page!.candidate_id,
+        is_current: false,
+      }),
+      expect.objectContaining({
+        id: blocked.page!.candidate_id,
+        is_current: true,
+      }),
+    ]),
+  );
+  expect(blocked.ready_for_ai).toBe(false);
+  expect(blocked.progress.verified_pages).toBe(0);
+  const rejected = await page.request.post(
+    `/api/v1/admin/materials/${source.id}/pages/1/confirm`,
+    {
+      headers,
+      data: {
+        expected_version: blocked.page!.version,
+        candidate_id: blocked.page!.candidate_id,
+        compared_with_original: true,
+        reason:
+          "Synthetic guard rejection assertion; never educational ground truth",
+      },
+    },
+  );
+  expect(await json(rejected, 409)).toMatchObject({
+    detail: { code: "source_page_verification_blocked" },
+  });
+  const afterRejected = await workspace(page, source.id);
+  expect(afterRejected.page!.version).toBe(blocked.page!.version);
+  expect(afterRejected.progress.verified_pages).toBe(0);
+
+  const rereadAccepted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/materials/${source.id}/pages/1/reread`),
+  );
+  await reread.click();
+  const rereadResponse = await rereadAccepted;
+  expect(rereadResponse.request().postDataJSON()).toEqual({
+    expected_version: blocked.page!.version,
+  });
+  expect(rereadResponse.status()).toBe(202);
+  const job = (await rereadResponse.json()) as ReadJob;
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(`/api/v1/admin/source-read-jobs/${job.id}`),
+          )
+        ).status,
+      {
+        timeout: 90_000,
+        intervals: [500, 1000, 2000],
+      },
+    )
+    .toBe("completed");
+  const fresh = await workspace(page, source.id);
+  expect(fresh.page!.version).toBeGreaterThan(blocked.page!.version);
+  expect(fresh.page!.candidate_id).not.toBe(blocked.page!.candidate_id);
+  expect(fresh.page!.state).toBe("needs_review");
+  expect(fresh.page!.system_text).toBe(initial.page!.system_text);
+  expect(fresh.page!.history).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: damaged.page!.candidate_id,
+        is_current: false,
+      }),
+      expect.objectContaining({
+        id: blocked.page!.candidate_id,
+        is_current: false,
+      }),
+      expect.objectContaining({
+        id: fresh.page!.candidate_id,
+        is_current: true,
+      }),
+    ]),
+  );
+  expect(fresh.progress.verified_pages).toBe(0);
+  expect(fresh.ready_for_ai).toBe(false);
+  await page.reload();
+  await imageReady(page, 1);
+  expect(await page.getByTestId("system-page-text").textContent()).toBe(
+    fresh.page!.system_text,
+  );
+  await expect(
+    page.getByText("Not yet checked against the original.", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await (
+      await page.request.get(
+        `/api/v1/admin/source-documents/${source.id}/content`,
+      )
+    ).body(),
+  ).toEqual(original);
+  console.log(
+    "SOURCE_REVIEW_REAL_API_EVIDENCE",
+    JSON.stringify({
+      failedVersion: damaged.page!.version,
+      recoveredVersion: blocked.page!.version,
+      rereadVersion: fresh.page!.version,
+      retainedCandidates: fresh.page!.history.length,
+      verifiedPages: fresh.progress.verified_pages,
+    }),
+  );
 });
 
 test("enabled native and React Aria buttons consistently show a pointer across Studio", async ({

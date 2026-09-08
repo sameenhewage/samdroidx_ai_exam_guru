@@ -16,6 +16,8 @@ from exam_guru_api.api.routes import source_fidelity as routes
 from exam_guru_api.auth.domain import AdminRole, AuthorizationError, Permission, Principal
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
 from exam_guru_api.documents import fidelity_queries as queries
+from exam_guru_api.documents import fidelity_service as fidelity_service_module
+from exam_guru_api.documents.fidelity import ALGORITHM_VERSION
 from exam_guru_api.documents.fidelity_models import PageReviewStateModel, SourceReadJobModel
 from exam_guru_api.documents.fidelity_schemas import (
     PageConfirmRequest,
@@ -855,3 +857,483 @@ def test_reread_rejects_unversioned_or_client_controlled_worker_requests(
     assert response.status_code == 422
     queue.assert_not_awaited()
     assert dispatcher.identifiers == []
+
+
+@pytest.mark.parametrize("method", ["native", "legacy", "ocr", "human"])
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {"failure_code": None},
+        {"failure_code": "ocr_timeout"},
+        {"maths_fidelity": {"can_confirm": False, "risk_codes": ["maths_anchor_missing"]}},
+    ],
+)
+def test_candidate_assessment_and_display_fail_closed_on_failure_evidence(
+    method: str, provenance: dict[str, object]
+) -> None:
+    provenance = {"languages": ["si"], **provenance}
+    view = queries._text_view(
+        "ගණිතය 2 + 3 = 5", method=method, provenance=provenance, diagnostics={}
+    )
+    assert not view.can_confirm
+    assessment = fidelity_service_module.assess_candidate("ගණිතය 2 + 3 = 5", method, provenance)
+    assert not assessment.can_confirm
+    assert set(assessment.risk_codes) <= set(view.risk_codes)
+    if "maths_fidelity" in provenance:
+        assert "maths_anchor_missing" in view.risk_codes
+
+
+@pytest.mark.parametrize("coverage", [True, float("nan"), -0.1, 2.0, "0.9"])
+def test_invalid_image_evidence_does_not_become_a_confirmable_native_candidate(
+    coverage: object,
+) -> None:
+    view = queries._text_view(
+        "The correct answer",
+        method="native",
+        provenance={"image_coverage": coverage},
+        diagnostics={},
+    )
+    assert not view.can_confirm
+    assert "invalid_image_coverage" in view.risk_codes
+
+
+@pytest.mark.parametrize(
+    ("raw", "readable"), [("ගණිතය 2 + 3 = 5", True), ("ගණිතය wOHdmk m%Yak", False)]
+)
+def test_readable_recovery_is_distinct_from_maths_confirmation(raw: str, readable: bool) -> None:
+    view = queries._text_view(
+        raw,
+        method="ocr",
+        provenance={
+            "languages": ["si"],
+            "maths_fidelity": {"can_confirm": False, "risk_codes": ["table_word_boxes_required"]},
+        },
+        diagnostics={"text_readable": not readable},
+    )
+    assert view.diagnostics["text_readable"] is readable
+    assert not view.can_confirm
+
+
+@pytest.mark.parametrize("method", ["ocr", "human"])
+def test_candidate_cannot_expand_its_own_original_source_language(method: str) -> None:
+    assessment = fidelity_service_module.assess_candidate(
+        "தமிழ் மொழி வினா",
+        method,
+        {
+            "source_languages": ["si"],
+            "languages": ["si", "ta"],
+        },
+    )
+    assert not assessment.can_confirm
+    assert "source_script_missing" in assessment.risk_codes
+
+
+def test_text_view_preserves_current_diagnostics_and_actual_sinhala_language() -> None:
+    diagnostics: dict[str, object] = {
+        "algorithm_version": "source-fidelity-v1/ucd-14.0.0",
+        "languages": ["en"],
+        "script_counts": {"sinhala": 0, "latin": 300},
+        "classifications": ["native_unicode"],
+        "recommended_route": "native_review",
+        "risk_codes": ["historical_risk"],
+    }
+    view = queries._text_view(
+        "ගණිතය f;ajd lsÍu",
+        method="legacy",
+        provenance={"languages": ["si"]},
+        diagnostics=diagnostics,
+    )
+    assert view.language == "si"
+    assert not view.can_confirm
+    assert view.diagnostics["algorithm_version"] == ALGORITHM_VERSION
+    assert view.diagnostics["languages"] == ["si"]
+    assert view.diagnostics["recommended_route"] == "ocr_review"
+    assert view.diagnostics["stored_diagnostics"] == diagnostics
+    assert "historical_risk" in view.risk_codes
+    assert "mixed_script_corruption" in view.risk_codes
+
+
+@pytest.mark.parametrize(
+    ("raw", "provenance", "sql_confirmable"),
+    [
+        (b"The correct answer\x00", {}, True),
+        (b"The correct answer\xff", {}, True),
+        (b"The correct answer", {"failure_code": None}, True),
+        (b"The correct answer", {"maths_fidelity": {"can_confirm": False}}, True),
+        (b"The correct answer", {}, False),
+    ],
+)
+@pytest.mark.parametrize("state_name", ["needs_review", "verified"])
+def test_confirmation_reassesses_raw_evidence_and_has_no_human_exemption(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: bytes,
+    provenance: dict[str, object],
+    sql_confirmable: bool,
+    state_name: str,
+) -> None:
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    service = PageFidelityService(session)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=1,
+        state=state_name,
+        current_candidate_id=CANDIDATE_ID,
+    )
+    monkeypatch.setattr(
+        service, "_source", AsyncMock(return_value=SourceDocumentModel(active_for_ai=True))
+    )
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    session.get.return_value = PageTextCandidateModel(
+        id=CANDIDATE_ID,
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        method="human",
+        raw_text_utf8=raw,
+        normalized_text="The correct answer",
+        can_confirm=True,
+        provenance=provenance,
+        diagnostics={"algorithm_version": ALGORITHM_VERSION},
+    )
+    session.scalar.return_value = sql_confirmable
+    advance = AsyncMock()
+    monkeypatch.setattr(service, "_advance", advance)
+    with pytest.raises(PageVerificationBlockedError, match="source_candidate_not_confirmable"):
+        asyncio.run(
+            service.confirm_page(
+                DOCUMENT_ID,
+                1,
+                candidate_id=CANDIDATE_ID,
+                expected_version=1,
+                actor_id=ADMIN.subject_id,
+                reason="Compared against original",
+            )
+        )
+    advance.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    if not sql_confirmable:
+        assert "public.source_candidate_is_confirmable" in str(session.scalar.await_args.args[0])
+
+
+@pytest.mark.parametrize("algorithm", [None, "source-fidelity-v1/ucd-14.0.0", ALGORITHM_VERSION])
+@pytest.mark.parametrize("failure", [None, "ocr_timeout", "source_page_image_integrity_failed"])
+@pytest.mark.parametrize("source_languages", [[], ["si"]])
+def test_edits_preserve_source_evidence_and_require_current_source_assessment(
+    monkeypatch: pytest.MonkeyPatch,
+    algorithm: str | None,
+    failure: str | None,
+    source_languages: list[str],
+) -> None:
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    service = PageFidelityService(session)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=1,
+        state="failed",
+        current_candidate_id=CANDIDATE_ID,
+    )
+    provenance: dict[str, object] = {
+        "languages": source_languages,
+        "fonts": ["FMAbhaya"],
+        "image_coverage": 0.9,
+        "page_image": {"sha256": "a" * 64},
+        "maths_fidelity": {"can_confirm": False, "risk_codes": ["maths_anchor_missing"]},
+        "failure_code": failure,
+    }
+    current = PageTextCandidateModel(
+        id=CANDIDATE_ID,
+        method="ocr",
+        raw_text_utf8="ගණිතය old text".encode(),
+        provenance=provenance,
+        diagnostics={"algorithm_version": algorithm, "languages": ["en"]},
+    )
+    monkeypatch.setattr(service, "_source", AsyncMock(return_value=SourceDocumentModel()))
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    session.get.return_value = current
+    record = AsyncMock(return_value=state)
+    monkeypatch.setattr(service, "record_candidate", record)
+    asyncio.run(
+        service.edit_page(
+            DOCUMENT_ID,
+            1,
+            text="ගණිතය 2 + 3 = 5",
+            reason="Corrected against original",
+            expected_version=1,
+            actor_id=ADMIN.subject_id,
+        )
+    )
+    assert record.await_args is not None
+    inherited = record.await_args.kwargs["provenance"]
+    assert "si" in inherited["languages"]
+    for key in ("fonts", "image_coverage", "page_image", "maths_fidelity"):
+        assert inherited[key] == provenance[key]
+    if algorithm != ALGORITHM_VERSION:
+        assert inherited["source_reprocessing_required"] is True
+    elif failure == "ocr_timeout":
+        assert "failure_code" not in inherited
+    else:
+        assert "failure_code" in inherited
+        assert inherited["failure_code"] == failure
+    assert current.provenance == provenance
+
+
+@pytest.mark.parametrize("state_name", ["needs_review", "verified", "excluded", "processing"])
+def test_page_view_reports_stale_current_candidates_without_mutating_history(
+    monkeypatch: pytest.MonkeyPatch, state_name: str
+) -> None:
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=4,
+        state=state_name,
+        current_candidate_id=CANDIDATE_ID,
+    )
+    session.scalar.side_effect = [state, False]
+    candidate = queries._Candidate(
+        id=CANDIDATE_ID,
+        method="human",
+        raw_text=b"The correct answer",
+        raw_size=18,
+        can_confirm=False,
+        provenance={"languages": ["en"]},
+        diagnostics={"algorithm_version": "source-fidelity-v1/ucd-14.0.0"},
+    )
+    monkeypatch.setattr(queries, "_candidate", AsyncMock(return_value=candidate))
+    monkeypatch.setattr(queries, "_history", AsyncMock(return_value=[]))
+    page = asyncio.run(
+        queries._page_view(
+            session,
+            SourceDocumentModel(id=DOCUMENT_ID, active_for_ai=True),
+            1,
+            principal=ADMIN,
+        )
+    )
+    assert page.state == (state_name if state_name in {"excluded", "processing"} else "failed")
+    assert not page.can_confirm
+    assert "source_reprocessing_required" in page.risk_codes
+    assert page.diagnostics["algorithm_version"] == ALGORITHM_VERSION
+    assert state.state == state_name
+    session.add.assert_not_called()
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("text", "provenance", "target"),
+    [
+        ("ගණිතය 2 + 3 = 5", {"languages": ["si"]}, "needs_review"),
+        ("The correct answer", {"failure_code": None}, "failed"),
+        ("The correct answer", {"maths_fidelity": {"can_confirm": False}}, "failed"),
+        ("ගණිතය\x00", {}, "failed"),
+        ("The correct answer", {"languages": ["si"]}, "failed"),
+    ],
+)
+def test_record_candidate_persists_immutable_raw_evidence_with_safe_state(
+    monkeypatch: pytest.MonkeyPatch, text: str, provenance: dict[str, object], target: str
+) -> None:
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    service = PageFidelityService(session)
+    state = PageReviewStateModel(document_id=DOCUMENT_ID, page_number=1, version=0, state="pending")
+    monkeypatch.setattr(
+        service, "_source", AsyncMock(return_value=SourceDocumentModel(checksum_sha256="a" * 64))
+    )
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    advance = AsyncMock()
+    monkeypatch.setattr(service, "_advance", advance)
+    asyncio.run(
+        service.record_candidate(
+            DOCUMENT_ID,
+            1,
+            raw_text=text,
+            method="human",
+            actor_id=ADMIN.subject_id,
+            provenance=provenance,
+        )
+    )
+    candidate = session.add.call_args.args[0]
+    assert isinstance(candidate, PageTextCandidateModel)
+    assert candidate.raw_text_utf8 == text.encode("utf-8")
+    assert candidate.can_confirm == (target == "needs_review")
+    assert candidate.diagnostics["algorithm_version"] == ALGORITHM_VERSION
+    assert advance.await_args is not None
+    assert advance.await_args.kwargs["target"] == target
+
+
+@pytest.mark.parametrize("has_parent", [False, True])
+def test_edit_without_new_current_source_text_cannot_clear_failure(
+    monkeypatch: pytest.MonkeyPatch, has_parent: bool
+) -> None:
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    service = PageFidelityService(session)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=1,
+        state="failed",
+        current_candidate_id=CANDIDATE_ID if has_parent else None,
+    )
+    monkeypatch.setattr(service, "_source", AsyncMock(return_value=SourceDocumentModel()))
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    session.get.return_value = PageTextCandidateModel(
+        id=CANDIDATE_ID,
+        method="ocr",
+        raw_text_utf8=b"The correct answer",
+        provenance={"languages": ["en"], "failure_code": "ocr_timeout"},
+        diagnostics={"algorithm_version": ALGORITHM_VERSION},
+    )
+    record = AsyncMock(return_value=state)
+    monkeypatch.setattr(service, "record_candidate", record)
+    asyncio.run(
+        service.edit_page(
+            DOCUMENT_ID,
+            1,
+            text="The correct answer",
+            reason="Saved correction",
+            expected_version=1,
+            actor_id=ADMIN.subject_id,
+        )
+    )
+    assert record.await_args is not None
+    inherited = record.await_args.kwargs["provenance"]
+    if has_parent:
+        assert inherited["failure_code"] == "ocr_timeout"
+    else:
+        assert inherited["source_reprocessing_required"] is True
+
+
+@pytest.mark.parametrize("value", [None, ["en", 1], ["en", "invalid"]])
+def test_human_edit_does_not_erase_malformed_original_language_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    value: object,
+) -> None:
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+
+    session = AsyncMock(spec=AsyncSession)
+    service = PageFidelityService(session)
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=1,
+        state="failed",
+        current_candidate_id=CANDIDATE_ID,
+    )
+    current = PageTextCandidateModel(
+        id=CANDIDATE_ID,
+        method="ocr",
+        raw_text_utf8=b"The old question",
+        provenance={"languages": value},
+        diagnostics={"algorithm_version": ALGORITHM_VERSION},
+    )
+    monkeypatch.setattr(service, "_source", AsyncMock(return_value=SourceDocumentModel()))
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    session.get.return_value = current
+    record = AsyncMock(return_value=state)
+    monkeypatch.setattr(service, "record_candidate", record)
+    asyncio.run(
+        service.edit_page(
+            DOCUMENT_ID,
+            1,
+            text="The corrected question",
+            reason="Corrected original text",
+            expected_version=1,
+            actor_id=ADMIN.subject_id,
+        )
+    )
+    assert record.await_args is not None
+    inherited = record.await_args.kwargs["provenance"]
+    assert inherited["languages"] == value
+    assessment = fidelity_service_module.assess_candidate(
+        "The corrected question", "human", inherited
+    )
+    assert not assessment.can_confirm
+    assert "invalid_languages" in assessment.risk_codes
+    assert current.provenance == {"languages": value}
+
+
+@pytest.mark.parametrize("invalid_utf8", [False, True])
+@pytest.mark.parametrize("answer", ["12", "13"])
+def test_human_edit_refreshes_math_reference_without_parent_words_or_history_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_utf8: bool,
+    answer: str,
+) -> None:
+    import pymupdf
+
+    from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
+    from exam_guru_api.documents.models import SourceDocumentModel
+    from exam_guru_api.documents.source_math_fidelity import extract_math_layout
+
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((50, 70), "3 X 4 = 12")
+        reference = extract_math_layout(page)
+    provenance: dict[str, object] = {
+        "source_languages": ["si"],
+        "languages": ["si"],
+        "maths_reference": reference,
+        "maths_fidelity": {"can_confirm": False, "risk_codes": ["math_tokens_changed"]},
+        "maths_words": [["13", [0, 0, 1, 1]]],
+        "candidate_selection": {"method": "ocr"},
+    }
+    raw = "ගණිතය 3 X 4 = 13".encode() + (b"\xff" if invalid_utf8 else b"")
+    current = PageTextCandidateModel(
+        id=CANDIDATE_ID,
+        method="ocr",
+        raw_text_utf8=raw,
+        provenance=provenance,
+        diagnostics={"algorithm_version": ALGORITHM_VERSION},
+    )
+    state = PageReviewStateModel(
+        document_id=DOCUMENT_ID,
+        page_number=1,
+        version=1,
+        state="failed",
+        current_candidate_id=CANDIDATE_ID,
+    )
+    session = AsyncMock(spec=AsyncSession)
+    session.get.return_value = current
+    service = PageFidelityService(session)
+    monkeypatch.setattr(service, "_source", AsyncMock(return_value=SourceDocumentModel()))
+    monkeypatch.setattr(service, "_state", AsyncMock(return_value=state))
+    record = AsyncMock(return_value=state)
+    monkeypatch.setattr(service, "record_candidate", record)
+    corrected = f"ගණිතය 3 X 4 = {answer}"
+    asyncio.run(
+        service.edit_page(
+            DOCUMENT_ID,
+            1,
+            text=corrected,
+            reason="Correct against the immutable maths reference",
+            expected_version=1,
+            actor_id=ADMIN.subject_id,
+        )
+    )
+    assert record.await_args is not None
+    inherited = record.await_args.kwargs["provenance"]
+    assert "maths_words" not in inherited
+    assert "candidate_selection" not in inherited
+    assert inherited["maths_reference"] == reference
+    assert inherited["source_languages"] == ["si"]
+    assert inherited["maths_fidelity"]["can_confirm"] is (answer == "12")
+    assessment = fidelity_service_module.assess_candidate(corrected, "human", inherited)
+    assert assessment.can_confirm is (answer == "12")
+    if answer == "13":
+        assert "math_tokens_changed" in assessment.risk_codes
+    assert current.provenance == provenance
+    assert current.raw_text_utf8 == raw

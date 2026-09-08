@@ -1,19 +1,17 @@
 import codecs
-import math
 import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Boolean, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.domain import AuthorizationError, Permission, Principal, authorize
 from exam_guru_api.curriculum.admission import admitted_curriculum_predicate
 from exam_guru_api.documents.fidelity import (
     MAX_TEXT_CHARACTERS,
-    assess_page,
     normalize_source_text,
 )
 from exam_guru_api.documents.fidelity_models import (
@@ -40,6 +38,7 @@ from exam_guru_api.documents.fidelity_schemas import (
 from exam_guru_api.documents.fidelity_service import (
     FidelitySourceNotFoundError,
     PageFidelityService,
+    assess_candidate,
 )
 from exam_guru_api.documents.models import SourceDocumentModel, SourcePageModel
 
@@ -108,43 +107,38 @@ def _text_view(
     diagnostics: dict[str, object],
     truncated: bool = False,
 ) -> _TextView:
-    languages = tuple(
-        language
-        for language in _strings(diagnostics.get("languages", provenance.get("languages")))
-        if language in {"si", "ta", "en", "und"}
-    )
-    coverage = provenance.get("image_coverage", 0.0)
-    if (
-        not isinstance(coverage, (int, float))
-        or isinstance(coverage, bool)
-        or not math.isfinite(coverage)
-        or not 0 <= coverage <= 1
-    ):
-        coverage = 0.0
     normalized = normalize_source_text(text[:MAX_TEXT_CHARACTERS])
-    assessment = assess_page(
-        normalized[:MAX_TEXT_CHARACTERS],
-        expected_languages=languages,
-        font_names=_strings(provenance.get("fonts")),
-        image_coverage=float(coverage),
-        method="manual" if method == "human" else "ocr" if method == "ocr" else "native",
-    )
+    assessment = assess_candidate(normalized[:MAX_TEXT_CHARACTERS], method, provenance)
     display = _escape_display(normalized[:MAX_TEXT_CHARACTERS])
     truncated = truncated or max(len(text), len(normalized), len(display)) > MAX_TEXT_CHARACTERS
     risk_codes = sorted(set(assessment.risk_codes) | set(_strings(diagnostics.get("risk_codes"))))
     details = {
+        **diagnostics,
+        "stored_diagnostics": diagnostics,
         "algorithm_version": assessment.algorithm_version,
         "languages": list(assessment.languages),
         "script_counts": dict(assessment.script_counts),
         "classifications": list(assessment.classifications),
         "recommended_route": assessment.recommended_route,
-        **diagnostics,
         "risk_codes": risk_codes,
         "text_truncated": truncated,
+        "text_readable": not truncated
+        and assess_candidate(
+            normalized[:MAX_TEXT_CHARACTERS],
+            method,
+            {
+                key: value
+                for key, value in provenance.items()
+                if key not in {"maths_reference", "maths_fidelity", "maths_words"}
+            },
+        ).can_confirm,
     }
+    language = assessment.languages[0] if len(assessment.languages) == 1 else "mul"
+    if assessment.script_counts.get("sinhala", 0) and not assessment.script_counts.get("tamil", 0):
+        language = "si"
     return _TextView(
         system_text=display[:MAX_TEXT_CHARACTERS],
-        language=assessment.languages[0] if len(assessment.languages) == 1 else "mul",
+        language=language,
         can_confirm=assessment.can_confirm and not truncated,
         risk_codes=[_escape_display(code) for code in risk_codes],
         diagnostics=cast(dict[str, object], _display_metadata(details)),
@@ -173,14 +167,17 @@ async def _progress(
 ) -> tuple[PageReviewProgress, int | None, int | None]:
     numbers = func.generate_series(1, total).table_valued("page_number").render_derived()
     state, legacy = PageReviewStateModel, SourcePageModel
-    flagged = func.coalesce(state.state, "pending").not_in(("verified", "excluded"))
+    current = func.public.source_page_fidelity_is_current(
+        document_id, numbers.c.page_number, state.current_candidate_id, type_=Boolean()
+    )
+    flagged = and_(func.coalesce(state.state, "pending") != "excluded", current.is_(False))
     processed, verified, excluded, previous, following = (
         await session.execute(
             select(
                 func.count().filter(
                     or_(state.current_candidate_id.is_not(None), legacy.id.is_not(None))
                 ),
-                func.count().filter(state.state == "verified"),
+                func.count().filter(current),
                 func.count().filter(state.state == "excluded"),
                 func.max(numbers.c.page_number).filter(
                     and_(flagged, numbers.c.page_number < page_number)
@@ -230,7 +227,7 @@ async def _candidate(
                     candidate.method,
                     func.substr(candidate.raw_text_utf8, 1, _TEXT_BYTE_LIMIT).label("raw_text"),
                     func.octet_length(candidate.raw_text_utf8).label("raw_size"),
-                    candidate.can_confirm,
+                    func.public.source_candidate_is_confirmable(candidate.id).label("can_confirm"),
                     candidate.provenance,
                     candidate.diagnostics,
                 )
@@ -340,15 +337,37 @@ async def _page_view(
     except AuthorizationError:
         can_trust = False
     selected_is_current = selected_id == current_id
+    page_state = (
+        state.state if state and selected_is_current else "needs_review" if candidate else "pending"
+    )
+    confirmable = bool(candidate and candidate.can_confirm and view.can_confirm)
+    current_verified = page_state != "verified" or bool(
+        await session.scalar(
+            select(
+                func.public.source_page_fidelity_is_current(document.id, page_number, current_id)
+            )
+        )
+    )
+    if candidate and (not confirmable or not current_verified):
+        risks = sorted(set(view.risk_codes) | {"source_reprocessing_required"})
+        view = replace(
+            view,
+            can_confirm=False,
+            risk_codes=risks,
+            diagnostics={
+                **view.diagnostics,
+                "risk_codes": risks,
+                "source_reprocessing_required": True,
+                "recommended_route": "ocr_review",
+            },
+        )
+        if page_state not in {"excluded", "processing"}:
+            page_state = "failed"
     return PageReviewView(
         page_number=page_number,
         state=cast(
             Literal["pending", "needs_review", "verified", "excluded", "processing", "failed"],
-            state.state
-            if state and selected_is_current
-            else "needs_review"
-            if candidate
-            else "pending",
+            page_state,
         ),
         version=state.version if state else 0,
         candidate_id=candidate.id if candidate else None,
@@ -357,6 +376,7 @@ async def _page_view(
         can_confirm=bool(
             can_trust
             and document.active_for_ai
+            and not document.quarantined_for_teacher_use
             and state
             and state.state == "needs_review"
             and selected_is_current
@@ -396,9 +416,13 @@ async def get_review_workspace(
         ready = bool(
             document.original_page_count
             and document.active_for_ai
+            and not document.quarantined_for_teacher_use
             and not metadata_review_required
             and progress.remaining_pages == 0
             and progress.verified_pages > 0
+            and await session.scalar(
+                select(func.public.source_document_fidelity_is_current(document.id))
+            )
         )
         return PageReviewWorkspaceResponse(
             document_id=document.id,

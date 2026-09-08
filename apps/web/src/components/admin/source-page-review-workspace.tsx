@@ -114,7 +114,11 @@ const english = {
   failed:
     "The page could not be read. Try again or correct the text against the original.",
   unconfirmable:
-    "This reading cannot be confirmed yet. Correct the text or read the page again.",
+    "Read the page again or correct the text against the original. The unsuccessful reading is kept in Technical details and cannot be confirmed.",
+  unsuccessfulText: "Unsuccessful reading (not verified)",
+  recoveredText: "Re-read text — not ready for confirmation",
+  recoveryWarning:
+    "This recovered text is readable, but it has not passed all checks against the original. Numbers, symbols and tables may still be incorrect. Read again or correct the text.",
   previewLoading: "Loading original page…",
   previewError:
     "The original page could not be loaded. Try the image again before confirming the text.",
@@ -222,10 +226,13 @@ const sinhala: Copy = {
   verifiedState: "මුල් පිටුව සමඟ සසඳා තහවුරු කර ඇත.",
   excludedState: "භාවිතයෙන් ඉවත් කර ඇත. ඉතිහාසය සුරැකී ඇත.",
   processing: "මෙම පිටුව කියවමින් පවතී…",
-  failed:
-    "පිටුව කියවීමට නොහැකි විය. නැවත උත්සාහ කරන්න හෝ මුල් පිටුව සමඟ සසඳා පෙළ නිවැරදි කරන්න.",
+  failed: "මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.",
   unconfirmable:
-    "මෙම පෙළ තවමත් තහවුරු කළ නොහැක. පෙළ නිවැරදි කරන්න හෝ පිටුව නැවත කියවන්න.",
+    "පිටුව නැවත කියවන්න හෝ මුල් පිටුව සමඟ සසඳා පෙළ නිවැරදි කරන්න. සාර්ථක නොවූ කියවීම තාක්ෂණික විස්තර යටතේ සුරැකී ඇත. එය තහවුරු කළ නොහැක.",
+  unsuccessfulText: "සාර්ථක නොවූ කියවීම (තහවුරු කර නැත)",
+  recoveredText: "නැවත කියවූ පෙළ — තහවුරු කිරීමට සූදානම් නැත",
+  recoveryWarning:
+    "නැවත ලබාගත් මෙම පෙළ කියවිය හැකි නමුත් මුල් පිටුව සමඟ කළ සියලු පරීක්ෂා සමත් වී නැත. අංක, සංකේත සහ වගු තවමත් වැරදි විය හැක. නැවත කියවන්න හෝ පෙළ නිවැරදි කරන්න.",
   previewLoading: "මුල් පිටුව පූරණය වෙමින් පවතී…",
   previewError:
     "මුල් පිටුව පූරණය කළ නොහැකි විය. පෙළ තහවුරු කිරීමට පෙර පිටුව නැවත පූරණය කරන්න.",
@@ -277,13 +284,12 @@ const sinhala: Copy = {
 type ReviewLanguage = "en" | "si";
 const reviewLanguageKey = "exam-guru:review-language:v1";
 
-function savedReviewLanguage(): ReviewLanguage {
+function savedReviewLanguage(): ReviewLanguage | null {
   try {
-    return window.localStorage.getItem(reviewLanguageKey) === "si"
-      ? "si"
-      : "en";
+    const language = window.localStorage.getItem(reviewLanguageKey);
+    return language === "si" || language === "en" ? language : null;
   } catch {
-    return "en";
+    return null;
   }
 }
 
@@ -297,6 +303,22 @@ function textLanguage(language: string): "si" | "ta" | "en" {
   if (["si", "sin", "sinhala"].includes(code)) return "si";
   if (["ta", "tam", "tamil"].includes(code)) return "ta";
   return "en";
+}
+
+function detectedReviewLanguage(workspace?: Workspace): ReviewLanguage {
+  const diagnostics = workspace?.page?.diagnostics;
+  const languages = [
+    workspace?.language,
+    workspace?.page?.language,
+    diagnostics?.detected_language,
+    ...(Array.isArray(diagnostics?.languages) ? diagnostics.languages : []),
+  ];
+  return languages.some(
+    (language) =>
+      typeof language === "string" && textLanguage(language) === "si",
+  )
+    ? "si"
+    : "en";
 }
 
 function problem(error: unknown, status: number): Problem {
@@ -323,6 +345,23 @@ function problemMessage(value: Problem, copy: Copy): string {
   if (value.status === 422) return copy.invalidRequest;
   if (value.status === 0) return copy.networkError;
   return copy.requestError;
+}
+
+function RecoveredText({ page, copy }: { page: Page; copy: Copy }) {
+  return (
+    <section aria-label={copy.recoveredText} className={alertClass}>
+      <h3 className="font-semibold">{copy.recoveredText}</h3>
+      <p className="mt-2 leading-7">{copy.recoveryWarning}</p>
+      <pre
+        className="mt-3 whitespace-pre-wrap break-words font-sans text-base leading-8"
+        data-testid="recovered-page-text"
+        dir="auto"
+        lang={textLanguage(page.language)}
+      >
+        {page.system_text}
+      </pre>
+    </section>
+  );
 }
 
 function OriginalPage({
@@ -477,16 +516,17 @@ function ReviewSession({
   const mutationLock = useRef(false);
   const correctionFormId = useId();
   const pageInputId = useId();
-  const storedLanguage = useSyncExternalStore<ReviewLanguage>(
+  const storedLanguage = useSyncExternalStore<ReviewLanguage | null>(
     subscribeReviewLanguage,
     savedReviewLanguage,
-    () => "en",
+    () => null,
   );
   const [languageChoice, setLanguageChoice] = useState<ReviewLanguage | null>(
     null,
   );
   const workspace = loaded?.data;
-  const language = languageChoice ?? storedLanguage;
+  const language =
+    languageChoice ?? storedLanguage ?? detectedReviewLanguage(workspace);
   const copy: Copy = language === "si" ? sinhala : english;
   const page =
     workspace?.page?.page_number === requestedPage ? workspace.page : null;
@@ -511,12 +551,23 @@ function ReviewSession({
     !readJobLoading,
   );
   const canWrite = role === "admin" && pageAvailable && !busy && !conflict;
+  const reviewableCandidate = Boolean(
+    page?.can_confirm && page.candidate_id && page.system_text.trim(),
+  );
+  const readingFailed =
+    page?.state === "failed" ||
+    (page?.state === "needs_review" && !reviewableCandidate);
+  const readableRecovery = Boolean(
+    readingFailed &&
+    page?.candidate_id &&
+    page.system_text.trim() &&
+    page.diagnostics.text_readable === true,
+  );
   const canConfirm = Boolean(
     canWrite &&
     !draft &&
-    page?.can_confirm &&
-    page.candidate_id &&
-    page.state === "needs_review" &&
+    reviewableCandidate &&
+    page?.state === "needs_review" &&
     workspace?.source_active &&
     previewReady,
   );
@@ -978,9 +1029,18 @@ function ReviewSession({
         ? copy.excludedState
         : page?.state === "processing"
           ? copy.processing
-          : page?.state === "failed"
+          : readingFailed
             ? copy.failed
             : copy.notVerified;
+  const confirmControl = (
+    <Button
+      className={readingFailed ? buttonClass : primaryButton}
+      isDisabled={!canConfirm}
+      onPress={() => openDecision("confirm")}
+    >
+      {copy.confirmAction}
+    </Button>
+  );
 
   return (
     <section
@@ -1283,17 +1343,12 @@ function ReviewSession({
               <h2 className="font-semibold">{copy.systemText}</h2>
               <p
                 className="mt-1 text-sm"
-                role={page.state === "failed" ? "alert" : "status"}
+                role={readingFailed ? "alert" : "status"}
               >
                 {status}
               </p>
-              {page.risk_codes.length > 0 && (
+              {!readingFailed && page.risk_codes.length > 0 && (
                 <p className="mt-1 text-sm text-amber-950">{copy.suspicious}</p>
-              )}
-              {!page.can_confirm && page.state === "needs_review" && (
-                <p className="mt-1 text-sm text-amber-950">
-                  {copy.unconfirmable}
-                </p>
               )}
             </header>
             <div
@@ -1341,13 +1396,19 @@ function ReviewSession({
                       className="rounded-lg border border-amber-400 bg-amber-50 p-3"
                     >
                       <h3 className="font-semibold">{copy.latest}</h3>
-                      <pre
-                        className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-8"
-                        dir="auto"
-                        lang={textLanguage(page.language)}
-                      >
-                        {page.system_text}
-                      </pre>
+                      {readableRecovery ? (
+                        <RecoveredText page={page} copy={copy} />
+                      ) : readingFailed ? (
+                        <p className="mt-2 text-sm">{copy.unconfirmable}</p>
+                      ) : (
+                        <pre
+                          className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-8"
+                          dir="auto"
+                          lang={textLanguage(page.language)}
+                        >
+                          {page.system_text}
+                        </pre>
+                      )}
                       <Button
                         className={`${buttonClass} mt-3`}
                         isDisabled={loading || Boolean(busy)}
@@ -1363,6 +1424,10 @@ function ReviewSession({
                     </section>
                   )}
                 </Form>
+              ) : readableRecovery ? (
+                <RecoveredText page={page} copy={copy} />
+              ) : readingFailed ? (
+                <p className={alertClass}>{copy.unconfirmable}</p>
               ) : (
                 <pre
                   className="whitespace-pre-wrap break-words font-sans text-base leading-8"
@@ -1378,6 +1443,19 @@ function ReviewSession({
                   {copy.technical}
                 </summary>
                 <div className="mt-3 space-y-3 text-sm" lang="en">
+                  {readingFailed && !readableRecovery && (
+                    <section aria-label={copy.unsuccessfulText} lang={language}>
+                      <h3 className="font-semibold">{copy.unsuccessfulText}</h3>
+                      <pre
+                        className="mt-2 whitespace-pre-wrap break-words font-sans text-base leading-8"
+                        data-testid="failed-page-text"
+                        dir="auto"
+                        lang={textLanguage(page.language)}
+                      >
+                        {page.system_text}
+                      </pre>
+                    </section>
+                  )}
                   <p>Page version: {page.version}</p>
                   <p className="break-all">
                     Current candidate: {page.candidate_id ?? "None"}
@@ -1446,15 +1524,9 @@ function ReviewSession({
           </>
         ) : (
           <>
+            {!readingFailed && confirmControl}
             <Button
-              className={primaryButton}
-              isDisabled={!canConfirm}
-              onPress={() => openDecision("confirm")}
-            >
-              {copy.confirmAction}
-            </Button>
-            <Button
-              className={buttonClass}
+              className={readingFailed ? primaryButton : buttonClass}
               isDisabled={!canReread}
               onPress={reread}
             >
@@ -1484,6 +1556,7 @@ function ReviewSession({
             >
               {copy.excludeAction}
             </Button>
+            {readingFailed && confirmControl}
           </>
         )}
         {busy && (

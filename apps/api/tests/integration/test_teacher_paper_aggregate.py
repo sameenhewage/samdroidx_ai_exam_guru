@@ -2704,11 +2704,62 @@ def test_exact_slot_without_active_reviewed_context_fails_safely_without_generic
 def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
     aggregate_seed: Seed,
 ) -> None:
-    with pytest.raises(DBAPIError, match="cannot discard verified knowledge lineage"):
+    async def snapshot() -> dict[str, object]:
+        engine = create_async_engine(aggregate_seed.database_url)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(text("SET TRANSACTION READ ONLY"))
+                history = await connection.scalar(
+                    text("""
+                    SELECT jsonb_build_object(
+                        'head', (SELECT version_num FROM alembic_version),
+                        'sources', (SELECT jsonb_agg(to_jsonb(d) ORDER BY d.id)
+                            FROM source_documents d),
+                        'candidates', (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id)
+                            FROM source_page_text_candidates c),
+                        'reviews', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id)
+                            FROM source_page_review_events e),
+                        'chunks', (SELECT jsonb_agg(to_jsonb(k) ORDER BY k.id)
+                            FROM knowledge_chunks k),
+                        'embeddings', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id)
+                            FROM knowledge_embeddings e),
+                        'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY g.id)
+                            FROM generation_runs g),
+                        'teacher_jobs', (SELECT jsonb_agg(to_jsonb(j) ORDER BY j.id)
+                            FROM teacher_paper_jobs j),
+                        'teacher_slots', (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id)
+                            FROM teacher_paper_slots s),
+                        'teacher_runs', (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id)
+                            FROM teacher_paper_slot_runs r),
+                        'quality_feedback', (SELECT jsonb_agg(to_jsonb(f) ORDER BY f.id)
+                            FROM subject_quality_feedback f),
+                        'quality_cases', (SELECT jsonb_agg(to_jsonb(c)
+                            ORDER BY c.eval_case_id, c.version)
+                            FROM subject_quality_eval_case_versions c),
+                        'quality_runs', (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id)
+                            FROM subject_quality_eval_runs r),
+                        'quality_results', (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id)
+                            FROM subject_quality_eval_results r),
+                        'published', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.paper_id, p.version)
+                            FROM published_paper_versions p)
+                    )
+                """)
+                )
+                assert isinstance(history, dict)
+                return history
+        finally:
+            await engine.dispose()
+
+    history = asyncio.run(snapshot())
+    assert history["head"] == "0039_source_fidelity_v2"
+    assert history["candidates"]
+    assert history["chunks"]
+    with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):
         command.downgrade(
             _config_for_database(aggregate_seed.database_url),
             "0024_subject_quality_validation_scope",
         )
+    assert asyncio.run(snapshot()) == history
     assert_database_schema_current(aggregate_seed.database_url)
 
 

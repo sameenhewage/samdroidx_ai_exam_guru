@@ -1048,9 +1048,12 @@ def test_material_rows_filters_and_summary_use_read_only_fidelity_and_admission_
     assert len(session.executed) == 6
     for query in session.executed:
         compiled = str(cast(Any, query).compile(compile_kwargs={"literal_binds": True}))
-        assert "source_page_review_states" in compiled
+        assert "AND public.source_document_fidelity_is_current(source_documents.id)" in compiled
         assert "source_read_jobs" in compiled
-        assert "catalogue_curriculum_is_admitted" in compiled
+        assert (
+            "AND catalogue_curriculum_is_admitted(source_documents.curriculum_version_id)"
+            in compiled
+        )
         assert "source_documents.original_page_count" in compiled
         assert "source_documents.extraction_status = 'trusted'" not in compiled
         assert "FOR UPDATE" not in compiled
