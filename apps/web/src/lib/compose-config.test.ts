@@ -9,16 +9,82 @@ const dockerfilePath = resolve(process.cwd(), "Dockerfile");
 const packagePath = resolve(process.cwd(), "../../package.json");
 const playwrightPath = resolve(process.cwd(), "playwright.config.ts");
 const runnerPath = resolve(process.cwd(), "../../scripts/run_isolated_e2e.sh");
+const launcherPath = resolve(process.cwd(), "../../start-studio.cmd");
+const readLauncher = () =>
+  readFileSync(launcherPath, "utf8").replaceAll("\r\n", "\n");
 
 describe("local web identity configuration", () => {
   it("keeps Compose explicitly deterministic and passes the mode through the image", () => {
     const compose = readFileSync(composePath, "utf8");
     const dockerfile = readFileSync(dockerfilePath, "utf8");
 
-    expect(compose).toMatch(/web:\n[\s\S]*?WEB_IDENTITY_PROVIDER: deterministic/);
-    expect(compose).toMatch(/web:\n[\s\S]*?ENABLE_DETERMINISTIC_IDENTITY: "true"/);
+    expect(compose).toMatch(
+      /web:\n[\s\S]*?WEB_IDENTITY_PROVIDER: deterministic/,
+    );
+    expect(compose).toMatch(
+      /web:\n[\s\S]*?ENABLE_DETERMINISTIC_IDENTITY: "true"/,
+    );
     expect(dockerfile).toContain("ARG WEB_IDENTITY_PROVIDER=deny");
-    expect(dockerfile).toContain("WEB_IDENTITY_PROVIDER=${WEB_IDENTITY_PROVIDER}");
+    expect(dockerfile).toContain(
+      "WEB_IDENTITY_PROVIDER=${WEB_IDENTITY_PROVIDER}",
+    );
+  });
+});
+
+describe("single-file Windows Studio launcher", () => {
+  it("uses the existing Compose file and an explicit Desktop project from its own directory", () => {
+    const launcher = readLauncher();
+    expect(launcher).toContain("setlocal EnableExtensions");
+    expect(launcher).toContain('pushd "%~dp0"');
+    expect(launcher).toContain(
+      'docker --context desktop-linux compose --project-name ai-exam-guru --file "%~dp0compose.yaml" up --build --detach --wait --wait-timeout 900',
+    );
+    expect(launcher).toContain(
+      'set "EXAM_GURU_OCR_TESSERACT_MAX_SOURCE_BYTES=268435456"',
+    );
+    expect(launcher).not.toMatch(
+      /docker\s+run|set\s+"?EXAM_GURU_DATA_PATH=|set\s+"?POSTGRES_PASSWORD=/i,
+    );
+  });
+
+  it("separates non-starting modes and refuses destructive shortcuts", () => {
+    const launcher = readLauncher();
+    expect(launcher).toContain('if /I "%mode%"=="--check" goto checked');
+    expect(launcher).toContain(
+      'if /I "%mode%"=="--build-only" goto build_only',
+    );
+    const buildOnly = launcher
+      .split("\n:build_only\n")[1]
+      ?.split("\n:checked\n")[0];
+    expect(buildOnly).toContain('compose.yaml" build');
+    expect(buildOnly).toContain("goto done");
+    expect(buildOnly).not.toMatch(/\bup\b|\bstart\b|\bmigrate\b/);
+    expect(launcher).toContain("config --quiet");
+    expect(launcher).not.toMatch(
+      /\bdown\b|\bprune\b|volume\s+rm|--remove-orphans|--force-recreate/,
+    );
+  });
+
+  it("requires an explicit yes before creating an empty database and handles cancellation", () => {
+    const launcher = readLauncher();
+    const inspect = launcher.indexOf(
+      "volume inspect ai-exam-guru_postgres18-data",
+    );
+    const prompt = launcher.indexOf("choice /C YN");
+    const startup = launcher.indexOf("up --build");
+    expect(inspect).toBeGreaterThan(-1);
+    expect(prompt).toBeGreaterThan(inspect);
+    expect(startup).toBeGreaterThan(prompt);
+    expect(launcher).toContain("if errorlevel 2 goto cancelled");
+    expect(launcher).toContain("if not errorlevel 1 goto cancelled");
+    expect(launcher).toContain("NEW EMPTY database");
+    expect(launcher).toContain("PDF files are not automatically imported");
+    const cancelled = launcher
+      .split("\n:cancelled\n")[1]
+      ?.split("\n:docker_error\n")[0];
+    expect(cancelled).toContain("goto done");
+    expect(cancelled).not.toContain("compose");
+    expect(launcher).not.toMatch(/choice.*(?:\/D\s+Y|\/T\s+)/i);
   });
 });
 
@@ -26,8 +92,12 @@ describe("isolated browser acceptance runtime", () => {
   it("parameterizes the environment and browser origin instead of fixing the normal Studio runtime", () => {
     const compose = readFileSync(composePath, "utf8");
 
-    expect(compose).toContain("EXAM_GURU_ENVIRONMENT: ${EXAM_GURU_ENVIRONMENT:-local}");
-    expect(compose).toContain("APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}");
+    expect(compose).toContain(
+      "EXAM_GURU_ENVIRONMENT: ${EXAM_GURU_ENVIRONMENT:-local}",
+    );
+    expect(compose).toContain(
+      "APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}",
+    );
   });
 
   it("runs browser acceptance through a fail-closed throwaway Compose project", () => {
@@ -38,10 +108,12 @@ describe("isolated browser acceptance runtime", () => {
     const playwright = readFileSync(playwrightPath, "utf8");
     const runner = readFileSync(runnerPath, "utf8");
 
-    expect(packageConfig.scripts["test:e2e:isolated"]).toBe("bash scripts/run_isolated_e2e.sh");
+    expect(packageConfig.scripts["test:e2e:isolated"]).toBe(
+      "bash scripts/run_isolated_e2e.sh",
+    );
     expect(playwright).toContain("requireIsolatedE2ERuntime(process.env)");
-    expect(runner).toContain("docker compose --project-name \"$project_name\"");
-    expect(runner).toContain("EXAM_GURU_DATA_PATH=\"$data_path\"");
+    expect(runner).toContain('docker compose --project-name "$project_name"');
+    expect(runner).toContain('EXAM_GURU_DATA_PATH="$data_path"');
     expect(runner).toContain("E2E_RUNTIME_ISOLATED=true");
     expect(runner).toContain("down --volumes --remove-orphans");
     expect(ci).toContain("npm run test:e2e:isolated");

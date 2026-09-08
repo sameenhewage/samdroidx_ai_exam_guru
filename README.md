@@ -97,7 +97,22 @@ The local Studio is intended to run through versioned Docker/Docker Compose whil
 
 The storage-provider abstraction follows [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md): **local durable host filesystem storage is the bootstrap/default Studio backend**, while S3/MinIO is an optional profile/provider.
 
-Typical local startup is:
+### Windows: one-file startup
+
+Open Docker Desktop with Linux containers, then double-click **`start-studio.cmd`** in the repository root. It builds the current code and starts all core services through the existing `compose.yaml`, shown as one **ai-exam-guru** group under Docker Desktop **Containers**. Do not run the individual images separately. With the default ports, open `http://localhost:3000` after startup succeeds.
+
+The launcher keeps the existing env file, credentials and storage path, and applies the documented local legacy OCR profile for that process: 256 MiB upload/OCR bytes, 40 pages and five seconds per command. Use Compose directly for deliberately customized limits. Existing database volumes are not reset; if the Desktop PostgreSQL volume is absent, the launcher requires an explicit **Y** before creating a new empty database. PDFs are not automatically imported or restored. Back up important data before upgrades, because startup applies pending forward migrations.
+
+Optional PowerShell commands:
+
+```powershell
+.\start-studio.cmd --check
+.\start-studio.cmd --build-only
+```
+
+`--check` validates configuration without starting services; `--build-only` builds images without starting them. The default double-click action builds **and** starts the system. Afterwards, use the **ai-exam-guru** group in Docker Desktop to stop or start its existing containers; run the launcher again after source updates to rebuild them.
+
+For other local shells, typical startup is:
 
 ```bash
 test -f .env || cp .env.example .env
