@@ -53,6 +53,18 @@ type UiError = Readonly<{
 type WizardStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 const grades = Array.from({ length: 13 }, (_, index) => index + 1);
+const intakeMedia = [
+  "Sinhala",
+  "Tamil",
+  "English",
+  "Mixed / other",
+  "Not sure",
+];
+const materialTypesWithYear: readonly MaterialType[] = [
+  "past_paper",
+  "marking_scheme",
+  "evaluation_report",
+];
 const wizardStepLabels = [
   "Grade",
   "Medium",
@@ -241,6 +253,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
 }
 
+function intakeLabelError(value: string, label: string): UiError | null {
+  const text = value.trim();
+  return Array.from(text).length > 200 || /(?! )[\p{C}\p{Z}]/u.test(text)
+    ? {
+        code: "intake_label_invalid",
+        message: `Use up to 200 characters for the ${label}, without hidden formatting.`,
+      }
+    : null;
+}
+
 function validatePdf(file: File | null): UiError | null {
   if (!file)
     return { code: "pdf_required", message: "Choose a PDF file to continue." };
@@ -384,6 +406,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const [wizardGrade, setWizardGrade] = useState("");
   const [wizardMediumId, setWizardMediumId] = useState("");
   const [wizardSubjectId, setWizardSubjectId] = useState("");
+  const [wizardManualDetails, setWizardManualDetails] = useState(false);
+  const [wizardIntakeMedium, setWizardIntakeMedium] = useState("");
+  const [wizardIntakeSubject, setWizardIntakeSubject] = useState("");
+  const [wizardIntakeCurriculum, setWizardIntakeCurriculum] = useState("");
   const [wizardMaterialType, setWizardMaterialType] =
     useState<MaterialType>("syllabus");
   const [wizardYear, setWizardYear] = useState("");
@@ -468,6 +494,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
   const wizardGradeCatalogue = catalogue.filter(
     (entry) => entry.grade === Number(wizardGrade),
   );
+  const wizardUsesIntake =
+    wizardManualDetails || wizardGradeCatalogue.length === 0;
+  const wizardUsesYear = materialTypesWithYear.includes(wizardMaterialType);
   const wizardMedia = catalogueChoices(wizardGradeCatalogue, "medium");
   const wizardSubjects = catalogueChoices(
     wizardGradeCatalogue.filter((entry) => entry.medium_id === wizardMediumId),
@@ -524,20 +553,23 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       grade: number | null,
       subjectId: string,
       offset: number,
+      ignoreFilters = false,
     ): Promise<MaterialDiscovery> => {
       const result = await api.GET("/api/v1/admin/materials", {
         params: {
           query: {
             ...(grade === null ? { unassigned_only: true } : { grade }),
             limit: MATERIAL_PAGE_LIMIT,
-            material_type: selectedMaterialType || null,
-            medium_id: selectedMedium || null,
+            material_type: ignoreFilters ? null : selectedMaterialType || null,
+            medium_id: ignoreFilters ? null : selectedMedium || null,
             offset,
-            search: materialSearch.trim() || null,
-            status: selectedMaterialStatus || null,
+            search: ignoreFilters ? null : materialSearch.trim() || null,
+            status: ignoreFilters ? null : selectedMaterialStatus || null,
             subject_id: subjectId || null,
             year:
-              Number(selectedYear) >= 1900 && Number(selectedYear) <= 2100
+              !ignoreFilters &&
+              Number(selectedYear) >= 1900 &&
+              Number(selectedYear) <= 2100
                 ? Number(selectedYear)
                 : null,
           },
@@ -593,13 +625,14 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     async (
       grade: number | null = selectedGrade,
       subjectId: string = selectedSubject,
+      ignoreFilters = false,
     ) => {
       try {
         const [summaryResult, sourceResult, materialResult] = await Promise.all(
           [
             api.GET("/api/v1/admin/materials/grade-summary"),
             api.GET("/api/v1/admin/source-documents"),
-            discoverMaterials(grade, subjectId, 0),
+            discoverMaterials(grade, subjectId, 0, ignoreFilters),
           ],
         );
         if (!summaryResult.error)
@@ -792,6 +825,43 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     [api],
   );
 
+  function clearMaterialFilters() {
+    setMaterialSearch("");
+    setSelectedSubject("");
+    setSelectedMedium("");
+    setSelectedMaterialType("");
+    setSelectedMaterialStatus("");
+    setSelectedYear("");
+  }
+
+  function resetWizardAssignment() {
+    setWizardMediumId("");
+    setWizardSubjectId("");
+    setWizardIntakeMedium("");
+    setWizardIntakeSubject("");
+    setWizardIntakeCurriculum("");
+    setWizardCurriculumId("");
+    setWizardUnitId("");
+    setWizardLessonId("");
+    setWizardUnits([]);
+    setWizardLessons([]);
+    setWizardScopeLoading(false);
+  }
+
+  function chooseUploadDetailsMode(manual: boolean) {
+    if (
+      uploadRunning.current ||
+      activeUpload ||
+      uploadProgress ||
+      uploadRequestId
+    )
+      return;
+    resetWizardAssignment();
+    setWizardManualDetails(manual);
+    setWizardStep(1);
+    setWizardError(null);
+  }
+
   function resetWizard() {
     uploadViewRequest.current += 1;
     uploadTask.current = null;
@@ -805,15 +875,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setRetryDelayMs(0);
     setWizardStep(0);
     setWizardGrade("");
-    setWizardMediumId("");
-    setWizardSubjectId("");
+    setWizardManualDetails(false);
+    resetWizardAssignment();
     setWizardMaterialType("syllabus");
     setWizardYear("");
-    setWizardCurriculumId("");
-    setWizardUnitId("");
-    setWizardLessonId("");
-    setWizardUnits([]);
-    setWizardLessons([]);
     setWizardFile(null);
     setWizardError(null);
     setDuplicate(null);
@@ -834,21 +899,36 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       });
       return;
     }
-    if (wizardStep === 1 && !wizardMediumId) {
+    if (
+      wizardStep === 1 &&
+      (wizardUsesIntake
+        ? !intakeMedia.includes(wizardIntakeMedium)
+        : !wizardMediumId)
+    ) {
       setWizardError({
         code: "medium_required",
         message: "Choose a medium to continue.",
       });
       return;
     }
-    if (wizardStep === 2 && !wizardSubjectId) {
+    if (wizardStep === 2 && !wizardUsesIntake && !wizardSubjectId) {
       setWizardError({
         code: "subject_required",
         message: "Choose a subject to continue.",
       });
       return;
     }
-    if (wizardStep === 3) {
+    if (wizardUsesIntake && (wizardStep === 2 || wizardStep === 4)) {
+      const labelError =
+        wizardStep === 2
+          ? intakeLabelError(wizardIntakeSubject, "subject")
+          : intakeLabelError(wizardIntakeCurriculum, "curriculum / edition");
+      if (labelError) {
+        setWizardError(labelError);
+        return;
+      }
+    }
+    if (wizardStep === 3 && !wizardUsesIntake) {
       const defaultCurriculum =
         wizardCurricula.find(
           (curriculum) =>
@@ -870,21 +950,17 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       }
     }
     if (wizardStep === 4) {
-      if (!wizardCurriculumId) {
+      if (!wizardUsesIntake && !wizardCurriculumId) {
         setWizardError({
           code: "curriculum_required",
           message: "Choose the curriculum this material belongs to.",
         });
         return;
       }
-      const needsYear = [
-        "past_paper",
-        "marking_scheme",
-        "evaluation_report",
-      ].includes(wizardMaterialType);
       const year = Number(wizardYear);
       if (
-        needsYear &&
+        wizardUsesYear &&
+        (!wizardUsesIntake || wizardYear !== "") &&
         (!Number.isInteger(year) || year < 1900 || year > 2100)
       ) {
         setWizardError({
@@ -1000,14 +1076,33 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             undefined,
             false,
           );
-        const numericYear = wizardYear ? Number(wizardYear) : null;
+        const numericYear =
+          wizardUsesYear && wizardYear ? Number(wizardYear) : null;
+        const year = Number.isInteger(numericYear) ? numericYear : null;
         const metadata: UploadMetadata = {
-          curriculum_version_id: wizardCurriculumId || null,
+          curriculum_version_id: wizardUsesIntake
+            ? null
+            : wizardCurriculumId || null,
           document_type: wizardMaterialType,
-          lesson_id: wizardLessonId || null,
+          lesson_id: wizardUsesIntake ? null : wizardLessonId || null,
           paper_code: null,
-          unit_id: wizardUnitId || null,
-          year: Number.isInteger(numericYear) ? numericYear : null,
+          unit_id: wizardUsesIntake ? null : wizardUnitId || null,
+          year,
+          ...(wizardUsesIntake
+            ? {
+                intake_metadata: {
+                  candidate_grade: Number(wizardGrade),
+                  medium_label:
+                    wizardIntakeMedium === "Not sure"
+                      ? null
+                      : wizardIntakeMedium,
+                  subject_label: wizardIntakeSubject.trim() || null,
+                  curriculum_label: wizardIntakeCurriculum.trim() || null,
+                  document_type_label: materialTypeLabels[wizardMaterialType],
+                  year,
+                },
+              }
+            : {}),
         };
         uploadTask.current = new ResumableSourceUpload({
           api,
@@ -1085,13 +1180,29 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         }
       }
       if (view !== uploadViewRequest.current) return;
-      const grade = resumeId ? selectedGrade : Number(wizardGrade);
-      const subject = resumeId ? "" : wizardSubjectId;
+      let grade: number | null = Number(wizardGrade);
+      if (resumeId) {
+        const result = await api
+          .GET("/api/v1/admin/materials", {
+            params: { query: { document_id: uploaded.document_id!, limit: 1 } },
+            cache: "no-store",
+            signal: controller.signal,
+          })
+          .catch(() => null);
+        const material = result?.data?.find(
+          (item) => item.id === uploaded.document_id,
+        );
+        grade = material
+          ? material.grade
+          : (uploaded.intake_metadata.candidate_grade ?? selectedGrade);
+      }
+      if (view !== uploadViewRequest.current) return;
+      const subject = resumeId || wizardUsesIntake ? "" : wizardSubjectId;
+      clearMaterialFilters();
       setSelectedGrade(grade);
-      setSelectedMedium("");
       setSelectedSubject(subject);
       setUploadedDocumentId(uploaded.document_id!);
-      await refreshCatalog(grade, subject);
+      await refreshCatalog(grade, subject, true);
       setWizardOpen(false);
       resetWizard();
       setNotice(message);
@@ -1690,14 +1801,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               </label>
               <button
                 className={`${secondaryButton} sm:col-span-2 lg:col-span-3 lg:justify-self-start`}
-                onClick={() => {
-                  setMaterialSearch("");
-                  setSelectedSubject("");
-                  setSelectedMedium("");
-                  setSelectedMaterialType("");
-                  setSelectedMaterialStatus("");
-                  setSelectedYear("");
-                }}
+                onClick={clearMaterialFilters}
                 type="button"
               >
                 Clear filters
@@ -2093,6 +2197,32 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 ))}
               </ol>
 
+              {wizardGrade && wizardUsesIntake && (
+                <section
+                  className="mt-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+                  aria-label="Upload for metadata review"
+                >
+                  <h3 className="font-semibold">Upload for metadata review</h3>
+                  <p className="mt-2">
+                    You can upload this PDF without a confirmed curriculum.
+                    Enter the details you know and leave uncertain details
+                    blank. The material details and text must be reviewed before
+                    AI use.
+                  </p>
+                  {wizardManualDetails &&
+                    wizardGradeCatalogue.length > 0 &&
+                    (wizardStep === 1 || wizardStep === 2) && (
+                      <button
+                        className={`${secondaryButton} mt-3`}
+                        onClick={() => chooseUploadDetailsMode(false)}
+                        type="button"
+                      >
+                        Use listed options instead
+                      </button>
+                    )}
+                </section>
+              )}
+
               <form className="mt-6 grid gap-5" onSubmit={submitUploadWizard}>
                 {wizardStep === 0 && (
                   <label className={fieldClass} htmlFor="upload-grade">
@@ -2102,9 +2232,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                       id="upload-grade"
                       onChange={(event) => {
                         setWizardGrade(event.currentTarget.value);
-                        setWizardMediumId("");
-                        setWizardSubjectId("");
-                        setWizardCurriculumId("");
+                        setWizardManualDetails(false);
+                        resetWizardAssignment();
                         setWizardError(null);
                       }}
                       value={wizardGrade}
@@ -2120,51 +2249,104 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 )}
 
                 {wizardStep === 1 && (
-                  <label className={fieldClass} htmlFor="upload-medium">
-                    Medium
-                    <select
-                      className={inputClass}
-                      id="upload-medium"
-                      onChange={(event) => {
-                        setWizardMediumId(event.currentTarget.value);
-                        setWizardSubjectId("");
-                        setWizardCurriculumId("");
-                        setWizardError(null);
-                      }}
-                      value={wizardMediumId}
+                  <div className="grid gap-2">
+                    <label className={fieldClass} htmlFor="upload-medium">
+                      Medium
+                      <select
+                        aria-describedby="upload-medium-help"
+                        className={inputClass}
+                        id="upload-medium"
+                        onChange={(event) => {
+                          if (wizardUsesIntake)
+                            setWizardIntakeMedium(event.currentTarget.value);
+                          else {
+                            setWizardMediumId(event.currentTarget.value);
+                            setWizardSubjectId("");
+                            setWizardCurriculumId("");
+                          }
+                          setWizardError(null);
+                        }}
+                        value={
+                          wizardUsesIntake ? wizardIntakeMedium : wizardMediumId
+                        }
+                      >
+                        <option value="">Choose medium</option>
+                        {wizardUsesIntake
+                          ? intakeMedia.map((medium) => (
+                              <option key={medium} value={medium}>
+                                {medium}
+                              </option>
+                            ))
+                          : wizardMedia.map((medium) => (
+                              <option key={medium.id} value={medium.id}>
+                                {medium.name}
+                              </option>
+                            ))}
+                      </select>
+                    </label>
+                    <p
+                      className="text-sm text-slate-600"
+                      id="upload-medium-help"
                     >
-                      <option value="">Choose medium</option>
-                      {wizardMedia.map((medium) => (
-                        <option key={medium.id} value={medium.id}>
-                          {medium.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      The language used in the PDF, not the subject.{" "}
+                      {wizardUsesIntake &&
+                        "Choose Not sure instead of guessing."}
+                    </p>
+                  </div>
                 )}
 
-                {wizardStep === 2 && (
-                  <label className={fieldClass} htmlFor="upload-subject">
-                    Subject
-                    <select
-                      className={inputClass}
-                      id="upload-subject"
-                      onChange={(event) => {
-                        setWizardSubjectId(event.currentTarget.value);
-                        setWizardCurriculumId("");
-                        setWizardError(null);
-                      }}
-                      value={wizardSubjectId}
+                {wizardStep === 2 &&
+                  (wizardUsesIntake ? (
+                    <label
+                      className={fieldClass}
+                      htmlFor="upload-intake-subject"
                     >
-                      <option value="">Choose subject</option>
-                      {wizardSubjects.map((subject) => (
-                        <option key={subject.id} value={subject.id}>
-                          {subject.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                      Subject (if known)
+                      <input
+                        className={inputClass}
+                        id="upload-intake-subject"
+                        maxLength={200}
+                        onChange={(event) => {
+                          setWizardIntakeSubject(event.currentTarget.value);
+                          setWizardError(null);
+                        }}
+                        placeholder="For example, Mathematics"
+                        value={wizardIntakeSubject}
+                      />
+                    </label>
+                  ) : (
+                    <label className={fieldClass} htmlFor="upload-subject">
+                      Subject
+                      <select
+                        className={inputClass}
+                        id="upload-subject"
+                        onChange={(event) => {
+                          setWizardSubjectId(event.currentTarget.value);
+                          setWizardCurriculumId("");
+                          setWizardError(null);
+                        }}
+                        value={wizardSubjectId}
+                      >
+                        <option value="">Choose subject</option>
+                        {wizardSubjects.map((subject) => (
+                          <option key={subject.id} value={subject.id}>
+                            {subject.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+
+                {(wizardStep === 1 || wizardStep === 2) &&
+                  !wizardUsesIntake && (
+                    <button
+                      className={`${secondaryButton} justify-self-start`}
+                      onClick={() => chooseUploadDetailsMode(true)}
+                      type="button"
+                    >
+                      Enter details for review instead
+                    </button>
+                  )}
 
                 {wizardStep === 3 && (
                   <label className={fieldClass} htmlFor="upload-material-type">
@@ -2176,6 +2358,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                         setWizardMaterialType(
                           event.currentTarget.value as MaterialType,
                         );
+                        setWizardYear("");
                         setWizardError(null);
                       }}
                       value={wizardMaterialType}
@@ -2191,13 +2374,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
                 {wizardStep === 4 && (
                   <div className="grid gap-5">
-                    {[
-                      "past_paper",
-                      "marking_scheme",
-                      "evaluation_report",
-                    ].includes(wizardMaterialType) && (
+                    {wizardUsesYear && (
                       <label className={fieldClass} htmlFor="upload-year">
-                        Year
+                        {wizardUsesIntake ? "Year (if known)" : "Year"}
                         <input
                           className={inputClass}
                           id="upload-year"
@@ -2213,75 +2392,105 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                         />
                       </label>
                     )}
-                    <label className={fieldClass} htmlFor="upload-curriculum">
-                      Curriculum version
-                      <select
-                        className={inputClass}
-                        id="upload-curriculum"
-                        onChange={(event) => {
-                          const id = event.currentTarget.value;
-                          setWizardCurriculumId(id);
-                          setWizardError(null);
-                          void loadWizardScope(id);
-                        }}
-                        value={wizardCurriculumId}
+                    {wizardUsesIntake ? (
+                      <label
+                        className={fieldClass}
+                        htmlFor="upload-intake-curriculum"
                       >
-                        <option value="">Choose curriculum</option>
-                        {wizardCurricula.map((curriculum) => (
-                          <option
-                            key={curriculum.curriculum_version_id}
-                            value={curriculum.curriculum_version_id}
-                          >
-                            {curriculum.curriculum_title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {wizardScopeLoading ? (
-                      <p className="text-sm text-slate-600" role="status">
-                        Loading units and lessons…
-                      </p>
+                        Curriculum / edition (if known)
+                        <input
+                          className={inputClass}
+                          id="upload-intake-curriculum"
+                          maxLength={200}
+                          onChange={(event) => {
+                            setWizardIntakeCurriculum(
+                              event.currentTarget.value,
+                            );
+                            setWizardError(null);
+                          }}
+                          placeholder="Copy from the PDF, or leave blank for review"
+                          value={wizardIntakeCurriculum}
+                        />
+                      </label>
                     ) : (
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <label className={fieldClass} htmlFor="upload-unit">
-                          Unit (optional)
+                      <>
+                        <label
+                          className={fieldClass}
+                          htmlFor="upload-curriculum"
+                        >
+                          Curriculum version
                           <select
                             className={inputClass}
-                            id="upload-unit"
+                            id="upload-curriculum"
                             onChange={(event) => {
-                              setWizardUnitId(event.currentTarget.value);
-                              setWizardLessonId("");
+                              const id = event.currentTarget.value;
+                              setWizardCurriculumId(id);
+                              setWizardError(null);
+                              void loadWizardScope(id);
                             }}
-                            value={wizardUnitId}
+                            value={wizardCurriculumId}
                           >
-                            <option value="">Whole curriculum</option>
-                            {activeWizardUnits.map((unit) => (
-                              <option key={unit.id} value={unit.id}>
-                                {unit.title}
+                            <option value="">Choose curriculum</option>
+                            {wizardCurricula.map((curriculum) => (
+                              <option
+                                key={curriculum.curriculum_version_id}
+                                value={curriculum.curriculum_version_id}
+                              >
+                                {curriculum.curriculum_title}
                               </option>
                             ))}
                           </select>
                         </label>
-                        <label className={fieldClass} htmlFor="upload-lesson">
-                          Lesson (optional)
-                          <select
-                            className={inputClass}
-                            disabled={!wizardUnitId}
-                            id="upload-lesson"
-                            onChange={(event) =>
-                              setWizardLessonId(event.currentTarget.value)
-                            }
-                            value={wizardLessonId}
-                          >
-                            <option value="">All lessons in unit</option>
-                            {activeWizardLessons.map((lesson) => (
-                              <option key={lesson.id} value={lesson.id}>
-                                {lesson.title}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
+                        {wizardScopeLoading ? (
+                          <p className="text-sm text-slate-600" role="status">
+                            Loading units and lessons…
+                          </p>
+                        ) : (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <label className={fieldClass} htmlFor="upload-unit">
+                              Unit (optional)
+                              <select
+                                className={inputClass}
+                                id="upload-unit"
+                                onChange={(event) => {
+                                  setWizardUnitId(event.currentTarget.value);
+                                  setWizardLessonId("");
+                                }}
+                                value={wizardUnitId}
+                              >
+                                <option value="">Whole curriculum</option>
+                                {activeWizardUnits.map((unit) => (
+                                  <option key={unit.id} value={unit.id}>
+                                    {unit.title}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label
+                              className={fieldClass}
+                              htmlFor="upload-lesson"
+                            >
+                              Lesson (optional)
+                              <select
+                                className={inputClass}
+                                disabled={!wizardUnitId}
+                                id="upload-lesson"
+                                onChange={(event) =>
+                                  setWizardLessonId(event.currentTarget.value)
+                                }
+                                value={wizardLessonId}
+                              >
+                                <option value="">All lessons in unit</option>
+                                {activeWizardLessons.map((lesson) => (
+                                  <option key={lesson.id} value={lesson.id}>
+                                    {lesson.title}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
@@ -2326,13 +2535,21 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                       </div>
                       <div>
                         <dt className="font-semibold text-slate-500">Medium</dt>
-                        <dd className="mt-1">{selectedWizardMedium?.name}</dd>
+                        <dd className="mt-1">
+                          {wizardUsesIntake
+                            ? wizardIntakeMedium
+                            : selectedWizardMedium?.name}
+                        </dd>
                       </div>
                       <div>
                         <dt className="font-semibold text-slate-500">
                           Subject
                         </dt>
-                        <dd className="mt-1">{selectedWizardSubject?.name}</dd>
+                        <dd className="mt-1">
+                          {wizardUsesIntake
+                            ? wizardIntakeSubject.trim() || "Not provided"
+                            : selectedWizardSubject?.name}
+                        </dd>
                       </div>
                       <div>
                         <dt className="font-semibold text-slate-500">
@@ -2348,33 +2565,42 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                         </dt>
                         <dd className="mt-1">
                           {[
-                            wizardYear,
-                            selectedWizardCurriculum?.curriculum_title,
+                            wizardUsesYear ? wizardYear : "",
+                            wizardUsesIntake
+                              ? wizardIntakeCurriculum.trim()
+                              : selectedWizardCurriculum?.curriculum_title,
                           ]
                             .filter(Boolean)
                             .join(" · ")}
                         </dd>
                       </div>
-                      {(selectedWizardUnit || selectedWizardLesson) && (
-                        <div>
-                          <dt className="font-semibold text-slate-500">
-                            Scope
-                          </dt>
-                          <dd className="mt-1">
-                            {[
-                              selectedWizardUnit?.title,
-                              selectedWizardLesson?.title,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </dd>
-                        </div>
-                      )}
+                      {!wizardUsesIntake &&
+                        (selectedWizardUnit || selectedWizardLesson) && (
+                          <div>
+                            <dt className="font-semibold text-slate-500">
+                              Scope
+                            </dt>
+                            <dd className="mt-1">
+                              {[
+                                selectedWizardUnit?.title,
+                                selectedWizardLesson?.title,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </dd>
+                          </div>
+                        )}
                       <div className="sm:col-span-2">
                         <dt className="font-semibold text-slate-500">PDF</dt>
                         <dd className="mt-1 break-words">{wizardFile?.name}</dd>
                       </div>
                     </dl>
+                    {wizardUsesIntake && (
+                      <p className="mt-4 font-semibold text-amber-900">
+                        These details need review. Uploading does not approve
+                        the curriculum or make this PDF ready for AI use.
+                      </p>
+                    )}
                   </section>
                 )}
 
@@ -2479,7 +2705,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             <div className="mt-4">
               <InlineError
                 error={wizardError}
-                title="Upload was not completed."
+                title={
+                  !resumeId && wizardStep < 6
+                    ? "Check upload details"
+                    : "Upload was not completed."
+                }
               />
             </div>
           )}

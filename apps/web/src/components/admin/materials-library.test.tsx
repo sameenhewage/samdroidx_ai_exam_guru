@@ -593,6 +593,19 @@ function fixtureApi(options: FixtureOptions = {}) {
               year: uploadMetadata?.year ?? upload.intake_metadata.year ?? null,
               status: "processing",
               page_count: null,
+              ...(Object.keys(upload.intake_metadata).length > 0
+                ? {
+                    grade: upload.intake_metadata.candidate_grade ?? null,
+                    medium: upload.intake_metadata.medium_label ?? null,
+                    subject: upload.intake_metadata.subject_label ?? null,
+                    subject_id: null,
+                    curriculum: null,
+                    unit: null,
+                    lesson: null,
+                    metadata_review_required: true,
+                    intake_metadata: upload.intake_metadata,
+                  }
+                : {}),
             };
             currentMaterials = [
               uploadedMaterial,
@@ -601,6 +614,9 @@ function fixtureApi(options: FixtureOptions = {}) {
             sources = [
               sourceDocument(uploadedMaterial, {
                 extraction_status: "uploaded",
+                metadata_review_required:
+                  uploadedMaterial.metadata_review_required,
+                intake_metadata: uploadedMaterial.intake_metadata,
               }),
               ...sources.filter((item) => item.id !== ids.uploaded),
             ];
@@ -859,6 +875,50 @@ async function openWizardAtPdfStep(existingDialog?: HTMLElement) {
   });
   await continueWizard(dialog);
 
+  return dialog;
+}
+
+async function openIntakeWizardAtPdfStep({
+  grade = "5",
+  medium = "Sinhala",
+  subject = "ගණිතය",
+  curriculum = "Cover edition 2023",
+  year = "2023",
+} = {}) {
+  fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+  const dialog = screen.getByRole("dialog", { name: "Upload material" });
+  fireEvent.change(within(dialog).getByLabelText("Grade"), {
+    target: { value: grade },
+  });
+  await continueWizard(dialog);
+  expect(
+    within(dialog).getByRole("option", { name: medium }),
+  ).toBeInTheDocument();
+  fireEvent.change(within(dialog).getByLabelText("Medium"), {
+    target: { value: medium },
+  });
+  await continueWizard(dialog);
+  fireEvent.change(within(dialog).getByLabelText("Subject (if known)"), {
+    target: { value: subject },
+  });
+  await continueWizard(dialog);
+  fireEvent.change(within(dialog).getByLabelText("Material type"), {
+    target: { value: "past_paper" },
+  });
+  await continueWizard(dialog);
+  expect(
+    within(dialog).queryByLabelText("Curriculum version"),
+  ).not.toBeInTheDocument();
+  fireEvent.change(within(dialog).getByLabelText("Year (if known)"), {
+    target: { value: year },
+  });
+  fireEvent.change(
+    within(dialog).getByLabelText("Curriculum / edition (if known)"),
+    {
+      target: { value: curriculum },
+    },
+  );
+  await continueWizard(dialog);
   return dialog;
 }
 
@@ -1661,6 +1721,436 @@ describe("MaterialsLibrary", () => {
           );
         }),
       ).toBe(true);
+    });
+  });
+
+  it.each(["Sinhala", "Tamil", "English"])(
+    "uploads unconfirmed %s details when the grade catalogue is empty without inventing approved scope",
+    async (medium) => {
+      const { requests } = await renderLibrary("admin", {
+        catalogue: [],
+        initialMaterials: [],
+        summaries: [],
+      });
+      const dialog = await openIntakeWizardAtPdfStep({ medium });
+      const file = new File(
+        ["%PDF-1.7\nunconfirmed"],
+        "unconfirmed-paper.pdf",
+        {
+          type: "application/pdf",
+        },
+      );
+      fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+        target: { files: [file] },
+      });
+      await continueWizard(dialog);
+      const review = within(dialog).getByRole("region", {
+        name: "Review upload",
+      });
+      expect(review).toHaveTextContent(medium);
+      expect(review).toHaveTextContent("ගණිතය");
+      expect(review).toHaveTextContent("Cover edition 2023");
+      expect(review).toHaveTextContent(/details.*review/i);
+      expect(review).not.toHaveTextContent("Ready for AI");
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Upload material" }),
+      );
+      await screen.findByRole("link", { name: "Open uploaded material" });
+      const creates = requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          new URL(request.url).pathname.endsWith("/source-uploads"),
+      );
+      expect(creates).toHaveLength(1);
+      expect(await jsonBody(creates[0])).toMatchObject({
+        filename: file.name,
+        document_type: "past_paper",
+        curriculum_version_id: null,
+        unit_id: null,
+        lesson_id: null,
+        year: 2023,
+        intake_metadata: {
+          candidate_grade: 5,
+          medium_label: medium,
+          subject_label: "ගණිතය",
+          curriculum_label: "Cover edition 2023",
+          document_type_label: "Past Paper",
+          year: 2023,
+        },
+      });
+      expect(
+        requests
+          .filter((request) => request.method === "POST")
+          .every((request) =>
+            /\/source-uploads(?:\/[^/]+\/complete)?$/.test(
+              new URL(request.url).pathname,
+            ),
+          ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (request) =>
+            new URL(request.url).searchParams.has("subject_id") &&
+            request.url.includes(ids.mathsSubject),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("allows unknown intake details without a guessed medium, subject, year or curriculum", async () => {
+    const { requests } = await renderLibrary("admin", { catalogue: [] });
+    const dialog = await openIntakeWizardAtPdfStep({
+      grade: "13",
+      medium: "Not sure",
+      subject: "",
+      curriculum: "",
+      year: "",
+    });
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\nunknown"], "unknown.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await screen.findByRole("link", { name: "Open uploaded material" });
+    const create = requests.find(
+      (request) =>
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/source-uploads"),
+    )!;
+    expect(await jsonBody(create)).toMatchObject({
+      curriculum_version_id: null,
+      unit_id: null,
+      lesson_id: null,
+      year: null,
+      intake_metadata: {
+        candidate_grade: 13,
+        medium_label: null,
+        subject_label: null,
+        curriculum_label: null,
+        year: null,
+      },
+    });
+  });
+
+  it("offers review-only details for an unlisted language even when another curriculum is admitted", async () => {
+    await renderLibrary("admin");
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    await continueWizard(dialog);
+    expect(
+      within(dialog).queryByRole("option", { name: "Sinhala" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Enter details for review instead",
+      }),
+    );
+    expect(
+      within(dialog).getByRole("option", { name: "Sinhala" }),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: "Sinhala" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Subject (if known)")).toHaveValue("");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Use listed options instead",
+      }),
+    );
+    expect(within(dialog).getByLabelText("Medium")).toHaveValue("");
+    expect(
+      within(dialog).queryByRole("option", { name: "Sinhala" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not report a failed upload before one has started and clears candidate details on grade changes", async () => {
+    await renderLibrary("admin", { catalogue: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload material" });
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "5" },
+    });
+    await continueWizard(dialog);
+    await continueWizard(dialog);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Choose a medium to continue.",
+    );
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Check upload details",
+    );
+    expect(within(dialog).getByRole("alert")).not.toHaveTextContent(
+      "Upload was not completed",
+    );
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: "Sinhala" },
+    });
+    await continueWizard(dialog);
+    fireEvent.change(within(dialog).getByLabelText("Subject (if known)"), {
+      target: { value: "Grade 5 subject" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.change(within(dialog).getByLabelText("Grade"), {
+      target: { value: "7" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Medium")).toHaveValue("");
+    fireEvent.change(within(dialog).getByLabelText("Medium"), {
+      target: { value: "Tamil" },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("Subject (if known)")).toHaveValue("");
+  });
+
+  it.each(["x".repeat(201), "Mathe\u200bmatics", "Maths\u00a0text"])(
+    "rejects invalid candidate subject text before any upload request: %j",
+    async (subject) => {
+      const { requests } = await renderLibrary("admin", { catalogue: [] });
+      fireEvent.click(screen.getByRole("button", { name: "Upload material" }));
+      const dialog = screen.getByRole("dialog", { name: "Upload material" });
+      fireEvent.change(within(dialog).getByLabelText("Grade"), {
+        target: { value: "5" },
+      });
+      await continueWizard(dialog);
+      fireEvent.change(within(dialog).getByLabelText("Medium"), {
+        target: { value: "Sinhala" },
+      });
+      await continueWizard(dialog);
+      const input = within(dialog).getByLabelText("Subject (if known)");
+      expect(input).toHaveAttribute("maxlength", "200");
+      fireEvent.change(input, { target: { value: subject } });
+      await continueWizard(dialog);
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "Use up to 200 characters for the subject, without hidden formatting.",
+      );
+      expect(input).toBeInTheDocument();
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+    },
+  );
+
+  it("checks optional intake years and curriculum labels before showing the PDF step", async () => {
+    const { requests } = await renderLibrary("admin", { catalogue: [] });
+    const dialog = await openIntakeWizardAtPdfStep({ year: "2101" });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Enter a whole year from 1900 through 2100.",
+    );
+    expect(within(dialog).queryByLabelText("PDF file")).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Year (if known)"), {
+      target: { value: "2023" },
+    });
+    const curriculum = within(dialog).getByLabelText(
+      "Curriculum / edition (if known)",
+    );
+    expect(curriculum).toHaveAttribute("maxlength", "200");
+    fireEvent.change(curriculum, { target: { value: "Edition\u0000" } });
+    await continueWizard(dialog);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Use up to 200 characters for the curriculum / edition, without hidden formatting.",
+    );
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+    fireEvent.change(curriculum, {
+      target: { value: "  Edition from cover  " },
+    });
+    await continueWizard(dialog);
+    expect(within(dialog).getByLabelText("PDF file")).toBeInTheDocument();
+  });
+
+  it("clears stale library filters in both state and the immediate post-upload request", async () => {
+    const { requests } = await renderLibrary("admin");
+    const filters = screen.getByRole("region", { name: "Material filters" });
+    for (const [label, value] of [
+      ["Search", "missing material"],
+      ["Medium", ids.medium],
+      ["Material type", "syllabus"],
+      ["Status", "ready_for_ai"],
+      ["Year", "1999"],
+    ]) {
+      fireEvent.change(within(filters).getByLabelText(label), {
+        target: { value },
+      });
+    }
+    await waitFor(() =>
+      expect(
+        requests.some((request) => {
+          const url = new URL(request.url);
+          return (
+            url.pathname.endsWith("/materials") &&
+            url.searchParams.get("search") === "missing material" &&
+            url.searchParams.get("year") === "1999"
+          );
+        }),
+      ).toBe(true),
+    );
+    const dialog = await openWizardAtPdfStep();
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\nfresh"], "fresh-paper.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await screen.findByRole("link", { name: "Open uploaded material" });
+    for (const label of [
+      "Search",
+      "Medium",
+      "Material type",
+      "Status",
+      "Year",
+    ]) {
+      expect(within(filters).getByLabelText(label)).toHaveProperty("value", "");
+    }
+    const completedAt = requests.findIndex(
+      (request) =>
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/complete"),
+    );
+    const refreshes = requests
+      .slice(completedAt + 1)
+      .filter(
+        (request) =>
+          request.method === "GET" &&
+          new URL(request.url).pathname.endsWith("/materials"),
+      );
+    expect(refreshes.length).toBeGreaterThan(0);
+    for (const request of refreshes) {
+      for (const key of [
+        "search",
+        "medium_id",
+        "material_type",
+        "status",
+        "year",
+      ]) {
+        expect(new URL(request.url).searchParams.has(key), request.url).toBe(
+          false,
+        );
+      }
+    }
+    expect(
+      screen.getByRole("region", { name: "Uploaded materials" }),
+    ).toHaveTextContent("fresh-paper.pdf");
+  });
+
+  it("shows a resumed candidate upload in its own grade instead of the currently selected unassigned list", async () => {
+    const file = new File(["%PDF-1.7\nsaved grade"], "saved-grade.pdf", {
+      type: "application/pdf",
+    });
+    const saved: UploadSession = {
+      id: ids.uploadSession,
+      filename: file.name,
+      size_bytes: file.size,
+      document_type: "teacher_guide",
+      intake_metadata: {
+        candidate_grade: 12,
+        medium_label: "Sinhala",
+        subject_label: "Mathematics",
+      },
+      status: "uploading",
+      next_offset: 0,
+      verified_bytes: 0,
+      version: 0,
+      chunk_size_bytes: 4_194_304,
+      deduplicated: false,
+      created_at: now,
+      updated_at: now,
+    };
+    localStorage.setItem(
+      UPLOAD_CHECKPOINT_KEY,
+      JSON.stringify({
+        uploadIds: [ids.uploadSession],
+        creationUncertain: false,
+      }),
+    );
+    await renderLibrary("admin", {
+      catalogue: [],
+      savedUpload: saved,
+      initialMaterials: [intakeMaterial],
+      summaries: [unassignedSummary],
+    });
+    const overview = screen.getByRole("region", { name: "Materials by grade" });
+    fireEvent.click(
+      within(overview).getByRole("button", { name: /Unassigned materials/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue saved upload 1" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Continue upload",
+    });
+    fireEvent.change(await within(dialog).findByLabelText("Original PDF"), {
+      target: { files: [file] },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Resume upload" }),
+    );
+    await screen.findByRole("link", { name: "Open uploaded material" });
+    expect(
+      within(overview).getByRole("button", { name: /^Grade 12\b/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("region", { name: "Uploaded materials" }),
+    ).toHaveTextContent(file.name);
+  });
+
+  it("does not carry a past-paper year into a material type that has no year field", async () => {
+    const { requests } = await renderLibrary("admin", { catalogue: [] });
+    const dialog = await openIntakeWizardAtPdfStep({
+      year: "2025",
+      curriculum: "Unverified edition",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.change(within(dialog).getByLabelText("Material type"), {
+      target: { value: "syllabus" },
+    });
+    await continueWizard(dialog);
+    expect(
+      within(dialog).queryByLabelText("Year (if known)"),
+    ).not.toBeInTheDocument();
+    await continueWizard(dialog);
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\nchanged type"], "changed-type.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    expect(
+      within(dialog).getByRole("region", { name: "Review upload" }),
+    ).not.toHaveTextContent("2025");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await screen.findByRole("link", { name: "Open uploaded material" });
+    const create = requests.find(
+      (request) =>
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/source-uploads"),
+    )!;
+    expect(await jsonBody(create)).toMatchObject({
+      document_type: "syllabus",
+      year: null,
+      intake_metadata: { year: null },
     });
   });
 

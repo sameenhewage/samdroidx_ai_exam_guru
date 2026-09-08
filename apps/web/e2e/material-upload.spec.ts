@@ -317,7 +317,8 @@ test("real API: full browser refresh recovers a committed lost-create response w
   const dialog = await prepareWizard(page, entry, filename, bytes);
   let committed: Session | undefined;
   let originalRequest:
-    components["schemas"]["SourceUploadCreateRequest"] | undefined;
+    | components["schemas"]["SourceUploadCreateRequest"]
+    | undefined;
   let createCount = 0;
   const createPath = "**/api/v1/admin/source-uploads";
   await page.route(createPath, async (route) => {
@@ -395,4 +396,220 @@ test("real API: full browser refresh recovers a committed lost-create response w
   expect(done.uploadIds).toEqual([]);
   expect(done.requestIds ?? []).toEqual([]);
   await page.unroute(createPath);
+});
+
+test("real API: Materials uploads without an admitted grade catalogue retain candidate metadata for review", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await attestedAdmin(page);
+  const grade = 12;
+  const cataloguePath = `/api/v1/admin/material-catalogue?grade=${grade}&limit=1000`;
+  const catalogueBefore = await page.request.get(cataloguePath);
+  expect(catalogueBefore.status()).toBe(200);
+  expect((await catalogueBefore.json()) as Catalogue[]).toEqual([]);
+  const filename = `no-catalogue-${randomUUID().slice(0, 8)}.pdf`;
+  const bytes = pdf(filename);
+  const intakeMetadata = {
+    candidate_grade: grade,
+    medium_label: "Sinhala",
+    subject_label: "Mathematics",
+    curriculum_label: "Unverified edition",
+    document_type_label: "Past Paper",
+    year: 2024,
+  } satisfies components["schemas"]["SourceIntakeMetadata"];
+  const mutations: Array<{ method: string; path: string }> = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      path.startsWith("/api/") &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method())
+    )
+      mutations.push({ method: request.method(), path });
+  });
+
+  await page.goto("/admin/materials");
+  const filters = page.getByRole("region", { name: "Material filters" });
+  await filters.getByLabel("Search", { exact: true }).fill("not-this-upload");
+  await filters
+    .getByRole("combobox", { name: "Material type", exact: true })
+    .selectOption("syllabus");
+  await filters
+    .getByRole("combobox", { name: "Status", exact: true })
+    .selectOption("ready_for_ai");
+  await filters.getByLabel("Year", { exact: true }).fill("1999");
+  await page
+    .getByRole("button", { name: "Upload material", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Upload material",
+    exact: true,
+  });
+  await expect(dialog).toBeVisible();
+  const next = () =>
+    dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog
+    .getByRole("combobox", { name: "Grade", exact: true })
+    .selectOption(String(grade));
+  await next();
+  const medium = dialog.getByRole("combobox", {
+    name: "Medium",
+    exact: true,
+  });
+  await expect(medium.locator("option")).toContainText([
+    "Sinhala",
+    "Tamil",
+    "English",
+    "Mixed / other",
+    "Not sure",
+  ]);
+  await medium.selectOption({ label: "Sinhala" });
+  await next();
+  await dialog
+    .getByRole("textbox", { name: "Subject (if known)", exact: true })
+    .fill("Mathematics");
+  await next();
+  await dialog
+    .getByRole("combobox", { name: "Material type", exact: true })
+    .selectOption("past_paper");
+  await next();
+  const year = dialog.getByLabel("Year (if known)", { exact: true });
+  await expect(year).toHaveJSProperty("required", false);
+  await year.fill("2024");
+  await dialog
+    .getByRole("textbox", {
+      name: "Curriculum / edition (if known)",
+      exact: true,
+    })
+    .fill("Unverified edition");
+  await next();
+  await dialog.getByLabel("PDF file").setInputFiles({
+    name: filename,
+    mimeType: "application/pdf",
+    buffer: bytes,
+  });
+  await next();
+  const review = dialog.getByRole("region", {
+    name: "Review upload",
+    exact: true,
+  });
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("These details need review.");
+  await expect(review).toContainText(
+    "Uploading does not approve the curriculum",
+  );
+  for (const value of [
+    "Sinhala",
+    "Mathematics",
+    "Past Paper",
+    "2024",
+    "Unverified edition",
+    filename,
+  ])
+    await expect(review).toContainText(value);
+  expect(mutations).toEqual([]);
+
+  const creation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/admin/source-uploads",
+  );
+  await dialog
+    .getByRole("button", { name: "Upload material", exact: true })
+    .click();
+  const created = await creation;
+  expect(created.status()).toBe(201);
+  expect(created.request().postDataJSON()).toMatchObject({
+    filename,
+    size_bytes: bytes.length,
+    curriculum_version_id: null,
+    unit_id: null,
+    lesson_id: null,
+    document_type: "past_paper",
+    intake_metadata: intakeMetadata,
+  });
+  const session = (await created.json()) as Session;
+  await expect(
+    page.getByRole("link", { name: "Open uploaded material" }),
+  ).toBeVisible({ timeout: 60_000 });
+  const status = await page.request.get(
+    `/api/v1/admin/source-uploads/${session.id}`,
+  );
+  expect(status.status()).toBe(200);
+  const completed = (await status.json()) as Session;
+  expect(completed).toMatchObject({
+    status: "completed",
+    next_offset: bytes.length,
+    verified_bytes: bytes.length,
+    deduplicated: false,
+  });
+  expect(completed.document_id).toBeTruthy();
+  const sourceResponse = await page.request.get(
+    `/api/v1/admin/source-documents?document_id=${completed.document_id}`,
+  );
+  expect(sourceResponse.status()).toBe(200);
+  const sources: components["schemas"]["SourceDocumentResponse"][] =
+    await sourceResponse.json();
+  expect(sources).toHaveLength(1);
+  expect(sources[0]).toMatchObject({
+    id: completed.document_id,
+    original_filename: filename,
+    curriculum_version_id: null,
+    unit_id: null,
+    lesson_id: null,
+    metadata_review_required: true,
+    intake_metadata: intakeMetadata,
+  });
+  expect(sources[0].extraction_status).not.toBe("trusted");
+  const materialResponse = await page.request.get(
+    `/api/v1/admin/materials?document_id=${completed.document_id}&grade=${grade}&limit=1`,
+  );
+  expect(materialResponse.status()).toBe(200);
+  const materials = (await materialResponse.json()) as Material[];
+  expect(materials).toHaveLength(1);
+  expect(materials[0]).toMatchObject({
+    id: completed.document_id,
+    title: filename,
+    grade,
+    medium: "Sinhala",
+    subject: "Mathematics",
+    curriculum: "Unverified edition",
+    year: 2024,
+    metadata_review_required: true,
+    intake_metadata: intakeMetadata,
+  });
+  expect(materials[0].status).not.toBe("ready_for_ai");
+
+  const gradeButton = page
+    .getByRole("region", { name: "Materials by grade" })
+    .getByRole("button", { name: /^Grade 12\b/ });
+  await expect(gradeButton).toHaveAttribute("aria-pressed", "true");
+  const material = page
+    .getByRole("region", { name: "Uploaded materials" })
+    .getByRole("article")
+    .filter({ hasText: filename });
+  await expect(material).toBeVisible();
+  await expect(material).toContainText("Metadata needs review");
+  await expect(
+    material.getByRole("link", { name: "View", exact: true }),
+  ).toHaveAttribute("href", `/admin/materials/${completed.document_id}`);
+  await page.reload();
+  await gradeButton.click();
+  await expect(gradeButton).toHaveAttribute("aria-pressed", "true");
+  await expect(material).toBeVisible();
+  await expect(material).toContainText("Metadata needs review");
+  const catalogueAfter = await page.request.get(cataloguePath);
+  expect(catalogueAfter.status()).toBe(200);
+  expect((await catalogueAfter.json()) as Catalogue[]).toEqual([]);
+  expect(mutations).toEqual([
+    { method: "POST", path: "/api/v1/admin/source-uploads" },
+    {
+      method: "PUT",
+      path: `/api/v1/admin/source-uploads/${session.id}/chunks`,
+    },
+    {
+      method: "POST",
+      path: `/api/v1/admin/source-uploads/${session.id}/complete`,
+    },
+  ]);
 });
