@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -60,7 +60,7 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
     with PostgresContainer(
         image="pgvector/pgvector:0.8.6-pg18-trixie",
         username="exam_guru",
-        password="isolated-fidelity-migration",
+        password=uuid4().hex,
         dbname="source_fidelity_migration_test",
         driver="asyncpg",
     ) as postgres:
@@ -192,7 +192,7 @@ def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrad
     with PostgresContainer(
         image="pgvector/pgvector:0.8.6-pg18-trixie",
         username="exam_guru",
-        password="isolated-fidelity-downgrade",
+        password=uuid4().hex,
         dbname="source_fidelity_downgrade_test",
         driver="asyncpg",
     ) as postgres:
