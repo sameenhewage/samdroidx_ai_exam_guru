@@ -7,7 +7,9 @@ from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, BinaryIO, Never, cast
 from uuid import UUID
 
@@ -45,6 +47,483 @@ from exam_guru_api.documents.tesseract_ocr import CommandResult, RenderedPageIma
 from exam_guru_api.infrastructure.object_storage import LocalFileObjectStorage
 from tests.test_tesseract_file_input import FileCommandRunner, file_config, source_pdf
 from tests.test_tesseract_ocr_adapter import single_word_tsv
+
+
+def recovery_metadata(
+    page: pymupdf.Page,
+    text: str,
+    words: list[tuple[str, tuple[float, float, float, float]]],
+    recovered_text: str,
+    reference: dict[str, object] | None = None,
+) -> dict[str, object]:
+    def digest(value: object) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                value, ensure_ascii=True, sort_keys=True, allow_nan=False, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+
+    return {
+        "algorithm_version": "native-math-recovery-v1",
+        "source": "original_pdf_native_nonlegacy",
+        "coordinate_space": "unrotated_pdf_points",
+        "offset_space": "unicode_codepoints",
+        "page_number": page.number + 1,
+        "source_reference_sha256": digest(
+            extract_math_layout(page) if reference is None else reference
+        ),
+        "original_ocr_sha256": hashlib.sha256(
+            text.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "original_words_sha256": digest(words),
+        "recovered_text_sha256": hashlib.sha256(
+            recovered_text.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "evidence_hash_serialization": {
+            "version": "python-json-sorted-compact-ascii-v1",
+            "input": "decoded_math_evidence",
+            "fields": ["source_reference_sha256", "original_words_sha256"],
+            "hash_algorithm": "sha256",
+            "encoding": "utf-8",
+            "ensure_ascii": True,
+            "sort_keys": True,
+            "allow_nan": False,
+            "separators": [",", ":"],
+        },
+        "edits": [{"kind": "insert"}],
+    }
+
+
+def test_real_recovery_engine_is_wired_to_synthetic_legacy_body_and_trusted_equation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mixed-font-equation.pdf"
+    with pymupdf.open() as document:
+        page = document.new_page(width=180, height=180)
+        page.insert_text((15, 30), "Read the question", fontname="cour", fontsize=8)
+        document.xref_set_key(page.get_fonts()[0][0], "BaseFont", "/FMBindumathi")
+        page.insert_text((15, 80), "X + 2 = 4", fontname="helv", fontsize=12)
+        document.save(path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    runner = FileCommandRunner(tmp_path / "models", tsv=single_word_tsv("ගණිතය"))
+    with (
+        path.open("rb") as source,
+        FilePageReader(command_runner=runner).open(
+            source, configuration=PageReadingConfiguration(ocr=file_config(runner.models))
+        ) as reader,
+    ):
+        result = reader.read_page(1)
+    assert len(result.candidates) == 5
+    assert result.preferred_index in (3, 4)
+    assert result.candidates[1].raw_text == result.candidates[2].raw_text == "ගණිතය"
+    for recovered in result.candidates[3:]:
+        assert "X + 2 = 4" in recovered.raw_text
+        evidence = cast(dict[str, object], recovered.provenance["recovery"])
+        assert evidence["algorithm_version"] == "native-math-recovery-v1"
+        assert recovered.provenance["automatic_verification"] is False
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+def test_source_reading_argument_boundaries_reject_before_database_work() -> None:
+    with pytest.raises(ValueError, match="timezone aware"):
+        jobs._now(datetime(2026, 1, 1))
+    with pytest.raises(ValueError, match="out of range"):
+        jobs._integer(True, minimum=0, maximum=1)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="selected page"):
+            await jobs.queue_source_read(
+                cast(Any, None), UUID(int=1), actor_id=UUID(int=2), expected_page_version=0
+            )
+        with pytest.raises(ValueError, match="current page version"):
+            await jobs.queue_source_read(
+                cast(Any, None), UUID(int=1), actor_id=UUID(int=2), page_number=1
+            )
+
+    asyncio.run(scenario())
+
+
+def test_each_successful_ocr_variant_appends_a_reassessed_recovery_without_rewriting_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = source_pdf(tmp_path / "recovery.pdf", font_name="FMBindumathi")
+    raw = "ගණිතය ප්‍රශ්නය කියවා පිළිතුරු ලියන්න"
+    runner = FileCommandRunner(tmp_path / "models", tsv=single_word_tsv(raw))
+    calls: list[tuple[str, list[tuple[str, tuple[float, float, float, float]]]]] = []
+
+    def recover(
+        page: pymupdf.Page, text: str, words: list[tuple[str, tuple[float, float, float, float]]]
+    ) -> SimpleNamespace:
+        assert page.number == 0
+        calls.append((text, list(words)))
+        return SimpleNamespace(
+            raw_text=text + "\nX + 2 = 4",
+            words=(*words, ("X + 2 = 4", (15.0, 40.0, 80.0, 50.0))),
+            provenance=recovery_metadata(page, text, words, text + "\nX + 2 = 4"),
+        )
+
+    monkeypatch.setattr(page_reading, "recover_native_equations", recover, raising=False)
+    with (
+        path.open("rb") as source,
+        FilePageReader(command_runner=runner).open(
+            source, configuration=PageReadingConfiguration(ocr=file_config(runner.models))
+        ) as reader,
+    ):
+        result = reader.read_page(1)
+    assert len(calls) == 2
+    assert len(result.candidates) == 5
+    native, bilingual, sinhala, *derived = result.candidates
+    assert "Read the question" in native.raw_text
+    assert bilingual.raw_text == sinhala.raw_text == raw
+    assert all("derivation" not in value.provenance for value in (native, bilingual, sinhala))
+    for index, (original, recovered) in enumerate(
+        zip((bilingual, sinhala), derived, strict=True), 1
+    ):
+        provenance = recovered.provenance
+        assert recovered.method == "ocr"
+        assert recovered.raw_text == raw + "\nX + 2 = 4"
+        assert provenance["raw_sha256"] == hashlib.sha256(recovered.raw_text.encode()).hexdigest()
+        assert provenance["source_languages"] == native.provenance["source_languages"]
+        assert provenance["page_image"] == original.provenance["page_image"]
+        assert provenance["page_image_use"] == "ocr_input"
+        assert provenance["automatic_verification"] is False
+        assert provenance["mappings_applied"] == []
+        derivation = cast(dict[str, Any], provenance["derivation"])
+        assert derivation["engine"] == "native-math-recovery"
+        assert derivation["engine_version"] == "1"
+        assert derivation["ocr_engine"] == original.provenance["engine"]
+        assert derivation["ocr_engine_version"] == original.provenance["engine_version"]
+        assert (
+            derivation["ocr_config_sha256"]
+            == hashlib.sha256(
+                json.dumps(
+                    original.provenance["config"], sort_keys=True, ensure_ascii=True
+                ).encode()
+            ).hexdigest()
+        )
+        assert provenance["config"] == original.provenance["config"]
+        assert derivation["input_candidates"] == [
+            {
+                "candidate_index": 0,
+                "method": "native",
+                "raw_sha256": native.provenance["raw_sha256"],
+            },
+            {
+                "candidate_index": index,
+                "method": "ocr",
+                "raw_sha256": original.provenance["raw_sha256"],
+            },
+        ]
+        assert decode_math_evidence(provenance["maths_words"]) != decode_math_evidence(
+            original.provenance["maths_words"]
+        )
+        assert cast(dict[str, Any], provenance["maths_fidelity"])["can_confirm"] is False
+        assert cast(dict[str, Any], provenance["candidate_selection"])["can_confirm"] is False
+        assert len(json.dumps(provenance, allow_nan=False).encode()) <= 60 * 1024
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "none",
+        "unchanged",
+        "error",
+        "oversized",
+        "missing_metadata",
+        "invalid_json",
+        "metadata_limit",
+        "ocr_failure",
+        "algorithm_version",
+        "original_ocr_sha256",
+        "original_words_sha256",
+        "recovered_text_sha256",
+        "source_reference_sha256",
+        "evidence_hash_serialization",
+        "page_number",
+        "missing_hash",
+        "edits",
+    ],
+)
+def test_recovery_errors_and_metadata_omissions_never_promote_or_discard_original_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    path = source_pdf(tmp_path / "recovery-failure.pdf", font_name="FMBindumathi")
+    raw = "ගණිතය ප්‍රශ්නය කියවා පිළිතුරු ලියන්න"
+    runner = FileCommandRunner(
+        tmp_path / "models", tsv=single_word_tsv(raw), fail_ocr=mode == "ocr_failure"
+    )
+    calls = 0
+
+    def recover(
+        page: pymupdf.Page, text: str, words: list[tuple[str, tuple[float, float, float, float]]]
+    ) -> SimpleNamespace | None:
+        nonlocal calls
+        calls += 1
+        if mode == "none":
+            return None
+        if mode == "error":
+            raise RuntimeError("private recovery details")
+        output = text if mode == "unchanged" else text + "\nX + 2 = 4"
+        metadata = recovery_metadata(page, text, words, output)
+        if mode == "missing_metadata":
+            metadata = {}
+        elif mode in {"invalid_json", "metadata_limit"}:
+            metadata["evidence"] = float("nan") if mode == "invalid_json" else "x" * 70000
+        elif mode == "missing_hash":
+            del metadata["original_ocr_sha256"]
+        elif mode in metadata:
+            metadata[mode] = "invalid"
+        return SimpleNamespace(
+            raw_text="X" * (MAX_TEXT_CHARACTERS + 1) if mode == "oversized" else output,
+            words=tuple(words),
+            provenance=metadata,
+        )
+
+    monkeypatch.setattr(page_reading, "recover_native_equations", recover)
+    with (
+        path.open("rb") as source,
+        FilePageReader(command_runner=runner).open(
+            source, configuration=PageReadingConfiguration(ocr=file_config(runner.models))
+        ) as reader,
+    ):
+        result = reader.read_page(1)
+    assert calls == (0 if mode == "ocr_failure" else 2)
+    assert len(result.candidates) == (5 if mode == "metadata_limit" else 3)
+    for original in result.candidates[1:3]:
+        assert original.raw_text == ("" if mode == "ocr_failure" else raw)
+        assert "derivation" not in original.provenance
+        if mode not in {"none", "unchanged", "metadata_limit", "ocr_failure"}:
+            assert original.provenance["recovery_failure_code"] == "native_math_recovery_failed"
+    if mode == "metadata_limit":
+        for recovered in result.candidates[3:]:
+            assert recovered.raw_text == raw + "\nX + 2 = 4"
+            assert recovered.provenance["failure_code"] == "candidate_metadata_limit"
+            assert "recovery" in cast(dict[str, object], recovered.provenance["omitted_metadata"])
+            assert (
+                len(cast(dict[str, Any], recovered.provenance["derivation"])["input_candidates"])
+                == 2
+            )
+            assert (
+                cast(dict[str, Any], recovered.provenance["candidate_selection"])["can_confirm"]
+                is False
+            )
+            assert len(json.dumps(recovered.provenance, allow_nan=False).encode()) <= 60 * 1024
+
+
+@pytest.mark.parametrize("latin", [False, True])
+def test_missing_native_reference_does_not_penalize_more_raster_numbers(latin: bool) -> None:
+    sinhala = "ගණිතය ප්‍රශ්නය කියවා පිළිතුරු ලියන්න"
+    with pymupdf.open() as document:
+        reference = extract_math_layout(document.new_page())
+    reference.update(complete=False, risk_codes=["raster_grid_unverified"])
+    candidates = [
+        page_reading.PageReadingCandidate(
+            sinhala + (" X" if latin else "") + " 1 2 3 4 5 6 7 8", "ocr", {}
+        ),
+        page_reading.PageReadingCandidate(sinhala + " 1 2 3 4 5 6 7 8 9 10", "ocr", {}),
+    ]
+    for candidate in candidates:
+        page_reading._candidate_evidence(candidate, ("si",), reference, None)
+    assert reference["anchors"] == []
+    maths = [
+        cast(dict[str, Any], candidate.provenance["maths_fidelity"]) for candidate in candidates
+    ]
+    assert maths[0]["added_count"] < maths[1]["added_count"]
+    result = page_reading._selected_result(1, candidates)
+    assert result.preferred_index == 1
+    assert result.failure_code == "source_fidelity_failed"
+    assert all(
+        cast(dict[str, Any], candidate.provenance["candidate_selection"])["qualified_recovery"]
+        is False
+        for candidate in candidates
+    )
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("valid_words", [False, True])
+def test_paired_recovery_uses_original_prose_share_and_decoded_reference_hash(
+    monkeypatch: pytest.MonkeyPatch, unreadable: bool, compressed: bool, valid_words: bool
+) -> None:
+    sinhala = "ගණිතය ප්‍රශ්නය කියවා පිළිතුරු ලියන්න"
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((15, 30), "X + 2 = 4")
+        reference = extract_math_layout(page)
+        reference.update(complete=False, risk_codes=["raster_grid_unverified"])
+        if compressed:
+            reference["fixture_padding"] = "r" * 20000
+        encoded = cast(dict[str, object], encode_math_evidence(reference))
+        native = page_reading.PageReadingCandidate(
+            "X + 2 = 4", "native", {"fonts": ["FMBindumathi"]}
+        )
+        original = page_reading.PageReadingCandidate(
+            sinhala, "ocr", {"engine": "tesseract-cli", "engine_version": "5.4.1", "config": {}}
+        )
+        for candidate in (native, original):
+            page_reading._candidate_evidence(candidate, ("si",), encoded, None)
+
+        def recover(
+            page: pymupdf.Page,
+            text: str,
+            words: list[tuple[str, tuple[float, float, float, float]]],
+        ) -> SimpleNamespace:
+            output = text + "\nX + 2 = 4" + ("\ufffd" if unreadable else "")
+            metadata = recovery_metadata(page, text, words, output, reference)
+            if compressed:
+                assert encoded["sha256"] != metadata["source_reference_sha256"]
+            return SimpleNamespace(
+                raw_text=output,
+                words=tuple(
+                    (str(word[4]), tuple(float(value) for value in word[:4]))
+                    for word in page.get_text("words", sort=True)
+                )
+                if valid_words
+                else (),
+                provenance=metadata,
+            )
+
+        monkeypatch.setattr(page_reading, "recover_native_equations", recover)
+        reader = page_reading._OpenPageReader(
+            cast(Any, None), document, PageReadingConfiguration(), None, None, None
+        )
+        recovered = reader._recovered_candidate(1, native, original, 1, [], ("si",), encoded)
+        assert recovered is not None
+    selection = cast(dict[str, Any], recovered.provenance["candidate_selection"])
+    original_selection = cast(dict[str, Any], original.provenance["candidate_selection"])
+    assert selection["script_share"] < original_selection["script_share"]
+    assert selection["prose_script_share"] == original_selection["script_share"]
+    assert selection["prose_source_candidate_index"] == 1
+    assert selection["native_math_preserved_gain"] > 0
+    result = page_reading._selected_result(1, [native, original, recovered])
+    assert result.preferred_index == (2 if valid_words and not unreadable else 1)
+    assert result.failure_code == "source_fidelity_failed"
+    assert all(
+        cast(dict[str, Any], candidate.provenance["candidate_selection"])["can_confirm"] is False
+        for candidate in result.candidates
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "qualified",
+        "equal_risk",
+        "worse_risk",
+        "new_risk",
+        "zero_gain",
+        "unreadable",
+        "omitted",
+        "oversized",
+        "confirmable_raw",
+        "valid_native",
+    ],
+)
+def test_qualified_recovery_can_outrank_pure_sinhala_without_bypassing_safety(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    sinhala = "ගණිතය ප්‍රශ්නය කියවා පිළිතුරු ලියන්න"
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((15, 30), "X + 2 = 4")
+        reference = extract_math_layout(page)
+        reference.update(complete=False, risk_codes=["raster_grid_unverified"])
+        native = page_reading.PageReadingCandidate(
+            "X + 2 = 4", "native", {"fonts": ["FMBindumathi"], "automatic_verification": False}
+        )
+        parent = page_reading.PageReadingCandidate(
+            sinhala + " lesson" + ("\nX + 2 = 4" if mode == "zero_gain" else ""),
+            "ocr",
+            {
+                "engine": "tesseract-cli",
+                "engine_version": "5.4.1",
+                "config": {},
+                "automatic_verification": False,
+            },
+        )
+        alternative = page_reading.PageReadingCandidate(
+            sinhala, "ocr", {"automatic_verification": False}
+        )
+        for candidate in (native, parent, alternative):
+            page_reading._candidate_evidence(candidate, ("si", "en"), reference, None)
+        parent_selection = cast(dict[str, Any], parent.provenance["candidate_selection"])
+        parent_maths = cast(dict[str, Any], parent.provenance["maths_fidelity"])
+        if mode in {"equal_risk", "worse_risk"}:
+            parent_selection["risk_count"] = 2 if mode == "equal_risk" else 1
+        elif mode == "new_risk":
+            parent_maths["risk_codes"].extend(["parent_only_risk_one", "parent_only_risk_two"])
+            parent_selection["risk_count"] += 2
+        elif mode == "omitted":
+            parent.provenance["omitted_metadata"] = {"source_detail": {"sha256": "a" * 64}}
+        elif mode in {"confirmable_raw", "valid_native"}:
+            ready = alternative if mode == "confirmable_raw" else native
+            cast(dict[str, object], ready.provenance["candidate_selection"]).update(
+                can_confirm=True, text_readable=True
+            )
+
+        def recover(
+            page: pymupdf.Page,
+            text: str,
+            words: list[tuple[str, tuple[float, float, float, float]]],
+        ) -> SimpleNamespace:
+            output = text + ("\n" if mode == "zero_gain" else "\nX + 2 = 4")
+            output += "\ufffd" if mode == "unreadable" else ""
+            metadata = recovery_metadata(page, text, words, output, reference)
+            if mode == "oversized":
+                metadata["padding"] = "x" * 70000
+            return SimpleNamespace(
+                raw_text=output,
+                words=tuple(
+                    (str(word[4]), tuple(float(value) for value in word[:4]))
+                    for word in page.get_text("words", sort=True)
+                ),
+                provenance=metadata,
+            )
+
+        assess = page_reading._candidate_evidence
+
+        def assessed(
+            candidate: page_reading.PageReadingCandidate,
+            languages: tuple[str, ...],
+            reference: dict[str, object],
+            words: list[tuple[str, tuple[float, float, float, float]]] | None,
+        ) -> dict[str, object]:
+            info = assess(candidate, languages, reference, words)
+            if mode == "new_risk":
+                cast(dict[str, Any], candidate.provenance["maths_fidelity"])["risk_codes"].append(
+                    "new_risk"
+                )
+                info["risk_count"] = cast(int, info["risk_count"]) + 1
+            return info
+
+        monkeypatch.setattr(page_reading, "recover_native_equations", recover)
+        monkeypatch.setattr(page_reading, "_candidate_evidence", assessed)
+        reader = page_reading._OpenPageReader(
+            cast(Any, None), document, PageReadingConfiguration(), None, None, None
+        )
+        derived = reader._recovered_candidate(1, native, parent, 1, [], ("si", "en"), reference)
+        assert derived is not None
+    assert cast(dict[str, Any], alternative.provenance["candidate_selection"])["script_share"] == 1
+    assert parent_selection["script_share"] < 1
+    result = page_reading._selected_result(1, [native, parent, alternative, derived])
+    assert result.preferred_index == (
+        3 if mode == "qualified" else 0 if mode == "valid_native" else 2
+    )
+    selection = cast(dict[str, Any], derived.provenance["candidate_selection"])
+    assert selection["qualified_recovery"] is (
+        mode in {"qualified", "confirmable_raw", "valid_native"}
+    )
+    if mode == "qualified":
+        assert selection["selection_reason"] == "qualified_native_math_recovery"
+        assert selection["native_math_preserved_gain"] > 0
+        assert selection["risk_count"] < parent_selection["risk_count"]
+        assert result.failure_code == "source_fidelity_failed"
+    if mode == "new_risk":
+        assert selection["native_math_preserved_gain"] > 0
+        assert selection["risk_count"] < parent_selection["risk_count"]
+    assert all(
+        candidate.provenance["automatic_verification"] is False for candidate in result.candidates
+    )
 
 
 def test_sinhala_reading_compares_bilingual_and_sinhala_only_candidates(tmp_path: Path) -> None:

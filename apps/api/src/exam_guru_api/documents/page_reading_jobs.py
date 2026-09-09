@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -453,6 +455,103 @@ async def _page_version(session: AsyncSession, claim: SourceReadClaim) -> int | 
     return version
 
 
+def _reading_inputs(result: PageReadingResult) -> list[list[dict[str, object]]]:
+    inputs: list[list[dict[str, object]]] = []
+    for index, candidate in enumerate(result.candidates):
+        derivation = candidate.provenance.get("derivation")
+        if (
+            "derivation" not in candidate.provenance
+            and candidate.provenance.get("engine") != "native-math-recovery"
+        ):
+            inputs.append([])
+            continue
+        if (
+            candidate.method != "ocr"
+            or not isinstance(derivation, dict)
+            or derivation.get("engine") != "native-math-recovery"
+            or derivation.get("engine_version") != "1"
+            or not isinstance(derivation.get("input_candidates"), list)
+            or len(derivation["input_candidates"]) != 2
+        ):
+            raise ValueError("source page reader returned an invalid result")
+        sources: list[dict[str, object]] = []
+        for method, source in zip(("native", "ocr"), derivation["input_candidates"], strict=True):
+            if not isinstance(source, dict) or set(source) != {
+                "candidate_index",
+                "method",
+                "raw_sha256",
+            }:
+                raise ValueError("source page reader returned an invalid result")
+            source_index = source["candidate_index"]
+            if (
+                isinstance(source_index, bool)
+                or not isinstance(source_index, int)
+                or not 0 <= source_index < index
+            ):
+                raise ValueError("source page reader returned an invalid result")
+            original = result.candidates[source_index]
+            digest = hashlib.sha256(
+                original.raw_text.encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
+            if (
+                source["method"] != method
+                or original.method != method
+                or inputs[source_index]
+                or "failure_code" in original.provenance
+                or source["raw_sha256"] != digest
+                or original.provenance.get("raw_sha256", digest) != digest
+            ):
+                raise ValueError("source page reader returned an invalid result")
+            if method == "ocr" and (
+                derivation.get("ocr_engine") != original.provenance.get("engine")
+                or derivation.get("ocr_engine_version") != original.provenance.get("engine_version")
+                or derivation.get("ocr_config_sha256")
+                != hashlib.sha256(
+                    json.dumps(
+                        original.provenance.get("config", {}), sort_keys=True, ensure_ascii=True
+                    ).encode()
+                ).hexdigest()
+            ):
+                raise ValueError("source page reader returned an invalid result")
+            sources.append(source)
+        inputs.append(sources)
+    derived_count = sum(bool(sources) for sources in inputs)
+    if derived_count > 2 or len(inputs) - derived_count > 3:
+        raise ValueError("source page reader returned an invalid result")
+    return inputs
+
+
+async def _persisted_reading_inputs(
+    session: AsyncSession,
+    claim: SourceReadClaim,
+    candidate_ids: list[UUID],
+    sources: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    inputs: list[dict[str, object]] = []
+    for source in sources:
+        candidate_id = candidate_ids[cast(int, source["candidate_index"])]
+        original = await session.get(PageTextCandidateModel, candidate_id)
+        if (
+            original is None
+            or original.document_id != claim.document_id
+            or original.page_number != claim.next_page
+            or original.provenance.get("job_id") != str(claim.id)
+            or original.method != source["method"]
+            or hashlib.sha256(original.raw_text_utf8).hexdigest() != source["raw_sha256"]
+        ):
+            raise ValueError("source page reader returned an invalid result")
+        inputs.append(
+            {
+                **source,
+                "candidate_id": str(candidate_id),
+                "document_id": str(claim.document_id),
+                "page_number": claim.next_page,
+                "job_id": str(claim.id),
+            }
+        )
+    return inputs
+
+
 async def _commit_page(
     session: AsyncSession,
     claim: SourceReadClaim,
@@ -483,7 +582,7 @@ async def _commit_page(
     if accepted and result is not None:
         if (
             result.page_number != claim.next_page
-            or not 1 <= len(result.candidates) <= 3
+            or not 1 <= len(result.candidates) <= 5
             or any(candidate.method not in {"native", "ocr"} for candidate in result.candidates)
             or (
                 result.preferred_index is not None
@@ -503,9 +602,18 @@ async def _commit_page(
             )
         ):
             raise ValueError("source page reader returned an invalid result")
+        inputs = _reading_inputs(result)
         fidelity = PageFidelityService(session)
         candidate_ids: list[UUID] = []
-        for candidate in result.candidates:
+        for candidate, sources in zip(result.candidates, inputs, strict=True):
+            provenance = dict(candidate.provenance)
+            if sources:
+                provenance["derivation"] = {
+                    **cast(dict[str, object], provenance["derivation"]),
+                    "input_candidates": await _persisted_reading_inputs(
+                        session, claim, candidate_ids, sources
+                    ),
+                }
             state = await fidelity.record_candidate(
                 claim.document_id,
                 claim.next_page,
@@ -513,7 +621,7 @@ async def _commit_page(
                 method=candidate.method,
                 actor_id=claim.requested_by,
                 provenance={
-                    **candidate.provenance,
+                    **provenance,
                     "job_id": str(claim.id),
                     "attempt": claim.attempts,
                     "page_number": claim.next_page,
@@ -544,7 +652,7 @@ async def _commit_page(
                     "job_id": str(claim.id),
                     "text_sha256": selected.text_sha256,
                     "candidate_ids": [str(value) for value in candidate_ids],
-                    "selection_strategy": "source-fidelity-ranked-v2",
+                    "selection_strategy": "source-fidelity-ranked-v3",
                     "automatic_verification": False,
                 },
             )

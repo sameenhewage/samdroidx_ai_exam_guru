@@ -1411,6 +1411,290 @@ def ranked_reading(preferred_index: int) -> PageReadingResult:
     )
 
 
+def recovered_reading() -> PageReadingResult:
+    originals = tuple(
+        replace(
+            candidate,
+            raw_text=f"Read the original question {index}",
+            provenance={
+                key: value for key, value in candidate.provenance.items() if key != "failure_code"
+            },
+        )
+        for index, candidate in enumerate(ranked_reading(0).candidates)
+    )
+    derived: list[PageReadingCandidate] = []
+    for index in (1, 2):
+        original = originals[index]
+        derived.append(
+            PageReadingCandidate(
+                "Read the recovered equation X + 2 = 4",
+                "ocr",
+                {
+                    "engine": "native-math-recovery",
+                    "engine_version": "1",
+                    "source_languages": ["en"],
+                    "derivation": {
+                        "engine": "native-math-recovery",
+                        "engine_version": "1",
+                        "ocr_engine": original.provenance["engine"],
+                        "ocr_engine_version": original.provenance["engine_version"],
+                        "ocr_config_sha256": hashlib.sha256(b"{}").hexdigest(),
+                        "input_candidates": [
+                            {
+                                "candidate_index": source_index,
+                                "method": originals[source_index].method,
+                                "raw_sha256": hashlib.sha256(
+                                    originals[source_index].raw_text.encode()
+                                ).hexdigest(),
+                            }
+                            for source_index in (0, index)
+                        ],
+                    },
+                },
+            )
+        )
+    return PageReadingResult(1, (*originals, *derived), preferred_index=3)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failed_metadata", [False, True])
+def test_derived_readings_record_validated_input_identities_and_append_selection_without_trust(
+    reading_database_url: str, tmp_path: Path, failed_metadata: bool
+) -> None:
+    async def scenario() -> None:
+        path = source_pdf(tmp_path / "derived-selection.pdf")
+        reading = recovered_reading()
+        if failed_metadata:
+            reading.candidates[3].provenance["failure_code"] = "candidate_metadata_limit"
+        async with database(reading_database_url) as sessions, sessions() as session:
+            doc_id = await add_source(session, path, pages=1)
+            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+            result = await run_source_read(
+                session, job_id, storage=SourceStore(path), reader=ResultReader(reading)
+            )
+            assert result.status == "completed"
+            assert await candidate_count(session, doc_id) == 5
+            events = list(
+                await session.scalars(
+                    select(PageReviewEventModel)
+                    .where(PageReviewEventModel.document_id == doc_id)
+                    .order_by(PageReviewEventModel.version)
+                )
+            )
+            assert [event.version for event in events] == list(range(1, 7))
+            assert all(event.action == "candidate_recorded" for event in events)
+            ids = [event.candidate_id for event in events[:5]]
+            assert events[-1].candidate_id == ids[3]
+            for index, expected in enumerate(reading.candidates):
+                candidate = await session.get(PageTextCandidateModel, ids[index])
+                assert candidate is not None
+                assert candidate.raw_text_utf8 == expected.raw_text.encode()
+                assert candidate.parent_candidate_id == (ids[index - 1] if index else None)
+                assert candidate.provenance["automatic_verification"] is False
+                if index >= 3:
+                    derivation = cast(dict[str, object], candidate.provenance["derivation"])
+                    inputs = cast(list[dict[str, object]], derivation["input_candidates"])
+                    assert inputs == [
+                        {
+                            "candidate_index": source_index,
+                            "method": reading.candidates[source_index].method,
+                            "raw_sha256": hashlib.sha256(
+                                reading.candidates[source_index].raw_text.encode()
+                            ).hexdigest(),
+                            "candidate_id": str(ids[source_index]),
+                            "document_id": str(doc_id),
+                            "page_number": 1,
+                            "job_id": str(job_id),
+                        }
+                        for source_index in (0, index - 2)
+                    ]
+            state = await session.get(PageReviewStateModel, (doc_id, 1))
+            assert state is not None
+            assert state.current_candidate_id == ids[3]
+            assert state.state == ("failed" if failed_metadata else "needs_review")
+            assert not await PageFidelityService(session).document_is_verified(doc_id)
+            assert not await session.scalar(func.public.source_page_fidelity_is_current(doc_id, 1))
+            assert not await session.scalar(
+                select(PageGroundTruthModel.id).where(PageGroundTruthModel.document_id == doc_id)
+            )
+            retry = await run_source_read(
+                session, job_id, storage=SourceStore(path), reader=ResultReader(reading)
+            )
+            assert not retry.claimed
+            assert await candidate_count(session, doc_id) == 5
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "bool",
+        "float",
+        "negative",
+        "future",
+        "hash",
+        "method",
+        "derived",
+        "missing",
+        "six",
+        "shape",
+        "extra_identity",
+        "engine",
+        "version",
+        "ocr_engine",
+        "ocr_version",
+        "ocr_config",
+        "source_failure",
+        "source_hash",
+        "source_method",
+        "derived_input",
+        "three_derived",
+    ],
+)
+def test_derived_reader_input_contract_rejects_invalid_indices_hashes_and_six_candidates(
+    reading_database_url: str, tmp_path: Path, invalid: str
+) -> None:
+    async def scenario() -> None:
+        path = source_pdf(tmp_path / "derived-invalid.pdf")
+        reading = recovered_reading()
+        derivation = cast(dict[str, object], reading.candidates[3].provenance["derivation"])
+        inputs = cast(list[dict[str, object]], derivation["input_candidates"])
+        if invalid in {"bool", "float", "negative", "future", "derived"}:
+            inputs[1]["candidate_index"] = {
+                "bool": True,
+                "float": 1.0,
+                "negative": -1,
+                "future": 4,
+                "derived": 3,
+            }[invalid]
+        elif invalid == "hash":
+            inputs[1]["raw_sha256"] = "0" * 64
+        elif invalid == "method":
+            inputs[1]["method"] = "native"
+        elif invalid == "missing":
+            del reading.candidates[3].provenance["derivation"]
+        elif invalid == "shape":
+            derivation["input_candidates"] = [None, None]
+        elif invalid == "extra_identity":
+            inputs[1]["candidate_id"] = str(uuid4())
+        elif invalid in {"engine", "version", "ocr_engine", "ocr_version", "ocr_config"}:
+            key = {
+                "engine": "engine",
+                "version": "engine_version",
+                "ocr_engine": "ocr_engine",
+                "ocr_version": "ocr_engine_version",
+                "ocr_config": "ocr_config_sha256",
+            }[invalid]
+            derivation[key] = "invalid"
+        elif invalid in {"source_failure", "source_hash"}:
+            reading.candidates[1].provenance[
+                "failure_code" if invalid == "source_failure" else "raw_sha256"
+            ] = "invalid"
+        elif invalid == "source_method":
+            reading = replace(
+                reading,
+                candidates=(
+                    reading.candidates[0],
+                    replace(reading.candidates[1], method="native"),
+                    *reading.candidates[2:],
+                ),
+            )
+        elif invalid == "derived_input":
+            derivation = cast(dict[str, object], reading.candidates[4].provenance["derivation"])
+            inputs = cast(list[dict[str, object]], derivation["input_candidates"])
+            inputs[1].update(
+                candidate_index=3,
+                raw_sha256=hashlib.sha256(reading.candidates[3].raw_text.encode()).hexdigest(),
+            )
+        elif invalid == "three_derived":
+            reading = replace(
+                reading,
+                candidates=(
+                    *reading.candidates[:2],
+                    *(reading.candidates[3] for _ in range(3)),
+                ),
+            )
+        else:
+            reading = replace(reading, candidates=(*reading.candidates, reading.candidates[-1]))
+        async with database(reading_database_url) as sessions, sessions() as session:
+            doc_id = await add_source(session, path, pages=1)
+            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+            with pytest.raises(ValueError, match="reader returned an invalid result"):
+                await run_source_read(
+                    session, job_id, storage=SourceStore(path), reader=ResultReader(reading)
+                )
+            assert not session.in_transaction()
+            assert await candidate_count(session, doc_id) == 0
+            assert await session.get(PageReviewStateModel, (doc_id, 1)) is None
+            job = await session.get(SourceReadJobModel, job_id)
+            assert job is not None
+            assert job.next_page == 1
+            assert job.status == "running"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+def test_missing_source_and_job_are_not_recovery_inputs(reading_database_url: str) -> None:
+    async def scenario() -> None:
+        async with database(reading_database_url) as sessions, sessions() as session:
+            with pytest.raises(FidelitySourceNotFoundError):
+                await queue_source_read(session, uuid4(), actor_id=ACTOR)
+            with pytest.raises(reading_jobs.SourceReadJobNotFoundError):
+                await reading_jobs._current_result(
+                    session, uuid4(), claimed=False, pages_processed=0
+                )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("invalid", ["missing", "document", "page", "job", "method", "hash"])
+def test_persisted_recovery_inputs_must_belong_to_same_job_document_page_and_raw_evidence(
+    reading_database_url: str, tmp_path: Path, invalid: str
+) -> None:
+    async def scenario() -> None:
+        path = source_pdf(tmp_path / "input-identity.pdf", pages=2)
+        async with database(reading_database_url) as sessions, sessions() as session:
+            doc_id = await add_source(session, path, pages=2)
+            job_id = (await queue_source_read(session, doc_id, actor_id=ACTOR)).id
+            claim = await claim_source_read(session, job_id)
+            assert claim is not None
+            raw = "Read the original question"
+            other_doc = await add_source(session, source_pdf(tmp_path / "other.pdf"), pages=1)
+            state = await PageFidelityService(session).record_candidate(
+                other_doc if invalid == "document" else doc_id,
+                2 if invalid == "page" else 1,
+                raw_text=raw,
+                method="native",
+                actor_id=ACTOR,
+                provenance={"job_id": str(uuid4() if invalid == "job" else job_id)},
+                expected_version=0,
+            )
+            assert state.current_candidate_id is not None
+            candidate_id = uuid4() if invalid == "missing" else state.current_candidate_id
+            with pytest.raises(ValueError, match="reader returned an invalid result"):
+                await reading_jobs._persisted_reading_inputs(
+                    session,
+                    claim,
+                    [candidate_id],
+                    [
+                        {
+                            "candidate_index": 0,
+                            "method": "ocr" if invalid == "method" else "native",
+                            "raw_sha256": "0" * 64
+                            if invalid == "hash"
+                            else hashlib.sha256(raw.encode()).hexdigest(),
+                        }
+                    ],
+                )
+            assert not await PageFidelityService(session).document_is_verified(doc_id)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("preferred_index", [0, 1], ids=["native-first", "ocr-middle"])
 def test_preferred_not_last_candidate_retains_all_evidence_and_requires_original_comparison(
@@ -1479,7 +1763,7 @@ def test_preferred_not_last_candidate_retains_all_evidence_and_requires_original
                 "job_id": str(job_id),
                 "text_sha256": chosen.text_sha256,
                 "candidate_ids": [str(value) for value in candidate_ids],
-                "selection_strategy": "source-fidelity-ranked-v2",
+                "selection_strategy": "source-fidelity-ranked-v3",
                 "automatic_verification": False,
             }
             state = await session.get(PageReviewStateModel, (doc_id, 1))

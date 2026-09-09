@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
@@ -15,6 +16,13 @@ from exam_guru_api.documents.fidelity import (
     MissingOCRLanguagesError,
     assess_page,
     select_ocr_languages,
+)
+from exam_guru_api.documents.native_math_recovery import (
+    ALGORITHM_VERSION as NATIVE_MATH_RECOVERY_VERSION,
+)
+from exam_guru_api.documents.native_math_recovery import (
+    NativeMathRecovery,
+    recover_native_equations,
 )
 from exam_guru_api.documents.ocr import (
     MalformedOCROutputError,
@@ -39,6 +47,7 @@ from exam_guru_api.documents.source_math_fidelity import (
     MAX_ENCODED_MATH_REFERENCE_BYTES,
     MAX_ENCODED_MATH_WORD_BYTES,
     assess_math_fidelity,
+    decode_math_evidence,
     encode_math_evidence,
     extract_math_layout,
 )
@@ -225,6 +234,56 @@ def _math_reference(page: pymupdf.Page) -> dict[str, object]:
     return reference
 
 
+def _recovery_evidence(
+    recovered: NativeMathRecovery,
+    text: str,
+    words: list[tuple[str, tuple[float, float, float, float]]],
+    reference: dict[str, object],
+    page_number: int,
+) -> dict[str, object]:
+    def digest(value: object) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                value, ensure_ascii=True, sort_keys=True, allow_nan=False, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+
+    metadata = json.loads(json.dumps(recovered.provenance, ensure_ascii=True, allow_nan=False))
+    expected = {
+        "algorithm_version": NATIVE_MATH_RECOVERY_VERSION,
+        "source": "original_pdf_native_nonlegacy",
+        "coordinate_space": "unrotated_pdf_points",
+        "offset_space": "unicode_codepoints",
+        "page_number": page_number,
+        "original_ocr_sha256": hashlib.sha256(
+            text.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "recovered_text_sha256": hashlib.sha256(
+            recovered.raw_text.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "source_reference_sha256": digest(decode_math_evidence(reference)),
+        "original_words_sha256": digest(words),
+        "evidence_hash_serialization": {
+            "version": "python-json-sorted-compact-ascii-v1",
+            "input": "decoded_math_evidence",
+            "fields": ["source_reference_sha256", "original_words_sha256"],
+            "hash_algorithm": "sha256",
+            "encoding": "utf-8",
+            "ensure_ascii": True,
+            "sort_keys": True,
+            "allow_nan": False,
+            "separators": [",", ":"],
+        },
+    }
+    if (
+        digest({key: metadata.get(key) for key in expected}) != digest(expected)
+        or not isinstance(metadata.get("edits"), list)
+        or not metadata["edits"]
+    ):
+        raise ValueError("invalid native math recovery evidence")
+    return cast(dict[str, object], metadata)
+
+
 def _candidate_evidence(
     candidate: PageReadingCandidate,
     languages: tuple[str, ...],
@@ -312,7 +371,7 @@ def _bound_candidate_metadata(candidate: PageReadingCandidate) -> None:
         return
     original_summary = _metadata_summary(provenance)
     omitted = dict(cast(dict[str, object], provenance.get("omitted_metadata", {})))
-    for key in ("maths_reference", "maths_words", "font_metadata", "fonts", "blocks"):
+    for key in ("maths_reference", "maths_words", "font_metadata", "fonts", "blocks", "recovery"):
         if key in provenance:
             omitted.setdefault(key, _metadata_summary(provenance.pop(key)))
     provenance["omitted_metadata"] = omitted
@@ -324,14 +383,14 @@ def _bound_candidate_metadata(candidate: PageReadingCandidate) -> None:
         "risk_codes": ["candidate_metadata_limit"],
     }
     cast(dict[str, object], provenance["candidate_selection"]).update(
-        can_confirm=False, text_readable=False
+        can_confirm=False, text_readable=False, qualified_recovery=False
     )
     # Config/probe strings are caller/provider controlled. In the exceptional case that
     # they alone exceed storage, retain their digest identity rather than losing the text.
     for key in sorted(provenance, key=lambda key: len(json.dumps(provenance[key])), reverse=True):
         if len(json.dumps(provenance, ensure_ascii=True, allow_nan=False).encode()) <= limit:
             break
-        if key in {"omitted_metadata", "candidate_selection", "maths_fidelity"}:
+        if key in {"omitted_metadata", "candidate_selection", "maths_fidelity", "derivation"}:
             continue
         value = provenance[key]
         if len(json.dumps(value, ensure_ascii=True).encode()) > 1024:
@@ -359,6 +418,7 @@ def _bound_candidate_metadata(candidate: PageReadingCandidate) -> None:
                 "raw_sha256",
                 "raw_character_count",
                 "prior_failure_code",
+                "derivation",
             )
             if key in provenance
         }
@@ -385,23 +445,31 @@ def _selected_result(page_number: int, candidates: list[PageReadingCandidate]) -
     for candidate in candidates:
         _bound_candidate_metadata(candidate)
 
-    def rank(index: int) -> tuple[bool, bool, bool, float, int, int]:
+    def rank(index: int) -> tuple[bool, bool, bool, bool, float, int, int, int]:
         selection = cast(dict[str, object], candidates[index].provenance["candidate_selection"])
         return (
             selection["can_confirm"] is True,
             selection["text_readable"] is True,
             candidates[index].method == "native" and selection["can_confirm"] is True,
-            cast(float, selection["script_share"]),
+            selection["can_confirm"] is not True and selection.get("qualified_recovery") is True,
+            cast(float, selection.get("prose_script_share", selection["script_share"])),
             -cast(int, selection["risk_count"]),
+            cast(int, selection.get("native_math_preserved_gain", 0)),
             index,
         )
 
     selected = max(range(len(candidates)), key=rank)
     for index, candidate in enumerate(candidates):
-        cast(dict[str, object], candidate.provenance["candidate_selection"]).update(
+        selection = cast(dict[str, object], candidate.provenance["candidate_selection"])
+        qualified = selection.get("qualified_recovery") is True
+        selection.update(
             selected=index == selected,
             candidate_count=len(candidates),
-            strategy="source-fidelity-ranked-v2",
+            strategy="source-fidelity-ranked-v3",
+            qualified_recovery=qualified,
+            selection_reason="qualified_native_math_recovery"
+            if index == selected and qualified
+            else "source_fidelity_order",
         )
     chosen = candidates[selected]
     safe = cast(dict[str, object], chosen.provenance["candidate_selection"])["can_confirm"] is True
@@ -593,13 +661,27 @@ class _OpenPageReader:
         plans = [requested]
         if "si" in assessment.languages and "ta" not in assessment.languages:
             plans.append(("sin",))
-        candidates = [native_candidate]
-        candidates.extend(
+        originals = [
             self._ocr_candidate(
                 page_number, languages, assessment.languages, native_provenance, reference
             )
             for languages in plans
-        )
+        ]
+        candidates = [native_candidate, *(candidate for candidate, _ in originals)]
+        for candidate in candidates:
+            _bound_candidate_metadata(candidate)
+        for index, (candidate, words) in enumerate(originals, 1):
+            recovered = self._recovered_candidate(
+                page_number,
+                native_candidate,
+                candidate,
+                index,
+                words,
+                assessment.languages,
+                reference,
+            )
+            if recovered is not None:
+                candidates.append(recovered)
         # A probe failure can occur before OCR renders anything. Only then render a
         # separate comparison; never retry a declared missing/failed image as quality repair.
         if "page_image" not in native_provenance and native_info["can_confirm"]:
@@ -610,6 +692,106 @@ class _OpenPageReader:
             native_info.update(can_confirm=False, text_readable=False)
         return _selected_result(page_number, candidates)
 
+    def _recovered_candidate(
+        self,
+        page_number: int,
+        native: PageReadingCandidate,
+        original: PageReadingCandidate,
+        original_index: int,
+        words: list[tuple[str, tuple[float, float, float, float]]],
+        source_languages: tuple[str, ...],
+        reference: dict[str, object],
+    ) -> PageReadingCandidate | None:
+        if "failure_code" in original.provenance or "failure_code" in native.provenance:
+            return None
+        try:
+            recovered = recover_native_equations(
+                self._document[page_number - 1], original.raw_text, list(words)
+            )
+            if recovered is None or recovered.raw_text == original.raw_text:
+                return None
+            if (
+                not isinstance(recovered.raw_text, str)
+                or len(recovered.raw_text) > MAX_TEXT_CHARACTERS
+                or not isinstance(recovered.provenance, dict)
+                or not recovered.provenance
+            ):
+                raise ValueError("invalid native math recovery")
+            recovery = _recovery_evidence(
+                recovered, original.raw_text, words, reference, page_number
+            )
+            provenance = deepcopy(original.provenance)
+            for key in (
+                "raw_sha256",
+                "raw_character_count",
+                "blocks",
+                "candidate_selection",
+                "maths_fidelity",
+                "maths_words",
+                "maths_reference",
+                "risk_codes",
+                "languages",
+            ):
+                provenance.pop(key, None)
+            provenance.update(
+                engine="native-math-recovery",
+                engine_version="1",
+                recovery=recovery,
+                derivation={
+                    "engine": "native-math-recovery",
+                    "engine_version": "1",
+                    "ocr_engine": original.provenance["engine"],
+                    "ocr_engine_version": original.provenance["engine_version"],
+                    "ocr_config_sha256": hashlib.sha256(
+                        json.dumps(
+                            original.provenance["config"], sort_keys=True, ensure_ascii=True
+                        ).encode()
+                    ).hexdigest(),
+                    "input_candidates": [
+                        {
+                            "candidate_index": index,
+                            "method": candidate.method,
+                            "raw_sha256": candidate.provenance["raw_sha256"],
+                        }
+                        for index, candidate in ((0, native), (original_index, original))
+                    ],
+                },
+            )
+            candidate = PageReadingCandidate(recovered.raw_text, "ocr", provenance)
+            selection = _candidate_evidence(
+                candidate, source_languages, reference, list(recovered.words)
+            )
+            original_selection = cast(dict[str, object], original.provenance["candidate_selection"])
+            original_maths = cast(dict[str, object], original.provenance["maths_fidelity"])
+            recovered_maths = cast(dict[str, object], provenance["maths_fidelity"])
+            selection.update(
+                prose_script_share=original_selection["script_share"],
+                prose_source_candidate_index=original_index,
+                parent_risk_count=original_selection["risk_count"],
+                native_math_preserved_gain=max(
+                    0,
+                    cast(int, recovered_maths["preserved_count"])
+                    - cast(int, original_maths["preserved_count"]),
+                ),
+            )
+            selection["qualified_recovery"] = (
+                selection["text_readable"] is True
+                and cast(int, selection["native_math_preserved_gain"]) > 0
+                and cast(int, selection["risk_count"]) < cast(int, original_selection["risk_count"])
+                and not any(
+                    "failure_code" in value.provenance or "omitted_metadata" in value.provenance
+                    for value in (native, original, candidate)
+                )
+                and set(cast(list[str], provenance["risk_codes"]))
+                <= set(cast(list[str], original.provenance["risk_codes"]))
+                and set(cast(list[str], recovered_maths["risk_codes"]))
+                <= set(cast(list[str], original_maths["risk_codes"]))
+            )
+            return candidate
+        except Exception:
+            original.provenance["recovery_failure_code"] = "native_math_recovery_failed"
+            return None
+
     def _ocr_candidate(
         self,
         page_number: int,
@@ -617,7 +799,7 @@ class _OpenPageReader:
         source_languages: tuple[str, ...],
         native_provenance: dict[str, object],
         reference: dict[str, object],
-    ) -> PageReadingCandidate:
+    ) -> tuple[PageReadingCandidate, list[tuple[str, tuple[float, float, float, float]]]]:
         config_snapshot = cast(dict[str, object], self._configuration.to_dict()["ocr"])
         config_snapshot["language"] = "+".join(requested)
         provenance: dict[str, object] = {
@@ -737,7 +919,7 @@ class _OpenPageReader:
             provenance["failure_code"] = failure
         candidate = PageReadingCandidate(text, "ocr", provenance)
         _candidate_evidence(candidate, source_languages, reference, words or None)
-        return candidate
+        return candidate, words
 
 
 class FilePageReader:
