@@ -21,6 +21,7 @@ from pydantic import (
     ValidationError,
 )
 from sqlalchemy import Boolean, ColumnElement, and_, case, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,12 +42,13 @@ from exam_guru_api.documents.domain import (
     validate_pdf_upload,
 )
 from exam_guru_api.documents.fidelity_models import SourceReadJobModel
-from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.documents.models import SourceDocumentModel, SourceMetadataCandidateModel
 from exam_guru_api.documents.schemas import (
     MaterialGradeSummaryResponse,
     MaterialListItemResponse,
     MaterialStatus,
     SourceIntakeMetadata,
+    SourceMetadataCandidateResponse,
 )
 from exam_guru_api.infrastructure.object_storage import (
     InvalidObjectKeyError,
@@ -152,6 +154,10 @@ class ConcurrentMaterialScopeVersionError(RuntimeError):
         super().__init__(f"expected material metadata version {expected}, found {actual}")
 
 
+class MaterialMetadataCandidateConflictError(RuntimeError):
+    pass
+
+
 class InvalidMaterialRemovalReasonError(ValueError):
     pass
 
@@ -221,6 +227,76 @@ class SourceUploadResult:
 class SourceDocumentContent:
     filename: str
     data: bytes
+
+
+def _metadata_candidate_projection() -> ColumnElement[dict[str, object]]:
+    candidate = SourceMetadataCandidateModel
+    return cast(
+        ColumnElement[dict[str, object]],
+        select(
+            func.jsonb_build_object(
+                "id",
+                candidate.id,
+                "version",
+                candidate.version,
+                "scope_version",
+                candidate.scope_version,
+                "metadata",
+                candidate.payload,
+                "material_type",
+                candidate.material_type,
+                "reason",
+                candidate.reason,
+                "created_by",
+                candidate.created_by,
+                "created_at",
+                candidate.created_at,
+                "is_current",
+                True,
+            )
+        )
+        .where(
+            candidate.document_id == SourceDocumentModel.id,
+            candidate.scope_version == SourceDocumentModel.metadata_scope_version,
+            candidate.source_checksum_sha256 == SourceDocumentModel.checksum_sha256,
+            SourceDocumentModel.curriculum_version_id.is_(None),
+            SourceDocumentModel.metadata_review_required.is_(True),
+        )
+        .order_by(candidate.version.desc())
+        .limit(1)
+        .correlate(SourceDocumentModel)
+        .scalar_subquery()
+        .cast(JSONB),
+    )
+
+
+async def get_metadata_candidate(
+    session: AsyncSession, document: SourceDocumentModel
+) -> SourceMetadataCandidateResponse | None:
+    candidate = await session.scalar(
+        select(SourceMetadataCandidateModel)
+        .where(SourceMetadataCandidateModel.document_id == document.id)
+        .order_by(SourceMetadataCandidateModel.version.desc())
+        .limit(1)
+    )
+    if candidate is None:
+        return None
+    return SourceMetadataCandidateResponse(
+        id=candidate.id,
+        version=candidate.version,
+        scope_version=candidate.scope_version,
+        metadata=SourceIntakeMetadata.model_validate(candidate.payload),
+        material_type=candidate.material_type,
+        reason=candidate.reason,
+        created_by=candidate.created_by,
+        created_at=candidate.created_at,
+        is_current=(
+            candidate.scope_version == document.metadata_scope_version
+            and candidate.source_checksum_sha256 == document.checksum_sha256
+            and document.curriculum_version_id is None
+            and document.metadata_review_required
+        ),
+    )
 
 
 class SourceDocumentService:
@@ -590,6 +666,80 @@ class SourceDocumentService:
         await self._session.refresh(document)
         return document
 
+    async def correct_candidate_metadata(
+        self,
+        document_id: UUID,
+        *,
+        metadata: SourceIntakeMetadata,
+        reason: str,
+        expected_scope_version: int,
+        expected_candidate_version: int,
+        actor_id: UUID,
+        material_type: SourceDocumentType | None = None,
+    ) -> SourceDocumentModel:
+        document = await self._get_for_update(document_id)
+        self._require_version(document, expected_scope_version)
+        if (
+            document.curriculum_version_id is not None
+            or not document.metadata_review_required
+            or document.quarantined_for_teacher_use
+            or document.extraction_status is ExtractionStatus.TRUSTED
+            or await self._source_has_knowledge(document_id)
+        ):
+            raise MaterialScopeImmutableError(document_id)
+        current = await get_metadata_candidate(self._session, document)
+        version = 0 if current is None else current.version
+        if type(expected_candidate_version) is not int or expected_candidate_version != version:
+            raise ConcurrentMaterialScopeVersionError(expected_candidate_version, version)
+        if (
+            not isinstance(reason, str)
+            or reason != reason.strip()
+            or not reason.isprintable()
+            or not 1 <= len(reason) <= 512
+        ):
+            raise ValueError("metadata correction reason must be trimmed and printable")
+        payload = SourceIntakeMetadata.model_validate(metadata).model_dump(mode="json")
+        candidate = SourceMetadataCandidateModel(
+            id=uuid4(),
+            document_id=document.id,
+            source_checksum_sha256=document.checksum_sha256,
+            version=version + 1,
+            scope_version=document.metadata_scope_version,
+            payload=payload,
+            material_type=(
+                material_type
+                if material_type is not None
+                else current.material_type
+                if current is not None and current.is_current
+                else document.document_type
+            ),
+            reason=reason,
+            created_by=actor_id,
+        )
+        self._session.add(candidate)
+        self._session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=actor_id,
+                resource_type="source_document",
+                resource_id=document.id,
+                action="source_document.metadata_candidate_corrected",
+                payload={
+                    "candidate_id": str(candidate.id),
+                    "source_checksum_sha256": document.checksum_sha256,
+                    "version": candidate.version,
+                    "scope_version": candidate.scope_version,
+                    "previous_candidate_id": None if current is None else str(current.id),
+                    "metadata": payload,
+                    "material_type": candidate.material_type.value,
+                    "reason": reason,
+                },
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(document)
+        return document
+
     async def correct_scope(
         self,
         document_id: UUID,
@@ -600,6 +750,7 @@ class SourceDocumentService:
         expected_version: int,
         actor_id: UUID,
         confirm_intake_metadata: bool = False,
+        metadata_candidate_id: UUID | None = None,
     ) -> SourceDocumentModel:
         document = await self._get_for_update(document_id)
         self._require_version(document, expected_version)
@@ -612,7 +763,12 @@ class SourceDocumentService:
         )
         updated = (curriculum_version_id, unit_id, lesson_id)
         confirming = confirm_intake_metadata and document.metadata_review_required
+        proposal = None
         if confirm_intake_metadata:
+            latest = await get_metadata_candidate(self._session, document)
+            proposal = latest if latest is not None and latest.is_current else None
+            if metadata_candidate_id != (None if proposal is None else proposal.id):
+                raise MaterialMetadataCandidateConflictError
             await self._validate_confirmation_scope(cast(UUID, curriculum_version_id))
         if previous == updated and not confirming:
             return document
@@ -622,10 +778,14 @@ class SourceDocumentService:
         await self._validate_learning_scope(curriculum_version_id, unit_id, lesson_id)
         previous_version = document.metadata_scope_version
         previous_year = document.year
+        previous_type = document.document_type
         document.curriculum_version_id = curriculum_version_id
         document.unit_id = unit_id
         document.lesson_id = lesson_id
-        if confirming and document.year is None and document.intake_metadata is not None:
+        if confirming and proposal is not None:
+            document.year = proposal.metadata.year
+            document.document_type = proposal.material_type
+        elif confirming and document.year is None and document.intake_metadata is not None:
             document.year = SourceIntakeMetadata.model_validate(document.intake_metadata).year
         document.metadata_review_required = not confirm_intake_metadata
         document.metadata_scope_version += 1
@@ -645,6 +805,16 @@ class SourceDocumentService:
                     "from": self._scope_payload(*previous),
                     "to": self._scope_payload(*updated),
                     "intake_metadata": document.intake_metadata,
+                    **(
+                        {
+                            "confirmed_metadata_candidate_id": str(proposal.id),
+                            "confirmed_metadata": proposal.metadata.model_dump(mode="json"),
+                            "previous_document_type": previous_type.value,
+                            "document_type": document.document_type.value,
+                        }
+                        if proposal is not None
+                        else {}
+                    ),
                     "metadata_review_required": bool(document.metadata_review_required),
                     "previous_year": previous_year,
                     "year": document.year,
@@ -678,6 +848,10 @@ class SourceDocumentService:
         if search is not None and (not normalized_search or len(normalized_search) > 200):
             raise ValueError("material search is out of bounds")
         material_status = self._material_status_expression()
+        metadata_candidate = _metadata_candidate_projection()
+        display_metadata = func.coalesce(
+            metadata_candidate["metadata"], SourceDocumentModel.intake_metadata
+        )
         statement = (
             select(
                 SourceDocumentModel,
@@ -689,6 +863,7 @@ class SourceDocumentService:
                 CurriculumUnitModel.title.label("unit_title"),
                 CurriculumLessonModel.title.label("lesson_title"),
                 material_status.label("material_status"),
+                metadata_candidate.label("metadata_candidate"),
             )
             .select_from(SourceDocumentModel)
             .outerjoin(
@@ -719,8 +894,7 @@ class SourceDocumentService:
                     ExamConfigurationModel.grade == grade,
                     and_(
                         SourceDocumentModel.curriculum_version_id.is_(None),
-                        SourceDocumentModel.intake_metadata["candidate_grade"].as_integer()
-                        == grade,
+                        display_metadata["candidate_grade"].as_integer() == grade,
                     ),
                 )
             )
@@ -729,16 +903,23 @@ class SourceDocumentService:
         if medium_id is not None:
             statement = statement.where(MediumModel.id == medium_id)
         if material_type is not None:
-            statement = statement.where(SourceDocumentModel.document_type == material_type)
+            statement = statement.where(
+                func.coalesce(
+                    metadata_candidate["material_type"].as_string(),
+                    SourceDocumentModel.document_type,
+                )
+                == material_type
+            )
         if year is not None:
             statement = statement.where(
-                or_(
-                    SourceDocumentModel.year == year,
-                    and_(
-                        SourceDocumentModel.year.is_(None),
-                        SourceDocumentModel.intake_metadata["year"].as_integer() == year,
+                case(
+                    (metadata_candidate.is_not(None), display_metadata["year"].as_integer()),
+                    else_=func.coalesce(
+                        SourceDocumentModel.year,
+                        SourceDocumentModel.intake_metadata["year"].as_integer(),
                     ),
                 )
+                == year
             )
         if status is not None:
             statement = statement.where(material_status == status.value)
@@ -761,16 +942,21 @@ class SourceDocumentService:
                 ),
                 unit=unit_title,
                 lesson=lesson_title,
-                material_type=document.document_type,
+                material_type=proposal.material_type
+                if proposal is not None
+                else document.document_type,
                 status=row_status,
                 year=(
-                    document.year
+                    proposal.metadata.year
+                    if proposal is not None
+                    else document.year
                     if document.year is not None
                     else intake.year
                     if intake is not None
                     else None
                 ),
                 intake_metadata=intake,
+                metadata_candidate=proposal,
                 metadata_review_required=bool(document.metadata_review_required),
                 page_count=(
                     document.original_page_count
@@ -790,14 +976,22 @@ class SourceDocumentService:
                 unit_title,
                 lesson_title,
                 row_status,
+                proposal_payload,
             ) in rows
+            for proposal in (
+                None
+                if proposal_payload is None
+                else SourceMetadataCandidateResponse.model_validate(proposal_payload),
+            )
             for intake in (
                 None
                 if document.intake_metadata is None
                 else SourceIntakeMetadata.model_validate(document.intake_metadata),
             )
             for candidate in (
-                intake
+                proposal.metadata
+                if proposal is not None
+                else intake
                 if intake is not None and document.curriculum_version_id is None
                 else SourceIntakeMetadata(),
             )
@@ -805,17 +999,20 @@ class SourceDocumentService:
 
     async def grade_summary(self) -> tuple[MaterialGradeSummaryResponse, ...]:
         material_status = self._material_status_expression()
+        display_metadata = func.coalesce(
+            _metadata_candidate_projection()["metadata"], SourceDocumentModel.intake_metadata
+        )
         display_grade = case(
             (
                 SourceDocumentModel.curriculum_version_id.is_(None),
-                SourceDocumentModel.intake_metadata["candidate_grade"].as_integer(),
+                display_metadata["candidate_grade"].as_integer(),
             ),
             else_=ExamConfigurationModel.grade,
         )
         display_subject = case(
             (
                 SourceDocumentModel.curriculum_version_id.is_(None),
-                SourceDocumentModel.intake_metadata["subject_label"].as_string(),
+                display_metadata["subject_label"].as_string(),
             ),
             else_=SubjectModel.name,
         )

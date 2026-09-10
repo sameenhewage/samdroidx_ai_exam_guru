@@ -301,6 +301,50 @@ class SourceDocumentModel(AuditColumns, Base):
         return MaterialUseState.REMOVED if self.active_for_ai is False else MaterialUseState.ACTIVE
 
 
+class SourceMetadataCandidateModel(Base):
+    __tablename__ = "source_metadata_candidates"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version", name="uq_source_metadata_candidate_version"),
+        CheckConstraint("version > 0 AND scope_version >= 0", name="ck_metadata_candidate_version"),
+        CheckConstraint(
+            "source_checksum_sha256 ~ '^[0-9a-f]{64}$'", name="ck_metadata_candidate_hash"
+        ),
+        CheckConstraint(
+            "source_intake_metadata_is_bounded(payload)", name="ck_metadata_candidate_payload"
+        ),
+        CheckConstraint(
+            f"material_type IN ({_DOCUMENT_TYPES_SQL})", name="ck_metadata_candidate_type"
+        ),
+        CheckConstraint(
+            "reason = btrim(reason) AND char_length(reason) BETWEEN 1 AND 512 "
+            "AND reason !~ '[[:cntrl:]]'",
+            name="ck_metadata_candidate_reason",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT")
+    )
+    source_checksum_sha256: Mapped[str] = mapped_column(String(64))
+    version: Mapped[int] = mapped_column(Integer)
+    scope_version: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    material_type: Mapped[SourceDocumentType] = mapped_column(
+        Enum(
+            SourceDocumentType,
+            native_enum=False,
+            create_constraint=False,
+            values_callable=lambda values: [value.value for value in values],
+            length=32,
+        )
+    )
+    reason: Mapped[str] = mapped_column(String(512))
+    created_by: Mapped[UUID] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
 class SourcePageModel(AuditColumns, Base):
     __tablename__ = "source_pages"
     __table_args__ = (

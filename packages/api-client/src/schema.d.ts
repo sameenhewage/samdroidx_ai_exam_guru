@@ -1041,6 +1041,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/materials/{document_id}/metadata-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Correct Material Metadata Candidate */
+        post: operations["correct_material_metadata_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/materials/{document_id}/original": {
         parameters: {
             query?: never;
@@ -4381,6 +4398,7 @@ export interface components {
             material_type: components["schemas"]["SourceDocumentType"];
             /** Medium */
             medium: string | null;
+            metadata_candidate?: components["schemas"]["SourceMetadataCandidateResponse"] | null;
             /**
              * Metadata Review Required
              * @default false
@@ -4407,6 +4425,17 @@ export interface components {
             /** Year */
             year: number | null;
         };
+        /** MaterialMetadataCandidateRequest */
+        MaterialMetadataCandidateRequest: {
+            /** Expected Candidate Version */
+            expected_candidate_version: number;
+            /** Expected Scope Version */
+            expected_scope_version: number;
+            material_type?: components["schemas"]["SourceDocumentType"] | null;
+            metadata: components["schemas"]["SourceIntakeMetadata"];
+            /** Reason */
+            reason: string;
+        };
         /** MaterialRemoveRequest */
         MaterialRemoveRequest: {
             /** Expected Version */
@@ -4432,6 +4461,8 @@ export interface components {
             expected_version: number;
             /** Lesson Id */
             lesson_id?: string | null;
+            /** Metadata Candidate Id */
+            metadata_candidate_id?: string | null;
             /** Unit Id */
             unit_id?: string | null;
         };
@@ -6931,6 +6962,7 @@ export interface components {
             lesson_id: string | null;
             /** Likely Metadata Duplicate Of Id */
             likely_metadata_duplicate_of_id?: string | null;
+            metadata_candidate?: components["schemas"]["SourceMetadataCandidateResponse"] | null;
             /**
              * Metadata Review Required
              * @default false
@@ -6993,6 +7025,34 @@ export interface components {
             warnings?: string[];
             /** Year */
             year?: number | null;
+        };
+        /** SourceMetadataCandidateResponse */
+        SourceMetadataCandidateResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Current */
+            is_current: boolean;
+            material_type: components["schemas"]["SourceDocumentType"];
+            metadata: components["schemas"]["SourceIntakeMetadata"];
+            /** Reason */
+            reason: string;
+            /** Scope Version */
+            scope_version: number;
+            /** Version */
+            version: number;
         };
         /** SourcePageResponse */
         SourcePageResponse: {
@@ -11923,6 +11983,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MaterialGradeSummaryResponse"][];
+                };
+            };
+        };
+    };
+    correct_material_metadata_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaterialMetadataCandidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -94,6 +94,143 @@ async function storeRecoveryLink(page: Page, id: string) {
   return dialog;
 }
 
+test("real API: unassigned Sinhala descriptions can be corrected without changing original intake or trust", async ({
+  page,
+}, testInfo) => {
+  const headers = await attestedAdmin(page);
+  const filename = `Metadata-${randomUUID().slice(0, 8)}.pdf`;
+  const bytes = pdf(filename);
+  const intake = {
+    candidate_grade: 5,
+    medium_label: "Sinhala",
+    subject_label: "Mathematics",
+    document_type_label: "Syllabus",
+    year: 2020,
+  };
+  const created = await page.request.post("/api/v1/admin/source-uploads", {
+    headers,
+    data: {
+      filename,
+      request_id: randomUUID(),
+      size_bytes: bytes.length,
+      document_type: "syllabus",
+      intake_metadata: intake,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const session = (await created.json()) as Session;
+  const stored = await page.request.put(
+    `/api/v1/admin/source-uploads/${session.id}/chunks?offset=0`,
+    {
+      headers: {
+        ...headers,
+        "Content-Type": "application/octet-stream",
+        "X-Chunk-SHA256": createHash("sha256").update(bytes).digest("hex"),
+      },
+      data: bytes,
+    },
+  );
+  expect(stored.status()).toBe(200);
+  const pending = await page.request.post(
+    `/api/v1/admin/source-uploads/${session.id}/complete`,
+    {
+      headers,
+      data: { expected_version: (await stored.json()).version },
+    },
+  );
+  expect(pending.status()).toBe(202);
+  let completed: Session = await pending.json();
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `/api/v1/admin/source-uploads/${session.id}`,
+      );
+      completed = (await response.json()) as Session;
+      return completed.status;
+    })
+    .toBe("completed");
+  const documentId = completed.document_id!;
+  const originalResponse = await page.request.get(
+    `/api/v1/admin/source-documents?document_id=${documentId}`,
+  );
+  const original = (
+    await originalResponse.json()
+  )[0] as components["schemas"]["SourceDocumentResponse"];
+  await page.goto("/admin/materials");
+  await page
+    .getByRole("button", { name: `Edit metadata: ${filename}`, exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("ශ්‍රේණිය", { exact: true })).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "තොරතුරු වෙනස් කරන්න", exact: true })
+    .click();
+  await dialog
+    .getByRole("combobox", { name: "ශ්‍රේණිය", exact: true })
+    .selectOption("3");
+  await dialog
+    .getByRole("combobox", { name: "ද්‍රව්‍ය වර්ගය", exact: true })
+    .selectOption("Worksheet");
+  await dialog.getByLabel("වර්ෂය", { exact: true }).fill("2021");
+  await dialog
+    .getByLabel("වෙනස් කිරීමට හේතුව", { exact: true })
+    .fill("Synthetic candidate description correction, not source approval");
+  const savedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        `/materials/${documentId}/metadata-candidates`,
+      ),
+  );
+  await dialog
+    .getByRole("button", { name: "පරීක්ෂාව සඳහා සුරකින්න", exact: true })
+    .click();
+  const saved = await savedResponse;
+  expect(saved.status()).toBe(200);
+  const corrected =
+    (await saved.json()) as components["schemas"]["SourceDocumentResponse"];
+  expect(corrected.checksum_sha256).toBe(original.checksum_sha256);
+  expect(corrected.intake_metadata).toEqual(original.intake_metadata);
+  expect(corrected.curriculum_version_id).toBeNull();
+  expect(corrected.metadata_review_required).toBe(true);
+  expect(corrected.metadata_scope_version).toBe(
+    original.metadata_scope_version,
+  );
+  expect(corrected.document_type).toBe("syllabus");
+  expect(corrected.metadata_candidate).toMatchObject({
+    version: 1,
+    material_type: "other_approved",
+    metadata: {
+      candidate_grade: 3,
+      document_type_label: "Worksheet",
+      year: 2021,
+    },
+    is_current: true,
+  });
+  await expect(dialog).toHaveCount(0);
+  const listedResponse = await page.request.get(
+    `/api/v1/admin/materials?document_id=${documentId}&grade=3`,
+  );
+  const listed = (await listedResponse.json())[0] as Material;
+  expect(listed.status).not.toBe("ready_for_ai");
+  expect(listed.material_type).toBe("other_approved");
+  expect(listed.year).toBe(2021);
+  await page
+    .getByRole("button", { name: `Edit metadata: ${filename}`, exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByText("Worksheet", { exact: true }),
+  ).toBeVisible();
+  const originalDetails = page
+    .getByText("මුල් උඩුගත කිරීමේ තොරතුරු", { exact: true })
+    .locator("..");
+  await expect(originalDetails).not.toHaveAttribute("open");
+  await testInfo.attach("candidate-metadata-review", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+});
+
 test("real API: normal Materials resumes only the matching PDF, finishes once, follows its read job and handles deduplication", async ({
   page,
 }) => {

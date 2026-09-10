@@ -338,6 +338,7 @@ type FixtureOptions = {
   materialPages?: Record<number, Material[]>;
   restoreConflict?: boolean;
   scopeConflict?: boolean;
+  metadataCandidateConflict?: boolean;
   throwOnUpload?: boolean;
   interruptChunk?: boolean;
   pauseChunk?: boolean;
@@ -750,6 +751,51 @@ function fixtureApi(options: FixtureOptions = {}) {
       }
       if (
         material &&
+        request.method === "POST" &&
+        path.endsWith(`/materials/${material.id}/metadata-candidates`)
+      ) {
+        if (options.metadataCandidateConflict)
+          return Response.json(
+            { detail: { code: "concurrent_material_scope_modification" } },
+            { status: 409 },
+          );
+        const body =
+          (await request.json()) as components["schemas"]["MaterialMetadataCandidateRequest"];
+        const candidate: components["schemas"]["SourceMetadataCandidateResponse"] =
+          {
+            id: "00000000-0000-0000-0000-000000000510",
+            version: body.expected_candidate_version + 1,
+            scope_version: body.expected_scope_version,
+            metadata: body.metadata,
+            material_type: body.material_type ?? material.material_type,
+            reason: body.reason,
+            created_by: "00000000-0000-0000-0000-000000000001",
+            created_at: now,
+            is_current: true,
+          };
+        material.metadata_candidate = candidate;
+        material.material_type = candidate.material_type;
+        material.grade = body.metadata.candidate_grade ?? null;
+        material.subject = body.metadata.subject_label ?? null;
+        material.medium = body.metadata.medium_label ?? null;
+        material.year = body.metadata.year ?? null;
+        material.metadata_review_required = true;
+        material.status = "needs_review";
+        sources = sources.map((source) =>
+          source.id === material.id
+            ? {
+                ...source,
+                metadata_candidate: candidate,
+                metadata_review_required: true,
+              }
+            : source,
+        );
+        return Response.json(
+          sources.find((source) => source.id === material.id),
+        );
+      }
+      if (
+        material &&
         request.method === "PATCH" &&
         path.endsWith(`/materials/${material.id}/scope`)
       ) {
@@ -1051,6 +1097,113 @@ describe("MaterialsLibrary", () => {
     expect(confirmation).not.toBeChecked();
     expect(confirmation).toBeDisabled();
     expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("offers Sinhala candidate-only correction without an admitted catalogue", async () => {
+    const { requests } = await renderLibrary("admin", {
+      catalogue: [],
+      initialMaterials: [{ ...intakeMaterial, grade: 5 }],
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByLabelText("ශ්‍රේණිය")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "තොරතුරු වෙනස් කරන්න" }),
+    );
+    fireEvent.change(within(dialog).getByLabelText("ශ්‍රේණිය"), {
+      target: { value: "3" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("ද්‍රව්‍ය වර්ගය"), {
+      target: { value: "Worksheet" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("වෙනස් කිරීමට හේතුව"), {
+      target: { value: "Correct the unverified worksheet description" },
+    });
+    const save = within(dialog).getByRole("button", {
+      name: "පරීක්ෂාව සඳහා සුරකින්න",
+    });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "POST" &&
+            new URL(request.url).pathname.endsWith("/metadata-candidates"),
+        ),
+      ).toBe(true),
+    );
+    const request = requests.find(
+      (value) =>
+        value.method === "POST" &&
+        new URL(value.url).pathname.endsWith("/metadata-candidates"),
+    )!;
+    const body = await request.json();
+    expect(body.metadata.candidate_grade).toBe(3);
+    expect(body.metadata.document_type_label).toBe("Worksheet");
+    expect(body.metadata.medium_label).toBe("Sinhala");
+    expect(body.expected_candidate_version).toBe(0);
+    expect(body).not.toHaveProperty("confirm_intake_metadata");
+    expect(body).not.toHaveProperty("curriculum_version_id");
+    expect(requests.some((value) => value.method === "PATCH")).toBe(false);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(
+        "තොරතුරු පරීක්ෂාව සඳහා සුරකින ලදී. මෙය AI භාවිතයට තහවුරු කිරීමක් නොවේ.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const reopened = screen.getByRole("dialog");
+    expect(within(reopened).getByText("Worksheet")).toBeVisible();
+    const original = within(reopened)
+      .getByText("මුල් උඩුගත කිරීමේ තොරතුරු")
+      .closest("details")!;
+    expect(original).not.toHaveAttribute("open");
+    expect(original).toHaveTextContent("Workbook");
+  });
+
+  it("retains unverified description edits on conflict without approving source metadata", async () => {
+    await renderLibrary("admin", {
+      catalogue: [],
+      initialMaterials: [{ ...intakeMaterial, grade: 5 }],
+      metadataCandidateConflict: true,
+    });
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Edit metadata: ${intakeMaterial.title}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "තොරතුරු වෙනස් කරන්න" }),
+    );
+    fireEvent.change(within(dialog).getByLabelText("විෂය"), {
+      target: { value: "Corrected proposed subject" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("වෙනස් කිරීමට හේතුව"), {
+      target: { value: "Description correction" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "පරීක්ෂාව සඳහා සුරකින්න" }),
+    );
+    await within(dialog).findByRole("alert");
+    expect(within(dialog).getByLabelText("විෂය")).toHaveValue(
+      "Corrected proposed subject",
+    );
+    expect(within(dialog).getByRole("checkbox")).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox")).not.toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("presents detected grade, medium, subject, material type and year, then reveals only approved assignments on request", async () => {

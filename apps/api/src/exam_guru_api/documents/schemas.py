@@ -100,16 +100,50 @@ class MaterialScopeCorrectionRequest(BaseModel):
     lesson_id: UUID | None = None
     expected_version: int = Field(strict=True, ge=0)
     confirm_intake_metadata: bool = Field(default=False, strict=True)
+    metadata_candidate_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_scope_shape(self) -> Self:
         if self.confirm_intake_metadata and self.curriculum_version_id is None:
             raise ValueError("intake metadata confirmation requires curriculum_version_id")
+        if self.metadata_candidate_id is not None and not self.confirm_intake_metadata:
+            raise ValueError("metadata candidate binding requires explicit confirmation")
         if self.unit_id is not None and self.curriculum_version_id is None:
             raise ValueError("unit_id requires curriculum_version_id")
         if self.lesson_id is not None and self.unit_id is None:
             raise ValueError("lesson_id requires unit_id")
         return self
+
+
+class MaterialMetadataCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    expected_scope_version: int = Field(strict=True, ge=0)
+    expected_candidate_version: int = Field(strict=True, ge=0)
+    metadata: SourceIntakeMetadata
+    material_type: SourceDocumentType | None = None
+    reason: str = Field(strict=True, min_length=1, max_length=512)
+
+    @field_validator("reason")
+    @classmethod
+    def printable_reason(cls, value: str) -> str:
+        if value != value.strip() or not value.isprintable():
+            raise ValueError("metadata correction reason must be trimmed and printable")
+        return value
+
+
+class SourceMetadataCandidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID
+    version: int = Field(ge=1)
+    scope_version: int = Field(ge=0)
+    metadata: SourceIntakeMetadata
+    material_type: SourceDocumentType
+    reason: str
+    created_by: UUID
+    created_at: datetime
+    is_current: bool
 
 
 class SourcePageResponse(BaseModel):
@@ -173,6 +207,7 @@ class SourceDocumentResponse(BaseModel):
     removed_at: datetime | None
     metadata_scope_version: int
     intake_metadata: SourceIntakeMetadata | None = None
+    metadata_candidate: SourceMetadataCandidateResponse | None = None
     metadata_review_required: bool = False
     year: int | None
     paper_code: str | None
@@ -226,6 +261,7 @@ class MaterialListItemResponse(BaseModel):
     uploaded_at: datetime
     metadata_scope_version: int
     intake_metadata: SourceIntakeMetadata | None = None
+    metadata_candidate: SourceMetadataCandidateResponse | None = None
     metadata_review_required: bool = False
 
 

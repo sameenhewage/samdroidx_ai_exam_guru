@@ -169,7 +169,9 @@ The controlled model-comparison benchmark uses a **60-second command budget**, s
 
 ### Review, provenance and readiness
 
-Imported candidate metadata is labeled **Metadata needs review**; unresolved grades appear under **Unassigned materials**. Explicit metadata confirmation requires a current, evidence-backed admission of the active curriculum catalogue. Catalogue/metadata admission is independent of page-text confirmation and benchmark ground truth; neither grants the other.
+Imported candidate metadata is labeled **Metadata needs review**; unresolved grades appear under **Unassigned materials**. Unassigned materials can use **Edit metadata → Change detected details** to save corrected descriptions even when the admitted catalogue is empty. Sinhala descriptions expose Sinhala editing labels. These are separate, append-only, checksum/scope/version-bound candidates with reasons and audit history; original intake metadata is not overwritten. The current proposal may change unverified display/filter hints, but saving it never clears metadata review or verifies page text. Draft versions remain fixed until explicitly reopened, and conflicts retain unsaved edits.
+
+Explicit metadata confirmation still requires current, evidence-backed catalogue admission and the exact current candidate revision when one exists. It adopts the reviewed year/material category with old/new audit evidence. Catalogue/metadata admission is independent of page-text confirmation and benchmark ground truth; neither grants the other.
 
 Materials uses `SOURCE_READ`-authorized original-PDF streaming (GET/HEAD and a validated single byte Range) and page-image comparison. Workers retain native-comparison and exact OCR-input images under durable `STORAGE_ROOT/fidelity-page-images`, with schema-versioned source/page/rasterizer/hash/size provenance. Reads verify the artifact; a declared image that is lost or corrupt fails closed, not as a cache miss. Bounded original rendering is only a fallback when no durable artifact was declared. Originals, upload staging and image artifacts must survive rebuilds and be covered by backup inventory.
 

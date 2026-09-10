@@ -6,6 +6,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from alembic import command
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text, update
@@ -25,12 +26,13 @@ from exam_guru_api.curriculum.admission import (
 from exam_guru_api.curriculum.admission_models import CatalogueAdmissionDecisionModel
 from exam_guru_api.curriculum.models import CurriculumVersionModel
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
-from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.documents.models import SourceDocumentModel, SourceMetadataCandidateModel
 from exam_guru_api.documents.schemas import MaterialStatus
 from exam_guru_api.documents.service import (
     ConcurrentMaterialScopeVersionError,
     SourceDocumentService,
 )
+from exam_guru_api.infrastructure.migrations import _config_for_database
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from tests.integration.test_fidelity_workspace_postgres import (
     ADMIN,
@@ -447,3 +449,199 @@ def test_raw_scope_api_requires_source_write_and_returns_stable_admission_confli
     )
     assert listed.status_code == 200
     assert listed.json()[0]["status"] == "needs_review"
+
+
+def test_empty_candidate_migration_roundtrip_preserves_existing_source_evidence(
+    workspace_database_url: str,
+) -> None:
+    async def snapshot() -> object:
+        async with database_session(workspace_database_url) as session:
+            return await session.scalar(
+                text("SELECT jsonb_agg(to_jsonb(d) ORDER BY id) FROM source_documents d")
+            )
+
+    before = asyncio.run(snapshot())
+    config = _config_for_database(workspace_database_url)
+    command.downgrade(config, "0040_source_fidelity_rules_v2")
+    assert asyncio.run(snapshot()) == before
+    command.upgrade(config, "head")
+    assert asyncio.run(snapshot()) == before
+
+
+def test_candidate_metadata_correction_preserves_original_without_catalogue_authority(
+    workspace_database_url: str, materials_client: TestClient
+) -> None:
+    async def prepare() -> UUID:
+        async with database_session(workspace_database_url) as session:
+            return await add_intake_source(session)
+
+    document_id = asyncio.run(prepare())
+    path = f"{PREFIX}/materials/{document_id}/metadata-candidates"
+    body = {
+        "expected_scope_version": 0,
+        "expected_candidate_version": 0,
+        "metadata": {
+            "candidate_grade": 3,
+            "subject_label": "English",
+            "medium_label": "English",
+            "document_type_label": "Worksheet",
+            "year": None,
+        },
+        "reason": "Correct candidate descriptions without approving a curriculum",
+    }
+    assert materials_client.post(path, json=body).status_code == 401
+    assert materials_client.post(path, json=body, headers=REVIEWER_HEADERS).status_code == 403
+    response = materials_client.post(path, json=body, headers=ADMIN_HEADERS)
+    assert response.status_code == 200, response.text
+    corrected = response.json()
+    assert corrected["metadata_review_required"] is True
+    assert corrected["curriculum_version_id"] is None
+    assert corrected["intake_metadata"]["candidate_grade"] == 7
+    assert corrected["intake_metadata"]["year"] == 2024
+    assert corrected["metadata_candidate"]["version"] == 1
+    assert corrected["metadata_candidate"]["metadata"]["candidate_grade"] == 3
+    assert corrected["metadata_candidate"]["metadata"]["year"] is None
+    assert materials_client.post(path, json=body, headers=ADMIN_HEADERS).status_code == 409
+    assert (
+        materials_client.post(
+            path, json={**body, "confirm_intake_metadata": True}, headers=ADMIN_HEADERS
+        ).status_code
+        == 422
+    )
+    listed = materials_client.get(f"{PREFIX}/materials", params={"grade": 3}, headers=ADMIN_HEADERS)
+    assert listed.status_code == 200
+    item = next(value for value in listed.json() if value["id"] == str(document_id))
+    assert item["grade"] == 3
+    assert item["subject"] == "English"
+    assert item["medium"] == "English"
+    assert item["year"] is None
+    assert item["status"] == "needs_review"
+    assert item["intake_metadata"]["candidate_grade"] == 7
+    filtered = materials_client.get(
+        f"{PREFIX}/materials", params={"year": 2024}, headers=ADMIN_HEADERS
+    )
+    assert all(value["id"] != str(document_id) for value in filtered.json())
+
+
+def test_metadata_candidate_history_is_append_only_and_requires_bound_audit(
+    workspace_database_url: str, materials_client: TestClient
+) -> None:
+    async def prepare() -> tuple[UUID, object]:
+        async with database_session(workspace_database_url) as session:
+            document_id = await add_intake_source(session)
+            return document_id, await document_snapshot(session, document_id)
+
+    document_id, original = asyncio.run(prepare())
+    path = f"{PREFIX}/materials/{document_id}/metadata-candidates"
+    for version, grade in enumerate((3, 4)):
+        response = materials_client.post(
+            path,
+            headers=ADMIN_HEADERS,
+            json={
+                "expected_scope_version": 0,
+                "expected_candidate_version": version,
+                "metadata": {"candidate_grade": grade, "subject_label": "English"},
+                "reason": "Correct unverified descriptions in a disposable fixture",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["metadata_candidate"]["version"] == version + 1
+
+    async def check_history() -> None:
+        async with database_session(workspace_database_url) as session:
+            assert await document_snapshot(session, document_id) == original
+            candidates = list(
+                await session.scalars(
+                    select(SourceMetadataCandidateModel)
+                    .where(SourceMetadataCandidateModel.document_id == document_id)
+                    .order_by(SourceMetadataCandidateModel.version)
+                )
+            )
+            assert [row.payload["candidate_grade"] for row in candidates] == [3, 4]
+            audits = [
+                event
+                for event in await source_audits(session, document_id)
+                if event.action == "source_document.metadata_candidate_corrected"
+            ]
+            assert len(audits) == 2
+            for statement in (
+                "UPDATE source_metadata_candidates SET reason='changed' WHERE document_id=:id",
+                "DELETE FROM source_metadata_candidates WHERE document_id=:id",
+            ):
+                with pytest.raises(DBAPIError, match="append only"):
+                    await session.execute(text(statement), {"id": document_id})
+                await session.rollback()
+            source = await session.get(SourceDocumentModel, document_id)
+            assert source is not None
+            checksum = source.checksum_sha256
+            for candidate_checksum, message in (
+                (checksum, "matching audit"),
+                ("0" * 64, "unassigned untrusted source"),
+            ):
+                session.add(
+                    SourceMetadataCandidateModel(
+                        id=uuid4(),
+                        document_id=document_id,
+                        source_checksum_sha256=candidate_checksum,
+                        version=3,
+                        scope_version=0,
+                        payload={"candidate_grade": 5},
+                        material_type=SourceDocumentType.TEACHER_GUIDE,
+                        reason="Missing or mismatched audit fixture",
+                        created_by=ADMIN.subject_id,
+                    )
+                )
+                with pytest.raises(DBAPIError, match=message):
+                    await session.commit()
+                await session.rollback()
+            assert await document_snapshot(session, document_id) == original
+
+    asyncio.run(check_history())
+    with pytest.raises(DBAPIError, match="cannot discard source metadata candidate evidence"):
+        command.downgrade(
+            _config_for_database(workspace_database_url), "0040_source_fidelity_rules_v2"
+        )
+    asyncio.run(check_history())
+
+
+def test_metadata_confirmation_binds_the_current_candidate_revision(
+    workspace_database_url: str, materials_client: TestClient
+) -> None:
+    async def prepare() -> tuple[UUID, UUID]:
+        async with database_session(workspace_database_url) as session:
+            curriculum_id = await add_curriculum(session)
+            await admit_curriculum(session, curriculum_id)
+            return await add_intake_source(session), curriculum_id
+
+    document_id, curriculum_id = asyncio.run(prepare())
+    candidate = materials_client.post(
+        f"{PREFIX}/materials/{document_id}/metadata-candidates",
+        headers=ADMIN_HEADERS,
+        json={
+            "expected_scope_version": 0,
+            "expected_candidate_version": 0,
+            "metadata": {"candidate_grade": 7, "year": 2021, "document_type_label": "Worksheet"},
+            "material_type": "other_approved",
+            "reason": "Correct the candidate source year before scope confirmation",
+        },
+    )
+    assert candidate.status_code == 200
+    body = {
+        "expected_version": 0,
+        "curriculum_version_id": str(curriculum_id),
+        "confirm_intake_metadata": True,
+    }
+    stale = materials_client.patch(
+        f"{PREFIX}/materials/{document_id}/scope", headers=ADMIN_HEADERS, json=body
+    )
+    assert stale.status_code == 409
+    confirmed = materials_client.patch(
+        f"{PREFIX}/materials/{document_id}/scope",
+        headers=ADMIN_HEADERS,
+        json={**body, "metadata_candidate_id": candidate.json()["metadata_candidate"]["id"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["year"] == 2021
+    assert confirmed.json()["document_type"] == "other_approved"
+    assert confirmed.json()["intake_metadata"]["year"] == 2024
+    assert confirmed.json()["metadata_review_required"] is False

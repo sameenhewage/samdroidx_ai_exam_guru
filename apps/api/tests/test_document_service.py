@@ -18,11 +18,17 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
 )
 from exam_guru_api.documents.domain import ExtractionStatus, SourceDocumentType
-from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.schemas import MaterialScopeCorrectionRequest, MaterialStatus
+from exam_guru_api.documents.models import SourceDocumentModel, SourceMetadataCandidateModel
+from exam_guru_api.documents.schemas import (
+    MaterialMetadataCandidateRequest,
+    MaterialScopeCorrectionRequest,
+    MaterialStatus,
+    SourceIntakeMetadata,
+)
 from exam_guru_api.documents.service import (
     ConcurrentMaterialScopeVersionError,
     InvalidMaterialRemovalReasonError,
+    MaterialMetadataCandidateConflictError,
     MaterialScopeImmutableError,
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
@@ -110,6 +116,7 @@ class MaterialSession:
         self.objects: dict[tuple[type[object], UUID], object] = {}
         self.scalar_results: list[object | None] = []
         self.execute_results: list[list[object]] = []
+        self.metadata_candidate: SourceMetadataCandidateModel | None = None
         self.executed: list[object] = []
         self.added: list[object] = []
         self.commits = 0
@@ -127,11 +134,22 @@ class MaterialSession:
         return self.objects.get((model, identifier))
 
     async def scalar(self, _query: object) -> object | None:
+        descriptions = getattr(_query, "column_descriptions", ())
+        if any(item.get("entity") is SourceMetadataCandidateModel for item in descriptions):
+            return self.metadata_candidate
         return self.scalar_results.pop(0)
 
     async def execute(self, query: object) -> ExecuteRows:
         self.executed.append(query)
-        return ExecuteRows(self.execute_results.pop(0))
+        rows = self.execute_results.pop(0)
+        if any(
+            item.get("name") == "metadata_candidate"
+            for item in getattr(query, "column_descriptions", ())
+        ):
+            rows = [
+                (*row, None) if isinstance(row, tuple) and len(row) == 9 else row for row in rows
+            ]
+        return ExecuteRows(rows)
 
     def add(self, value: object) -> None:
         self.added.append(value)
@@ -626,6 +644,191 @@ def test_material_learning_scope_validation_covers_every_consistency_boundary() 
     asyncio.run(validate(session, curriculum.id, unit.id, lesson.id))
 
 
+def metadata_proposal(
+    document: SourceDocumentModel, scope: int = 0
+) -> SourceMetadataCandidateModel:
+    return SourceMetadataCandidateModel(
+        id=UUID(int=701),
+        document_id=document.id,
+        source_checksum_sha256=document.checksum_sha256,
+        version=4,
+        scope_version=scope,
+        payload={"candidate_grade": 7, "year": 2021},
+        material_type=SourceDocumentType.PAST_PAPER,
+        reason="Unverified description revision",
+        created_by=ACTOR_ID,
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.mark.parametrize("previous_scope", [None, 0, 1])
+@pytest.mark.parametrize("explicit_type", [None, SourceDocumentType.OTHER_APPROVED])
+def test_candidate_success_persists_separate_bound_revision_and_never_mutates_intake(
+    previous_scope: int | None,
+    explicit_type: SourceDocumentType | None,
+) -> None:
+    document = existing_document()
+    document.metadata_review_required = True
+    document.intake_metadata = {"candidate_grade": 7, "year": 2024}
+    session = MaterialSession()
+    session.put(document)
+    session.scalar_results = [False]
+    if previous_scope is not None:
+        session.metadata_candidate = metadata_proposal(document, previous_scope)
+    service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    result = asyncio.run(
+        service.correct_candidate_metadata(
+            document.id,
+            metadata=SourceIntakeMetadata(candidate_grade=3),
+            reason="Correct the description without approval",
+            expected_scope_version=0,
+            expected_candidate_version=0 if previous_scope is None else 4,
+            material_type=explicit_type,
+            actor_id=ACTOR_ID,
+        )
+    )
+    candidate = next(
+        item for item in session.added if isinstance(item, SourceMetadataCandidateModel)
+    )
+    audit = next(item for item in session.added if isinstance(item, AdminAuditEventModel))
+    expected_type = explicit_type or (
+        SourceDocumentType.PAST_PAPER if previous_scope == 0 else SourceDocumentType.SYLLABUS
+    )
+    assert candidate.material_type is expected_type
+    assert candidate.source_checksum_sha256 == document.checksum_sha256
+    assert candidate.scope_version == 0
+    assert candidate.version == (1 if previous_scope is None else 5)
+    assert candidate.payload["candidate_grade"] == 3
+    assert audit.payload["candidate_id"] == str(candidate.id)
+    assert audit.payload["metadata"] == candidate.payload
+    assert result.intake_metadata == {"candidate_grade": 7, "year": 2024}
+    assert result.curriculum_version_id is None
+    assert result.metadata_review_required is True
+    assert result.metadata_scope_version == 0
+    assert session.commits == 1
+
+
+@pytest.mark.parametrize("expected", [1, True])
+def test_candidate_version_conflicts_do_not_write_a_revision(expected: object) -> None:
+    document = existing_document()
+    document.metadata_review_required = True
+    session = MaterialSession()
+    session.put(document)
+    session.scalar_results = [False]
+    service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    with pytest.raises(ConcurrentMaterialScopeVersionError):
+        asyncio.run(
+            service.correct_candidate_metadata(
+                document.id,
+                metadata=SourceIntakeMetadata(),
+                reason="Description correction",
+                expected_scope_version=0,
+                expected_candidate_version=cast(int, expected),
+                actor_id=ACTOR_ID,
+            )
+        )
+    assert session.added == []
+
+
+@pytest.mark.parametrize("binding", [None, UUID(int=701)])
+def test_metadata_confirmation_uses_only_the_explicit_current_revision(
+    binding: UUID | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = existing_document()
+    document.metadata_review_required = True
+    document.intake_metadata = {"year": 2024}
+    session = MaterialSession()
+    session.put(document)
+    session.metadata_candidate = metadata_proposal(document)
+    session.scalar_results = [False]
+    service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    monkeypatch.setattr(service, "_validate_confirmation_scope", AsyncMock())
+    monkeypatch.setattr(service, "_validate_learning_scope", AsyncMock())
+    operation = service.correct_scope(
+        document.id,
+        curriculum_version_id=UUID(int=11),
+        unit_id=None,
+        lesson_id=None,
+        expected_version=0,
+        actor_id=ACTOR_ID,
+        confirm_intake_metadata=True,
+        metadata_candidate_id=binding,
+    )
+    if binding is None:
+        with pytest.raises(MaterialMetadataCandidateConflictError):
+            asyncio.run(operation)
+        assert session.added == []
+    else:
+        result = asyncio.run(operation)
+        assert result.year == 2021
+        assert result.document_type is SourceDocumentType.PAST_PAPER
+        assert result.intake_metadata == {"year": 2024}
+        assert result.metadata_review_required is False
+        event = next(item for item in session.added if isinstance(item, AdminAuditEventModel))
+        assert event.payload["confirmed_metadata_candidate_id"] == str(binding)
+
+
+@pytest.mark.parametrize("unsafe", ["assigned", "resolved", "quarantined", "trusted", "knowledge"])
+def test_candidate_correction_rejects_ineligible_source_without_mutation(unsafe: str) -> None:
+    document = existing_document()
+    document.metadata_review_required = unsafe != "resolved"
+    document.quarantined_for_teacher_use = unsafe == "quarantined"
+    if unsafe == "assigned":
+        document.curriculum_version_id = UUID(int=10)
+    if unsafe == "trusted":
+        document.extraction_status = ExtractionStatus.TRUSTED
+    session = MaterialSession()
+    session.put(document)
+    session.scalar_results = [unsafe == "knowledge"]
+    service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    with pytest.raises(MaterialScopeImmutableError):
+        asyncio.run(
+            service.correct_candidate_metadata(
+                document.id,
+                metadata=SourceIntakeMetadata(candidate_grade=3),
+                reason="Unverified description correction",
+                expected_scope_version=0,
+                expected_candidate_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+    assert session.commits == 0
+    assert session.added == []
+
+
+@pytest.mark.parametrize("reason", [None, "", " leading", "trailing ", "line\nbreak", "x" * 513])
+def test_candidate_correction_requires_a_bounded_reason_before_persistence(reason: object) -> None:
+    document = existing_document()
+    document.metadata_review_required = True
+    session = MaterialSession()
+    session.put(document)
+    session.scalar_results = [False]
+    service = SourceDocumentService(
+        cast(AsyncSession, session), cast(ObjectStorage, StubStorage()), max_upload_bytes=1024
+    )
+    with pytest.raises(ValueError, match="reason"):
+        asyncio.run(
+            service.correct_candidate_metadata(
+                document.id,
+                metadata=SourceIntakeMetadata(candidate_grade=3),
+                reason=cast(str, reason),
+                expected_scope_version=0,
+                expected_candidate_version=0,
+                actor_id=ACTOR_ID,
+            )
+        )
+    assert session.added == []
+
+
 def test_material_listing_summary_statuses_and_pagination_are_bounded() -> None:
     session = MaterialSession()
     storage = StubStorage()
@@ -717,8 +920,13 @@ def test_material_listing_applies_teacher_search_and_filters_server_side() -> No
     compiled = str(cast(Any, session.executed[-1]).compile(compile_kwargs={"literal_binds": True}))
     assert "exam_configurations.grade = 5" in compiled
     assert "media.id =" in compiled
-    assert "source_documents.document_type =" in compiled
-    assert "source_documents.year = 2025" in compiled
+    assert "source_documents.document_type) =" in compiled
+    assert "source_documents.year" in compiled
+    assert "END = 2025" in compiled
+    assert (
+        "source_metadata_candidates.scope_version = source_documents.metadata_scope_version"
+        in compiled
+    )
     assert "source_documents.active_for_ai IS false" in compiled
     assert "ESCAPE '/'" in compiled
 
@@ -998,7 +1206,24 @@ def test_intake_json_deep_nesting_is_rejected_without_recursion_failure(
         SourceIntakeMetadata.from_json("[" * 2000 + "]" * 2000)
 
 
+@pytest.mark.parametrize("reason", [" leading", "trailing ", "line\nbreak"])
+def test_metadata_candidate_schema_rejects_unprintable_or_padded_reason(reason: str) -> None:
+    with pytest.raises(ValidationError, match="reason"):
+        MaterialMetadataCandidateRequest(
+            expected_scope_version=0,
+            expected_candidate_version=0,
+            metadata=SourceIntakeMetadata(),
+            reason=reason,
+        )
+
+
 def test_material_scope_request_shape_rejects_forged_lesson_relationships() -> None:
+    with pytest.raises(ValidationError, match="binding requires explicit confirmation"):
+        MaterialScopeCorrectionRequest(
+            curriculum_version_id=UUID(int=1),
+            expected_version=0,
+            metadata_candidate_id=UUID(int=2),
+        )
     with pytest.raises(ValidationError, match="unit_id requires curriculum_version_id"):
         MaterialScopeCorrectionRequest(
             curriculum_version_id=None,

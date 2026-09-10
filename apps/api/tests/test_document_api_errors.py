@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -15,6 +16,7 @@ from exam_guru_api.api.routes.documents import (
     _material_http_exception,
     _source_document_response,
     begin_source_document_review,
+    correct_material_metadata_candidate,
     correct_material_scope,
     correct_source_document_block,
     correct_source_document_page,
@@ -53,11 +55,13 @@ from exam_guru_api.documents.models import (
 )
 from exam_guru_api.documents.schemas import (
     ExtractionJobResponse,
+    MaterialMetadataCandidateRequest,
     MaterialRemoveRequest,
     MaterialRestoreRequest,
     MaterialScopeCorrectionRequest,
     ReviewedTextUpdate,
     SourceDocumentResponse,
+    SourceIntakeMetadata,
 )
 from exam_guru_api.documents.service import (
     ConcurrentMaterialScopeVersionError,
@@ -73,6 +77,55 @@ from exam_guru_api.documents.service import (
     SourceUploadResult,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
+
+
+@pytest.fixture(autouse=True)
+def no_metadata_candidate_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "exam_guru_api.api.routes.documents.get_metadata_candidate", AsyncMock(return_value=None)
+    )
+
+
+@pytest.mark.parametrize("failure", [None, "missing", "immutable", "version"])
+def test_candidate_route_forwards_versioned_input_and_maps_domain_failures(
+    failure: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors = {
+        "missing": (SourceDocumentNotFoundError(), 404),
+        "immutable": (MaterialScopeImmutableError(), 409),
+        "version": (ConcurrentMaterialScopeVersionError(0, 1), 409),
+    }
+    operation = AsyncMock(return_value=source_document())
+    if failure is not None:
+        operation.side_effect = errors[failure][0]
+    monkeypatch.setattr(SourceDocumentService, "correct_candidate_metadata", operation)
+    values = arguments()
+    body = MaterialMetadataCandidateRequest(
+        expected_scope_version=0,
+        expected_candidate_version=0,
+        metadata=SourceIntakeMetadata(candidate_grade=3),
+        reason="Unverified description correction",
+    )
+    request = correct_material_metadata_candidate(
+        UUID(int=1),
+        body,
+        values.principal,
+        values.session,
+        values.object_storage,
+        values.settings,
+    )
+    if failure is None:
+        result = asyncio.run(request)
+        assert result.id == UUID(int=1)
+    else:
+        with pytest.raises(HTTPException) as caught:
+            asyncio.run(request)
+        assert caught.value.status_code == errors[failure][1]
+    assert operation.await_args is not None
+    assert operation.await_args.kwargs["expected_candidate_version"] == 0
+    assert operation.await_args.kwargs["expected_scope_version"] == 0
+    assert operation.await_args.kwargs["actor_id"] == values.principal.subject_id
 
 
 def upload_file() -> UploadFile:

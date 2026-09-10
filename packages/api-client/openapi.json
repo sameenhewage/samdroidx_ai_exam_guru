@@ -5703,6 +5703,16 @@
             ],
             "title": "Medium"
           },
+          "metadata_candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataCandidateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "metadata_review_required": {
             "default": false,
             "title": "Metadata Review Required",
@@ -5801,6 +5811,48 @@
         "title": "MaterialListItemResponse",
         "type": "object"
       },
+      "MaterialMetadataCandidateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_candidate_version": {
+            "minimum": 0.0,
+            "title": "Expected Candidate Version",
+            "type": "integer"
+          },
+          "expected_scope_version": {
+            "minimum": 0.0,
+            "title": "Expected Scope Version",
+            "type": "integer"
+          },
+          "material_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceDocumentType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SourceIntakeMetadata"
+          },
+          "reason": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_scope_version",
+          "expected_candidate_version",
+          "metadata",
+          "reason"
+        ],
+        "title": "MaterialMetadataCandidateRequest",
+        "type": "object"
+      },
       "MaterialRemoveRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5874,6 +5926,18 @@
               }
             ],
             "title": "Lesson Id"
+          },
+          "metadata_candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Candidate Id"
           },
           "unit_id": {
             "anyOf": [
@@ -12186,6 +12250,16 @@
             ],
             "title": "Likely Metadata Duplicate Of Id"
           },
+          "metadata_candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMetadataCandidateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "metadata_review_required": {
             "default": false,
             "title": "Metadata Review Required",
@@ -12512,6 +12586,63 @@
           }
         },
         "title": "SourceIntakeMetadata",
+        "type": "object"
+      },
+      "SourceMetadataCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_current": {
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "material_type": {
+            "$ref": "#/components/schemas/SourceDocumentType"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SourceIntakeMetadata"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope_version": {
+            "minimum": 0.0,
+            "title": "Scope Version",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "scope_version",
+          "metadata",
+          "material_type",
+          "reason",
+          "created_by",
+          "created_at",
+          "is_current"
+        ],
+        "title": "SourceMetadataCandidateResponse",
         "type": "object"
       },
       "SourcePageResponse": {
@@ -22389,6 +22520,64 @@
           }
         ],
         "summary": "List Material Grade Summary",
+        "tags": [
+          "admin-documents"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/metadata-candidates": {
+      "post": {
+        "operationId": "correct_material_metadata_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialMetadataCandidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct Material Metadata Candidate",
         "tags": [
           "admin-documents"
         ]

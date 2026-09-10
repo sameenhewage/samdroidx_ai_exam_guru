@@ -43,6 +43,18 @@ type Unit = components["schemas"]["CurriculumUnitResponse"];
 type RemoveBody = components["schemas"]["MaterialRemoveRequest"];
 type RestoreBody = components["schemas"]["MaterialRestoreRequest"];
 type ScopeBody = components["schemas"]["MaterialScopeCorrectionRequest"];
+type MetadataCandidateBody =
+  components["schemas"]["MaterialMetadataCandidateRequest"];
+type MetadataDraft = {
+  scopeVersion: number;
+  candidateVersion: number;
+  grade: string;
+  medium: string;
+  subject: string;
+  type: string;
+  year: string;
+  reason: string;
+};
 
 type UiError = Readonly<{
   code: string;
@@ -82,6 +94,45 @@ const materialTypes: ReadonlyArray<{ label: string; value: MaterialType }> = [
   { label: "Marking Scheme", value: "marking_scheme" },
   { label: "Evaluation / Examiner Report", value: "evaluation_report" },
   { label: "Other approved material", value: "other_approved" },
+];
+
+const candidateMaterialTypes: readonly {
+  label: string;
+  value: MaterialType;
+  sinhala: string;
+}[] = [
+  { label: "Syllabus", value: "syllabus", sinhala: "විෂය නිර්දේශය" },
+  {
+    label: "Teacher Guide",
+    value: "teacher_guide",
+    sinhala: "ගුරු මාර්ගෝපදේශය",
+  },
+  {
+    label: "Past Paper",
+    value: "past_paper",
+    sinhala: "පසුගිය ප්‍රශ්න පත්‍රය",
+  },
+  {
+    label: "Marking Scheme",
+    value: "marking_scheme",
+    sinhala: "ලකුණු දීමේ පටිපාටිය",
+  },
+  {
+    label: "Evaluation / Examiner Report",
+    value: "evaluation_report",
+    sinhala: "විභාග ඇගයීම් වාර්තාව",
+  },
+  {
+    label: "Worksheet",
+    value: "other_approved",
+    sinhala: "ක්‍රියාකාරකම් පත්‍රිකාව",
+  },
+  { label: "Workbook", value: "other_approved", sinhala: "වැඩ පොත" },
+  {
+    label: "Other material",
+    value: "other_approved",
+    sinhala: "වෙනත් ද්‍රව්‍ය",
+  },
 ];
 
 const materialTypeLabels: Record<MaterialType, string> = Object.fromEntries(
@@ -125,6 +176,8 @@ const errorMessages: Record<string, string> = {
     "Your session has expired. Sign in again before retrying.",
   concurrent_material_scope_modification:
     "This material changed in another session. Close this window, refresh Materials, and try again.",
+  metadata_candidate_changed:
+    "The descriptions changed after you opened this material. Reopen it and compare the current details before confirming.",
   curriculum_version_inactive:
     "That curriculum is no longer active. Choose another curriculum.",
   empty_file: "The selected PDF is empty.",
@@ -459,6 +512,10 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
 
   const [scopeTarget, setScopeTarget] = useState<Material | null>(null);
   const [scopeEditing, setScopeEditing] = useState(false);
+  const [scopeCandidateId, setScopeCandidateId] = useState<string | null>(null);
+  const [metadataDraft, setMetadataDraft] = useState<MetadataDraft | null>(
+    null,
+  );
   const [scopeGrade, setScopeGrade] = useState("");
   const [scopeMediumId, setScopeMediumId] = useState("");
   const [scopeSubjectId, setScopeSubjectId] = useState("");
@@ -1314,6 +1371,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     const assignment = curriculumById.get(source.curriculum_version_id ?? "");
     setScopeTarget(material);
     setScopeEditing(false);
+    setMetadataDraft(null);
+    setScopeCandidateId(
+      source.metadata_candidate?.is_current
+        ? source.metadata_candidate.id
+        : null,
+    );
     setConfirmIntakeMetadata(false);
     setScopeGrade(assignment ? String(assignment.grade) : "");
     setScopeMediumId(assignment?.medium_id ?? "");
@@ -1323,6 +1386,75 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     setScopeLessonId(assignment ? (source.lesson_id ?? "") : "");
     setScopeError(null);
     await loadScopeChoices(assignment?.curriculum_version_id ?? "", true);
+  }
+
+  async function saveMetadataCandidate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (
+      !scopeTarget ||
+      !scopeSource ||
+      !metadataDraft ||
+      !canSaveMetadataCandidate ||
+      role !== "admin"
+    )
+      return;
+    const body: MetadataCandidateBody = {
+      expected_scope_version: metadataDraft.scopeVersion,
+      expected_candidate_version: metadataDraft.candidateVersion,
+      material_type:
+        candidateMaterialTypes.find((item) => item.label === metadataDraft.type)
+          ?.value ??
+        scopeSource.metadata_candidate?.material_type ??
+        scopeSource.document_type,
+      metadata: {
+        ...scopeIntake,
+        candidate_grade: metadataDraft.grade
+          ? Number(metadataDraft.grade)
+          : null,
+        medium_label: metadataDraft.medium.trim() || null,
+        subject_label: metadataDraft.subject.trim() || null,
+        document_type_label: metadataDraft.type.trim() || null,
+        year: metadataDraft.year ? Number(metadataDraft.year) : null,
+      },
+      reason: metadataDraft.reason.trim(),
+    };
+    setScopeSaving(true);
+    setScopeError(null);
+    try {
+      const result = await api.POST(
+        "/api/v1/admin/materials/{document_id}/metadata-candidates",
+        {
+          body,
+          params: { path: { document_id: scopeTarget.id } },
+        },
+      );
+      if (result.error) {
+        setScopeError(uiError(result.error, result.response.status));
+        return;
+      }
+      const updated = result.data;
+      if (updated)
+        setSources((current) => [
+          updated,
+          ...current.filter((source) => source.id !== updated.id),
+        ]);
+      const grade = body.metadata.candidate_grade ?? null;
+      clearMaterialFilters();
+      setSelectedGrade(grade);
+      setSelectedSubject("");
+      await refreshCatalog(grade, "", true);
+      setScopeTarget(null);
+      setMetadataDraft(null);
+      setNotice(
+        scopeSinhala
+          ? "තොරතුරු පරීක්ෂාව සඳහා සුරකින ලදී. මෙය AI භාවිතයට තහවුරු කිරීමක් නොවේ."
+          : "Descriptions saved for review. This does not approve the material for AI use.",
+      );
+    } catch {
+      setScopeError(networkError());
+    } finally {
+      setScopeSaving(false);
+    }
   }
 
   function changeScopeCurriculum(curriculumId: string) {
@@ -1338,6 +1470,9 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     if (!scopeTarget || !canSaveScope || role !== "admin") return;
     const body: ScopeBody = {
       confirm_intake_metadata: confirmIntakeMetadata && canConfirmIntake,
+      ...(confirmIntakeMetadata && canConfirmIntake && scopeCandidateId
+        ? { metadata_candidate_id: scopeCandidateId }
+        : {}),
       curriculum_version_id: scopeCurriculumId || null,
       expected_version: scopeTarget.metadata_scope_version,
       lesson_id: scopeLessonId || null,
@@ -1393,6 +1528,29 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
     scopeTarget?.metadata_review_required ||
     scopeSource?.metadata_review_required,
   );
+  const scopeIntake = scopeSource?.metadata_candidate?.is_current
+    ? scopeSource.metadata_candidate.metadata
+    : (scopeTarget?.intake_metadata ?? scopeSource?.intake_metadata);
+  const scopeSinhala = /sinhala|සිංහල/i.test(
+    scopeIntake?.medium_label ?? scopeTarget?.medium ?? "",
+  );
+  const canEditMetadataCandidate =
+    role === "admin" &&
+    Boolean(scopeSource) &&
+    !scopeSource?.curriculum_version_id &&
+    scopeNeedsReview;
+  const candidateYearValid =
+    metadataDraft?.year === "" ||
+    Boolean(
+      metadataDraft &&
+      /^\d{4}$/.test(metadataDraft.year) &&
+      Number(metadataDraft.year) >= 1900 &&
+      Number(metadataDraft.year) <= 2100,
+    );
+  const canSaveMetadataCandidate =
+    canEditMetadataCandidate &&
+    !scopeSaving &&
+    Boolean(metadataDraft?.reason.trim() && candidateYearValid);
   const scopeSelectionValid = Boolean(
     scopeCurriculum &&
     (!scopeUnitId ||
@@ -1846,8 +2004,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 <div className="mt-5 grid gap-4">
                   {visibleMaterials.map((material) => {
                     const source = sourceById.get(material.id);
+                    const proposal =
+                      material.metadata_candidate ?? source?.metadata_candidate;
                     const intake =
-                      material.intake_metadata ?? source?.intake_metadata;
+                      proposal?.is_current === true
+                        ? proposal.metadata
+                        : (material.intake_metadata ?? source?.intake_metadata);
                     const metadataReviewRequired =
                       material.metadata_review_required ||
                       source?.metadata_review_required;
@@ -2807,15 +2969,184 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             Edit {scopeTarget.title}
           </h2>
           <MaterialIntakeMetadata
-            intake={scopeTarget.intake_metadata ?? scopeSource?.intake_metadata}
+            intake={scopeIntake}
             reviewRequired={scopeNeedsReview}
           />
-          <p className="mt-3 text-sm leading-6 text-slate-600">
-            Compare the detected information with the original. Changing the
-            curriculum keeps the existing year and source evidence. Only an
-            approved grade, medium, and subject assignment can be confirmed.
+          {scopeSource?.metadata_candidate && (
+            <details className="mt-3 text-sm">
+              <summary className="cursor-pointer font-semibold">
+                {scopeSinhala
+                  ? "මුල් උඩුගත කිරීමේ තොරතුරු"
+                  : "Original upload details"}
+              </summary>
+              <MaterialIntakeMetadata
+                intake={scopeSource.intake_metadata}
+                reviewRequired
+              />
+            </details>
+          )}
+          <p
+            className="mt-3 text-sm leading-6 text-slate-600"
+            lang={scopeSinhala ? "si" : "en"}
+          >
+            {scopeSinhala
+              ? "තොරතුරු මුල් පිටුව සමඟ සසඳන්න. පරීක්ෂාව සඳහා සුරැකීම, විෂයමාලාව හෝ පෙළ තහවුරු කිරීමක් නොවේ."
+              : "Compare these descriptions with the original. Saving them for review does not confirm curriculum scope or page text."}
           </p>
-          <form className="mt-5 grid gap-5" onSubmit={saveScope}>
+          <form
+            className="mt-5 grid gap-5"
+            onSubmit={metadataDraft ? saveMetadataCandidate : saveScope}
+          >
+            {canEditMetadataCandidate && !metadataDraft && (
+              <button
+                className={`${secondaryButton} justify-self-start`}
+                type="button"
+                disabled={scopeSaving}
+                onClick={() => {
+                  setMetadataDraft({
+                    scopeVersion:
+                      scopeSource?.metadata_scope_version ??
+                      scopeTarget.metadata_scope_version,
+                    candidateVersion:
+                      scopeSource?.metadata_candidate?.version ?? 0,
+                    grade: String(
+                      scopeIntake?.candidate_grade ?? scopeTarget.grade ?? "",
+                    ),
+                    medium: scopeIntake?.medium_label ?? "",
+                    subject: scopeIntake?.subject_label ?? "",
+                    type: scopeIntake?.document_type_label ?? "",
+                    year: String(scopeIntake?.year ?? ""),
+                    reason: "",
+                  });
+                  setScopeEditing(false);
+                  setConfirmIntakeMetadata(false);
+                  setScopeError(null);
+                }}
+              >
+                {scopeSinhala
+                  ? "තොරතුරු වෙනස් කරන්න"
+                  : "Change detected details"}
+              </button>
+            )}
+            {metadataDraft && (
+              <fieldset
+                className="grid gap-4 sm:grid-cols-2"
+                disabled={scopeSaving}
+                lang={scopeSinhala ? "si" : "en"}
+              >
+                <legend className="mb-2 font-semibold">
+                  {scopeSinhala
+                    ? "පරීක්ෂාව සඳහා තොරතුරු"
+                    : "Descriptions for review"}
+                </legend>
+                <p className="text-sm leading-6 text-amber-900 sm:col-span-2">
+                  {scopeSinhala
+                    ? "මෙය විෂයමාලාව හෝ පිටුවේ පෙළ තහවුරු කිරීමක් නොවේ."
+                    : "This does not confirm the curriculum or page text."}
+                </p>
+                <label className={fieldClass} htmlFor="candidate-grade">
+                  {scopeSinhala ? "ශ්‍රේණිය" : "Grade"}
+                  <select
+                    className={inputClass}
+                    id="candidate-grade"
+                    value={metadataDraft.grade}
+                    onChange={(event) =>
+                      setMetadataDraft({
+                        ...metadataDraft,
+                        grade: event.currentTarget.value,
+                      })
+                    }
+                  >
+                    <option value="">
+                      {scopeSinhala ? "නොදනී" : "Not sure"}
+                    </option>
+                    {grades.map((grade) => (
+                      <option key={grade} value={grade}>
+                        {grade}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {(
+                  [
+                    ["medium", scopeSinhala ? "මාධ්‍යය" : "Medium"],
+                    ["subject", scopeSinhala ? "විෂය" : "Subject"],
+                    ["year", scopeSinhala ? "වර්ෂය" : "Year"],
+                  ] as const
+                ).map(([name, label]) => (
+                  <label
+                    key={name}
+                    className={fieldClass}
+                    htmlFor={`candidate-${name}`}
+                  >
+                    {label}
+                    <input
+                      className={inputClass}
+                      id={`candidate-${name}`}
+                      value={metadataDraft[name]}
+                      maxLength={name === "year" ? 4 : 200}
+                      inputMode={name === "year" ? "numeric" : "text"}
+                      onChange={(event) =>
+                        setMetadataDraft({
+                          ...metadataDraft,
+                          [name]: event.currentTarget.value,
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+                <label className={fieldClass} htmlFor="candidate-type">
+                  {scopeSinhala ? "ද්‍රව්‍ය වර්ගය" : "Material type"}
+                  <select
+                    className={inputClass}
+                    id="candidate-type"
+                    value={metadataDraft.type}
+                    onChange={(event) =>
+                      setMetadataDraft({
+                        ...metadataDraft,
+                        type: event.currentTarget.value,
+                      })
+                    }
+                  >
+                    {!candidateMaterialTypes.some(
+                      (item) => item.label === metadataDraft.type,
+                    ) && (
+                      <option value={metadataDraft.type}>
+                        {metadataDraft.type ||
+                          (scopeSinhala ? "නොදනී" : "Not sure")}
+                      </option>
+                    )}
+                    {candidateMaterialTypes.map((item) => (
+                      <option key={item.label} value={item.label}>
+                        {scopeSinhala ? item.sinhala : item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  className={`${fieldClass} sm:col-span-2`}
+                  htmlFor="candidate-reason"
+                >
+                  {scopeSinhala
+                    ? "වෙනස් කිරීමට හේතුව"
+                    : "Reason for correction"}
+                  <textarea
+                    className={inputClass}
+                    id="candidate-reason"
+                    value={metadataDraft.reason}
+                    required
+                    maxLength={512}
+                    rows={2}
+                    onChange={(event) =>
+                      setMetadataDraft({
+                        ...metadataDraft,
+                        reason: event.currentTarget.value,
+                      })
+                    }
+                  />
+                </label>
+              </fieldset>
+            )}
             {scopeCurriculum ? (
               <section
                 aria-label="Curriculum assignment"
@@ -3038,10 +3369,20 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
               </button>
               <button
                 className={primaryButton}
-                disabled={!canSaveScope}
+                disabled={
+                  metadataDraft ? !canSaveMetadataCandidate : !canSaveScope
+                }
                 type="submit"
               >
-                {scopeSaving ? "Saving…" : "Save changes"}
+                {scopeSaving
+                  ? metadataDraft && scopeSinhala
+                    ? "සුරකිමින්…"
+                    : "Saving…"
+                  : metadataDraft
+                    ? scopeSinhala
+                      ? "පරීක්ෂාව සඳහා සුරකින්න"
+                      : "Save descriptions for review"
+                    : "Save changes"}
               </button>
             </div>
           </form>

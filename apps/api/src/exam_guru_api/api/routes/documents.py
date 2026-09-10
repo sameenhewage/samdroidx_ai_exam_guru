@@ -59,6 +59,7 @@ from exam_guru_api.documents.schemas import (
     ExtractionJobResponse,
     MaterialGradeSummaryResponse,
     MaterialListItemResponse,
+    MaterialMetadataCandidateRequest,
     MaterialRemoveRequest,
     MaterialRestoreRequest,
     MaterialScopeCorrectionRequest,
@@ -71,6 +72,7 @@ from exam_guru_api.documents.schemas import (
 from exam_guru_api.documents.service import (
     ConcurrentMaterialScopeVersionError,
     InvalidMaterialRemovalReasonError,
+    MaterialMetadataCandidateConflictError,
     MaterialScopeImmutableError,
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
@@ -81,6 +83,7 @@ from exam_guru_api.documents.service import (
     SourceLearningScopeInactiveError,
     SourceLearningScopeMismatchError,
     SourceLearningScopeNotFoundError,
+    get_metadata_candidate,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 
@@ -259,6 +262,40 @@ async def restore_material_to_use(
     return await _source_document_response(session, document)
 
 
+@router.post(
+    "/materials/{document_id}/metadata-candidates",
+    operation_id="correct_material_metadata_candidate",
+    response_model=SourceDocumentResponse,
+)
+async def correct_material_metadata_candidate(
+    document_id: UUID,
+    request: MaterialMetadataCandidateRequest,
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_WRITE))],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SourceDocumentResponse:
+    try:
+        document = await SourceDocumentService(
+            session, object_storage, max_upload_bytes=settings.max_upload_bytes
+        ).correct_candidate_metadata(
+            document_id,
+            metadata=request.metadata,
+            material_type=request.material_type,
+            reason=request.reason,
+            expected_scope_version=request.expected_scope_version,
+            expected_candidate_version=request.expected_candidate_version,
+            actor_id=principal.subject_id,
+        )
+    except (
+        ConcurrentMaterialScopeVersionError,
+        MaterialScopeImmutableError,
+        SourceDocumentNotFoundError,
+    ) as error:
+        raise _material_http_exception(error) from error
+    return await _source_document_response(session, document)
+
+
 @router.patch(
     "/materials/{document_id}/scope",
     operation_id="correct_material_scope",
@@ -284,11 +321,13 @@ async def correct_material_scope(
             lesson_id=request.lesson_id,
             expected_version=request.expected_version,
             confirm_intake_metadata=request.confirm_intake_metadata,
+            metadata_candidate_id=request.metadata_candidate_id,
             actor_id=principal.subject_id,
         )
     except (
         ConcurrentMaterialScopeVersionError,
         CurriculumNotAdmittedError,
+        MaterialMetadataCandidateConflictError,
         MaterialScopeImmutableError,
         SourceCurriculumInactiveError,
         SourceCurriculumNotFoundError,
@@ -857,6 +896,7 @@ async def _source_document_response(
     return SourceDocumentResponse.model_validate(document).model_copy(
         update={
             "subject_id": subject_id,
+            "metadata_candidate": await get_metadata_candidate(session, document),
             "deduplicated": deduplicated,
             "likely_metadata_duplicate_of_id": likely_metadata_duplicate_of_id,
         }
@@ -864,6 +904,8 @@ async def _source_document_response(
 
 
 def _material_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, MaterialMetadataCandidateConflictError):
+        return HTTPException(status_code=409, detail={"code": "metadata_candidate_changed"})
     if isinstance(error, CurriculumNotAdmittedError):
         return HTTPException(status_code=409, detail={"code": "curriculum_not_admitted"})
     if isinstance(error, SourceDocumentNotFoundError):

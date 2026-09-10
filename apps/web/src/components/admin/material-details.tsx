@@ -85,7 +85,7 @@ export function MaterialIntakeMetadata({
     ],
     ["Medium label", intake?.medium_label ?? "Not detected"],
     ["Subject label", intake?.subject_label ?? "Not detected"],
-    ["Original type label", intake?.document_type_label ?? "Not detected"],
+    ["Material type", intake?.document_type_label ?? "Not detected"],
     ["Year", intake?.year == null ? "Not detected" : String(intake.year)],
     ["Curriculum label", intake?.curriculum_label],
     ["Term", intake?.term],
@@ -268,7 +268,11 @@ export function MaterialDetails({
   const assignment = catalogue.find(
     (entry) => entry.curriculum_version_id === source.curriculum_version_id,
   );
-  const intake = material.intake_metadata ?? source.intake_metadata;
+  const proposal = material.metadata_candidate ?? source.metadata_candidate;
+  const intake =
+    proposal?.is_current === true
+      ? proposal.metadata
+      : (material.intake_metadata ?? source.intake_metadata);
   const metadataReviewRequired =
     material.metadata_review_required || source.metadata_review_required;
   const typeLabel = metadataReviewRequired
