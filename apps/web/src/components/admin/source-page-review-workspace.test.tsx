@@ -11,6 +11,7 @@ import axe from "axe-core";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AdminHeader } from "./admin-header";
 import { SourcePageReviewWorkspace } from "./source-page-review-workspace";
 
 type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
@@ -552,7 +553,9 @@ describe("faithful source comparison", () => {
         "වම් පැත්තේ මුල් පිටුවත්, දකුණු පැත්තේ පද්ධතිය කියවූ පෙළත් සසඳන්න.",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("region", { name: "මුල් පිටුව" })).toBeVisible();
+    expect(
+      await screen.findByRole("region", { name: "මුල් පිටුව" }),
+    ).toBeVisible();
     const text = within(
       screen.getByRole("region", { name: "පද්ධතිය කියවූ පෙළ" }),
     ).getByTestId("system-page-text");
@@ -900,6 +903,88 @@ describe("faithful source comparison", () => {
     },
   );
 
+  it.each([4, 371])(
+    "marks only the focused review for compact chrome without hiding Sinhala safeguards (%s pages)",
+    async (total) => {
+      const api = fixtureApi((pageNumber) =>
+        workspace(
+          pageNumber,
+          {
+            language: "si",
+            state: "failed",
+            can_confirm: false,
+            system_text:
+              "මෙය පරීක්ෂණ පිටුවකි. අංක සහ වගු මුල් පිටුව සමඟ සසඳන්න.",
+            diagnostics: { text_readable: true },
+            risk_codes: ["maths_fidelity_unconfirmed"],
+          },
+          {
+            language: "si",
+            metadata_review_required: true,
+            progress: {
+              total_pages: total,
+              processed_pages: total,
+              verified_pages: 0,
+              excluded_pages: 0,
+              flagged_pages: total,
+              remaining_pages: total,
+            },
+          },
+        ),
+      );
+      render(
+        <main>
+          <div>
+            <AdminHeader current="materials" role="admin" />
+          </div>
+          <SourcePageReviewWorkspace documentId={documentId} role="admin" />
+        </main>,
+      );
+      await screen.findByRole("img", { name: "මුල් පිටුව 1" });
+      expect(screen.getByTestId("source-page-workspace")).toHaveAttribute(
+        "data-source-review",
+      );
+      expect(
+        within(
+          screen.getByRole("navigation", { name: "Primary admin navigation" }),
+        ).getAllByRole("link"),
+      ).toHaveLength(5);
+      expect(
+        screen.getByText("Advanced").closest("details"),
+      ).not.toHaveAttribute("open");
+      expect(
+        screen.getByText("තාක්ෂණික විස්තර").closest("details"),
+      ).not.toHaveAttribute("open");
+      expect(
+        screen.getByRole("link", { name: "මූලාශ්‍රය වෙත ආපසු" }),
+      ).toBeVisible();
+      expect(
+        screen.getByText("මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත."),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "නැවත කියවන්න" }),
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "පෙළ නිවැරදියි" }),
+      ).toBeDisabled();
+      for (const name of [
+        "පළමු පිටුව",
+        "අවසාන පිටුව",
+        "පිටුවේ තත්ත්වය යාවත්කාලීන කරන්න",
+        "මුල් විශාලත්වයට යන්න",
+      ]) {
+        const button = screen.getByRole("button", { name });
+        expect(button).toHaveAttribute("aria-label", name);
+        expect(button.querySelector("svg")).toHaveAttribute(
+          "aria-hidden",
+          "true",
+        );
+      }
+      expect(localStorage.getItem(reviewLanguageKey)).toBeNull();
+      expect(api.mutations()).toEqual([]);
+    },
+  );
+
   it("shows only server progress and bounds a 371-page book to two independently scrolling panels", async () => {
     const api = await renderWorkspace();
     count("Total pages", 371);
@@ -917,6 +1002,9 @@ describe("faithful source comparison", () => {
       "lg:grid-cols-2",
     );
     expect(screen.getByTestId("source-page-workspace")).toHaveClass(
+      "lg:flex-1",
+    );
+    expect(screen.getByTestId("source-page-workspace")).not.toHaveClass(
       "lg:h-[calc(100dvh-15rem)]",
     );
     expect(screen.getByRole("region", { name: "Original page" })).toHaveClass(

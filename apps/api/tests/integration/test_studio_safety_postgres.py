@@ -237,7 +237,7 @@ def test_forward_migration_preserves_every_preexisting_value_and_never_classifie
                 assert document is not None
                 assert document.quarantined_for_teacher_use is False
             assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0039_source_fidelity_v2"
+                "0040_source_fidelity_rules_v2"
             )
 
     asyncio.run(scenario())
@@ -723,7 +723,7 @@ def test_clean_downgrade_preserves_0036_sources_and_scope_guards() -> None:
 
             asyncio.run(quarantine_history())
             history = asyncio.run(downgrade_snapshot(url))
-            assert history["head"] == "0039_source_fidelity_v2"
+            assert history["head"] == "0040_source_fidelity_rules_v2"
             assert history["candidates"] is None
             with pytest.raises(
                 IntegrityError, match="cannot discard source fixture quarantine history"
@@ -743,7 +743,7 @@ def test_downgrade_refuses_to_discard_quarantine_history(safety_database: Safety
 
     asyncio.run(scenario())
     history = asyncio.run(downgrade_snapshot(safety_database.url))
-    assert history["head"] == "0039_source_fidelity_v2"
+    assert history["head"] == "0040_source_fidelity_rules_v2"
     assert history["candidates"]
     with pytest.raises(IntegrityError, match="cannot discard source fidelity v2 protections"):
         command.downgrade(migration_config(safety_database.url), "0036_resumable_source_uploads")

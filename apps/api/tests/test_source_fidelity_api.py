@@ -961,6 +961,10 @@ def test_text_view_preserves_current_diagnostics_and_actual_sinhala_language() -
         (b"The correct answer", {"failure_code": None}, True),
         (b"The correct answer", {"maths_fidelity": {"can_confirm": False}}, True),
         (b"The correct answer", {}, False),
+        (b"ixLHd", {"source_languages": ["si"], "languages": ["en"]}, True),
+        (b".=Kk", {"source_languages": ["si"]}, True),
+        (b"fm;s", {"source_languages": ["si"]}, True),
+        (b"l%shdldrlu", {"source_languages": ["si"]}, True),
     ],
 )
 @pytest.mark.parametrize("state_name", ["needs_review", "verified"])
@@ -1135,6 +1139,11 @@ def test_page_view_reports_stale_current_candidates_without_mutating_history(
         ("The correct answer", {"maths_fidelity": {"can_confirm": False}}, "failed"),
         ("ගණිතය\x00", {}, "failed"),
         ("The correct answer", {"languages": ["si"]}, "failed"),
+        ("ixLHd", {"source_languages": ["si"], "languages": ["en"]}, "failed"),
+        (".=Kk", {"source_languages": ["si"]}, "failed"),
+        ("fm;s", {"source_languages": ["si"]}, "failed"),
+        ("l%shdldrlu", {"source_languages": ["si"]}, "failed"),
+        ("ගණිතය LaTeX", {"source_languages": ["si"]}, "needs_review"),
     ],
 )
 def test_record_candidate_persists_immutable_raw_evidence_with_safe_state(

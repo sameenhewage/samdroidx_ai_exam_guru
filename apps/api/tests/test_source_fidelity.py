@@ -47,7 +47,7 @@ def test_normalization_is_nfc_only_and_idempotent(raw: str, expected: str) -> No
 
 def test_algorithm_version_identifies_the_actual_unicode_database() -> None:
     assert unicodedata.unidata_version == UNICODE_VERSION
-    assert f"source-fidelity-v2/ucd-{unicodedata.unidata_version}" == ALGORITHM_VERSION
+    assert f"source-fidelity-v2/rules-2/ucd-{unicodedata.unidata_version}" == ALGORITHM_VERSION
     assert assess_page(SYNTHETIC_SINHALA).algorithm_version == ALGORITHM_VERSION
     assert measure_text_fidelity("a", "b").algorithm_version == ALGORITHM_VERSION
 
@@ -626,3 +626,79 @@ def test_routing_metadata_is_bounded_and_validated(build: Callable[[], object]) 
 def test_ocr_selection_requires_a_page_assessment() -> None:
     with pytest.raises(TypeError, match="PageAssessment"):
         select_ocr_languages(cast(PageAssessment, "si"), available_languages=("eng",))
+
+
+@pytest.mark.parametrize("method", ["native", "ocr", "manual"])
+@pytest.mark.parametrize("expected", [(), ("si",), ("ta",), ("si", "en")])
+@pytest.mark.parametrize("raw", ["ixLHd", ".=Kk", "fm;s", "l%shdldrlu", "pqRSd", "bc;d"])
+def test_short_legacy_carriers_cannot_pass_without_font_evidence(
+    method: str, expected: tuple[str, ...], raw: str
+) -> None:
+    page = assess_page(raw, expected_languages=expected, method=method)
+    assert page.normalized_text == page.display_text == raw
+    assert "latin_script_mismatch" in page.risk_codes
+    assert "suspicious_encoding" in page.classifications
+    assert page.recommended_route == "ocr_review"
+    assert not page.can_confirm
+
+
+@pytest.mark.parametrize("method", ["native", "ocr", "manual"])
+@pytest.mark.parametrize("raw", ["ixLHd", ".=Kk", "fm;s", "l%shdldrlu"])
+def test_short_corruption_is_not_cleared_by_sinhala_or_english_context(
+    method: str, raw: str
+) -> None:
+    for prefix, risk in (
+        ("ගණිතය ", "mixed_script_corruption"),
+        ("Read the ", "latin_script_mismatch"),
+    ):
+        text = prefix + raw
+        page = assess_page(text, expected_languages=("si", "en"), method=method)
+        assert page.normalized_text == text
+        assert risk in page.risk_codes
+        assert not page.can_confirm
+
+
+@pytest.mark.parametrize("method", ["native", "ocr", "manual"])
+@pytest.mark.parametrize(
+    "term",
+    [
+        "LaTeX",
+        "PowerPoint",
+        "OpenAI",
+        "JavaScript",
+        "TypeScript",
+        "XMLHttpRequest",
+        "HTML5",
+        "mRNA",
+        "ePUBs",
+        "eBooks",
+        "NaCl",
+        "pH",
+        "mL",
+        "kWh",
+        "mmHg",
+        "PDF",
+        "RGB",
+        "AI",
+        "McDonald",
+        "WiFi",
+        "MathML",
+        "HTTPServer",
+        "2 X 3 = 5",
+        "f(x)=x+y; A<B",
+        "x;y;z",
+        "mass%total",
+        "sin(x)^n",
+        "cm;mm",
+        "mm;cm;km",
+        "ab;cd",
+    ],
+)
+def test_valid_mixed_language_terms_units_and_math_are_not_corruption(
+    method: str, term: str
+) -> None:
+    text = "ගණිතය " + term
+    page = assess_page(text, expected_languages=("si",), method=method)
+    assert page.normalized_text == page.display_text == text
+    assert page.risk_codes == ()
+    assert page.can_confirm

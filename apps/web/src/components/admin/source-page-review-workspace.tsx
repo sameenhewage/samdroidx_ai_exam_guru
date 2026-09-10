@@ -347,6 +347,32 @@ function problemMessage(value: Problem, copy: Copy): string {
   return copy.requestError;
 }
 
+function NavigationIcon({ name }: { name: "first" | "last" | "refresh" }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      focusable="false"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d={
+          name === "first"
+            ? "m11 6-6 6 6 6m8-12-6 6 6 6"
+            : name === "last"
+              ? "m5 6 6 6-6 6m8-12 6 6-6 6"
+              : "M4 10a8 8 0 1 1 2 8M4 4v6h6"
+        }
+      />
+    </svg>
+  );
+}
+
 function RecoveredText({ page, copy }: { page: Page; copy: Copy }) {
   return (
     <section aria-label={copy.recoveredText} className={alertClass}>
@@ -403,8 +429,12 @@ function OriginalPage({
         >
           +
         </Button>
-        <Button className={buttonClass} onPress={() => setZoom(100)}>
-          {copy.zoomReset}
+        <Button
+          aria-label={copy.zoomReset}
+          className={cn(buttonClass, "w-10 shrink-0 px-0")}
+          onPress={() => setZoom(100)}
+        >
+          <NavigationIcon name="refresh" />
         </Button>
         <a
           className="rounded p-2 text-sm underline focus-visible:ring-2 focus-visible:ring-amber-600"
@@ -1044,7 +1074,8 @@ function ReviewSession({
 
   return (
     <section
-      className="mx-auto flex min-h-0 w-full max-w-[100rem] flex-col gap-3 p-4 font-sans lg:h-[calc(100dvh-15rem)] lg:flex-1 lg:overflow-hidden"
+      className="mx-auto flex min-h-0 w-full max-w-[100rem] flex-col gap-2 p-3 font-sans lg:flex-1 lg:overflow-hidden"
+      data-source-review=""
       data-testid="source-page-workspace"
       lang={language}
     >
@@ -1146,11 +1177,12 @@ function ReviewSession({
         className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-slate-300 bg-white p-2"
       >
         <Button
-          className={buttonClass}
+          aria-label={copy.first}
+          className={cn(buttonClass, "w-10 shrink-0 px-0")}
           isDisabled={Boolean(busy) || !total || requestedPage <= 1}
           onPress={() => navigate(1)}
         >
-          {copy.first}
+          <NavigationIcon name="first" />
         </Button>
         <Button
           className={buttonClass}
@@ -1202,11 +1234,12 @@ function ReviewSession({
           {copy.next}
         </Button>
         <Button
-          className={buttonClass}
+          aria-label={copy.last}
+          className={cn(buttonClass, "w-10 shrink-0 px-0")}
           isDisabled={Boolean(busy) || !total || requestedPage >= total}
           onPress={() => navigate(total)}
         >
-          {copy.last}
+          <NavigationIcon name="last" />
         </Button>
         <Button
           className={buttonClass}
@@ -1233,11 +1266,12 @@ function ReviewSession({
           {copy.nextFlagged}
         </Button>
         <Button
-          className={`${buttonClass} ml-auto`}
+          aria-label={copy.refresh}
+          className={cn(buttonClass, "ml-auto w-10 shrink-0 px-0")}
           isDisabled={Boolean(busy) || loading || Boolean(draft)}
           onPress={() => void refresh()}
         >
-          {copy.refresh}
+          <NavigationIcon name="refresh" />
         </Button>
       </nav>
       {invalidPage && (

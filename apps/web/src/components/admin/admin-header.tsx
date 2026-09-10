@@ -32,8 +32,16 @@ type AdminLink = Readonly<{
 const primaryAreas: readonly AdminLink[] = [
   { href: "/admin/home", id: "home", label: "Home" },
   { href: "/admin/materials", id: "materials", label: "Materials" },
-  { href: "/admin/generate-papers", id: "generate-papers", label: "Generate Papers" },
-  { href: "/admin/review-approve", id: "review-approve", label: "Review & Approve" },
+  {
+    href: "/admin/generate-papers",
+    id: "generate-papers",
+    label: "Generate Papers",
+  },
+  {
+    href: "/admin/review-approve",
+    id: "review-approve",
+    label: "Review & Approve",
+  },
   {
     href: "/admin/published-papers",
     id: "published-papers",
@@ -69,7 +77,13 @@ const activeLinkClass =
 const linkClass =
   "rounded-md px-3 py-2 text-sm text-slate-300 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950";
 
-function AdminNavigationLink({ area, current }: { area: AdminLink; current: AdminArea }) {
+function AdminNavigationLink({
+  area,
+  current,
+}: {
+  area: AdminLink;
+  current: AdminArea;
+}) {
   const active = area.id === current;
   return (
     <Link
@@ -82,21 +96,31 @@ function AdminNavigationLink({ area, current }: { area: AdminLink; current: Admi
   );
 }
 
-export function AdminHeader({ current, role }: { current: AdminArea; role: AdminRole }) {
+export function AdminHeader({
+  current,
+  role,
+}: {
+  current: AdminArea;
+  role: AdminRole;
+}) {
   const availableAdvancedAreas = advancedAreas.filter(
     (area) => !area.adminOnly || role === "admin",
   );
-  const advancedActive = availableAdvancedAreas.some((area) => area.id === current);
+  const advancedActive = availableAdvancedAreas.some(
+    (area) => area.id === current,
+  );
 
   return (
-    <header className="border-b border-slate-300 bg-slate-950 px-5 py-5 text-white sm:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex flex-wrap items-center justify-between gap-5">
+    <header className="border-b border-slate-300 bg-slate-950 px-5 py-5 text-white sm:px-8 lg:[main:has([data-source-review])_&]:py-2">
+      <div className="mx-auto max-w-7xl lg:[main:has([data-source-review])_&]:flex lg:[main:has([data-source-review])_&]:items-center lg:[main:has([data-source-review])_&]:gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-5 lg:[main:has([data-source-review])_&]:shrink-0">
           <div>
             <p className="font-mono text-xs tracking-[0.2em] text-amber-300 uppercase">
               AI Exam Guru
             </p>
-            <p className="mt-1 font-semibold">Admin Content Studio</p>
+            <p className="mt-1 font-semibold lg:[main:has([data-source-review])_&]:sr-only">
+              Admin Content Studio
+            </p>
           </div>
 
           <div className="flex items-center gap-4">
@@ -116,14 +140,14 @@ export function AdminHeader({ current, role }: { current: AdminArea; role: Admin
 
         <nav
           aria-label="Primary admin navigation"
-          className="mt-5 flex w-full flex-wrap gap-1 border-t border-white/10 pt-4"
+          className="mt-5 flex w-full flex-wrap gap-1 border-t border-white/10 pt-4 lg:[main:has([data-source-review])_&]:mt-0 lg:[main:has([data-source-review])_&]:w-auto lg:[main:has([data-source-review])_&]:flex-1 lg:[main:has([data-source-review])_&]:border-0 lg:[main:has([data-source-review])_&]:pt-0"
         >
           {primaryAreas.map((area) => (
             <AdminNavigationLink area={area} current={current} key={area.id} />
           ))}
         </nav>
 
-        <details className="mt-3 border-t border-white/10 pt-3">
+        <details className="mt-3 border-t border-white/10 pt-3 lg:[main:has([data-source-review])_&]:relative lg:[main:has([data-source-review])_&]:mt-0 lg:[main:has([data-source-review])_&]:shrink-0 lg:[main:has([data-source-review])_&]:border-0 lg:[main:has([data-source-review])_&]:pt-0">
           <summary
             className={`w-fit cursor-pointer rounded-md px-3 py-2 text-sm outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${advancedActive ? "font-semibold text-white" : "text-slate-300"}`}
           >
@@ -131,10 +155,14 @@ export function AdminHeader({ current, role }: { current: AdminArea; role: Admin
           </summary>
           <nav
             aria-label="Advanced admin navigation"
-            className="mt-2 grid gap-1 border-l border-white/10 pl-3 sm:grid-cols-2 lg:grid-cols-4"
+            className="mt-2 grid gap-1 border-l border-white/10 pl-3 sm:grid-cols-2 lg:grid-cols-4 lg:[main:has([data-source-review])_&]:absolute lg:[main:has([data-source-review])_&]:right-0 lg:[main:has([data-source-review])_&]:z-50 lg:[main:has([data-source-review])_&]:max-h-[70dvh] lg:[main:has([data-source-review])_&]:w-[36rem] lg:[main:has([data-source-review])_&]:overflow-auto lg:[main:has([data-source-review])_&]:rounded-lg lg:[main:has([data-source-review])_&]:bg-slate-950 lg:[main:has([data-source-review])_&]:p-3 lg:[main:has([data-source-review])_&]:shadow-xl"
           >
             {availableAdvancedAreas.map((area) => (
-              <AdminNavigationLink area={area} current={current} key={area.id} />
+              <AdminNavigationLink
+                area={area}
+                current={current}
+                key={area.id}
+              />
             ))}
           </nav>
         </details>

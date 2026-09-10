@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 UNICODE_VERSION = unicodedata.unidata_version
-ALGORITHM_VERSION = f"source-fidelity-v2/ucd-{UNICODE_VERSION}"
+ALGORITHM_VERSION = f"source-fidelity-v2/rules-2/ucd-{UNICODE_VERSION}"
 MAX_TEXT_CHARACTERS = 100_000
 MAX_EDIT_CELLS = 4_000_000
 _LANGUAGE_ORDER = ("si", "en", "ta")
@@ -238,17 +238,31 @@ def _font_languages(font_names: tuple[str, ...]) -> set[str]:
 
 
 def _latin_corruption(text: str) -> bool:
+    if re.search(r"(?<![A-Za-z0-9])\.=[A-Za-z]{2,}", text):
+        return True
     for carrier in re.findall(r"[A-Za-z\u00c0-\u024f][A-Za-z\u00c0-\u024f%<;^|=]*", text):
         letters = "".join(character for character in carrier if character.isalpha())
         if len(letters) < 3 or letters.isupper():
             continue
-        if re.search(r"[A-Za-z][%<;^|][A-Za-z]", carrier):
+        parts = re.split(r"[%<;^|=]+", carrier)
+        if (
+            re.search(r"[A-Za-z][%;][A-Za-z]", carrier)
+            and any(len(part) > 1 for part in parts)
+            and any(len(part) == 1 for part in parts)
+            and any(part and not set(part.casefold()) & set("aeiouy") for part in parts)
+        ):
             return True
         if any(character.isupper() and ord(character) > 127 for character in letters[1:]):
             return True
-        if len(letters) >= 5 and not set(letters.casefold()) & set("aeiouy"):
+        if any(len(part) >= 5 and not set(part.casefold()) & set("aeiouy") for part in parts):
             return True
-        if len(letters) >= 5 and sum(character.isupper() for character in letters[1:]) >= 2:
+        interior_capitals = re.search(r"[a-z][A-Z]{2,}([a-z]+)$", letters)
+        if (
+            len(letters) >= 5
+            and interior_capitals is not None
+            and interior_capitals[1] != "s"
+            and not set(interior_capitals[1]) & set("aeiouy")
+        ):
             return True
     return False
 
@@ -289,14 +303,16 @@ def assess_page(
         evidence.add("en")
     languages = tuple(language for language in _LANGUAGE_ORDER if language in evidence) or ("und",)
     local_source = bool(evidence & {"si", "ta"})
-    latin_corruption = local_source and _latin_corruption(normalized)
+    latin_corruption = _latin_corruption(normalized)
     mixed_corruption = bool(counts["sinhala"] + counts["tamil"]) and latin_corruption
-    latin_mismatch = (
-        local_source
-        and not counts["sinhala"] + counts["tamil"]
-        and counts["latin"] >= 16
-        and sum(len(word) >= 3 for word in words) >= 3
-        and (not english or latin_corruption)
+    latin_mismatch = not counts["sinhala"] + counts["tamil"] and (
+        latin_corruption
+        or (
+            local_source
+            and counts["latin"] >= 16
+            and sum(len(word) >= 3 for word in words) >= 3
+            and not english
+        )
     )
     expected_local = set(expected_languages) & {"si", "ta"}
     source_script_missing = (

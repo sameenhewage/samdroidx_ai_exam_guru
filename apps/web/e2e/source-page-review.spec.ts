@@ -148,6 +148,246 @@ async function expectReadableButton(button: Locator) {
   return computed;
 }
 
+for (const pageCount of [4, 371]) {
+  test(`focused review: useful laptop panes and Sinhala navigation (${pageCount} synthetic pages)`, async ({
+    page,
+  }) => {
+    const runtime = requireIsolatedE2ERuntime(process.env);
+    await login(page, "admin");
+    expect(
+      await json(
+        await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+      ),
+    ).toMatchObject({
+      application_env: "test",
+      test_runtime_id: runtime.composeProjectName,
+    });
+    // Presentation/navigation fixtures only: no upload, source read, trust or corpus writes.
+    const documentId = randomUUID();
+    const requestedPages: number[] = [];
+    const writes: string[] = [];
+    const materialPath = `**/api/v1/admin/materials/${documentId}/**`;
+    await page.route(materialPath, async (route) => {
+      const request = route.request();
+      if (request.method() !== "GET") {
+        writes.push(request.method());
+        await route.abort();
+        return;
+      }
+      const url = new URL(request.url());
+      if (url.pathname.endsWith("/image")) {
+        const pageNumber = Number(url.pathname.split("/").at(-2));
+        await route.fulfill({
+          contentType: "image/svg+xml",
+          body: `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1200"><rect width="600" height="1200" fill="white"/><text x="40" y="40">Synthetic page ${pageNumber} of ${pageCount}</text>${Array.from({ length: 38 }, (_, index) => `<path d="M40 ${80 + index * 28}h520" stroke="#334155"/>`).join("")}</svg>`,
+        });
+        return;
+      }
+      const pageNumber = Number(url.searchParams.get("page_number"));
+      requestedPages.push(pageNumber);
+      const failed = pageNumber !== 1;
+      const view: Workspace = {
+        document_id: documentId,
+        document_title: `පරීක්ෂණ මූලාශ්‍රය — ${pageCount} පිටු.pdf`,
+        language: "si",
+        metadata_review_required: true,
+        source_active: true,
+        ready_for_ai: false,
+        progress: {
+          total_pages: pageCount,
+          processed_pages: pageCount,
+          verified_pages: 0,
+          excluded_pages: 0,
+          flagged_pages: pageCount,
+          remaining_pages: pageCount,
+        },
+        previous_flagged_page: pageNumber > 1 ? pageNumber - 1 : null,
+        next_flagged_page: pageNumber < pageCount ? pageNumber + 1 : null,
+        page: {
+          page_number: pageNumber,
+          state: failed ? "failed" : "needs_review",
+          version: 7,
+          candidate_id: `${documentId.slice(0, -3)}001`,
+          system_text:
+            "මෙය පරීක්ෂණ පිටුවකි. අංක සහ වගු මුල් පිටුව සමඟ සසඳන්න.\n".repeat(
+              40,
+            ),
+          language: "si",
+          can_confirm: !failed,
+          risk_codes: failed ? ["maths_fidelity_unconfirmed"] : [],
+          diagnostics: { text_readable: true },
+          provenance: {
+            source_languages: ["si"],
+            engine: "synthetic-layout-fixture",
+          },
+          history: [],
+          preview_url: `/api/v1/admin/materials/${documentId}/pages/${pageNumber}/image`,
+        },
+      };
+      await route.fulfill({ json: view });
+    });
+    await page.goto(`/admin/materials/${documentId}/review-text?page_number=2`);
+    await imageReady(page, 2, "මුල් පිටුව");
+    const original = page.getByRole("region", {
+      name: "මුල් පිටුව",
+      exact: true,
+    });
+    const text = page.getByTestId("text-scroll-panel");
+    const actions = page.getByRole("group", { name: "පිටුව සඳහා ක්‍රියා" });
+    const failure = page.getByText("මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත.", {
+      exact: true,
+    });
+    for (const viewport of [
+      { width: 1440, height: 1000 },
+      { width: 1366, height: 768 },
+      { width: 1280, height: 720 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      const dimensions = await page.evaluate(() => {
+        const workspace = document.querySelector(
+          '[data-testid="source-page-workspace"]',
+        )!;
+        const original = workspace.querySelector("img")!.closest("section")!;
+        const text = workspace.querySelector(
+          '[data-testid="text-scroll-panel"]',
+        )!;
+        const actions = workspace.querySelector('[role="group"]')!;
+        return {
+          originalContentHeight:
+            original.clientHeight -
+            original.querySelector("header")!.getBoundingClientRect().height,
+          textContentHeight: text.clientHeight,
+          originalTop: original.getBoundingClientRect().top,
+          textPanelTop: text.parentElement!.getBoundingClientRect().top,
+          actionBottom: actions.getBoundingClientRect().bottom,
+          documentHeight: document.documentElement.scrollHeight,
+          documentWidth: document.documentElement.scrollWidth,
+        };
+      });
+      console.log(
+        "FOCUSED_REVIEW_LAYOUT",
+        JSON.stringify({ pageCount, viewport, ...dimensions }),
+      );
+      await test.info().attach(`layout-${viewport.width}x${viewport.height}`, {
+        body: JSON.stringify({ pageCount, viewport, ...dimensions }),
+        contentType: "application/json",
+      });
+      expect(dimensions.originalContentHeight).toBeGreaterThanOrEqual(240);
+      expect(dimensions.textContentHeight).toBeGreaterThanOrEqual(240);
+      expect(dimensions.originalTop).toBe(dimensions.textPanelTop);
+      expect(dimensions.actionBottom).toBeLessThanOrEqual(viewport.height);
+      expect(dimensions.documentHeight).toBeLessThanOrEqual(
+        viewport.height + 1,
+      );
+      expect(dimensions.documentWidth).toBeLessThanOrEqual(viewport.width);
+      await expect(failure).toBeInViewport({ ratio: 1 });
+      await expect(actions).toBeInViewport({ ratio: 1 });
+      await expect(
+        page.getByRole("navigation", { name: "Primary admin navigation" }),
+      ).toBeInViewport({ ratio: 1 });
+      await expect(
+        page.getByRole("link", { name: "මූලාශ්‍රය වෙත ආපසු", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Advanced", { exact: true }).locator(".."),
+      ).not.toHaveAttribute("open", "");
+      await expect(
+        page.getByText("තාක්ෂණික විස්තර", { exact: true }).locator(".."),
+      ).not.toHaveAttribute("open", "");
+      await expectReadableButton(
+        actions.getByRole("button", { name: "නැවත කියවන්න", exact: true }),
+      );
+      await expect(
+        actions.getByRole("button", { name: "පෙළ නිවැරදියි", exact: true }),
+      ).toBeDisabled();
+      await test.info().attach(`review-${viewport.width}x${viewport.height}`, {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+    }
+    const advanced = page.getByText("Advanced", { exact: true });
+    await advanced.click();
+    await expect(
+      page.getByRole("navigation", { name: "Advanced admin navigation" }),
+    ).toBeInViewport({ ratio: 1 });
+    expect(
+      await text.evaluate((element) => element.clientHeight),
+    ).toBeGreaterThanOrEqual(240);
+    await advanced.click();
+    const reread = actions.getByRole("button", {
+      name: "නැවත කියවන්න",
+      exact: true,
+    });
+    await reread.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(reread).toBeFocused();
+    expect(
+      await reread.evaluate((element) => element.matches(":focus-visible")),
+    ).toBe(true);
+    await expect(reread).toHaveCSS("cursor", "pointer");
+    await expectReadableButton(reread);
+    await original.evaluate((element) => {
+      element.scrollTop = 300;
+    });
+    expect(await original.evaluate((element) => element.scrollTop)).toBe(300);
+    expect(await text.evaluate((element) => element.scrollTop)).toBe(0);
+    await text.evaluate((element) => {
+      element.scrollTop = 200;
+    });
+    expect(await text.evaluate((element) => element.scrollTop)).toBe(200);
+    expect(await original.evaluate((element) => element.scrollTop)).toBe(300);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+    await expect(failure).toBeInViewport({ ratio: 1 });
+    await expect(actions).toBeInViewport({ ratio: 1 });
+    await actions
+      .getByRole("button", { name: "පෙළ නිවැරදි කරන්න", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "නිවැරදි කළ පෙළ", exact: true }),
+    ).toBeVisible();
+    await expect(actions).toBeInViewport({ ratio: 1 });
+    await actions
+      .getByRole("button", { name: "සංස්කරණය අවලංගු කරන්න", exact: true })
+      .click();
+    const clickPage = async (name: string, pageNumber: number) => {
+      await page.getByRole("button", { name, exact: true }).click();
+      await imageReady(page, pageNumber, "මුල් පිටුව");
+    };
+    await clickPage("අවසාන පිටුව", pageCount);
+    await expect(
+      page.getByRole("button", { name: "ඊළඟ පිටුව", exact: true }),
+    ).toBeDisabled();
+    await clickPage("පළමු පිටුව", 1);
+    await clickPage("ඊළඟ පිටුව", 2);
+    await page
+      .getByRole("spinbutton", { name: "පිටු අංකය", exact: true })
+      .fill(String(pageCount - 1));
+    await clickPage("පිටුවට යන්න", pageCount - 1);
+    await clickPage("අවධානය අවශ්‍ය පෙර පිටුව", pageCount - 2);
+    await clickPage("අවධානය අවශ්‍ය ඊළඟ පිටුව", pageCount - 1);
+    expect(requestedPages).toEqual([
+      2,
+      pageCount,
+      1,
+      2,
+      pageCount - 1,
+      pageCount - 2,
+      pageCount - 1,
+    ]);
+    expect(writes).toEqual([]);
+    await page.getByRole("link", { name: "Home", exact: true }).click();
+    await expect(page.getByTestId("source-page-workspace")).toHaveCount(0);
+    const normalHeaderHeight = await page
+      .getByRole("navigation", { name: "Primary admin navigation" })
+      .evaluate(
+        (element) => element.closest("header")!.getBoundingClientRect().height,
+      );
+    expect(normalHeaderHeight).toBeGreaterThanOrEqual(200);
+  });
+}
+
 test("real APIs: private page comparison, versioned drafts, explicit decisions and honest 40-page reference counts", async ({
   page,
 }) => {

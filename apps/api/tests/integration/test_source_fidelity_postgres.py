@@ -12,6 +12,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.documents.domain import SourceDocumentType
+from exam_guru_api.documents.fidelity import ALGORITHM_VERSION
 from exam_guru_api.documents.fidelity_models import (
     PageGroundTruthModel,
     PageReviewEventModel,
@@ -49,7 +50,7 @@ def fidelity_database_url() -> Iterator[str]:
         yield url
 
 
-async def add_source(session: AsyncSession) -> UUID:
+async def add_source(session: AsyncSession, *, page_count: int = 2) -> UUID:
     identifier = uuid4()
     checksum = hashlib.sha256(identifier.bytes).hexdigest()
     document = SourceDocumentModel(
@@ -62,7 +63,7 @@ async def add_source(session: AsyncSession) -> UUID:
         document_type=SourceDocumentType.TEACHER_GUIDE,
         created_by=ACTOR,
         updated_by=ACTOR,
-        original_page_count=2,
+        original_page_count=page_count,
     )
     session.add(document)
     await session.commit()
@@ -153,8 +154,15 @@ async def confirm_sql_candidate(
 @pytest.mark.parametrize("method", ["native", "legacy", "ocr", "human"])
 @pytest.mark.parametrize(
     "diagnostics",
-    [{"algorithm_version": "source-fidelity-v1/14.0.0"}, {}, {"algorithm_version": None}],
-    ids=["v1", "missing_version", "null_version"],
+    [
+        {"algorithm_version": "source-fidelity-v1/14.0.0"},
+        {},
+        {"algorithm_version": None},
+        {"algorithm_version": "source-fidelity-v2/ucd-15.0.0"},
+        {"algorithm_version": "source-fidelity-v2/rules-1/ucd-15.0.0"},
+        {"algorithm_version": "source-fidelity-v2/rules-20/ucd-15.0.0"},
+    ],
+    ids=["v1", "missing_version", "null_version", "unversioned_rules", "old_rules", "other_rules"],
 )
 def test_sql_confirmation_rejects_stale_or_unversioned_candidates(
     fidelity_database_url: str, method: str, diagnostics: dict[str, object]
@@ -212,7 +220,7 @@ def test_sql_v2_candidate_requires_confirmation_before_it_is_current(
                 session,
                 document_id,
                 method=method,
-                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                diagnostics={"algorithm_version": ALGORITHM_VERSION},
             )
             assert (
                 await session.scalar(
@@ -252,7 +260,7 @@ def test_sql_v2_confirmation_retains_original_evidence_guards(
                 session,
                 document_id,
                 method="human",
-                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                diagnostics={"algorithm_version": ALGORITHM_VERSION},
             )
             payload: dict[str, object] = {
                 "compared_with_original": invalid_evidence != "comparison",
@@ -308,7 +316,7 @@ def test_sql_v2_candidate_gate_fails_closed_for_unusable_evidence(
                 session,
                 document_id,
                 method="human",
-                diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                diagnostics={"algorithm_version": ALGORITHM_VERSION},
                 normalized_text=normalized_text,
                 can_confirm=can_confirm,
                 provenance=provenance,
@@ -342,6 +350,57 @@ def test_sql_candidate_gate_returns_false_for_missing_identity_in_readonly_trans
                     )
                     is False
                 )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("method", ["native", "ocr", "human"])
+@pytest.mark.parametrize("raw", ["ixLHd", ".=Kk", "fm;s", "l%shdldrlu", "ගණිතය LaTeX"])
+def test_short_readings_persist_current_policy_and_cannot_bypass_confirmation(
+    fidelity_database_url: str, method: str, raw: str
+) -> None:
+    async def scenario() -> None:
+        async with fidelity_session(fidelity_database_url) as session:
+            document_id = await add_source(session)
+            service = PageFidelityService(session)
+            state = await service.record_candidate(
+                document_id,
+                1,
+                raw_text=raw,
+                method=method,
+                actor_id=ACTOR,
+                provenance={"source_languages": ["si"], "languages": ["en"]},
+            )
+            readable = raw.startswith("ගණිතය")
+            assert state.state == ("needs_review" if readable else "failed")
+            candidate = await session.get(PageTextCandidateModel, state.current_candidate_id)
+            assert candidate is not None
+            assert candidate.raw_text_utf8 == raw.encode()
+            assert candidate.normalized_text == raw
+            assert candidate.diagnostics["algorithm_version"] == ALGORITHM_VERSION
+            assert candidate.can_confirm is readable
+            if readable:
+                await service.confirm_page(
+                    document_id,
+                    1,
+                    candidate_id=candidate.id,
+                    expected_version=state.version,
+                    actor_id=ACTOR,
+                    reason="Compared synthetic source text with original",
+                )
+                assert await service.page_is_verified(document_id, 1)
+            else:
+                with pytest.raises(PageVerificationBlockedError):
+                    await service.confirm_page(
+                        document_id,
+                        1,
+                        candidate_id=candidate.id,
+                        expected_version=state.version,
+                        actor_id=ACTOR,
+                        reason="A claimed comparison cannot bypass failed evidence",
+                    )
+                assert not await service.page_is_verified(document_id, 1)
 
     asyncio.run(scenario())
 

@@ -6,7 +6,19 @@ This document defines when Exam Guru is ready to be handed to real teachers for 
 
 The teacher pilot is **not** an architecture test. Teachers should receive a coherent product they can actually use to prepare, review and approve Grade 5 papers.
 
-## Current verdict — NOT READY (6 September 2026)
+## Current verdict — NOT READY (10 September 2026 local inspection)
+
+The actual Windows Docker Desktop Studio was inspected directly, rather than inferred from the historical rollout below. Its database contains **one checksum-matched real corpus source / four page-review states**, 24 candidate versions and 33 page events, with **zero current verified pages, ground truth, benchmarks, chunks, embeddings or admitted curricula**. Legacy `source_pages` and `extracted_blocks` are both empty; those tables are distinct from the newer page-review records. The sole subject is an exactly identified migration bootstrap placeholder, not a proven E2E fixture. No reset, deletion, quarantine or fabricated admission was performed.
+
+The fresh read-only Grade 3/4/5 inventory found **711 files / 696 PDF paths / 587 distinct PDFs / 5,234 unique pages** (7,112 pages across duplicate paths). Grade 3 has 307 PDF paths, Grade 4 has 197, and Grade 5 has 192. All 711 files retained their original hashes, sizes and recorded filesystem identity. All unique pages were inspected; five distinct encrypted PDFs are readable without passwords, and 99 PDFs emitted parser warnings. These are inventory results, not OCR accuracy or trusted content. The uploaded four-page multiplication source matches two Grade-5 paths exactly.
+
+Actual browser inspection exposed a 32-pixel reading area at 1280×720 and an empty-catalogue metadata-correction dead end. Noto Sans Sinhala rendered correctly; current mathematical/grid/table failures remained blocked. The deployed web security patch was subsequently updated from Next 16.3.1 to the verified 16.3.4 release without changing source/database state. Local source-review, safe corpus intake, representative human ground truth and real accuracy measurements remain unfinished; no teacher-pilot invitation or Ready-for-AI claim follows.
+
+The owner has made actual local runtime/source fidelity the primary acceptance gate. GitHub remains secondary: current-change regressions and genuine security/data-integrity failures require correction, while unrelated external failures are classified and recorded without stopping safe local product work. The reported runtime-CI failure was a Google Chrome APT package-index hash mismatch after a successful zero-vulnerability npm install; no integrity check was bypassed.
+
+## Historical separate-runtime checkpoint — 6 September 2026
+
+The following counts and benchmark links describe the earlier rollout, not the current Desktop database:
 
 All 711 raw original/evidence files remain unchanged: 696 Grade 3/4/5 PDF paths represent 587 unique originals and 5,234 unique-PDF pages. The final integrity proof verifies SHA-256, size, nanosecond mtime/ctime, inode, device and mode. Forward migration from `0032` to `0038_upload_request_identity` preserved 659 source rows and extraction, knowledge, review and published history. Audited quarantine of 72 exactly proven E2E sources leaves the 587 real originals in normal Materials, active but metadata-required, untrusted and unindexed. Inventory/footer counts do not establish educational coverage. See [known limitations](06_KNOWN_LIMITATIONS.md) for the exact checkpoint and private evidence reference.
 
@@ -28,7 +40,7 @@ Earlier live `text-embedding-3-small`, `gpt-5.6-luna` generation and `gpt-5.6-te
 
 ### Bounded source-adjudication handoff, not a paper-generation pilot
 
-Authorized reviewers can work through the [fixed local benchmark review queue](http://localhost:3000/admin/materials/benchmark-review?benchmark_id=6d050ee1-141c-4424-88a9-a6dbff2af9ec). Compare every selected page with its original image/PDF; retain raw candidate and failure history, save corrections as new candidates, and confirm only the exact current version after comparison. Exclude unsuitable pages explicitly with a reason. Do not substitute an OCR/LLM rewrite or a legacy reviewed flag for human ground truth. Catalogue metadata may be reviewed independently; confirming either gate must not manufacture the other.
+The [historical fixed benchmark review queue](http://localhost:3000/admin/materials/benchmark-review?benchmark_id=6d050ee1-141c-4424-88a9-a6dbff2af9ec) belongs to that earlier runtime and is not present in the newly inspected Desktop database. Establish a checksum-bound representative queue in the actual Studio before presenting it as a current reviewer handoff. Compare every selected page with its original image/PDF; retain raw candidate and failure history, save corrections as new candidates, and confirm only the exact current version after comparison. Exclude unsuitable pages explicitly with a reason. Do not substitute an OCR/LLM rewrite or a legacy reviewed flag for human ground truth. Catalogue metadata may be reviewed independently; confirming either gate must not manufacture the other.
 
 ## V1 scope
 
@@ -202,7 +214,7 @@ A later correction creates a new version.
 
 ## Gate I — Browser/runtime proof
 
-The entire flow must pass against an isolated clean runtime with the real backend:
+Primary product acceptance must exercise the actual local Studio and representative real sources through normal application workflows. Synthetic regression data remains isolated, and the separate clean-system gate below still applies before a full pilot release. Required real-source flow:
 
 `Real source -> extraction review -> Ready for AI -> Grade 5 Scholarship generation -> question review -> marks confirmation -> approval -> publish`
 
@@ -222,9 +234,9 @@ All applicable existing quality gates remain green:
 - security/secret checks
 - isolated Compose runtime
 - Playwright/browser acceptance
-- remote CI
+- remote CI as a secondary gate, with current-change/security failures fixed and unrelated external/pre-existing failures explicitly classified
 
-Do not reduce thresholds to pass.
+Do not reduce thresholds to pass. An unrelated hosted-runner failure does not supersede actual local runtime/source acceptance or authorize weakening any check.
 
 ---
 

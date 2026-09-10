@@ -45,18 +45,43 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_0039_source_fidelity_v2_is_the_single_bounded_revision_head() -> None:
+def test_0040_source_fidelity_rules_v2_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0039_source_fidelity_v2"]
-    revision = scripts.get_revision("0039_source_fidelity_v2")
+    assert scripts.get_heads() == ["0040_source_fidelity_rules_v2"]
+    revision = scripts.get_revision("0040_source_fidelity_rules_v2")
     assert revision is not None
-    assert revision.down_revision == "0038_upload_request_identity"
+    assert revision.down_revision == "0039_source_fidelity_v2"
     assert len(revision.revision) <= 32
 
 
 @pytest.mark.integration
-def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence() -> None:
+@pytest.mark.parametrize(
+    ("previous_revision", "target_revision", "diagnostic_cases", "raw_text"),
+    [
+        (
+            "0038_upload_request_identity",
+            "0039_source_fidelity_v2",
+            ({"algorithm_version": "source-fidelity-v1/14.0.0"}, {}, {"algorithm_version": None}),
+            "Read the original",
+        ),
+        (
+            "0039_source_fidelity_v2",
+            "0040_source_fidelity_rules_v2",
+            (
+                {"algorithm_version": "source-fidelity-v2/ucd-15.0.0"},
+                {"algorithm_version": "source-fidelity-v2/rules-1/ucd-15.0.0"},
+            ),
+            "ixLHd",
+        ),
+    ],
+)
+def test_policy_upgrade_invalidates_stale_verification_without_mutating_evidence(
+    previous_revision: str,
+    target_revision: str,
+    diagnostic_cases: tuple[dict[str, object], ...],
+    raw_text: str,
+) -> None:
     with PostgresContainer(
         image="pgvector/pgvector:0.8.6-pg18-trixie",
         username="exam_guru",
@@ -66,7 +91,7 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
     ) as postgres:
         database_url = postgres.get_connection_url()
         config = _config_for_database(database_url)
-        command.upgrade(config, "0038_upload_request_identity")
+        command.upgrade(config, previous_revision)
         identities: list[tuple[UUID, UUID]] = []
         models = (
             SourceDocumentModel,
@@ -92,15 +117,10 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
                 }
 
         async def seed_history() -> None:
-            diagnostic_cases: tuple[dict[str, object], ...] = (
-                {"algorithm_version": "source-fidelity-v1/14.0.0"},
-                {},
-                {"algorithm_version": None},
-            )
             async with fidelity_session(database_url) as session:
                 for method in ("native", "legacy", "ocr", "human"):
                     for diagnostics in diagnostic_cases:
-                        document_id = await add_source(session)
+                        document_id = await add_source(session, page_count=1)
                         benchmark_id = await PageFidelityService(session).create_benchmark(
                             name=f"Historical {document_id}",
                             pages=((document_id, 1, ("sql-contract-fixture",)),),
@@ -108,7 +128,11 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
                             selection={"purpose": "immutable migration regression"},
                         )
                         candidate = await add_sql_candidate(
-                            session, document_id, method=method, diagnostics=diagnostics
+                            session,
+                            document_id,
+                            method=method,
+                            diagnostics=diagnostics,
+                            normalized_text=raw_text,
                         )
                         event = await confirm_sql_candidate(session, candidate)
                         source = await session.get(SourceDocumentModel, document_id)
@@ -134,11 +158,21 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
                             )
                             is True
                         )
+                        if previous_revision == "0039_source_fidelity_v2":
+                            assert (
+                                await session.scalar(
+                                    text(
+                                        "SELECT public.source_document_fidelity_is_current(:source)"
+                                    ),
+                                    {"source": document_id},
+                                )
+                                is True
+                            )
                         identities.append((document_id, candidate.id))
 
         asyncio.run(seed_history())
         before = asyncio.run(snapshot())
-        command.upgrade(config, "head")
+        command.upgrade(config, target_revision)
         assert asyncio.run(snapshot()) == before
 
         async def verify_stale_history_is_ineligible_and_immutable() -> None:
@@ -158,8 +192,17 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
                         )
                         is False
                     )
+                    assert (
+                        await session.scalar(
+                            text("SELECT public.source_document_fidelity_is_current(:source)"),
+                            {"source": document_id},
+                        )
+                        is False
+                    )
                     candidate = await session.get(PageTextCandidateModel, candidate_id)
                     assert candidate is not None
+                    assert candidate.can_confirm is True
+                    assert candidate.raw_text_utf8 == raw_text.encode()
                     with pytest.raises(DBAPIError, match="exact candidate confirmation"):
                         await confirm_sql_candidate(session, candidate)
                     await session.rollback()
@@ -188,7 +231,20 @@ def test_0039_upgrade_invalidates_stale_verification_without_mutating_evidence()
 
 
 @pytest.mark.integration
-def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrade() -> None:
+@pytest.mark.parametrize(
+    ("target_revision", "previous_revision", "algorithm"),
+    [
+        ("0039_source_fidelity_v2", "0038_upload_request_identity", "source-fidelity-v2/14.0.0"),
+        (
+            "0040_source_fidelity_rules_v2",
+            "0039_source_fidelity_v2",
+            "source-fidelity-v2/rules-2/ucd-15.0.0",
+        ),
+    ],
+)
+def test_policy_empty_downgrade_restores_functions_but_evidence_blocks_downgrade(
+    target_revision: str, previous_revision: str, algorithm: str
+) -> None:
     with PostgresContainer(
         image="pgvector/pgvector:0.8.6-pg18-trixie",
         username="exam_guru",
@@ -198,21 +254,24 @@ def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrad
     ) as postgres:
         database_url = postgres.get_connection_url()
         config = _config_for_database(database_url)
-        command.upgrade(config, "head")
-        command.downgrade(config, "0038_upload_request_identity")
+        command.upgrade(config, target_revision)
+        command.downgrade(config, previous_revision)
 
         async def check_empty_downgrade() -> None:
             async with fidelity_session(database_url) as session:
-                assert (
-                    await session.scalar(
-                        text(
-                            "SELECT to_regprocedure('public.source_candidate_is_confirmable(uuid)')"
-                        )
+                definition = await session.scalar(
+                    text(
+                        "SELECT pg_get_functiondef(to_regprocedure("
+                        "'public.source_candidate_is_confirmable(uuid)'))"
                     )
-                    is None
                 )
+                if previous_revision == "0039_source_fidelity_v2":
+                    assert definition is not None
+                    assert "LIKE 'source-fidelity-v2/%'" in definition
+                else:
+                    assert definition is None
                 assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "0038_upload_request_identity"
+                    previous_revision
                 )
                 for name in (
                     "public.source_page_fidelity_is_current(uuid,integer,uuid)",
@@ -222,10 +281,12 @@ def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrad
                         text("SELECT pg_get_functiondef(to_regprocedure(:name))"), {"name": name}
                     )
                     assert definition is not None
-                    assert "source_candidate_is_confirmable" not in definition
+                    assert ("source_candidate_is_confirmable" in definition) == (
+                        previous_revision == "0039_source_fidelity_v2"
+                    )
 
         asyncio.run(check_empty_downgrade())
-        command.upgrade(config, "head")
+        command.upgrade(config, target_revision)
 
         async def seed_v2_evidence() -> None:
             async with fidelity_session(database_url) as session:
@@ -234,17 +295,17 @@ def test_0039_empty_downgrade_restores_functions_but_v2_evidence_blocks_downgrad
                     session,
                     document_id,
                     method="human",
-                    diagnostics={"algorithm_version": "source-fidelity-v2/14.0.0"},
+                    diagnostics={"algorithm_version": algorithm},
                 )
 
         asyncio.run(seed_v2_evidence())
         with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):
-            command.downgrade(config, "0038_upload_request_identity")
+            command.downgrade(config, previous_revision)
 
         async def check_failed_downgrade() -> None:
             async with fidelity_session(database_url) as session:
                 assert await session.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "0039_source_fidelity_v2"
+                    target_revision
                 )
                 assert (
                     await session.scalar(
