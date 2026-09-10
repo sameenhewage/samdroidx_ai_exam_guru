@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.domain import AuthorizationError, Permission, Principal, authorize
 from exam_guru_api.curriculum.admission import admitted_curriculum_predicate
+from exam_guru_api.curriculum.models import CurriculumVersionModel, MediumModel
 from exam_guru_api.documents.fidelity import (
     MAX_TEXT_CHARACTERS,
     normalize_source_text,
@@ -41,6 +42,7 @@ from exam_guru_api.documents.fidelity_service import (
     assess_candidate,
 )
 from exam_guru_api.documents.models import SourceDocumentModel, SourcePageModel
+from exam_guru_api.documents.service import get_metadata_candidate
 
 _HISTORY_LIMIT = 20
 _TEXT_BYTE_LIMIT = 4 * (MAX_TEXT_CHARACTERS + 1)
@@ -392,6 +394,37 @@ async def _page_view(
     )
 
 
+def _review_language_hint(value: object) -> str:
+    if isinstance(value, str):
+        label = value.strip().casefold()
+        for language, labels in (
+            ("si", {"si", "sin", "si-lk", "sinhala", "sinhala medium", "සිංහල"}),
+            ("ta", {"ta", "tam", "ta-lk", "tamil", "tamil medium", "தமிழ்"}),
+            ("en", {"en", "eng", "en-lk", "english", "english medium"}),
+        ):
+            if label in labels:
+                return language
+    return "und"
+
+
+async def _source_review_language(session: AsyncSession, document: SourceDocumentModel) -> str:
+    if document.curriculum_version_id is not None:
+        curriculum = await session.get(CurriculumVersionModel, document.curriculum_version_id)
+        medium = await session.get(MediumModel, curriculum.medium_id) if curriculum else None
+        if medium is not None:
+            language = _review_language_hint(medium.code)
+            return _review_language_hint(medium.name) if language == "und" else language
+        return "und"
+    proposal = (
+        await get_metadata_candidate(session, document)
+        if document.metadata_review_required
+        else None
+    )
+    if proposal is not None and proposal.is_current:
+        return _review_language_hint(proposal.metadata.medium_label)
+    return _review_language_hint((document.intake_metadata or {}).get("medium_label"))
+
+
 async def get_review_workspace(
     session: AsyncSession,
     document_id: UUID,
@@ -427,7 +460,11 @@ async def get_review_workspace(
         return PageReviewWorkspaceResponse(
             document_id=document.id,
             document_title=_escape_display(document.original_filename),
-            language=page.language if page else "und",
+            language=(
+                page.language
+                if page is not None and page.language != "und"
+                else await _source_review_language(session, document)
+            ),
             metadata_review_required=metadata_review_required,
             source_active=document.active_for_ai,
             ready_for_ai=ready,

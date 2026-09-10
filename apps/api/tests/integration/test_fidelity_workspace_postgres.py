@@ -3,7 +3,7 @@ import hashlib
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -47,7 +47,10 @@ from exam_guru_api.documents.fidelity_service import (
     PageFidelityService,
 )
 from exam_guru_api.documents.models import SourceDocumentModel, SourcePageModel
+from exam_guru_api.documents.schemas import SourceIntakeMetadata
+from exam_guru_api.documents.service import SourceDocumentService
 from exam_guru_api.infrastructure.migrations import upgrade_database
+from exam_guru_api.infrastructure.object_storage import ObjectStorage
 
 pytestmark = pytest.mark.integration
 ADMIN = Principal(UUID(int=86001), frozenset({AdminRole.ADMIN}))
@@ -123,6 +126,7 @@ async def add_source(
     curriculum_id: UUID | None = None,
     extracted_count: int | None = None,
     legacy_trusted: bool = False,
+    intake_metadata: dict[str, object] | None = None,
 ) -> UUID:
     identifier = uuid4()
     checksum = hashlib.sha256(identifier.bytes).hexdigest()
@@ -138,6 +142,8 @@ async def add_source(
         updated_by=ADMIN.subject_id,
         original_page_count=total,
         curriculum_version_id=curriculum_id,
+        intake_metadata=intake_metadata,
+        metadata_review_required=intake_metadata is not None,
     )
     if extracted_count is not None:
         document.extraction_status = ExtractionStatus.EXTRACTED
@@ -156,6 +162,17 @@ async def add_source(
     if legacy_trusted:
         document.extraction_status = ExtractionStatus.TRUSTED
     session.add(document)
+    if intake_metadata is not None:
+        session.add(
+            AdminAuditEventModel(
+                id=uuid4(),
+                actor_id=ADMIN.subject_id,
+                resource_type="source_document",
+                resource_id=identifier,
+                action="source_document.uploaded",
+                payload={"intake_metadata": intake_metadata, "metadata_review_required": True},
+            )
+        )
     await session.commit()
     return identifier
 
@@ -267,6 +284,110 @@ async def evidence_counts(session: AsyncSession) -> tuple[int, ...]:
             )
         ]
     )
+
+
+@pytest.mark.parametrize("assigned", [False, True])
+@pytest.mark.parametrize(
+    ("medium", "expected"),
+    [("Sinhala", "si"), ("Tamil", "ta"), ("English", "en"), ("Unknown", "und")],
+)
+def test_unread_page_uses_source_presentation_hint_without_inventing_text_language(
+    workspace_database_url: str,
+    assigned: bool,
+    medium: str,
+    expected: str,
+) -> None:
+    async def scenario() -> None:
+        async with database_session(workspace_database_url) as session:
+            curriculum_id = await add_curriculum(session, medium_name=medium) if assigned else None
+            document_id = await add_source(
+                session,
+                total=371,
+                curriculum_id=curriculum_id,
+                intake_metadata=None if assigned else {"medium_label": medium},
+            )
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+            workspace = await get_review_workspace(
+                session, document_id, page_number=371, principal=ADMIN
+            )
+            assert workspace.language == expected
+            assert workspace.page is not None
+            assert workspace.page.language == "und"
+            assert workspace.page.system_text == ""
+            assert workspace.page.state == "pending"
+            assert workspace.page.candidate_id is None
+            assert workspace.page.can_confirm is False
+            assert workspace.ready_for_ai is False
+            assert workspace.progress.processed_pages == 0
+            assert workspace.page.preview_url.endswith("/pages/371/image")
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(PageReviewStateModel)
+                    .where(PageReviewStateModel.document_id == document_id)
+                )
+                == 0
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("label", "expected"), [("Sinhala", "si"), (None, "und")])
+def test_only_current_metadata_proposal_supplies_an_unread_page_hint(
+    workspace_database_url: str,
+    label: str | None,
+    expected: str,
+) -> None:
+    async def scenario() -> None:
+        async with database_session(workspace_database_url) as session:
+            document_id = await add_source(session, intake_metadata={"medium_label": "English"})
+            service = SourceDocumentService(
+                session, cast(ObjectStorage, object()), max_upload_bytes=1024
+            )
+            await service.correct_candidate_metadata(
+                document_id,
+                metadata=SourceIntakeMetadata(medium_label=label),
+                reason="Correct the unverified medium description",
+                expected_scope_version=0,
+                expected_candidate_version=0,
+                actor_id=ADMIN.subject_id,
+            )
+            workspace = await get_review_workspace(session, document_id, principal=ADMIN)
+            assert workspace.language == expected
+            assert workspace.page is not None
+            assert workspace.page.language == "und"
+            await service.remove_from_ai_use(
+                document_id,
+                reason="Archive this disposable source",
+                expected_version=0,
+                actor_id=ADMIN.subject_id,
+            )
+            historical = await get_review_workspace(session, document_id, principal=ADMIN)
+            assert historical.language == "en"
+            assert historical.ready_for_ai is False
+
+    asyncio.run(scenario())
+
+
+def test_detected_page_language_overrides_an_unverified_source_hint(
+    workspace_database_url: str,
+) -> None:
+    async def scenario() -> None:
+        async with database_session(workspace_database_url) as session:
+            document_id = await add_source(session, intake_metadata={"medium_label": "Sinhala"})
+            await record_page(
+                session,
+                document_id,
+                1,
+                value="Read the original page for this lesson",
+                languages=("en",),
+            )
+            workspace = await get_review_workspace(session, document_id, principal=ADMIN)
+            assert workspace.language == "en"
+            assert workspace.page is not None
+            assert workspace.page.language == "en"
+
+    asyncio.run(scenario())
 
 
 def test_workspace_reads_one_page_exact_flagged_navigation_and_never_writes(

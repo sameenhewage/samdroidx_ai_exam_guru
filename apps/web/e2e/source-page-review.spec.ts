@@ -388,6 +388,83 @@ for (const pageCount of [4, 371]) {
   });
 }
 
+test("real APIs: unread pages keep source-language controls without assigning text language or trust", async ({
+  page,
+}, testInfo) => {
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await login(page, "admin");
+  const identity = await json<{
+    application_env: string;
+    test_runtime_id: string;
+  }>(await page.request.get("/api/v1/admin/studio-safety/runtime-identity"));
+  expect(identity).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `Unread-${randomUUID().slice(0, 8)}`;
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: syntheticBook(marker, 371),
+        },
+        document_type: "teacher_guide",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "Sinhala",
+          subject_label: "Unverified workflow fixture",
+        }),
+      },
+    }),
+    201,
+  );
+  const initial = await workspace(page, source.id);
+  expect(initial.page).toBeNull();
+  expect(initial.language).toBe("si");
+  const read = await page.request.post(
+    `/api/v1/admin/source-documents/${source.id}/read`,
+    { headers },
+  );
+  expect(read.status()).toBe(202);
+  await expect
+    .poll(async () => (await workspace(page, source.id)).progress.total_pages)
+    .toBe(371);
+  await page.goto(`/admin/materials/${source.id}/review-text`);
+  await page.getByRole("button", { name: /^(Last page|අවසාන පිටුව)$/ }).click();
+  await expect(
+    page.getByRole("img", { name: "මුල් පිටුව 371", exact: true }),
+  ).toBeVisible();
+  await imageReady(page, 371, "මුල් පිටුව");
+  await expect(
+    page.getByRole("button", { name: "අවසාන පිටුව", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "පෙළ නිවැරදියි", exact: true }),
+  ).toBeDisabled();
+  await expectReadableButton(
+    page.getByRole("button", { name: "පළමු පිටුව", exact: true }),
+  );
+  const pending = await workspace(page, source.id, 371);
+  expect(pending.language).toBe("si");
+  expect(pending.page).toMatchObject({
+    state: "pending",
+    language: "und",
+    candidate_id: null,
+    can_confirm: false,
+    system_text: "",
+  });
+  expect(pending.ready_for_ai).toBe(false);
+  expect(pending.progress.verified_pages).toBe(0);
+  await testInfo.attach("unread-source-language", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+});
+
 test("real APIs: private page comparison, versioned drafts, explicit decisions and honest 40-page reference counts", async ({
   page,
 }) => {

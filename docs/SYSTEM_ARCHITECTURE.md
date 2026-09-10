@@ -351,6 +351,8 @@ Published Papers
 
 Engineering internals such as vector IDs, request fingerprints, prompt versions, retry lineage, context IDs and raw JSON belong behind Advanced/Technical areas.
 
+The page-review workspace's overall `language` is a presentation default, distinct from the candidate/page's observed text language. Known page language wins. For an unread or language-undetermined page, the UI may fall back to the assigned medium or a recognized current candidate/intake medium label; that hint never changes `page.language`, raw text, OCR configuration, diagnostics, confirmation eligibility or RAG scope. Unknown labels stay unknown. An explicit browser-local teacher language choice remains higher priority than automatic presentation defaults.
+
 Typical content flow:
 
 ```text

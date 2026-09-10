@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -28,6 +29,47 @@ def source(*, pages: int | None = 2) -> SourceDocumentModel:
         checksum_sha256="a" * 64,
         active_for_ai=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "und"),
+        (3, "und"),
+        ("", "und"),
+        ("unlisted", "und"),
+        (" SIN ", "si"),
+        ("සිංහල", "si"),
+        ("Sinhala medium", "si"),
+        ("தமிழ்", "ta"),
+        ("ta-LK", "ta"),
+        ("English", "en"),
+    ],
+)
+def test_review_hint_is_presentation_only_and_recognizes_explicit_labels(
+    value: object, expected: str
+) -> None:
+    assert fidelity_queries._review_language_hint(value) == expected
+
+
+@pytest.mark.parametrize("missing", ["curriculum", "medium", None])
+def test_source_presentation_hint_does_not_invent_missing_catalogue_language(
+    missing: str | None,
+) -> None:
+    document = source()
+    document.curriculum_version_id = UUID(int=87003)
+    session = AsyncMock(spec=AsyncSession)
+    curriculum = SimpleNamespace(medium_id=UUID(int=87004))
+    session.get.side_effect = (
+        [None]
+        if missing == "curriculum"
+        else [
+            curriculum,
+            None if missing == "medium" else SimpleNamespace(code="sin", name="English"),
+        ]
+    )
+    result = asyncio.run(fidelity_queries._source_review_language(session, document))
+    assert result == ("si" if missing is None else "und")
 
 
 @pytest.mark.parametrize("value", [None, 1, "", "  ", "x" * 2001])
