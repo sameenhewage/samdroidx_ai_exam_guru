@@ -563,6 +563,266 @@ describe("upload protocol boundaries", () => {
   });
 });
 
+describe("bounded upload backpressure", () => {
+  it("honors Retry-After and continues the same bounded part when explicitly enabled", async () => {
+    const f = await fixture({ file: fakePdf(20) });
+    const serve = f.fetchMock.getMockImplementation()!;
+    let deniedAt = 0;
+    let retriedAt = 0;
+    const progress = vi.fn();
+    f.fetchMock.mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (request.method === "PUT") {
+        if (!deniedAt) {
+          deniedAt = Date.now();
+          return httpFailure(429, "rate_limit_exceeded", {
+            "Retry-After": "1",
+          });
+        }
+        retriedAt = Date.now();
+      }
+      return serve(request);
+    });
+    const task = new ResumableSourceUpload({
+      api: f.api,
+      file: f.file,
+      metadata,
+    });
+    const completed = await task.run({
+      ...runOptions,
+      retryRateLimits: true,
+      onProgress: progress,
+    });
+    expect(completed.status).toBe("completed");
+    expect(retriedAt - deniedAt).toBeGreaterThanOrEqual(1000);
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: "waiting",
+        uploadedBytes: 0,
+        totalBytes: 20,
+        retryAfterSeconds: 1,
+      }),
+    );
+    expect(f.requests.filter((request) => request.path === root)).toHaveLength(
+      1,
+    );
+    expect(
+      f.requests.filter((request) => request.method === "PUT"),
+    ).toHaveLength(1);
+    expect(f.file.arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "-1", "1.5", "181", "999999"])(
+    "keeps manual recovery for an absent, invalid or excessive delay %j",
+    async (retryAfter) => {
+      const f = await fixture({
+        error: { status: 429, code: "rate_limit_exceeded", retryAfter },
+      });
+      const task = new ResumableSourceUpload({ api: f.api, uploadId: id });
+      await expect(
+        task.run({ ...runOptions, retryRateLimits: true }),
+      ).rejects.toMatchObject({ status: 429 });
+      expect(f.requests).toHaveLength(1);
+    },
+  );
+
+  it.each([401, 403, 409, 413, 422, 500])(
+    "does not retry other HTTP %s responses when backpressure recovery is enabled",
+    async (status) => {
+      const f = await fixture({
+        error: { status, code: "request_failed", retryAfter: "1" },
+      });
+      await expect(
+        new ResumableSourceUpload({ api: f.api, uploadId: id }).run({
+          ...runOptions,
+          retryRateLimits: true,
+        }),
+      ).rejects.toMatchObject({ status });
+      expect(f.requests).toHaveLength(1);
+    },
+  );
+
+  it("waits before completion retry while preserving its exact expected version", async () => {
+    const f = await fixture({ file: fakePdf(20) });
+    const serve = f.fetchMock.getMockImplementation()!;
+    const bodies: unknown[] = [];
+    f.fetchMock.mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (
+        request.method === "POST" &&
+        new URL(request.url).pathname.endsWith("/complete")
+      ) {
+        bodies.push(await request.clone().json());
+        if (bodies.length === 1)
+          return httpFailure(429, "rate_limit_exceeded", {
+            "Retry-After": "1",
+          });
+      }
+      return serve(request);
+    });
+    const result = await new ResumableSourceUpload({
+      api: f.api,
+      file: f.file,
+      metadata,
+    }).run({ ...runOptions, retryRateLimits: true });
+    expect(result.status).toBe("completed");
+    expect(bodies).toEqual([{ expected_version: 8 }, { expected_version: 8 }]);
+    expect(
+      f.requests.filter((request) => request.method === "PUT"),
+    ).toHaveLength(1);
+  });
+
+  it("reconciles a part accepted before a rate-limited response without accepting mismatched progress", async () => {
+    const f = await fixture({ file: fakePdf(20) });
+    const serve = f.fetchMock.getMockImplementation()!;
+    let puts = 0;
+    f.fetchMock.mockImplementation(async (input, init) => {
+      const request =
+        input instanceof Request ? input : new Request(input, init);
+      if (request.method === "PUT") {
+        puts += 1;
+        if (puts === 1) {
+          await serve(request);
+          return httpFailure(429, "rate_limit_exceeded", {
+            "Retry-After": "1",
+          });
+        }
+        return httpFailure(409, "source_upload_offset_conflict");
+      }
+      return serve(request);
+    });
+    const result = await new ResumableSourceUpload({
+      api: f.api,
+      file: f.file,
+      metadata,
+    }).run({ ...runOptions, retryRateLimits: true });
+    expect(result.status).toBe("completed");
+    expect(puts).toBe(2);
+    expect(
+      f.requests.filter((request) => request.method === "PUT"),
+    ).toHaveLength(1);
+    expect(
+      f.requests.some(
+        (request) =>
+          request.method === "GET" && request.path.endsWith("/chunks"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not automatically recreate an unacknowledged upload on rate limiting", async () => {
+    const f = await fixture({
+      file: fakePdf(20),
+      error: { status: 429, code: "rate_limit_exceeded", retryAfter: "1" },
+    });
+    const task = new ResumableSourceUpload({
+      api: f.api,
+      file: f.file,
+      metadata,
+    });
+    await expect(
+      task.run({ ...runOptions, retryRateLimits: true }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(f.requests).toHaveLength(1);
+    expect(readUploadCheckpoints().requestIds).toEqual([task.requestId]);
+  });
+
+  it.each([
+    ["0", 4, 3000],
+    ["60", 4, 180000],
+    ["61", 3, 122000],
+  ] as const)(
+    "bounds repeated rate limits with Retry-After %s by retries and total wait",
+    async (retryAfter, requests, waitedMs) => {
+      const f = await fixture({
+        error: { status: 429, code: "rate_limit_exceeded", retryAfter },
+      });
+      vi.useFakeTimers();
+      const start = Date.now();
+      const result = new ResumableSourceUpload({ api: f.api, uploadId: id })
+        .run({ ...runOptions, retryRateLimits: true })
+        .catch((error: unknown) => error);
+      await vi.runAllTimersAsync();
+      expect(await result).toMatchObject({ status: 429 });
+      expect(f.requests).toHaveLength(requests);
+      expect(Date.now() - start).toBe(waitedMs);
+    },
+  );
+
+  it.each([NaN, -1, Infinity])(
+    "refuses an invalid injected retry duration %s",
+    async (seconds) => {
+      const f = await fixture();
+      f.fetchMock.mockRejectedValue(
+        new UploadFailure("rate_limit_exceeded", 429, seconds),
+      );
+      await expect(
+        new ResumableSourceUpload({ api: f.api, uploadId: id }).run({
+          ...runOptions,
+          retryRateLimits: true,
+        }),
+      ).rejects.toMatchObject({ status: 429 });
+      expect(f.fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("pauses immediately while waiting and does not send a delayed retry", async () => {
+    const f = await fixture({
+      error: { status: 429, code: "rate_limit_exceeded", retryAfter: "60" },
+    });
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const task = new ResumableSourceUpload({ api: f.api, uploadId: id });
+    const result = task
+      .run({
+        ...runOptions,
+        retryRateLimits: true,
+        signal: controller.signal,
+        onProgress: progress,
+      })
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "waiting" }),
+    );
+    controller.abort();
+    expect(await result).toMatchObject({ code: "upload_paused" });
+    await vi.runAllTimersAsync();
+    expect(f.requests).toHaveLength(1);
+    expect(task.uploadId).toBe(id);
+  });
+
+  it("resets the wait budget after acknowledged progress instead of limiting document length", async () => {
+    const options = {
+      file: fakePdf(20),
+      prefix: 20,
+      status: "pending" as const,
+      neverComplete: true,
+    };
+    const f = await fixture(options);
+    const serve = f.fetchMock.getMockImplementation()!;
+    let attempts = 0;
+    f.fetchMock.mockImplementation(async (input, init) => {
+      attempts += 1;
+      if (attempts % 4 !== 0)
+        return httpFailure(429, "rate_limit_exceeded", { "Retry-After": "60" });
+      options.neverComplete = attempts === 4;
+      return serve(input, init);
+    });
+    vi.useFakeTimers();
+    const result = new ResumableSourceUpload({ api: f.api, uploadId: id }).run({
+      ...runOptions,
+      retryRateLimits: true,
+    });
+    await vi.runAllTimersAsync();
+    expect((await result).status).toBe("completed");
+    expect(attempts).toBe(8);
+    expect(f.requests.map((request) => request.method)).toEqual(["GET", "GET"]);
+  });
+});
+
 describe("upload recovery and cancellation", () => {
   it("preserves a request checkpoint across a failed lookup and resolves it only after a successful GET", async () => {
     const f = await fixture({ file: fakePdf(20), requestId });

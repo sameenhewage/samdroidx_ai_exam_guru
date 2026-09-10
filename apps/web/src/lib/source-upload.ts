@@ -16,10 +16,11 @@ export type UploadMetadata = Omit<
 type ReceiptPage = components["schemas"]["SourceUploadChunkPageResponse"];
 
 export type UploadProgress = {
-  phase: "creating" | "checking" | "uploading" | "finishing";
+  phase: "creating" | "checking" | "uploading" | "finishing" | "waiting";
   uploadedBytes: number;
   totalBytes: number;
   checkedBytes?: number;
+  retryAfterSeconds?: number;
 };
 type RunOptions = {
   signal?: AbortSignal;
@@ -28,6 +29,7 @@ type RunOptions = {
   onCreating?: (uncertain: boolean) => void;
   pollIntervalMs?: number;
   maxPolls?: number;
+  retryRateLimits?: boolean;
 };
 
 export class UploadFailure extends Error {
@@ -252,19 +254,38 @@ export class ResumableSourceUpload {
 
   private async request<T>(
     send: () => Promise<{ response: Response; data?: T; error?: unknown }>,
-    signal?: AbortSignal,
+    options: RunOptions,
   ): Promise<T> {
-    aborted(signal);
-    try {
-      const result = await send();
-      aborted(signal);
-      if (!result.response.ok || result.error || !result.data)
-        throw failure(result.error, result.response);
-      return result.data;
-    } catch (error) {
-      aborted(signal);
-      if (error instanceof UploadFailure) throw error;
-      throw new UploadFailure("upload_interrupted");
+    let waitedMs = 0;
+    for (let retries = 0; ; retries += 1) {
+      aborted(options.signal);
+      try {
+        const result = await send();
+        aborted(options.signal);
+        if (!result.response.ok || result.error || !result.data)
+          throw failure(result.error, result.response);
+        return result.data;
+      } catch (error) {
+        aborted(options.signal);
+        if (!(error instanceof UploadFailure))
+          throw new UploadFailure("upload_interrupted");
+        const seconds = error.retryAfterSeconds;
+        if (
+          !options.retryRateLimits ||
+          !this.id ||
+          error.status !== 429 ||
+          seconds === undefined ||
+          !Number.isSafeInteger(seconds) ||
+          seconds < 0 ||
+          retries >= 3
+        )
+          throw error;
+        const delayMs = Math.max(1, seconds) * 1000;
+        if (waitedMs + delayMs > 180_000) throw error;
+        waitedMs += delayMs;
+        this.progress(options, "waiting", undefined, delayMs / 1000);
+        await wait(delayMs, options.signal);
+      }
     }
   }
 
@@ -300,7 +321,7 @@ export class ResumableSourceUpload {
             cache: "no-store",
             signal: options.signal,
           }),
-        options.signal,
+        options,
       ),
       options,
     );
@@ -320,7 +341,7 @@ export class ResumableSourceUpload {
           cache: "no-store",
           signal: options.signal,
         }),
-      options.signal,
+      options,
     );
   }
 
@@ -344,12 +365,14 @@ export class ResumableSourceUpload {
     options: RunOptions,
     phase: UploadProgress["phase"],
     checkedBytes?: number,
+    retryAfterSeconds?: number,
   ) {
     options.onProgress?.({
       phase,
       uploadedBytes: this.session?.next_offset ?? 0,
       totalBytes: this.session?.size_bytes ?? this.file?.size ?? 0,
       checkedBytes,
+      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
     });
   }
 
@@ -428,7 +451,7 @@ export class ResumableSourceUpload {
             },
             signal: options.signal,
           }),
-        options.signal,
+        options,
       );
       this.accept(session, options);
       options.onCreating?.(false);
@@ -503,7 +526,7 @@ export class ResumableSourceUpload {
                 bodySerializer: () => bytes,
                 signal: options.signal,
               }),
-            options.signal,
+            options,
           );
           if (result.next_offset !== offset + size)
             throw new UploadFailure("upload_changed");
@@ -549,7 +572,7 @@ export class ResumableSourceUpload {
                     signal: options.signal,
                   },
                 ),
-              options.signal,
+              options,
             ),
             options,
           );

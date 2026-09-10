@@ -342,6 +342,7 @@ type FixtureOptions = {
   throwOnUpload?: boolean;
   interruptChunk?: boolean;
   pauseChunk?: boolean;
+  rateLimitChunk?: boolean;
   uploadStatus?: number;
   lookupStatus?: number;
   savedUpload?: UploadSession;
@@ -637,6 +638,16 @@ function fixtureApi(options: FixtureOptions = {}) {
             next_receipt_offset: null,
           });
         if (request.method === "PUT") {
+          if (options.rateLimitChunk && !chunkInterrupted) {
+            chunkInterrupted = true;
+            return Response.json(
+              { detail: { code: "rate_limit_exceeded" } },
+              {
+                status: 429,
+                headers: { "Retry-After": "2" },
+              },
+            );
+          }
           const bytes = await request.arrayBuffer();
           if (options.interruptChunk && !chunkInterrupted) {
             chunkInterrupted = true;
@@ -2799,6 +2810,79 @@ describe("MaterialsLibrary", () => {
     );
     expect(creates).toHaveLength(2);
     expect(await creates[1].json()).toEqual(body);
+  });
+
+  it("waits visibly for upload backpressure and continues without another teacher action", async () => {
+    const { requests } = await renderLibrary("admin", { rateLimitChunk: true });
+    const dialog = await openWizardAtPdfStep();
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\nbackpressure"], "backpressure.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    expect(
+      await within(dialog).findByText("Waiting to continue upload…"),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "Pause upload" }),
+    ).toBeEnabled();
+    await screen.findByRole(
+      "link",
+      { name: "Open uploaded material" },
+      { timeout: 4000 },
+    );
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === "POST" && request.url.endsWith("/source-uploads"),
+      ),
+    ).toHaveLength(1);
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      2,
+    );
+  });
+
+  it("stops promising automatic continuation after a teacher pauses during backpressure", async () => {
+    const { requests } = await renderLibrary("admin", { rateLimitChunk: true });
+    const dialog = await openWizardAtPdfStep();
+    fireEvent.change(within(dialog).getByLabelText("PDF file"), {
+      target: {
+        files: [
+          new File(["%PDF-1.7\npaused"], "pause-wait.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
+    });
+    await continueWizard(dialog);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Upload material" }),
+    );
+    await within(dialog).findByText("Waiting to continue upload…");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Pause upload" }),
+    );
+    await within(dialog).findByRole("alert");
+    expect(
+      within(dialog).queryByText(/will continue automatically/),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Upload paused",
+    );
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      1,
+    );
+    expect(
+      JSON.parse(localStorage.getItem(UPLOAD_CHECKPOINT_KEY)!),
+    ).toMatchObject({ uploadIds: [ids.uploadSession] });
   });
 
   it("continues an interrupted chunk from the same saved session without recreating or changing reviewed metadata", async () => {

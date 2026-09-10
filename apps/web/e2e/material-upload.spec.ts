@@ -231,6 +231,133 @@ test("real API: unassigned Sinhala descriptions can be corrected without changin
   });
 });
 
+for (const pauseDuringWait of [false, true]) {
+  test(`real API: resumable upload backpressure (${pauseDuringWait ? "pause and resume" : "automatic continuation"}) preserves one source and exact bytes`, async ({
+    page,
+  }, testInfo) => {
+    const retrySeconds = pauseDuringWait ? 5 : 2;
+    const headers = await attestedAdmin(page);
+    const filename = `Backpressure-${randomUUID().slice(0, 8)}.pdf`;
+    const bytes = pdf(filename);
+    const session = await seedSession(page, headers, filename, bytes);
+    const attempts: { at: number; offset: string | null }[] = [];
+    let extraCreates = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/v1/admin/source-uploads"
+      )
+        extraCreates += 1;
+    });
+    await page.route(
+      `**/api/v1/admin/source-uploads/${session.id}/chunks?*`,
+      async (route) => {
+        if (route.request().method() !== "PUT") return route.continue();
+        attempts.push({
+          at: Date.now(),
+          offset: new URL(route.request().url()).searchParams.get("offset"),
+        });
+        if (attempts.length === 1)
+          return route.fulfill({
+            status: 429,
+            headers: {
+              "Retry-After": String(retrySeconds),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ detail: { code: "rate_limit_exceeded" } }),
+          });
+        await route.continue();
+      },
+    );
+    const dialog = await storeRecoveryLink(page, session.id);
+    await dialog.getByLabel("Original PDF").setInputFiles({
+      name: filename,
+      mimeType: "application/pdf",
+      buffer: bytes,
+    });
+    await dialog
+      .getByRole("button", { name: "Resume upload", exact: true })
+      .click();
+    await expect(
+      dialog.getByText("Waiting to continue upload…", { exact: true }),
+    ).toBeVisible();
+    const pause = dialog.getByRole("button", {
+      name: "Pause upload",
+      exact: true,
+    });
+    await expect(pause).toBeEnabled();
+    const style = await pause.evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d")!;
+      const luminance = (color: string) => {
+        context.fillStyle = color;
+        context.fillRect(0, 0, 1, 1);
+        const channels = [...context.getImageData(0, 0, 1, 1).data]
+          .slice(0, 3)
+          .map((value) => {
+            const channel = value / 255;
+            return channel <= 0.04045
+              ? channel / 12.92
+              : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+        return (
+          channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+        );
+      };
+      const computed = getComputedStyle(element);
+      const foreground = luminance(computed.color);
+      const background = luminance(computed.backgroundColor);
+      return {
+        cursor: computed.cursor,
+        contrast:
+          (Math.max(foreground, background) + 0.05) /
+          (Math.min(foreground, background) + 0.05),
+      };
+    });
+    expect(style.cursor).toBe("pointer");
+    expect(style.contrast).toBeGreaterThanOrEqual(4.5);
+    await testInfo.attach("upload-backpressure", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+    if (pauseDuringWait) {
+      await pause.click();
+      await expect(dialog.getByRole("status")).toContainText("Upload paused");
+      await expect(dialog.getByText(/will continue automatically/)).toHaveCount(
+        0,
+      );
+      await expect
+        .poll(() => Date.now() - attempts[0].at, { timeout: 10000 })
+        .toBeGreaterThanOrEqual(retrySeconds * 1000);
+      expect(attempts).toHaveLength(1);
+      await dialog
+        .getByRole("button", { name: "Resume upload", exact: true })
+        .click();
+    }
+    await expect(
+      page.getByRole("link", { name: "Open uploaded material", exact: true }),
+    ).toBeVisible();
+    expect(attempts).toHaveLength(2);
+    expect(attempts.map((attempt) => attempt.offset)).toEqual(["0", "0"]);
+    expect(attempts[1].at - attempts[0].at).toBeGreaterThanOrEqual(
+      retrySeconds * 1000,
+    );
+    expect(extraCreates).toBe(0);
+    const response = await page.request.get(
+      `/api/v1/admin/source-uploads/${session.id}/chunks?offset=0&limit=64`,
+    );
+    expect(response.status()).toBe(200);
+    expect((await response.json()).receipts).toEqual([
+      {
+        offset: 0,
+        size_bytes: bytes.length,
+        checksum_sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+    ]);
+  });
+}
+
 test("real API: normal Materials resumes only the matching PDF, finishes once, follows its read job and handles deduplication", async ({
   page,
 }) => {

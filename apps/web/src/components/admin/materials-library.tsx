@@ -1174,6 +1174,7 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
       }
       const uploaded = await uploadTask.current.run({
         signal: controller.signal,
+        retryRateLimits: true,
         pollIntervalMs: 500,
         maxPolls: 240,
         onCreating: () => {
@@ -2829,7 +2830,11 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                     ? "Checking the selected PDF against saved progress…"
                     : uploadProgress.phase === "finishing"
                       ? "Finishing upload in Studio…"
-                      : "Uploading PDF…"}
+                      : uploadProgress.phase === "waiting"
+                        ? uploading
+                          ? "Waiting to continue upload…"
+                          : "Upload paused"
+                        : "Uploading PDF…"}
               </p>
               <progress
                 aria-label="PDF upload progress"
@@ -2841,6 +2846,12 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                 {formatBytes(uploadProgress.uploadedBytes)} of{" "}
                 {formatBytes(uploadProgress.totalBytes)} saved.
               </p>
+              {uploading && uploadProgress.phase === "waiting" && (
+                <p>
+                  Studio is busy. Your saved progress is safe and the upload
+                  will continue automatically. You can pause at any time.
+                </p>
+              )}
               {uploadProgress.phase === "checking" && (
                 <p>
                   {formatBytes(uploadProgress.checkedBytes ?? 0)} checked

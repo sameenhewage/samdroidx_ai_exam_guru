@@ -183,6 +183,8 @@ Forward migration to `0038_upload_request_identity` and audited quarantine of 72
 
 The current source-confirmation rules require `source-fidelity-v2/rules-2/` after migration 0040. Older diagnostics cannot authorize new content use merely because they once reported `can_confirm=true`; historical evidence remains intact. Short suspicious legacy carriers are blocked without treating tested valid mixed-language terms as corruption. These heuristics and a more usable bounded review workspace are not OCR-accuracy guarantees or automatic source approval.
 
+Materials now handles acknowledged-upload backpressure without asking a teacher to repeatedly press Continue: it honors bounded `Retry-After` hints, shows a waiting state and supports immediate Pause. Retries keep the same session, part bytes and expected version; missing/invalid/excessive hints and unacknowledged creation still require explicit recovery. Server rate limits and storage quotas are not raised. This does not imply the real large-document ingestion/reading gate is complete.
+
 Actual local Studio/source acceptance is primary. GitHub is secondary source control and regression/security infrastructure, not a runtime dependency. Fix current-change regressions and genuine security/data-integrity failures; classify and document unrelated hosted-runner failures without weakening checks or stopping otherwise safe local product work.
 
 The UI self-hosts Noto Sans Sinhala/Tamil via Fontsource packages `5.3.0`; their licenses ship in `apps/web/public/licenses/`. This identifies the installed packages, not an independently verified official Noto `v3.000` binary. Display fonts do not repair source encoding.
