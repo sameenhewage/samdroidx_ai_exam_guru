@@ -282,7 +282,7 @@ def test_storage_reconciliation_migration_constraints_transitions_and_clean_down
         "enforce_storage_orphan_finding_mutation_trigger",
     }
     assert singleton_count == 1
-    assert revision == "0042_evaluation_references"
+    assert revision == "0043_document_understanding"
 
     async def execute(statement: str, values: dict[str, object]) -> None:
         engine = create_async_engine(database_url)
