@@ -105,10 +105,19 @@ function isSourceContentPath(path: readonly string[]): boolean {
 
 function isSourceImagePath(path: readonly string[]): boolean {
   return (
-    path.length === 5 &&
-    path[2] === "pages" &&
-    ((path[0] === "materials" && path[4] === "image") ||
-      (path[0] === "source-documents" && path[4] === "preview"))
+    (path.length === 5 &&
+      ((path[2] === "pages" &&
+        ((path[0] === "materials" && path[4] === "image") ||
+          (path[0] === "source-documents" && path[4] === "preview"))) ||
+        (path[0] === "source-benchmarks" &&
+          path[2] === "evaluation-previews" &&
+          path[4] === "image"))) ||
+    (path.length === 8 &&
+      path[0] === "materials" &&
+      path[2] === "pages" &&
+      path[4] === "understanding" &&
+      path[5] === "candidates" &&
+      path[7] === "image")
   );
 }
 

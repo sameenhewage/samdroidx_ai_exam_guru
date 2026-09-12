@@ -10,12 +10,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from exam_guru_api.api.dependencies import get_database_session
+from exam_guru_api.api.dependencies import get_database_session, get_object_storage, get_settings
 from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import AuthorizationError, Permission, Principal
 from exam_guru_api.auth.rate_limits import RateLimitScope
-from exam_guru_api.documents.page_images import MAX_SOURCE_PAGE_NUMBER
+from exam_guru_api.core.config import Settings
+from exam_guru_api.documents.fidelity_schemas import ExplicitConfirmation
+from exam_guru_api.documents.page_images import (
+    MAX_SOURCE_PAGE_NUMBER,
+    PageImageError,
+    create_page_image_artifacts,
+)
+from exam_guru_api.documents.understanding_contracts import Key
 from exam_guru_api.documents.understanding_jobs import (
     UnderstandingJobDispatcher,
     UnderstandingJobNotFoundError,
@@ -38,6 +45,7 @@ from exam_guru_api.documents.understanding_verification import (
     TrustedPageKnowledge,
 )
 from exam_guru_api.generation.domain import GenerationAccounting
+from exam_guru_api.infrastructure.object_storage import ObjectStorage
 
 _PRIVATE_HEADERS = {
     "Cache-Control": "private, no-store",
@@ -75,6 +83,17 @@ class UnderstandingJobCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
     request_id: UUID
     expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class UnderstandingVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    candidate_id: UUID
+    expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
+    compared_with_original: ExplicitConfirmation
+    reviewed_region_keys: tuple[Key, ...] = Field(min_length=1, max_length=128)
+    accepted_claim_keys: tuple[Key, ...] = Field(max_length=128)
+    resolved_uncertainty_keys: tuple[Key, ...] = Field(max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
 
 
@@ -116,6 +135,9 @@ router = APIRouter(
 )
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 ReadPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))]
+TrustPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_TRUST))]
+Storage = Annotated[ObjectStorage, Depends(get_object_storage)]
+ApplicationSettings = Annotated[Settings, Depends(get_settings)]
 TriggerPrincipal = Annotated[
     Principal,
     Depends(require_rate_limit(Permission.SOURCE_WRITE, RateLimitScope.DOCUMENT_UNDERSTANDING)),
@@ -153,6 +175,9 @@ async def _run[Result](session: AsyncSession, operation: Callable[[], Awaitable[
     except (UnderstandingConflictError, IntegrityError):
         await session.rollback()
         raise HTTPException(409, detail={"code": "source_understanding_conflict"}) from None
+    except PageImageError as error:
+        await session.rollback()
+        raise HTTPException(error.status_code, detail={"code": error.code}) from None
     except ValueError:
         await session.rollback()
         raise HTTPException(422, detail={"code": "invalid_source_understanding_request"}) from None
@@ -194,6 +219,73 @@ async def get_page_understanding(
             if latest is None
             else UnderstandingJobResponse.model_validate(latest),
         }
+    )
+
+
+@router.get(
+    "/materials/{document_id}/pages/{page_number}/understanding/candidates/{candidate_id}/image",
+    operation_id="get_understanding_candidate_image",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Exact immutable image used by the observation candidate",
+            "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}},
+        }
+    },
+)
+async def get_candidate_image(
+    document_id: UUID,
+    page_number: PageNumber,
+    candidate_id: UUID,
+    principal: ReadPrincipal,
+    session: DatabaseSession,
+    storage: Storage,
+    settings: ApplicationSettings,
+) -> Response:
+    image = await _run(
+        session,
+        lambda: PageUnderstandingService(session).candidate_image(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            candidate_id=candidate_id,
+            storage=storage,
+            artifacts=create_page_image_artifacts(settings),
+        ),
+    )
+    return Response(image, media_type="image/png", headers=_PRIVATE_HEADERS)
+
+
+@router.post(
+    "/materials/{document_id}/pages/{page_number}/understanding/verify",
+    operation_id="verify_source_understanding",
+    response_model=TrustedPageKnowledge,
+)
+async def verify_source_understanding(
+    document_id: UUID,
+    page_number: PageNumber,
+    body: UnderstandingVerifyRequest,
+    principal: TrustPrincipal,
+    session: DatabaseSession,
+    storage: Storage,
+    settings: ApplicationSettings,
+) -> TrustedPageKnowledge:
+    return await _run(
+        session,
+        lambda: PageUnderstandingService(session).verify_against_original(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            candidate_id=body.candidate_id,
+            expected_version=body.expected_version,
+            compared_with_original=body.compared_with_original,
+            reviewed_region_keys=body.reviewed_region_keys,
+            accepted_claim_keys=body.accepted_claim_keys,
+            resolved_uncertainty_keys=body.resolved_uncertainty_keys,
+            reason=body.reason,
+            storage=storage,
+            artifacts=create_page_image_artifacts(settings),
+        ),
     )
 
 

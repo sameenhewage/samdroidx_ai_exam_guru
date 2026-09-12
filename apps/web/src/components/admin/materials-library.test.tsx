@@ -1668,33 +1668,75 @@ describe("MaterialsLibrary", () => {
       "href",
       `/admin/materials/${ids.guide}/review-text`,
     );
+    expect(
+      screen.getByRole("link", {
+        name: /Review page content|පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න/,
+      }),
+    ).toHaveAttribute("href", `/admin/materials/${ids.guide}/review-content`);
     expect(fixture.requests.every((request) => request.method === "GET")).toBe(
       true,
     );
   });
 
   it("owns PDF viewing in-app and requests only the selected page of a 371-page source", async () => {
-    const fixture = fixtureApi({ initialMaterials: [{ ...materials[0], page_count: 371 }] });
+    const fixture = fixtureApi({
+      initialMaterials: [{ ...materials[0], page_count: 371 }],
+    });
     vi.stubGlobal("fetch", fixture.fetchMock);
-    const view = render(<MaterialDetails documentId={ids.syllabus} role="reviewer" />);
-    await screen.findByRole("heading", { level: 1, name: "grade-5-maths-syllabus.pdf" });
+    const view = render(
+      <MaterialDetails documentId={ids.syllabus} role="reviewer" />,
+    );
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "grade-5-maths-syllabus.pdf",
+    });
     expect(view.container.querySelector("iframe, embed, object")).toBeNull();
-    const viewer = screen.getByTitle("Original PDF: grade-5-maths-syllabus.pdf");
+    const viewer = screen.getByTitle(
+      "Original PDF: grade-5-maths-syllabus.pdf",
+    );
     expect(within(viewer).getAllByRole("img")).toHaveLength(1);
-    expect(within(viewer).getByRole("img")).toHaveAttribute("src", `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/1/image`);
+    expect(within(viewer).getByRole("img")).toHaveAttribute(
+      "src",
+      `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/1/image`,
+    );
     fireEvent.click(within(viewer).getByRole("button", { name: "Last page" }));
-    expect(within(viewer).getByRole("img")).toHaveAttribute("src", `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/371/image`);
-    fireEvent.change(within(viewer).getByRole("spinbutton", { name: "Page number" }), { target: { value: "185" } });
+    expect(within(viewer).getByRole("img")).toHaveAttribute(
+      "src",
+      `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/371/image`,
+    );
+    fireEvent.change(
+      within(viewer).getByRole("spinbutton", { name: "Page number" }),
+      { target: { value: "185" } },
+    );
     fireEvent.click(within(viewer).getByRole("button", { name: "Go to page" }));
     expect(within(viewer).getAllByRole("img")).toHaveLength(1);
-    expect(within(viewer).getByRole("img")).toHaveAttribute("src", `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/185/image`);
-    const download = screen.getByRole("link", { name: "Download original PDF" });
+    expect(within(viewer).getByRole("img")).toHaveAttribute(
+      "src",
+      `${window.location.origin}/api/v1/admin/materials/${ids.syllabus}/pages/185/image`,
+    );
+    const download = screen.getByRole("link", {
+      name: "Download original PDF",
+    });
     expect(download).toHaveAttribute("download");
-    expect(download).toHaveAttribute("href", `/api/v1/admin/materials/${ids.syllabus}/original`);
+    expect(download).toHaveAttribute(
+      "href",
+      `/api/v1/admin/materials/${ids.syllabus}/original`,
+    );
     expect(download).not.toHaveAttribute("target", "_blank");
-    expect(screen.getByRole("link", { name: "View PDF" })).toHaveAttribute("href", "#original-pdf-heading");
-    expect(screen.queryByRole("link", { name: /Open original PDF/ })).not.toBeInTheDocument();
-    expect(fixture.requests.every(request => request.method === "GET" && !new URL(request.url).pathname.endsWith("/original"))).toBe(true);
+    expect(screen.getByRole("link", { name: "View PDF" })).toHaveAttribute(
+      "href",
+      "#original-pdf-heading",
+    );
+    expect(
+      screen.queryByRole("link", { name: /Open original PDF/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      fixture.requests.every(
+        (request) =>
+          request.method === "GET" &&
+          !new URL(request.url).pathname.endsWith("/original"),
+      ),
+    ).toBe(true);
   });
 
   it("uses bounded pagination so every material remains discoverable", async () => {

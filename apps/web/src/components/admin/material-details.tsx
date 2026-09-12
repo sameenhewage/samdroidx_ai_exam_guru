@@ -2,9 +2,21 @@
 
 import { createApiClient, type components } from "@exam-guru/api-client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
-import { reviewLanguageKey, savedReviewLanguage, subscribeReviewLanguage, type ReviewLanguage } from "@/lib/review-language";
+import {
+  reviewLanguageKey,
+  savedReviewLanguage,
+  subscribeReviewLanguage,
+  type ReviewLanguage,
+} from "@/lib/review-language";
+import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
 import { sourceViewerCopy } from "./original-page-viewer";
@@ -178,8 +190,14 @@ export function MaterialDetails({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [permissionDenied, setPermissionDenied] = useState(false);
-  const storedLanguage = useSyncExternalStore(subscribeReviewLanguage, savedReviewLanguage, () => null);
-  const [languageChoice, setLanguageChoice] = useState<ReviewLanguage | null>(null);
+  const storedLanguage = useSyncExternalStore(
+    subscribeReviewLanguage,
+    savedReviewLanguage,
+    () => null,
+  );
+  const [languageChoice, setLanguageChoice] = useState<ReviewLanguage | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -286,7 +304,10 @@ export function MaterialDetails({
     : materialTypeLabels[material.material_type];
 
   const hint = material.medium ?? intake?.medium_label ?? "";
-  const language = languageChoice ?? storedLanguage ?? (/^(si|sin|sinhala|සිංහල)(?:[-_]|$)/i.test(hint) ? "si" : "en");
+  const language =
+    languageChoice ??
+    storedLanguage ??
+    (/^(si|sin|sinhala|සිංහල)(?:[-_]|$)/i.test(hint) ? "si" : "en");
   const viewerCopy = sourceViewerCopy(language);
 
   return (
@@ -323,7 +344,26 @@ export function MaterialDetails({
                   : "The PDF is being read. Return later to review the extracted text."}
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
-          <a className={secondaryButton} href="#original-pdf-heading" lang={language}>{viewerCopy.view}</a>
+          <a
+            className={secondaryButton}
+            href="#original-pdf-heading"
+            lang={language}
+          >
+            {viewerCopy.view}
+          </a>
+          <Link
+            className={cn(
+              secondaryButton,
+              "border-slate-950 bg-slate-950 text-white hover:border-slate-800 hover:bg-slate-800",
+            )}
+            href={`/admin/materials/${documentId}/review-content`}
+            prefetch={false}
+            lang={language}
+          >
+            {language === "si"
+              ? "පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න"
+              : "Review page content"}
+          </Link>
           <Link
             className={secondaryButton}
             href={`/admin/materials/${documentId}/review-text`}
@@ -372,12 +412,21 @@ export function MaterialDetails({
             {viewerCopy.download}
           </a>
         </div>
-        <SourceDocumentViewer documentId={documentId} title={material.title} pageCount={material.page_count} language={language}
+        <SourceDocumentViewer
+          documentId={documentId}
+          title={material.title}
+          pageCount={material.page_count}
+          language={language}
           onRetryDetails={() => void load()}
-          onLanguageChange={value => {
+          onLanguageChange={(value) => {
             setLanguageChoice(value);
-            try { window.localStorage.setItem(reviewLanguageKey, value); } catch { return; }
-          }} />
+            try {
+              window.localStorage.setItem(reviewLanguageKey, value);
+            } catch {
+              return;
+            }
+          }}
+        />
       </section>
 
       <section aria-labelledby="material-details-heading" className="mt-8">

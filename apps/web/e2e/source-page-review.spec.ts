@@ -18,7 +18,7 @@ type UnderstandingJob = components["schemas"]["UnderstandingJobResponse"];
 type UnderstandingPage = components["schemas"]["UnderstandingPageResponse"];
 
 // Synthetic ASCII pages prove workflow mechanics, never real-source accuracy.
-function syntheticBook(marker: string, count = 40): Buffer {
+function syntheticBook(marker: string, count = 40, pageText?: string): Buffer {
   const pageIds = Array.from({ length: count }, (_, index) => 4 + index * 2);
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -26,11 +26,14 @@ function syntheticBook(marker: string, count = 40): Buffer {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
   for (const [index, pageId] of pageIds.entries()) {
-    const lines = Array.from(
-      { length: 40 },
-      (_, line) =>
-        `(${marker} page ${index + 1}, line ${line + 1}: 2 + 2 = 4.) Tj T*`,
-    ).join("\n");
+    const lines =
+      pageText === undefined
+        ? Array.from(
+            { length: 40 },
+            (_, line) =>
+              `(${marker} page ${index + 1}, line ${line + 1}: 2 + 2 = 4.) Tj T*`,
+          ).join("\n")
+        : `(${pageText.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)")}) Tj`;
     const stream = `BT /F1 10 Tf 15 TL 30 800 Td\n${lines}\nET`;
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${pageId + 1} 0 R >>`,
@@ -149,6 +152,173 @@ async function expectReadableButton(button: Locator) {
   await expect(button).toHaveCSS("opacity", "1");
   return computed;
 }
+
+test("teacher comparison: exact original image gates explicit structured verification", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await login(page, "admin");
+  expect(
+    await json(
+      await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+    ),
+  ).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `TeacherComparison-${randomUUID().slice(0, 8)}`;
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: syntheticBook(
+            marker,
+            1,
+            "Synthetic visual-understanding fixture.",
+          ),
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "English",
+          subject_label: "Synthetic workflow only",
+        }),
+      },
+    }),
+    201,
+  );
+  const read = await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(`/api/v1/admin/source-read-jobs/${read.id}`),
+          )
+        ).status,
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+  await page.goto(`/admin/materials/${source.id}`);
+  await page
+    .getByRole("link", { name: "Review page content", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/materials/${source.id}/review-content$`),
+  );
+  await page.getByRole("button", { name: "English", exact: true }).click();
+  await page.getByRole("button", { name: "Analyze page", exact: true }).click();
+  const path = `/api/v1/admin/materials/${source.id}/pages/1/understanding`;
+  await expect
+    .poll(
+      async () =>
+        (await json<UnderstandingPage>(await page.request.get(path))).latest_job
+          ?.status,
+      { timeout: 45_000 },
+    )
+    .toBe("succeeded");
+  const before = await json<UnderstandingPage>(await page.request.get(path));
+  expect(before.trusted).toBeNull();
+  const images = "**/understanding/candidates/*/image";
+  await page.route(images, (route) => route.abort("failed"));
+  await page.reload();
+  const review = page.getByRole("button", {
+    name: "Review this reading",
+    exact: true,
+  });
+  await expect(
+    page.getByRole("button", { name: "Try image again", exact: true }),
+  ).toBeVisible();
+  await expect(review).toBeDisabled();
+  await expectReadableButton(review);
+  await page.unroute(images);
+  await page
+    .getByRole("button", { name: "Try image again", exact: true })
+    .click();
+  await imageReady(page, 1);
+  await expect(review).toBeEnabled();
+  for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1280, height: 720 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await expect(review).toBeInViewport({ ratio: 1 });
+    await expectReadableButton(review);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(viewport.width);
+  }
+  await review.hover();
+  expect((await expectReadableButton(review)).cursor).toBe("pointer");
+  await review.focus();
+  await expectReadableButton(review);
+  await review.click();
+  const confirm = page.getByRole("button", {
+    name: "Confirm checked page",
+    exact: true,
+  });
+  await expect(confirm).toBeDisabled();
+  await page
+    .getByRole("checkbox", {
+      name: "I compared this reading with the original page.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("checkbox", {
+      name: "I checked every visible source detail.",
+      exact: true,
+    })
+    .check();
+  for (const uncertainty of before.candidate!.content.uncertainties) {
+    await page
+      .getByRole("checkbox", { name: uncertainty.reason, exact: true })
+      .check();
+  }
+  await page
+    .getByRole("textbox", {
+      name: "Reason for accepting this reading",
+      exact: true,
+    })
+    .fill(
+      "Compared the exact synthetic fixture; this is workflow evidence, not real-source accuracy.",
+    );
+  await expect(confirm).toBeEnabled();
+  await expect(confirm).toBeInViewport({ ratio: 1 });
+  await expectReadableButton(confirm);
+  await confirm.click();
+  await expect(
+    page.getByText("Page checked against the original", { exact: true }),
+  ).toBeVisible();
+  const after = await json<UnderstandingPage>(await page.request.get(path));
+  expect(after.trusted?.source.image_sha256).toBe(
+    before.candidate?.source.image_sha256,
+  );
+  expect(after.trusted?.decision.reviewed_region_keys).toEqual(["fixture"]);
+  expect(after.trusted?.decision.accepted_claim_keys).toEqual([]);
+  expect(after.latest_job?.attempts).toBe(1);
+  expect((await workspace(page, source.id)).progress.verified_pages).toBe(0);
+  await page.reload();
+  await expect(
+    page.getByText("Page checked against the original", { exact: true }),
+  ).toBeVisible();
+  await testInfo.attach("structured-review-verified", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+});
 
 test("real worker: visual analysis survives reload without granting source trust", async ({
   page,

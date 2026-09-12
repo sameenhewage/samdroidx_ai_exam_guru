@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import exam_guru_api.api.routes.understanding as routes
 from exam_guru_api.auth.domain import AdminRole, AuthorizationError, Permission, Principal
+from exam_guru_api.documents.page_images import PageImageError
 from exam_guru_api.documents.understanding_jobs import UnderstandingJobNotFoundError
 from exam_guru_api.documents.understanding_runtime import UnderstandingRuntime
 from exam_guru_api.documents.understanding_service import (
@@ -36,6 +37,7 @@ ADMIN = Principal(UUID(int=3001), frozenset({AdminRole.ADMIN}))
             "source_understanding_conflict",
         ),
         (ValueError("private source"), 422, "invalid_source_understanding_request"),
+        (PageImageError("source_original_unavailable"), 503, "source_original_unavailable"),
     ],
 )
 def test_api_domain_failures_are_rolled_back_and_sanitized(

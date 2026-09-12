@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4, uuid5
 
+import anyio
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from exam_guru_api.auth.domain import Permission, Principal, authorize
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.page_images import SourceCandidateImageMetadata
+from exam_guru_api.documents.page_images import (
+    PageImageArtifacts,
+    PageImageError,
+    SourceCandidateImageMetadata,
+    SourceImageIdentity,
+    SourceImageStorage,
+    open_verified_original,
+)
 from exam_guru_api.documents.understanding_contracts import UnderstandingModel, _canonical_bytes
 from exam_guru_api.documents.understanding_models import (
     DocumentUnderstandingRunModel,
@@ -408,6 +416,87 @@ class PageUnderstandingService:
             report,
             trusted,
             page.active_job_id,
+        )
+
+    async def candidate_image(
+        self,
+        *,
+        principal: Principal,
+        document_id: UUID,
+        page_number: int,
+        candidate_id: UUID,
+        storage: SourceImageStorage,
+        artifacts: PageImageArtifacts | None,
+    ) -> bytes:
+        authorize(principal, Permission.SOURCE_READ)
+        source = await self._source(document_id, page_number, write=False)
+        row = await self.session.get(ObservationCandidateModel, candidate_id)
+        if row is None or row.document_id != document_id or row.page_number != page_number:
+            raise UnderstandingSourceError("source_understanding_candidate_not_found")
+        candidate = _candidate(row)
+        if candidate.source.source_sha256 != source.checksum_sha256:
+            raise PageImageError("source_original_unavailable")
+        run = await self.session.get(DocumentUnderstandingRunModel, candidate.run_id)
+        if run is None or artifacts is None:
+            raise PageImageError("source_page_image_artifact_unavailable")
+        identity = SourceImageIdentity(
+            source.id,
+            source.checksum_sha256,
+            source.object_key,
+            source.size_bytes,
+            source.original_page_count,
+            source.original_filename,
+        )
+        try:
+            parsed = SourceCandidateImageMetadata.model_validate(run.image_metadata)
+        except (TypeError, ValueError):
+            raise PageImageError("source_page_image_metadata_invalid") from None
+        if parsed.sha256 != candidate.source.image_sha256:
+            raise PageImageError("source_page_image_metadata_invalid")
+        metadata = parsed.model_dump(mode="json")
+
+        def read_image() -> bytes:
+            with open_verified_original(storage, identity):
+                return artifacts.read(metadata, source=identity, page_number=page_number)
+
+        return await anyio.to_thread.run_sync(read_image)
+
+    async def verify_against_original(
+        self,
+        *,
+        principal: Principal,
+        document_id: UUID,
+        page_number: int,
+        candidate_id: UUID,
+        expected_version: int,
+        compared_with_original: bool,
+        reviewed_region_keys: tuple[str, ...],
+        accepted_claim_keys: tuple[str, ...],
+        resolved_uncertainty_keys: tuple[str, ...],
+        reason: str,
+        storage: SourceImageStorage,
+        artifacts: PageImageArtifacts | None,
+    ) -> TrustedPageKnowledge:
+        authorize(principal, Permission.SOURCE_TRUST)
+        await self.candidate_image(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            candidate_id=candidate_id,
+            storage=storage,
+            artifacts=artifacts,
+        )
+        return await self.verify(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            candidate_id=candidate_id,
+            expected_version=expected_version,
+            compared_with_original=compared_with_original,
+            reviewed_region_keys=reviewed_region_keys,
+            accepted_claim_keys=accepted_claim_keys,
+            resolved_uncertainty_keys=resolved_uncertainty_keys,
+            reason=reason,
         )
 
     async def verify(

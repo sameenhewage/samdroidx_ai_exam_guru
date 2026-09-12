@@ -639,29 +639,100 @@ describe("admin API proxy browser request boundary", () => {
     expect(forwarded.get("Authorization")).toBe("Bearer server-session-token");
   });
 
-  it("rejects active image content on the new page-image path", async () => {
-    adminSession();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response("<script>bad</script>", {
-            headers: { "Content-Type": "text/html" },
-          }),
-      ),
-    );
-    const response = await GET(
-      new NextRequest(
-        `http://localhost:3000/api/v1/admin/materials/${uploadId}/pages/1/image`,
-      ),
-      {
-        params: Promise.resolve({
-          path: ["materials", uploadId, "pages", "1", "image"],
-        }),
-      },
-    );
-    expect(response.status).toBe(502);
-  });
+  it.each([
+    { path: ["materials", uploadId, "pages", "1", "image"] },
+    {
+      path: [
+        "materials",
+        uploadId,
+        "pages",
+        "1",
+        "understanding",
+        "candidates",
+        uploadId,
+        "image",
+      ],
+    },
+    {
+      path: [
+        "source-benchmarks",
+        uploadId,
+        "evaluation-previews",
+        uploadId,
+        "image",
+      ],
+    },
+  ])(
+    "rejects active image content on each source-comparison path: $path",
+    async ({ path }) => {
+      adminSession();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response("<script>bad</script>", {
+              headers: { "Content-Type": "text/html" },
+            }),
+        ),
+      );
+      const response = await GET(
+        new NextRequest(`http://localhost:3000/api/v1/admin/${path.join("/")}`),
+        { params: Promise.resolve({ path }) },
+      );
+      expect(response.status).toBe(502);
+    },
+  );
+
+  it.each([
+    {
+      path: [
+        "materials",
+        uploadId,
+        "pages",
+        "1",
+        "understanding",
+        "candidates",
+        uploadId,
+        "image",
+      ],
+    },
+    {
+      path: [
+        "source-benchmarks",
+        uploadId,
+        "evaluation-previews",
+        uploadId,
+        "image",
+      ],
+    },
+  ])(
+    "keeps comparison image responses private and sandboxed: $path",
+    async ({ path }) => {
+      adminSession();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response("image fixture", {
+              headers: { "Content-Type": "image/png" },
+            }),
+        ),
+      );
+      const response = await GET(
+        new NextRequest(`http://localhost:3000/api/v1/admin/${path.join("/")}`),
+        { params: Promise.resolve({ path }) },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Cross-Origin-Resource-Policy")).toBe(
+        "same-origin",
+      );
+      expect(response.headers.get("Content-Security-Policy")).toContain(
+        "sandbox",
+      );
+      expect(response.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    },
+  );
 
   it("uses validated configuration, a bounded signal, and disabled redirects", async () => {
     vi.mocked(cookies).mockResolvedValue({
