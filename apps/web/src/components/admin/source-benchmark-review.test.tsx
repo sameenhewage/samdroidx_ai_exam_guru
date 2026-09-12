@@ -36,6 +36,7 @@ function benchmark(
       state:
         index === 0 ? "verified" : index === 1 ? "excluded" : "needs_review",
       ground_truth_versions: 0,
+      evaluation_reference_versions: 0,
     })),
     adjudicated_pages: 0,
     pending_pages: pageCount,
@@ -46,7 +47,9 @@ function benchmark(
 
 function fixtureApi(
   sets: Benchmark[] = [benchmark()],
-  handle?: (request: Request) => Response | Promise<Response> | undefined,
+  handle?: (
+    request: Request,
+  ) => Response | Promise<Response | undefined> | undefined,
 ) {
   const requests: Request[] = [];
   vi.stubGlobal(
@@ -55,7 +58,7 @@ function fixtureApi(
       const request =
         input instanceof Request ? input : new Request(input, init);
       requests.push(request.clone());
-      const response = handle?.(request);
+      const response = await handle?.(request);
       if (response) return response;
       const path = new URL(request.url).pathname;
       if (request.method === "GET" && path === basePath)
@@ -86,6 +89,133 @@ afterEach(() => {
 });
 
 describe("human source review queue", () => {
+  it("opens a separate human reference editor and saves without confirming the failed source", async () => {
+    const selected = benchmark(
+      {
+        evaluation_references: {
+          selected_pages: 1,
+          referenced_pages: 0,
+          pending_pages: 1,
+          evaluation_only: true,
+        },
+      },
+      1,
+    );
+    selected.pages[0].state = "failed";
+    const previewId = "00000000-0000-0000-0000-000000000884";
+    const path = `${basePath}/${benchmarkId}/pages/${documentId}/1`;
+    const preview: components["schemas"]["EvaluationPreviewResponse"] = {
+      id: previewId,
+      benchmark_id: benchmarkId,
+      document_id: documentId,
+      document_title: selected.pages[0].document_title,
+      page_number: 1,
+      source_checksum_sha256: "a".repeat(64),
+      image_sha256: "b".repeat(64),
+      image_width: 800,
+      image_height: 1200,
+      preview_url: `${basePath}/${benchmarkId}/evaluation-previews/${previewId}/image`,
+      language: "en",
+      reference_version: 0,
+      latest_reference: null,
+      evaluation_only: true,
+    };
+    const requests = fixtureApi([selected], async (request) => {
+      const pathname = new URL(request.url).pathname;
+      if (
+        request.method === "POST" &&
+        pathname === `${path}/evaluation-preview`
+      )
+        return Response.json(preview, { status: 201 });
+      if (
+        request.method === "POST" &&
+        pathname === `${path}/evaluation-references`
+      ) {
+        const body = await request.json();
+        expect(body).toMatchObject({
+          preview_id: previewId,
+          expected_version: 0,
+          text: "The original value is 4.",
+          compared_with_original: true,
+          human_reviewed: true,
+        });
+        selected.evaluation_references = {
+          selected_pages: 1,
+          referenced_pages: 1,
+          pending_pages: 0,
+          evaluation_only: true,
+        };
+        return Response.json(
+          {
+            id: "00000000-0000-0000-0000-000000000885",
+            preview_id: previewId,
+            benchmark_id: benchmarkId,
+            document_id: documentId,
+            page_number: 1,
+            version: 1,
+            text: body.text,
+            normalized_text: body.text,
+            text_sha256: "c".repeat(64),
+            normalized_sha256: "c".repeat(64),
+            blank_reference: false,
+            reviewer_id: "00000000-0000-0000-0000-000000000886",
+            reviewed_at: "2026-09-11T00:00:00Z",
+            reason: body.reason,
+            evaluation_only: true,
+          },
+          { status: 201 },
+        );
+      }
+    });
+    render(<SourceBenchmarkReview role="reviewer" />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Add evaluation reference for page 1 of Original teacher guide.pdf",
+      }),
+    );
+    const editor = await screen.findByRole("region", {
+      name: "Evaluation reference editor",
+    });
+    expect(within(editor).getByLabelText("Reference text")).toHaveValue("");
+    const save = within(editor).getByRole("button", {
+      name: "Save evaluation reference",
+    });
+    expect(save).toBeDisabled();
+    const image = within(editor).getByRole("img", {
+      name: "Original comparison page 1",
+    });
+    Object.defineProperty(image, "naturalWidth", {
+      configurable: true,
+      value: 800,
+    });
+    Object.defineProperty(image, "naturalHeight", {
+      configurable: true,
+      value: 1200,
+    });
+    await act(async () => fireEvent.load(image));
+    fireEvent.change(within(editor).getByLabelText("Reference text"), {
+      target: { value: "The original value is 4." },
+    });
+    fireEvent.change(within(editor).getByLabelText("Reason for reference"), {
+      target: { value: "Reviewed the original page" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("checkbox", {
+        name: /I compared this reference/,
+      }),
+    );
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await within(editor).findByText("Reference saved for evaluation only.");
+    expect(
+      requests
+        .filter((request) => request.method === "POST")
+        .map((request) => new URL(request.url).pathname),
+    ).toEqual([`${path}/evaluation-preview`, `${path}/evaluation-references`]);
+    expect(selected.pages[0].state).toBe("failed");
+    expect(selected.adjudicated_pages).toBe(0);
+  });
+
   it("distinguishes selected, pending and excluded candidates from actual human-confirmed references", async () => {
     const requests = fixtureApi();
     const view = render(<SourceBenchmarkReview role="admin" />);

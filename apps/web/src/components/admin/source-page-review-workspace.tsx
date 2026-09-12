@@ -281,10 +281,10 @@ const sinhala: Copy = {
   diagnostics: "කියවීමේ තාක්ෂණික විස්තර",
 };
 
-type ReviewLanguage = "en" | "si";
-const reviewLanguageKey = "exam-guru:review-language:v1";
+export type ReviewLanguage = "en" | "si";
+export const reviewLanguageKey = "exam-guru:review-language:v1";
 
-function savedReviewLanguage(): ReviewLanguage | null {
+export function savedReviewLanguage(): ReviewLanguage | null {
   try {
     const language = window.localStorage.getItem(reviewLanguageKey);
     return language === "si" || language === "en" ? language : null;
@@ -293,7 +293,7 @@ function savedReviewLanguage(): ReviewLanguage | null {
   }
 }
 
-function subscribeReviewLanguage(onChange: () => void) {
+export function subscribeReviewLanguage(onChange: () => void) {
   window.addEventListener("storage", onChange);
   return () => window.removeEventListener("storage", onChange);
 }

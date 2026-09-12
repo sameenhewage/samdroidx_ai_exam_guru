@@ -22,8 +22,11 @@ from exam_guru_api.documents.fidelity_models import (
     PageTextCandidateModel,
     SourceBenchmarkModel,
     SourceBenchmarkPageModel,
+    SourceEvaluationPreviewModel,
+    SourceEvaluationReferenceModel,
 )
 from exam_guru_api.documents.fidelity_schemas import (
+    EvaluationReferenceProgress,
     PageConfirmRequest,
     PageEditRequest,
     PageExcludeRequest,
@@ -604,6 +607,29 @@ async def _benchmark_views(
         .group_by(truth.benchmark_id, truth.document_id, truth.page_number)
         .subquery()
     )
+    evaluation = SourceEvaluationReferenceModel
+    evaluation_versions = (
+        select(
+            evaluation.benchmark_id,
+            evaluation.document_id,
+            evaluation.page_number,
+            func.count().label("versions"),
+        )
+        .join(
+            SourceEvaluationPreviewModel, SourceEvaluationPreviewModel.id == evaluation.preview_id
+        )
+        .join(
+            SourceDocumentModel,
+            and_(
+                SourceDocumentModel.id == evaluation.document_id,
+                SourceDocumentModel.checksum_sha256
+                == SourceEvaluationPreviewModel.source_checksum_sha256,
+            ),
+        )
+        .where(evaluation.benchmark_id.in_(identifiers))
+        .group_by(evaluation.benchmark_id, evaluation.document_id, evaluation.page_number)
+        .subquery()
+    )
     records = await session.execute(
         select(
             membership.benchmark_id,
@@ -613,6 +639,7 @@ async def _benchmark_views(
             membership.categories,
             func.coalesce(state.state, "pending").label("state"),
             func.coalesce(references.c.versions, 0).label("versions"),
+            func.coalesce(evaluation_versions.c.versions, 0).label("evaluation_versions"),
         )
         .join(SourceDocumentModel, SourceDocumentModel.id == membership.document_id)
         .outerjoin(
@@ -631,6 +658,14 @@ async def _benchmark_views(
                 state.state == "verified",
             ),
         )
+        .outerjoin(
+            evaluation_versions,
+            and_(
+                evaluation_versions.c.benchmark_id == membership.benchmark_id,
+                evaluation_versions.c.document_id == membership.document_id,
+                evaluation_versions.c.page_number == membership.page_number,
+            ),
+        )
         .where(membership.benchmark_id.in_(identifiers))
         .order_by(membership.document_id, membership.page_number)
     )
@@ -646,11 +681,15 @@ async def _benchmark_views(
                 categories=[_escape_display(category) for category in record.categories],
                 state=record.state,
                 ground_truth_versions=record.versions,
+                evaluation_reference_versions=record.evaluation_versions,
             )
         )
     responses = []
     for benchmark in benchmarks:
         reviewed = sum(page.ground_truth_versions > 0 for page in pages[benchmark.id])
+        evaluation_reviewed = sum(
+            page.evaluation_reference_versions > 0 for page in pages[benchmark.id]
+        )
         responses.append(
             SourceBenchmarkResponse(
                 id=benchmark.id,
@@ -662,6 +701,11 @@ async def _benchmark_views(
                 accuracy_status="references_available"
                 if reviewed
                 else "awaiting_human_adjudication",
+                evaluation_references=EvaluationReferenceProgress(
+                    selected_pages=len(pages[benchmark.id]),
+                    referenced_pages=evaluation_reviewed,
+                    pending_pages=len(pages[benchmark.id]) - evaluation_reviewed,
+                ),
             )
         )
     return responses

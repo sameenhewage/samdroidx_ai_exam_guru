@@ -13,6 +13,7 @@ import {
 import { Button } from "react-aria-components";
 
 import type { AdminRole } from "./admin-header";
+import { SourceEvaluationReferenceEditor } from "./source-evaluation-reference-editor";
 
 type Benchmark = components["schemas"]["SourceBenchmarkResponse"];
 
@@ -53,6 +54,12 @@ export function SourceBenchmarkReview({
   const [sets, setSets] = useState<Benchmark[]>([]);
   const [selectedId, setSelectedId] = useState(initialBenchmarkId);
   const [benchmark, setBenchmark] = useState<Benchmark | null>(null);
+  const [referencePreview, setReferencePreview] = useState<
+    components["schemas"]["EvaluationPreviewResponse"] | null
+  >(null);
+  const [preparingReference, setPreparingReference] = useState(false);
+  const [referenceError, setReferenceError] = useState<number | null>(null);
+  const referenceController = useRef<AbortController | null>(null);
   const [catalogOffset, setCatalogOffset] = useState(0);
   const [pageOffset, setPageOffset] = useState(0);
   const [listLoading, setListLoading] = useState(true);
@@ -156,6 +163,7 @@ export function SourceBenchmarkReview({
       window.clearTimeout(timer);
       listRequest.current += 1;
       listController.current?.abort();
+      referenceController.current?.abort();
     };
   }, [loadSets]);
 
@@ -175,6 +183,82 @@ export function SourceBenchmarkReview({
       : null;
   const pages =
     visibleBenchmark?.pages.slice(pageOffset, pageOffset + pageLimit) ?? [];
+
+  async function openReference(selected: Benchmark["pages"][number]) {
+    if (!visibleBenchmark?.evaluation_references || referenceController.current)
+      return;
+    const controller = new AbortController();
+    referenceController.current = controller;
+    setPreparingReference(true);
+    setReferenceError(null);
+    const benchmarkId = visibleBenchmark.id;
+    try {
+      const result = await api.POST(
+        "/api/v1/admin/source-benchmarks/{benchmark_id}/pages/{document_id}/{page_number}/evaluation-preview",
+        {
+          params: {
+            path: {
+              benchmark_id: benchmarkId,
+              document_id: selected.document_id,
+              page_number: selected.page_number,
+            },
+          },
+          signal: controller.signal,
+        },
+      );
+      if (controller.signal.aborted) return;
+      const preview = result.data;
+      if (result.error || !preview) {
+        setReferenceError(result.response.status);
+        return;
+      }
+      if (
+        preview.benchmark_id !== benchmarkId ||
+        preview.document_id !== selected.document_id ||
+        preview.page_number !== selected.page_number ||
+        preview.evaluation_only !== true ||
+        preview.preview_url !==
+          `/api/v1/admin/source-benchmarks/${benchmarkId}/evaluation-previews/${preview.id}/image`
+      ) {
+        setReferenceError(502);
+        return;
+      }
+      setReferencePreview(preview);
+    } catch {
+      if (!controller.signal.aborted) setReferenceError(0);
+    } finally {
+      if (referenceController.current === controller) {
+        referenceController.current = null;
+        setPreparingReference(false);
+      }
+    }
+  }
+
+  if (referencePreview)
+    return (
+      <SourceEvaluationReferenceEditor
+        key={referencePreview.id}
+        preview={referencePreview}
+        onSaved={() => void loadBenchmark(referencePreview.benchmark_id)}
+        onClose={() => setReferencePreview(null)}
+      />
+    );
+  if (preparingReference)
+    return (
+      <section className="mx-auto max-w-4xl space-y-4 p-6">
+        <p role="status">Preparing the original comparison image…</p>
+        <Button
+          className={buttonClass}
+          onPress={() => {
+            referenceController.current?.abort();
+            referenceController.current = null;
+            setPreparingReference(false);
+          }}
+        >
+          Back to review set
+        </Button>
+      </section>
+    );
 
   return (
     <section
@@ -198,7 +282,9 @@ export function SourceBenchmarkReview({
         </p>
         {role === "reviewer" && (
           <p className="mt-2 text-sm font-semibold">
-            Reviewer access is read-only.
+            {visibleBenchmark?.evaluation_references
+              ? "Reviewers can save evaluation-only references. Source-page confirmation remains restricted."
+              : "Reviewer access is read-only."}
           </p>
         )}
       </header>
@@ -292,6 +378,15 @@ export function SourceBenchmarkReview({
         </div>
       )}
 
+      {referenceError !== null && (
+        <p
+          role="alert"
+          className="rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm"
+        >
+          The original comparison could not be prepared. No reference was saved.
+          Check your access and the source image, then try again.
+        </p>
+      )}
       {detailLoading && <p role="status">Loading selected pages…</p>}
       {detailError !== null && (
         <div
@@ -356,6 +451,25 @@ export function SourceBenchmarkReview({
               nor a saved candidate establishes accuracy.
             </p>
           </section>
+          {visibleBenchmark.evaluation_references && (
+            <section
+              aria-label="Evaluation reference progress"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+            >
+              <h2 className="font-semibold">Evaluation-only references</h2>
+              <p className="mt-2">
+                {visibleBenchmark.evaluation_references.referenced_pages} of{" "}
+                {visibleBenchmark.evaluation_references.selected_pages} selected
+                pages have a saved human evaluation reference.{" "}
+                {visibleBenchmark.evaluation_references.pending_pages} remain.
+              </p>
+              <p className="mt-2">
+                These references measure readings only. They do not confirm
+                source pages, clear reading failures, or make content ready for
+                AI. Content-use reference counts above remain separate.
+              </p>
+            </section>
+          )}
           {pages.length ? (
             <>
               <nav
@@ -446,6 +560,23 @@ export function SourceBenchmarkReview({
                           >
                             Compare page
                           </Link>
+                          {visibleBenchmark.evaluation_references && (
+                            <div className="mt-2 grid gap-1">
+                              <p>
+                                Evaluation reference versions:{" "}
+                                {page.evaluation_reference_versions ?? 0}
+                              </p>
+                              <Button
+                                className={buttonClass}
+                                aria-label={`${page.evaluation_reference_versions ? "Edit" : "Add"} evaluation reference for page ${page.page_number} of ${page.document_title}`}
+                                onPress={() => void openReference(page)}
+                              >
+                                {page.evaluation_reference_versions
+                                  ? "Edit evaluation reference"
+                                  : "Add evaluation reference"}
+                              </Button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}

@@ -46,6 +46,8 @@ Earlier live `text-embedding-3-small`, `gpt-5.6-luna` generation and `gpt-5.6-te
 
 The [historical fixed benchmark review queue](http://localhost:3000/admin/materials/benchmark-review?benchmark_id=6d050ee1-141c-4424-88a9-a6dbff2af9ec) belongs to that earlier runtime and is not present in the newly inspected Desktop database. Establish a checksum-bound representative queue in the actual Studio before presenting it as a current reviewer handoff. Compare every selected page with its original image/PDF; retain raw candidate and failure history, save corrections as new candidates, and confirm only the exact current version after comparison. Exclude unsuitable pages explicitly with a reason. Do not substitute an OCR/LLM rewrite or a legacy reviewed flag for human ground truth. Catalogue metadata may be reviewed independently; confirming either gate must not manufacture the other.
 
+For pages whose reading cannot yet be confirmed, the independent **Add evaluation reference** workflow collects a person's transcription against the original image without changing operational source trust. Its editor starts blank or from the previous human reference and retains drafts through revision conflicts. Report its evaluation-only counts separately: they do not populate legacy source-confirmed ground truth, clear visual/Maths failures, admit curriculum or make content Ready for AI. A fixed real-source selection and genuinely human-written references remain prerequisites for accuracy measurement; synthetic workflow tests do not satisfy them.
+
 ## V1 scope
 
 Teacher-facing V1 scope:

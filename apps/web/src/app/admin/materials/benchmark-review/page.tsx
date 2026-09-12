@@ -24,8 +24,10 @@ export default async function SourceBenchmarkReviewPage({
     typeof query.benchmark_id === "string" ? query.benchmark_id : undefined;
 
   return (
-    <main className="min-h-screen bg-[#f3f4ef] text-slate-950">
-      <AdminHeader current="materials" role={role} />
+    <main className="min-h-screen bg-[#f3f4ef] text-slate-950 lg:[&:has([data-source-review])]:flex lg:[&:has([data-source-review])]:h-dvh lg:[&:has([data-source-review])]:min-h-0 lg:[&:has([data-source-review])]:flex-col lg:[&:has([data-source-review])]:overflow-hidden">
+      <div className="shrink-0">
+        <AdminHeader current="materials" role={role} />
+      </div>
       <SourceBenchmarkReview
         initialBenchmarkId={initialBenchmarkId}
         role={role}

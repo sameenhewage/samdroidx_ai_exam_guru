@@ -225,6 +225,14 @@ Materials PDF/image endpoints require `SOURCE_READ`, retain private/no-store and
 
 Implementation anchors: `documents/resumable_uploads.py`, `documents/page_reading_jobs.py`, `documents/page_reading.py`, `documents/page_images.py` and `api/routes/page_images.py` under `apps/api/src/exam_guru_api/`; browser recovery is in `apps/web/src/lib/source-upload.ts` and `source-upload-checkpoint.ts`.
 
+### 4.7 Independent human evaluation references
+
+A fixed benchmark selection may collect a human transcription even while its operational page reading is failed, unread or otherwise unconfirmable. Migration `0042_evaluation_references` adds private, append-only `source_evaluation_previews` and `source_evaluation_references`; neither table replaces `source_page_ground_truth` or changes page-review state. Preparing a preview requires content-review permission, uses the existing bounded extraction-trigger rate limit, verifies the immutable original and binds an integrity-checked durable image to the exact benchmark/document/page/checksum and reviewer. A declared missing or corrupt image fails closed rather than being regenerated.
+
+Saving requires that reviewer's prepared preview, the current reference version, an explicit original-image comparison and human-review attestation, and a reason. Keep the exact UTF-8 transcription (at most 100,000 characters / 400,000 bytes), a separate NFC view and both hashes. An empty reference requires an explicit blank-page declaration. PostgreSQL serializes source identity/quarantine and reference revisions, requires matching audit evidence, and refuses update, deletion, truncation or a downgrade that would discard this evidence. All reads remain permission-checked, private/no-store and same-origin; references and image artifacts remain private Studio recovery data.
+
+The teacher editor starts blank or from an earlier human reference, never from machine output. It keeps the original and reference in bounded comparison panes, requires the original image to load before saving, and preserves drafts through version conflicts with explicit keep/use-latest choices and renewed comparison. English/Sinhala presentation choices do not rewrite reference text or source language. Evaluation-reference counts are separate from content-use confirmation counts. Saving cannot approve metadata, confirm/exclude a page, clear Maths/table/layout failures, create legacy ground truth, authorize knowledge/RAG or establish OCR accuracy. Existing source-confirmed benchmark gates remain unchanged.
+
 ## 5. Duplicate and source-integrity model
 
 Every raw upload must be content-addressed/deduplicated using a cryptographic hash such as SHA-256.

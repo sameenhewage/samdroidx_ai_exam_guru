@@ -67,6 +67,43 @@ def application(session: AsyncMock | None = None) -> FastAPI:
     return app
 
 
+@pytest.mark.parametrize(
+    ("kind", "status_code", "code"),
+    [
+        ("version", 409, "evaluation_reference_version_conflict"),
+        ("image", 503, "source_page_image_invalid"),
+        ("authorization", 403, "permission_denied"),
+        ("validation", 422, "invalid_evaluation_reference_request"),
+        ("integrity", 409, "evaluation_reference_conflict"),
+    ],
+)
+def test_evaluation_reference_errors_rollback_without_echoing_private_details(
+    kind: str,
+    status_code: int,
+    code: str,
+) -> None:
+    from fastapi import HTTPException
+
+    from exam_guru_api.api.routes.source_evaluation import _run
+    from exam_guru_api.documents.evaluation_references import EvaluationReferenceError
+    from exam_guru_api.documents.page_images import PageImageError
+
+    errors: dict[str, Exception] = {
+        "version": EvaluationReferenceError("evaluation_reference_version_conflict", 409),
+        "image": PageImageError("source_page_image_invalid"),
+        "authorization": AuthorizationError(REVIEWER.subject_id, Permission.SOURCE_TRUST),
+        "validation": ValueError("private reference text"),
+        "integrity": IntegrityError("private statement", {}, ValueError("private reference text")),
+    }
+    session = AsyncMock(spec=AsyncSession)
+    operation = AsyncMock(side_effect=errors[kind])
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(_run(session, operation))
+    assert raised.value.status_code == status_code
+    assert cast(object, raised.value.detail) == {"code": code}
+    session.rollback.assert_awaited_once()
+
+
 def test_reread_enqueues_an_exact_version_without_confirming_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

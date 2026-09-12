@@ -252,6 +252,115 @@ class PageGroundTruthModel(Base):
     )
 
 
+class SourceEvaluationPreviewModel(Base):
+    __tablename__ = "source_evaluation_previews"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "benchmark_id",
+            "document_id",
+            "page_number",
+            name="uq_evaluation_preview_identity",
+        ),
+        ForeignKeyConstraint(
+            ["benchmark_id", "document_id", "page_number"],
+            [
+                "source_fidelity_benchmark_pages.benchmark_id",
+                "source_fidelity_benchmark_pages.document_id",
+                "source_fidelity_benchmark_pages.page_number",
+            ],
+            ondelete="RESTRICT",
+            name="fk_evaluation_preview_membership",
+        ),
+        ForeignKeyConstraint(
+            ["candidate_id", "document_id", "page_number"],
+            [
+                "source_page_text_candidates.id",
+                "source_page_text_candidates.document_id",
+                "source_page_text_candidates.page_number",
+            ],
+            ondelete="RESTRICT",
+            name="fk_evaluation_preview_candidate",
+        ),
+        CheckConstraint(
+            "source_checksum_sha256 ~ '^[0-9a-f]{64}$'", name="ck_evaluation_preview_source_hash"
+        ),
+        CheckConstraint("image_sha256 ~ '^[0-9a-f]{64}$'", name="ck_evaluation_preview_image_hash"),
+        CheckConstraint(
+            "jsonb_typeof(image_metadata)='object' AND octet_length(image_metadata::text)<=8192",
+            name="ck_evaluation_preview_metadata",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    benchmark_id: Mapped[UUID] = mapped_column(Uuid)
+    document_id: Mapped[UUID] = mapped_column(Uuid)
+    page_number: Mapped[int] = mapped_column(Integer)
+    candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    source_checksum_sha256: Mapped[str] = mapped_column(String(64))
+    image_sha256: Mapped[str] = mapped_column(String(64))
+    image_metadata: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_by: Mapped[UUID] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SourceEvaluationReferenceModel(Base):
+    __tablename__ = "source_evaluation_references"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["preview_id", "benchmark_id", "document_id", "page_number"],
+            [
+                "source_evaluation_previews.id",
+                "source_evaluation_previews.benchmark_id",
+                "source_evaluation_previews.document_id",
+                "source_evaluation_previews.page_number",
+            ],
+            ondelete="RESTRICT",
+            name="fk_evaluation_reference_preview",
+        ),
+        UniqueConstraint(
+            "benchmark_id",
+            "document_id",
+            "page_number",
+            "version",
+            name="uq_evaluation_reference_version",
+        ),
+        CheckConstraint("version > 0", name="ck_evaluation_reference_version"),
+        CheckConstraint(
+            "source_evaluation_text_is_valid(raw_text_utf8, normalized_text, blank_reference)",
+            name="ck_evaluation_reference_text",
+        ),
+        CheckConstraint(
+            "text_sha256=encode(sha256(raw_text_utf8),'hex')",
+            name="ck_evaluation_reference_raw_hash",
+        ),
+        CheckConstraint(
+            "normalized_sha256=encode(sha256(convert_to(normalized_text,'UTF8')),'hex')",
+            name="ck_evaluation_reference_normalized_hash",
+        ),
+        CheckConstraint(
+            "char_length(reason) BETWEEN 1 AND 2000 AND reason=btrim(reason) "
+            "AND reason !~ '[[:cntrl:]]'",
+            name="ck_evaluation_reference_reason",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    preview_id: Mapped[UUID] = mapped_column(Uuid)
+    benchmark_id: Mapped[UUID] = mapped_column(Uuid)
+    document_id: Mapped[UUID] = mapped_column(Uuid)
+    page_number: Mapped[int] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer)
+    raw_text_utf8: Mapped[bytes] = mapped_column(LargeBinary)
+    normalized_text: Mapped[str] = mapped_column(Text)
+    text_sha256: Mapped[str] = mapped_column(String(64))
+    normalized_sha256: Mapped[str] = mapped_column(String(64))
+    blank_reference: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str] = mapped_column(Text)
+    reviewer_id: Mapped[UUID] = mapped_column(Uuid)
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class SourceReadJobModel(Base):
     __tablename__ = "source_read_jobs"
     __table_args__ = (

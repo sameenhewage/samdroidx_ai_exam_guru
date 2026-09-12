@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.api.dependencies import get_database_session
+from exam_guru_api.api.routes.source_evaluation import router as evaluation_router
 from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission, require_rate_limit
 from exam_guru_api.auth.domain import AuthorizationError, Permission, Principal
@@ -60,6 +61,7 @@ router = APIRouter(
     dependencies=[Depends(_private_response)],
     responses={code: {"model": ApiErrorResponse} for code in (401, 403, 404, 409, 422)},
 )
+router.include_router(evaluation_router)
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 ReadPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))]
 TrustPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_TRUST))]

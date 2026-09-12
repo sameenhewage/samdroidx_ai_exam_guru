@@ -52,7 +52,7 @@ production schema.
 ### Platform and schema sources
 
 - `compose.yaml` selects local storage, binds `EXAM_GURU_DATA_PATH` (default `./.exam-guru-data`) to `/data` in the API, worker and maintenance containers, and pins PostgreSQL 18/pgvector 0.8.6 with a persistent database volume. Studio ports bind to loopback. MinIO and its bucket initializer exist only in the optional `s3` profile.
-- The release checkpoint is **`0038_upload_request_identity`**, declared in `apps/api/migrations/versions/0038_source_upload_request_identity.py`. Always resolve the actual selected release's Alembic head and compare the restored revision; do not treat this literal as a permanent target.
+- The release checkpoint is **`0042_evaluation_references`**, declared in `apps/api/migrations/versions/0042_evaluation_references.py`. Always resolve the actual selected release's Alembic head and compare the restored revision; do not treat this literal as a permanent target.
 - Migrations under `apps/api/migrations/versions/`: `0001_enable_pgvector.py` enables vectors; `0003_admin_audit_events.py` protects auditing; `0005_source_documents.py`, `0006_extraction_persistence.py` and `0017_ocr_worker_pipeline.py` retain immutable source/extraction identity and legacy review provenance.
 - `0007_knowledge_foundation.py`, `0011_analytics_runs.py` through `0016_published_papers.py`, and `0018_embedding_jobs.py` / `0019_extraction_outbox.py` preserve knowledge/vectors, analytics/blueprints, generation attempts, validation, human review, immutable publication and job recovery. `0020_restore_safe_canonical_json.py` preserves publication hashing under PostgreSQL's empty restore `search_path`; `0021_storage_reconciliation.py` adds non-destructive reconciliation history, not the current head.
 - `0033_source_page_fidelity.py` adds original page counts, immutable raw UTF-8/separate NFC candidates, versioned review events/current state, fixed benchmarks, human ground-truth references and `SourceReadJob` progress/leases. Image bytes remain outside PostgreSQL; versioned image references live in candidate provenance.
@@ -60,6 +60,7 @@ production schema.
 - `0035_verified_knowledge_lineage.py` adds `source_candidate_id` links on chunks/historical questions and current verified-candidate, exact NFC-span, admitted-scope guards through embedding, generation, validation, review and new publication. It preserves legacy history without manufacturing eligible bindings.
 - `0036_resumable_source_uploads.py` adds retained upload sessions/chunk receipts and widens source size storage; `0038_source_upload_request_identity.py` adds immutable owner-scoped `request_id` identity and creation-audit checks. Finalization state lives in `source_upload_sessions`, not a separate upload-job table.
 - `0037_studio_fixture_quarantine.py` adds `source_documents.quarantined_for_teacher_use` plus audited, versioned quarantine/restore guards. There is no separate quarantine table and no filename-based automatic deletion.
+- `0042_evaluation_references.py` adds immutable `source_evaluation_previews` and versioned `source_evaluation_references`, with matching audit, source/image identity and conflict guards. These human references are evaluation-only, independent of source-page confirmation and legacy ground truth. Include every retained preview's image artifact even when no reference has yet been saved; preserve both raw UTF-8 and NFC reference text/hashes. Downgrade cannot discard this evidence. Also preserve `source_metadata_candidates` from migration 0041; description corrections do not replace original intake or grant source trust.
 - `apps/api/src/exam_guru_api/infrastructure/object_storage.py` implements immutable content-addressed local originals and private reconciliation sidecars; `infrastructure/private_artifacts.py` implements retained private chunks. `documents/page_images.py` binds images to source/page/rasterizer/hash/size and fails closed on missing declared artifacts. `documents/page_reading_jobs.py`, `documents/upload_jobs.py`, `maintenance.py` and `worker.py` define reading/finalization and recovery dispatch.
 - `apps/api/src/exam_guru_api/papers/domain.py` and `papers/serialization.py` define canonical UTF-8 publication hashing/reconstruction. Later curriculum, teacher-paper and subject-quality relations are included below; a whole-database backup is mandatory.
 
@@ -77,6 +78,8 @@ post-restore evidence; it is not a suggestion to perform partial table dumps.
 | Sources and legacy extraction             | `source_documents`, `source_pages`, `extracted_blocks`                                                                                                                                                          |
 | Page fidelity and reading                 | `source_page_text_candidates`, `source_page_review_events`, `source_page_review_states`, `source_read_jobs`                                                                                                     |
 | Fixed benchmark and ground truth          | `source_fidelity_benchmarks`, `source_fidelity_benchmark_pages`, `source_page_ground_truth`                                                                                                                     |
+| Independent evaluation references         | `source_evaluation_previews`, `source_evaluation_references`, matching `admin_audit_events`                                                                                                                     |
+| Unverified description corrections        | `source_metadata_candidates`, matching `admin_audit_events`                                                                                                                                                     |
 | Resumable uploads/finalization            | `source_upload_sessions`, `source_upload_chunks`                                                                                                                                                                |
 | Fixture quarantine                        | `source_documents` quarantine/use/scope fields and matching `admin_audit_events` (not a separate table)                                                                                                         |
 | Storage reconciliation                    | `storage_reconciliation_state`, `storage_reconciliation_runs`, `storage_orphan_findings`                                                                                                                        |
@@ -356,7 +359,7 @@ uv run --project apps/api alembic -c apps/api/alembic.ini current --check-heads
 uv run --project apps/api alembic -c apps/api/alembic.ini check
 ```
 
-The restored revision must be a head for the selected release (`0038_upload_request_identity` at this checkpoint). If restoring an older supported backup to a newer release, first capture all pre-migration checks, then run `alembic upgrade head` under a separate approved step and repeat the entire database/artifact/lineage suite. Preserve exact IDs, hashes, raw/NFC candidate text, review/ground-truth and published history; migration is not permission to backfill trust. Never use downgrade, constraint/trigger removal or `alembic stamp` as a recovery shortcut.
+The restored revision must be a head for the selected release (`0042_evaluation_references` at this checkpoint). If restoring an older supported backup to a newer release, first capture all pre-migration checks, then run `alembic upgrade head` under a separate approved step and repeat the entire database/artifact/lineage suite. Preserve exact IDs, hashes, raw/NFC candidate text, review/ground-truth and published history; migration is not permission to backfill trust. Never use downgrade, constraint/trigger removal or `alembic stamp` as a recovery shortcut.
 
 ### 2. Counts and critical lineage
 
@@ -395,6 +398,11 @@ for each source_documents row:
 for every declared image artifact in every source_page_text_candidates version:
   source/page/schema/rasterizer identity matches the retained provenance
   artifact size, whole-image/chunk hashes and PNG structure are valid
+for every source_evaluation_previews image, including previews without saved references:
+  verify the same retained original/page/image identity, bytes and chunk hashes
+for every source_evaluation_references revision:
+  preserve preview identity, raw UTF-8, NFC text/hashes, reviewer, version and matching comparison audit
+  do not promote it into source_page_ground_truth or page confirmation
 for each retained source_upload_chunks receipt:
   chunk at the session/offset key matches its size and SHA-256
   receipt sequence agrees with the session's committed offset

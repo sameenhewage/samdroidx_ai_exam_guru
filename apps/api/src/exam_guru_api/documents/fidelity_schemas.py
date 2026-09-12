@@ -1,8 +1,9 @@
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
 def _explicit_confirmation(value: object) -> Literal[True]:
@@ -119,6 +120,81 @@ class SourceBenchmarkCreateRequest(BaseModel):
     selection: dict[str, object]
 
 
+class EvaluationReferenceSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
+
+    preview_id: UUID
+    expected_version: int = Field(strict=True, ge=0)
+    text: str = Field(strict=True, max_length=100000)
+    blank_reference: bool = Field(default=False, strict=True)
+    compared_with_original: ExplicitConfirmation
+    human_reviewed: ExplicitConfirmation
+    reason: str = Field(strict=True, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "EvaluationReferenceSaveRequest":
+        try:
+            self.text.encode("utf-8")
+        except UnicodeError:
+            raise ValueError("reference text must be valid Unicode") from None
+        if any(
+            unicodedata.category(character) == "Cc" and character not in "\n\r\t"
+            for character in self.text
+        ):
+            raise ValueError("reference text contains unsafe characters")
+        if (self.blank_reference and self.text != "") or (
+            not self.blank_reference and not self.text.strip()
+        ):
+            raise ValueError("blank reference requires explicit empty-page confirmation")
+        if not self.reason.strip() or any(
+            unicodedata.category(character) in {"Cc", "Cs"} for character in self.reason
+        ):
+            raise ValueError("reference reason contains unsafe characters")
+        return self
+
+
+class EvaluationReferenceResponse(BaseModel):
+    id: UUID
+    preview_id: UUID
+    benchmark_id: UUID
+    document_id: UUID
+    page_number: int
+    version: int
+    text: str
+    normalized_text: str
+    text_sha256: str
+    normalized_sha256: str
+    blank_reference: bool
+    reviewer_id: UUID
+    reviewed_at: datetime
+    reason: str
+    evaluation_only: Literal[True] = True
+
+
+class EvaluationPreviewResponse(BaseModel):
+    id: UUID
+    benchmark_id: UUID
+    document_id: UUID
+    document_title: str
+    page_number: int
+    source_checksum_sha256: str
+    image_sha256: str
+    image_width: int = Field(ge=1, le=16000)
+    image_height: int = Field(ge=1, le=16000)
+    preview_url: str
+    language: str
+    reference_version: int
+    latest_reference: EvaluationReferenceResponse | None
+    evaluation_only: Literal[True] = True
+
+
+class EvaluationReferenceProgress(BaseModel):
+    selected_pages: int = Field(ge=0)
+    referenced_pages: int = Field(ge=0)
+    pending_pages: int = Field(ge=0)
+    evaluation_only: Literal[True] = True
+
+
 class SourceBenchmarkPageView(BaseModel):
     document_id: UUID
     document_title: str
@@ -126,6 +202,7 @@ class SourceBenchmarkPageView(BaseModel):
     categories: list[str]
     state: str
     ground_truth_versions: int
+    evaluation_reference_versions: int = 0
 
 
 class SourceBenchmarkResponse(BaseModel):
@@ -136,3 +213,4 @@ class SourceBenchmarkResponse(BaseModel):
     adjudicated_pages: int
     pending_pages: int
     accuracy_status: Literal["awaiting_human_adjudication", "references_available"]
+    evaluation_references: EvaluationReferenceProgress | None = None

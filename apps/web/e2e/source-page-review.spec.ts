@@ -148,6 +148,239 @@ async function expectReadableButton(button: Locator) {
   return computed;
 }
 
+test("real APIs: independent evaluation references preserve blocked sources and concurrent human drafts", async ({
+  page,
+}, testInfo) => {
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await login(page, "admin");
+  expect(
+    await json(
+      await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+    ),
+  ).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `ReferenceFixture-${randomUUID().slice(0, 8)}`;
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: syntheticBook(marker, 1),
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "English",
+          subject_label: "Synthetic workflow only",
+        }),
+      },
+    }),
+    201,
+  );
+  const job = await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(`/api/v1/admin/source-read-jobs/${job.id}`),
+          )
+        ).status,
+      { timeout: 90_000 },
+    )
+    .toBe("completed");
+  const read = await workspace(page, source.id);
+  await json(
+    await page.request.post(
+      `/api/v1/admin/materials/${source.id}/pages/1/edit`,
+      {
+        headers,
+        data: {
+          expected_version: read.page!.version,
+          text: "An intentionally incomplete synthetic reading.",
+          reason:
+            "Exercise blocked-page evaluation without source confirmation",
+        },
+      },
+    ),
+  );
+  const before = await workspace(page, source.id);
+  expect(before.page!.can_confirm).toBe(false);
+  expect(before.progress.verified_pages).toBe(0);
+  const set = await json<Benchmark>(
+    await page.request.post("/api/v1/admin/source-benchmarks", {
+      headers,
+      data: {
+        name: marker,
+        pages: [
+          {
+            document_id: source.id,
+            page_number: 1,
+            categories: ["synthetic-evaluation-only"],
+          },
+        ],
+        selection: {
+          purpose:
+            "Disposable reference workflow test, not real-source accuracy",
+        },
+      },
+    }),
+    201,
+  );
+  const path = `/api/v1/admin/source-benchmarks/${set.id}/pages/${source.id}/1`;
+  const imagePattern = "**/evaluation-previews/*/image";
+  await page.route(imagePattern, (route) => route.abort("failed"));
+  await page.goto(`/admin/materials/benchmark-review?benchmark_id=${set.id}`);
+  await page
+    .getByRole("button", {
+      name: `Add evaluation reference for page 1 of ${marker}.pdf`,
+    })
+    .click();
+  const editor = page.getByRole("region", {
+    name: "Evaluation reference editor",
+    exact: true,
+  });
+  await editor.getByRole("button", { name: "English", exact: true }).click();
+  await expect(editor.getByRole("alert")).toContainText(
+    "The original image could not be verified",
+  );
+  await editor
+    .getByRole("textbox", { name: "Reference text", exact: true })
+    .fill("Preserve this temporary synthetic draft");
+  await page.unroute(imagePattern);
+  await editor
+    .getByRole("button", { name: "Try image again", exact: true })
+    .click();
+  await imageReady(page, 1, "Original comparison page");
+  await expect(
+    editor.getByRole("textbox", { name: "Reference text", exact: true }),
+  ).toHaveValue("Preserve this temporary synthetic draft");
+  await editor
+    .getByRole("textbox", { name: "Reference text", exact: true })
+    .fill("");
+  const input = editor.getByRole("textbox", {
+    name: "Reference text",
+    exact: true,
+  });
+  const save = editor.getByRole("button", {
+    name: "Save evaluation reference",
+    exact: true,
+  });
+  await expect(input).toHaveValue("");
+  await expect(save).toBeDisabled();
+  for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1280, height: 720 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await expect(save).toBeInViewport({ ratio: 1 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollHeight),
+    ).toBeLessThanOrEqual(viewport.height + 1);
+    expect((await input.boundingBox())!.height).toBeGreaterThanOrEqual(240);
+    await expectReadableButton(save);
+    await expect(save).toHaveCSS("cursor", "not-allowed");
+    await testInfo.attach(`reference-layout-${viewport.width}`, {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  }
+  const draft = Array.from(
+    { length: 40 },
+    (_, index) => `${marker} page 1, line ${index + 1}: 2 + 2 = 4.`,
+  ).join("\n");
+  await input.fill(draft);
+  await editor
+    .getByRole("textbox", { name: "Reason for reference" })
+    .fill("Compare the complete synthetic fixture transcription");
+  await editor
+    .getByRole("checkbox", { name: /I compared this reference/ })
+    .check();
+  await expect(save).toBeEnabled();
+  await expect(save).toHaveCSS("cursor", "pointer");
+  await expectReadableButton(save);
+  await save.hover();
+  await expectReadableButton(save);
+  await save.focus();
+  await expect(save).toBeFocused();
+  await expectReadableButton(save);
+  const competing = await json<
+    components["schemas"]["EvaluationPreviewResponse"]
+  >(await page.request.post(`${path}/evaluation-preview`, { headers }), 201);
+  await json(
+    await page.request.post(`${path}/evaluation-references`, {
+      headers,
+      data: {
+        preview_id: competing.id,
+        expected_version: 0,
+        text: "Competing synthetic reference",
+        human_reviewed: true,
+        compared_with_original: true,
+        reason: "Synthetic concurrency fixture",
+      },
+    }),
+    201,
+  );
+  await save.click();
+  await expect(editor.getByRole("alert")).toContainText(
+    "Another reference was saved",
+  );
+  await expect(input).toHaveValue(draft);
+  await editor.getByRole("button", { name: "Load latest reference" }).click();
+  await expect(
+    editor.getByRole("region", { name: "Latest saved reference" }),
+  ).toContainText("Competing synthetic reference");
+  await editor
+    .getByRole("button", { name: "Keep my text and use latest version" })
+    .click();
+  await expect(save).toBeDisabled();
+  await editor
+    .getByRole("checkbox", { name: /I compared this reference/ })
+    .check();
+  await save.click();
+  await expect(editor.getByRole("status")).toContainText(
+    "Reference saved for evaluation only.",
+  );
+  const history = await json<
+    components["schemas"]["EvaluationReferenceResponse"][]
+  >(await page.request.get(`${path}/evaluation-references`));
+  expect(history.map((reference) => reference.version)).toEqual([2, 1]);
+  expect(history[0].text).toBe(draft);
+  expect(await workspace(page, source.id)).toEqual(before);
+  const summary = await benchmark(page, set.id);
+  expect(summary.adjudicated_pages).toBe(0);
+  expect(summary.accuracy_status).toBe("awaiting_human_adjudication");
+  expect(summary.evaluation_references).toMatchObject({
+    referenced_pages: 1,
+    pending_pages: 0,
+    selected_pages: 1,
+  });
+  await editor.getByRole("button", { name: "Back to review set" }).click();
+  await expect(
+    page.getByRole("region", { name: "Evaluation reference progress" }),
+  ).toContainText("1 of 1");
+  await page
+    .getByRole("button", {
+      name: `Edit evaluation reference for page 1 of ${marker}.pdf`,
+    })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Reference text", exact: true }),
+  ).toHaveValue(draft);
+});
+
 for (const pageCount of [4, 371]) {
   test(`focused review: useful laptop panes and Sinhala navigation (${pageCount} synthetic pages)`, async ({
     page,
