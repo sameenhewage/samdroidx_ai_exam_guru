@@ -233,6 +233,282 @@ describe("teacher page understanding review", () => {
     ).toBeEnabled();
   });
 
+  it("saves a source correction as a new unverified child at the captured version", async () => {
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => {
+      fireEvent.load(image);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct this reading" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeDisabled();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+      { target: { value: "Corrected a\u0301 — printed source only." } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+      { target: { value: "Compared the literal source details." } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0].path).toBe(
+      `/api/v1/admin/materials/${documentId}/pages/1/understanding/corrections`,
+    );
+    expect(writes[0].body).toMatchObject({
+      parent_candidate_id: candidateId,
+      expected_version: 1,
+      request_id: expect.any(String),
+      reason: "Compared the literal source details.",
+      content: {
+        observation: {
+          regions: [
+            {
+              key: "text",
+              exact_text: "Corrected a\u0301 — printed source only.",
+            },
+          ],
+        },
+      },
+    });
+    expect(writes[0].body).not.toHaveProperty("trusted");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Correct this reading" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.queryByText("Page checked against the original"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps correction text and reason after a stale-version failure", async () => {
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => {
+      fireEvent.load(image);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct this reading" }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+      { target: { value: "Unsaved correction" } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+      { target: { value: "Keep this explanation" } },
+    );
+    verificationStatus = 409;
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await screen.findByText(
+      "This reading changed. Your review choices have been kept.",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+    ).toHaveValue("Unsaved correction");
+    expect(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+    ).toHaveValue("Keep this explanation");
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeDisabled();
+  });
+
+  it("keeps structured edits through an explicit rebase and binds the next parent image", async () => {
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => {
+      fireEvent.load(image);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct this reading" }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+      { target: { value: "Keep this structured correction" } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+      { target: { value: "Preserve my explanation" } },
+    );
+    verificationStatus = 409;
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await screen.findByText(
+      "This reading changed. Your review choices have been kept.",
+    );
+    const nextId = "00000000-0000-0000-0000-000000003509";
+    current = {
+      ...current,
+      version: 2,
+      candidate: { ...current.candidate!, id: nextId, revision: 2 },
+      report: { ...current.report!, candidate_id: nextId },
+    };
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reload latest reading" }),
+    );
+    const rebase = screen.getByRole("button", {
+      name: "Keep correction with latest reading",
+    });
+    await waitFor(() => expect(rebase).toBeEnabled());
+    fireEvent.click(rebase);
+    expect(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+    ).toHaveValue("Keep this structured correction");
+    expect(
+      screen.getByRole("textbox", { name: "Reason for correction" }),
+    ).toHaveValue("Preserve my explanation");
+    expect(
+      screen.getByRole("img", { name: "Original page 1" }).getAttribute("src"),
+    ).toContain(nextId);
+    expect(
+      screen.getByRole("button", { name: "Save correction" }),
+    ).toBeDisabled();
+    await act(async () => {
+      fireEvent.load(screen.getByRole("img", { name: "Original page 1" }));
+    });
+    verificationStatus = 200;
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1].body).toMatchObject({
+      parent_candidate_id: nextId,
+      expected_version: 2,
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Correct this reading" }),
+      ).toBeEnabled(),
+    );
+  });
+
+  it("does not rebase a correction onto an excluded page", async () => {
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => {
+      fireEvent.load(image);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct this reading" }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+      { target: { value: "Retained draft" } },
+    );
+    current = { ...current, version: 2, state: "excluded" };
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reload latest reading" }),
+    );
+    await screen.findByText(
+      "This reading changed. Your review choices have been kept.",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Keep correction with latest reading",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+    ).toHaveValue("Retained draft");
+  });
+
+  it("requires an explicit reason and decision to exclude even an unread page", async () => {
+    current = {
+      ...current,
+      version: 0,
+      state: "unprocessed",
+      candidate: null,
+      report: null,
+    };
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByText(context.document_title);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Do not use this page" }),
+    );
+    expect(screen.getByRole("button", { name: "Exclude page" })).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "I understand this page will not be used for AI.",
+      }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for excluding this page" }),
+      { target: { value: "Not suitable for this collection" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Exclude page" }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      path: `/api/v1/admin/materials/${documentId}/pages/1/understanding/exclude`,
+      body: {
+        expected_version: 0,
+        confirm_exclusion: true,
+        reason: "Not suitable for this collection",
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Do not use this page" }),
+      ).toBeEnabled(),
+    );
+  });
+
+  it("returns an excluded page to review without restoring its former trust", async () => {
+    current = {
+      ...current,
+      version: 2,
+      state: "excluded",
+      trusted: null,
+      exclusion: {
+        event_id: "00000000-0000-0000-0000-000000003507",
+        document_id: documentId,
+        page_number: 1,
+        source_sha256: source.source_sha256,
+        version: 2,
+        actor_id: "00000000-0000-0000-0000-000000003508",
+        reason: "Historical exclusion",
+      },
+    };
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByText("Historical exclusion");
+    expect(
+      screen.queryByRole("button", { name: "Correct this reading" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review this page again" }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "I want to return this page to review, without restoring trust.",
+      }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Reason for reopening this page" }),
+      { target: { value: "Reconsider this page" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Return page to review" }),
+    );
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      path: `/api/v1/admin/materials/${documentId}/pages/1/understanding/reopen`,
+      body: {
+        expected_version: 2,
+        confirm_reopen: true,
+        reason: "Reconsider this page",
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review this page again" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.queryByText("Page checked against the original"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps a known page language ahead of the workspace hint", async () => {
     context.language = "si";
     context.page = {

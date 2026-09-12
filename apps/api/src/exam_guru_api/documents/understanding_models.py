@@ -144,6 +144,20 @@ class ObservationCandidateModel(_Created, Base):
             ondelete="RESTRICT",
             name="fk_understanding_candidate_run",
         ),
+        ForeignKeyConstraint(
+            ["parent_candidate_id", "document_id", "page_number"],
+            [
+                "source_understanding_candidates.id",
+                "source_understanding_candidates.document_id",
+                "source_understanding_candidates.page_number",
+            ],
+            ondelete="RESTRICT",
+            name="fk_understanding_candidate_parent",
+        ),
+        CheckConstraint(
+            "parent_candidate_id IS NULL OR parent_candidate_id<>id",
+            name="ck_understanding_candidate_parent",
+        ),
         CheckConstraint(
             "page_number > 0 AND revision > 0", name="ck_understanding_candidate_revision"
         ),
@@ -172,6 +186,7 @@ class ObservationCandidateModel(_Created, Base):
     )
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    parent_candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)

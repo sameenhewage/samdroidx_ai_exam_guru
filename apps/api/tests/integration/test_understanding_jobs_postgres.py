@@ -459,7 +459,8 @@ def test_job_migration_preserves_verified_knowledge_and_refuses_job_history_loss
                         WHERE p.document_id=:id),
                     'runs',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id)
                         FROM source_understanding_runs r WHERE r.document_id=:id),
-                    'candidates',(SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id)
+                    'candidates',(SELECT jsonb_agg(to_jsonb(c)||jsonb_build_object(
+                        'parent_candidate_id',to_jsonb(c)->'parent_candidate_id') ORDER BY c.id)
                         FROM source_understanding_candidates c WHERE c.document_id=:id),
                     'regions',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id)
                         FROM source_understanding_regions r WHERE r.document_id=:id),

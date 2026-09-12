@@ -58,6 +58,41 @@ describe("admin API proxy body limits", () => {
     );
   });
 
+  it("allows the bounded page-understanding envelope only on explicit JSON corrections", () => {
+    const path = [
+      "materials",
+      uploadId,
+      "pages",
+      "1",
+      "understanding",
+      "corrections",
+    ];
+    expect(bodyLimitForRequest("POST", path, "application/json")).toBe(
+      1024 * 1024 + 64 * 1024,
+    );
+    expect(
+      bodyLimitForRequest("POST", path, "APPLICATION/JSON; charset=utf-8"),
+    ).toBe(1024 * 1024 + 64 * 1024);
+    expect(bodyLimitForRequest("PUT", path, "application/json")).toBe(
+      64 * 1024,
+    );
+    expect(bodyLimitForRequest("POST", path, "text/plain")).toBe(64 * 1024);
+    expect(
+      bodyLimitForRequest(
+        "POST",
+        [...path.slice(0, -1), "verify"],
+        "application/json",
+      ),
+    ).toBe(64 * 1024);
+    expect(
+      bodyLimitForRequest(
+        "POST",
+        ["materials", uploadId, "corrections"],
+        "application/json",
+      ),
+    ).toBe(64 * 1024);
+  });
+
   it("forwards the actual X-Chunk-SHA256 contract only on upload chunks, never browser authorization or invented Upload headers", () => {
     const incoming = new Headers({
       Authorization: "Bearer attacker",
@@ -150,6 +185,45 @@ describe("admin API proxy browser request boundary", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
+
+  it.each([false, true])(
+    "bounds a structured correction body before upstream dispatch (oversized: %s)",
+    async (oversized) => {
+      adminSession();
+      const path = [
+        "materials",
+        uploadId,
+        "pages",
+        "1",
+        "understanding",
+        "corrections",
+      ];
+      const body = JSON.stringify({
+        content: "x".repeat(oversized ? 1024 * 1024 + 64 * 1024 : 100000),
+      });
+      const upstream = vi.fn(async (_url: unknown, options: RequestInit) => {
+        expect(await new Response(options.body).text()).toBe(body);
+        return Response.json({ id: uploadId });
+      });
+      vi.stubGlobal("fetch", upstream);
+      const response = await POST(
+        new NextRequest(
+          `http://localhost:3000/api/v1/admin/${path.join("/")}`,
+          {
+            method: "POST",
+            headers: {
+              Origin: "http://localhost:3000",
+              "Content-Type": "application/json",
+            },
+            body,
+          },
+        ),
+        { params: Promise.resolve({ path }) },
+      );
+      expect(response.status).toBe(oversized ? 413 : 200);
+      expect(upstream).toHaveBeenCalledTimes(oversized ? 0 : 1);
+    },
+  );
 
   it.each([
     new Headers({ Origin: "https://attacker.example" }),

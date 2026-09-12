@@ -153,7 +153,7 @@ async function expectReadableButton(button: Locator) {
   return computed;
 }
 
-test("teacher comparison: exact original image gates explicit structured verification", async ({
+test("teacher lifecycle: exact-image review, correction and exclusion stay distinct", async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -315,6 +315,150 @@ test("teacher comparison: exact original image gates explicit structured verific
     page.getByText("Page checked against the original", { exact: true }),
   ).toBeVisible();
   await testInfo.attach("structured-review-verified", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  await imageReady(page, 1);
+  await page
+    .getByRole("button", { name: "Correct this reading", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Add teaching point", exact: true })
+    .click();
+  const teachingPoint = "Identify a synthetic example sentence.";
+  await page
+    .getByRole("textbox", { name: "Teaching point 1", exact: true })
+    .fill(teachingPoint);
+  await page
+    .getByRole("checkbox", {
+      name: "Source detail 1 for teaching point 1",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("textbox", { name: "Reason for correction", exact: true })
+    .fill(
+      "Add an unverified teaching interpretation without changing the synthetic printed source.",
+    );
+  const saveCorrection = page.getByRole("button", {
+    name: "Save correction",
+    exact: true,
+  });
+  await expect(saveCorrection).toBeEnabled();
+  await expectReadableButton(saveCorrection);
+  await saveCorrection.click();
+  await expect
+    .poll(
+      async () =>
+        (await json<UnderstandingPage>(await page.request.get(path))).candidate
+          ?.method,
+    )
+    .toBe("human");
+  const corrected = await json<UnderstandingPage>(await page.request.get(path));
+  expect(corrected.trusted).toBeNull();
+  expect(corrected.parent_candidate_id).toBe(before.candidate?.id);
+  expect(corrected.candidate?.source.image_sha256).toBe(
+    before.candidate?.source.image_sha256,
+  );
+  await imageReady(page, 1);
+  await page
+    .getByRole("button", { name: "Review this reading", exact: true })
+    .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I compared this reading with the original page.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("checkbox", {
+      name: "I checked every visible source detail.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("checkbox", { name: teachingPoint, exact: true })
+    .check();
+  for (const uncertainty of corrected.candidate!.content.uncertainties) {
+    await page
+      .getByRole("checkbox", { name: uncertainty.reason, exact: true })
+      .check();
+  }
+  await page
+    .getByRole("textbox", {
+      name: "Reason for accepting this reading",
+      exact: true,
+    })
+    .fill("Fresh comparison of the corrected synthetic interpretation.");
+  await page
+    .getByRole("button", { name: "Confirm checked page", exact: true })
+    .click();
+  await expect(
+    page.getByText("Page checked against the original", { exact: true }),
+  ).toBeVisible();
+  const rechecked = await json<UnderstandingPage>(await page.request.get(path));
+  expect(rechecked.trusted?.revision).toBe(2);
+  expect(rechecked.trusted?.education.claims[0].description).toBe(
+    teachingPoint,
+  );
+  await page
+    .getByRole("button", { name: "Do not use this page", exact: true })
+    .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I understand this page will not be used for AI.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("textbox", {
+      name: "Reason for excluding this page",
+      exact: true,
+    })
+    .fill("Exclude this disposable synthetic example.");
+  await page.getByRole("button", { name: "Exclude page", exact: true }).click();
+  await expect(
+    page.getByText(
+      "This page is excluded from AI use. Its history is preserved.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const excluded = await json<UnderstandingPage>(await page.request.get(path));
+  expect(excluded.trusted).toBeNull();
+  expect(excluded.candidate?.id).toBe(corrected.candidate?.id);
+  expect(excluded.exclusion?.reason).toBe(
+    "Exclude this disposable synthetic example.",
+  );
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Review this page again", exact: true })
+    .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I want to return this page to review, without restoring trust.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("textbox", {
+      name: "Reason for reopening this page",
+      exact: true,
+    })
+    .fill("Review the synthetic example again without restoring approval.");
+  await page
+    .getByRole("button", { name: "Return page to review", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await json<UnderstandingPage>(await page.request.get(path))).state,
+    )
+    .toBe("needs_human_review");
+  const reopened = await json<UnderstandingPage>(await page.request.get(path));
+  expect(reopened.trusted).toBeNull();
+  expect(reopened.latest_job?.attempts).toBe(1);
+  expect((await workspace(page, source.id)).progress.verified_pages).toBe(0);
+  await testInfo.attach("structured-review-reopened", {
     body: await page.screenshot(),
     contentType: "image/png",
   });

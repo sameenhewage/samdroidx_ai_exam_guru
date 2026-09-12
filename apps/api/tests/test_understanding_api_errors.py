@@ -19,6 +19,7 @@ from exam_guru_api.documents.understanding_service import (
     UnderstandingPageSnapshot,
     UnderstandingSourceError,
 )
+from tests.test_document_understanding_contracts import counting_candidate, parse
 from tests.test_document_understanding_provider import request as fixture_request
 
 ADMIN = Principal(UUID(int=3001), frozenset({AdminRole.ADMIN}))
@@ -53,6 +54,58 @@ def test_api_domain_failures_are_rolled_back_and_sanitized(
     assert caught.value.status_code == status
     assert cast(object, caught.value.detail) == {"code": code}
     session.rollback.assert_awaited_once()
+
+
+def test_correction_transport_revalidates_first_party_content_without_loosening_it() -> None:
+    content = parse(counting_candidate())
+    assert routes._page_content(content) == content
+    assert routes._page_content(content.model_dump(mode="json")) == content
+    invalid = content.model_dump(mode="json")
+    invalid["observation"]["regions"][0]["reading_order"] = True
+    with pytest.raises(ValueError, match="valid integer"):
+        routes._page_content(invalid)
+
+
+def test_lifecycle_routes_return_the_applied_version_without_claiming_trust(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identifier = uuid4()
+    session = AsyncMock(spec=AsyncSession)
+    excluded = UnderstandingPageSnapshot(identifier, 1, 1, "excluded", None, None, None)
+    reopened = UnderstandingPageSnapshot(identifier, 1, 2, "unprocessed", None, None, None)
+    monkeypatch.setattr(
+        routes,
+        "PageUnderstandingService",
+        lambda _: SimpleNamespace(
+            exclude=AsyncMock(return_value=excluded), reopen=AsyncMock(return_value=reopened)
+        ),
+    )
+    result = asyncio.run(
+        routes.exclude_source_understanding_page(
+            identifier,
+            1,
+            routes.UnderstandingExclusionRequest(
+                expected_version=0, confirm_exclusion=True, reason="Synthetic exclusion"
+            ),
+            ADMIN,
+            session,
+        )
+    )
+    assert result.version == 1
+    assert result.candidate_id is None
+    result = asyncio.run(
+        routes.reopen_source_understanding_page(
+            identifier,
+            1,
+            routes.UnderstandingReopenRequest(
+                expected_version=1, confirm_reopen=True, reason="Synthetic reopening"
+            ),
+            ADMIN,
+            session,
+        )
+    )
+    assert result.version == 2
+    assert result.state == "unprocessed"
 
 
 def test_missing_queue_configuration_is_explicit_and_read_only() -> None:

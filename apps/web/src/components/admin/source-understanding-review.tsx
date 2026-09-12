@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -28,13 +29,20 @@ import {
   viewerButtonClass,
 } from "./original-page-viewer";
 import { SourceUnderstandingContent } from "./source-understanding-content";
+import {
+  correctionIsComplete,
+  SourceUnderstandingEditor,
+} from "./source-understanding-editor";
 
 type Snapshot = components["schemas"]["UnderstandingPageResponse"];
 type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
 type Candidate = components["schemas"]["ObservationCandidate"];
 type CreateJob = components["schemas"]["UnderstandingJobCreateRequest"];
 type Verify = components["schemas"]["UnderstandingVerifyRequest"];
-type Draft = {
+type Correction = components["schemas"]["UnderstandingCorrectionRequest"];
+type Content = components["schemas"]["PageUnderstanding"];
+type VerifyDraft = {
+  mode: "verify";
   candidate: Candidate;
   version: number;
   compared: boolean;
@@ -43,6 +51,22 @@ type Draft = {
   resolved: string[];
   reason: string;
 };
+type CorrectionDraft = {
+  mode: "correct";
+  candidate: Candidate;
+  version: number;
+  content: Content;
+  reason: string;
+  requestId: string;
+};
+type LifecycleDraft = {
+  mode: "exclude" | "reopen";
+  candidate: Candidate | null;
+  version: number;
+  reason: string;
+  confirmed: boolean;
+};
+type Draft = VerifyDraft | CorrectionDraft | LifecycleDraft;
 type Problem =
   | "loadError"
   | "requestError"
@@ -61,6 +85,25 @@ const english = {
   review: "Review this reading",
   confirm: "Confirm checked page",
   cancel: "Cancel review",
+  cancelAction: "Cancel",
+  correct: "Correct this reading",
+  saveCorrection: "Save correction",
+  correctionReason: "Reason for correction",
+  rebaseCorrection: "Keep correction with latest reading",
+  exclude: "Do not use this page",
+  excludeSubmit: "Exclude page",
+  excludeReason: "Reason for excluding this page",
+  excludeConsent: "I understand this page will not be used for AI.",
+  exclusionNotice:
+    "Exclusion keeps the original and every earlier reading. It is not a source verification.",
+  excluded: "This page is excluded from AI use. Its history is preserved.",
+  reopen: "Review this page again",
+  reopenSubmit: "Return page to review",
+  reopenReason: "Reason for reopening this page",
+  reopenConsent:
+    "I want to return this page to review, without restoring trust.",
+  reopenNotice:
+    "Reopening does not restore an earlier verification. Check the page again before using it.",
   analyze: "Analyze page",
   analyzeAgain: "Read page again",
   analyzing: "Reading this page…",
@@ -111,6 +154,25 @@ const sinhala: Record<keyof typeof english, string> = {
   review: "මෙම කියවීම පරීක්ෂා කරන්න",
   confirm: "පරීක්ෂා කළ පිටුව තහවුරු කරන්න",
   cancel: "පරීක්ෂාව අවලංගු කරන්න",
+  cancelAction: "අවලංගු කරන්න",
+  correct: "මෙම කියවීම නිවැරදි කරන්න",
+  saveCorrection: "නිවැරදි කිරීම සුරකින්න",
+  correctionReason: "නිවැරදි කිරීමට හේතුව",
+  rebaseCorrection: "නවතම කියවීම සමඟ නිවැරදි කිරීම රඳවා ගන්න",
+  exclude: "මෙම පිටුව භාවිත නොකරන්න",
+  excludeSubmit: "පිටුව භාවිතයෙන් ඉවත් කරන්න",
+  excludeReason: "මෙම පිටුව භාවිත නොකිරීමට හේතුව",
+  excludeConsent: "මෙම පිටුව AI සඳහා භාවිත නොවන බව මට වැටහේ.",
+  exclusionNotice:
+    "මුල් පිටුව සහ පෙර කියවීම් රඳවා ගනී. භාවිතයෙන් ඉවත් කිරීම මූලාශ්‍ර තහවුරු කිරීමක් නොවේ.",
+  excluded: "මෙම පිටුව AI භාවිතයෙන් ඉවත් කර ඇත. එහි ඉතිහාසය රඳවා ඇත.",
+  reopen: "මෙම පිටුව නැවත පරීක්ෂා කරන්න",
+  reopenSubmit: "පිටුව නැවත පරීක්ෂාවට යොමු කරන්න",
+  reopenReason: "මෙම පිටුව නැවත පරීක්ෂා කිරීමට හේතුව",
+  reopenConsent:
+    "පෙර තහවුරු කිරීම නැවත ලබා නොදී මෙම පිටුව පරීක්ෂාවට යොමු කිරීමට මට අවශ්‍යයි.",
+  reopenNotice:
+    "නැවත විවෘත කිරීමෙන් පෙර තහවුරු කිරීම නැවත නොලැබේ. භාවිතයට පෙර පිටුව නැවත පරීක්ෂා කරන්න.",
   analyze: "පිටුව කියවන්න",
   analyzeAgain: "පිටුව නැවත කියවන්න",
   analyzing: "මෙම පිටුව කියවමින් පවතී…",
@@ -170,8 +232,13 @@ function problemFor(status: number): Problem {
           ? "limited"
           : "requestError";
 }
-function blankDraft(candidate: Candidate, version: number, reason = ""): Draft {
+function blankDraft(
+  candidate: Candidate,
+  version: number,
+  reason = "",
+): VerifyDraft {
   return {
+    mode: "verify",
     candidate,
     version,
     reason,
@@ -218,7 +285,8 @@ export function SourceUnderstandingReview({
   const [conflict, setConflict] = useState(false);
   const [loading, setLoading] = useState(true);
   const [fresh, setFresh] = useState(false);
-  const [busy, setBusy] = useState<"analysis" | "verify" | null>(null);
+  const [busy, setBusy] = useState<"analysis" | Draft["mode"] | null>(null);
+  const formId = useId();
   const [imageStatus, setImageStatus] = useState<{
     url: string;
     ready: boolean;
@@ -293,7 +361,7 @@ export function SourceUnderstandingReview({
         if (
           draftRef.current &&
           (draftRef.current.version !== incoming.version ||
-            draftRef.current.candidate.id !== incoming.candidate?.id)
+            draftRef.current.candidate?.id !== incoming.candidate?.id)
         )
           setConflict(true);
         if (
@@ -358,7 +426,11 @@ export function SourceUnderstandingReview({
   const imageState = useCallback(
     (ready: boolean) => {
       setImageStatus({ url: previewUrl, ready });
-      if (!ready && draftRef.current?.compared)
+      if (
+        !ready &&
+        draftRef.current?.mode === "verify" &&
+        draftRef.current.compared
+      )
         setDraft({ ...draftRef.current, compared: false });
     },
     [previewUrl, setDraft],
@@ -374,8 +446,13 @@ export function SourceUnderstandingReview({
     !blocked &&
     !working &&
     ["needs_human_review", "corrected"].includes(snapshot.state);
+  const mayCorrect =
+    writable &&
+    !!snapshot?.candidate &&
+    !working &&
+    snapshot.state !== "excluded";
   const canConfirm =
-    !!draft &&
+    draft?.mode === "verify" &&
     mayReview &&
     imageReady &&
     draft.compared &&
@@ -384,6 +461,30 @@ export function SourceUnderstandingReview({
     draft.candidate.content.uncertainties.every((item) =>
       draft.resolved.includes(item.key),
     ) &&
+    !conflict &&
+    fresh &&
+    !loading &&
+    !busy;
+
+  const canSaveCorrection =
+    draft?.mode === "correct" &&
+    mayCorrect &&
+    imageReady &&
+    draft.reason.trim().length > 0 &&
+    correctionIsComplete(draft.content) &&
+    JSON.stringify(draft.content) !== JSON.stringify(draft.candidate.content) &&
+    !conflict &&
+    fresh &&
+    !loading &&
+    !busy;
+  const canChangeLifecycle =
+    !!draft &&
+    (draft.mode === "exclude" || draft.mode === "reopen") &&
+    writable &&
+    !working &&
+    draft.confirmed &&
+    draft.reason.trim().length > 0 &&
+    (draft.mode === "reopen") === (snapshot?.state === "excluded") &&
     !conflict &&
     fresh &&
     !loading &&
@@ -471,35 +572,14 @@ export function SourceUnderstandingReview({
       setBusy(null);
     }
   }
-  async function confirm() {
-    if (!canConfirm || !draft) return;
-    const body: Verify = {
-      candidate_id: draft.candidate.id,
-      expected_version: draft.version,
-      compared_with_original: true,
-      reviewed_region_keys: draft.candidate.content.observation.regions.map(
-        (region) => region.key,
-      ),
-      accepted_claim_keys: draft.candidate.content.education.claims
-        .filter((claim) => draft.accepted.includes(claim.key))
-        .map((claim) => claim.key),
-      resolved_uncertainty_keys: draft.candidate.content.uncertainties
-        .filter((item) => draft.resolved.includes(item.key))
-        .map((item) => item.key),
-      reason: draft.reason,
-    };
-    setBusy("verify");
+  async function submitReview(
+    mode: Draft["mode"],
+    operation: () => Promise<{ response: Response; data?: unknown }>,
+  ) {
+    setBusy(mode);
     setProblem(null);
     try {
-      const result = await api.POST(
-        "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/verify",
-        {
-          params: {
-            path: { document_id: documentId, page_number: pageNumber },
-          },
-          body,
-        },
-      );
+      const result = await operation();
       if (!result.response.ok || !result.data) {
         setProblem(problemFor(result.response.status));
         setConflict(true);
@@ -517,13 +597,142 @@ export function SourceUnderstandingReview({
       setBusy(null);
     }
   }
+  async function confirm() {
+    if (!canConfirm || draft?.mode !== "verify") return;
+    const body: Verify = {
+      candidate_id: draft.candidate.id,
+      expected_version: draft.version,
+      compared_with_original: true,
+      reviewed_region_keys: draft.candidate.content.observation.regions.map(
+        (region) => region.key,
+      ),
+      accepted_claim_keys: draft.candidate.content.education.claims
+        .filter((claim) => draft.accepted.includes(claim.key))
+        .map((claim) => claim.key),
+      resolved_uncertainty_keys: draft.candidate.content.uncertainties
+        .filter((item) => draft.resolved.includes(item.key))
+        .map((item) => item.key),
+      reason: draft.reason,
+    };
+    await submitReview("verify", () =>
+      api.POST(
+        "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/verify",
+        {
+          params: {
+            path: { document_id: documentId, page_number: pageNumber },
+          },
+          body,
+        },
+      ),
+    );
+  }
+  async function saveCorrection() {
+    if (!canSaveCorrection || draft?.mode !== "correct") return;
+    const body: Correction = {
+      parent_candidate_id: draft.candidate.id,
+      request_id: draft.requestId,
+      expected_version: draft.version,
+      content: draft.content,
+      reason: draft.reason,
+    };
+    await submitReview("correct", () =>
+      api.POST(
+        "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/corrections",
+        {
+          params: {
+            path: { document_id: documentId, page_number: pageNumber },
+          },
+          body,
+        },
+      ),
+    );
+  }
+  async function changeLifecycle() {
+    if (
+      !canChangeLifecycle ||
+      !draft ||
+      (draft.mode !== "exclude" && draft.mode !== "reopen")
+    )
+      return;
+    const path = { document_id: documentId, page_number: pageNumber };
+    if (draft.mode === "exclude") {
+      const body = {
+        expected_version: draft.version,
+        reason: draft.reason,
+        confirm_exclusion: true as const,
+      };
+      await submitReview("exclude", () =>
+        api.POST(
+          "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/exclude",
+          { params: { path }, body },
+        ),
+      );
+    } else {
+      const body = {
+        expected_version: draft.version,
+        reason: draft.reason,
+        confirm_reopen: true as const,
+      };
+      await submitReview("reopen", () =>
+        api.POST(
+          "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/reopen",
+          { params: { path }, body },
+        ),
+      );
+    }
+  }
+  function beginCorrection() {
+    if (!snapshot?.candidate || !mayCorrect || !imageReady || loading || busy)
+      return;
+    setDraft({
+      mode: "correct",
+      candidate: snapshot.candidate,
+      version: snapshot.version,
+      content: snapshot.candidate.content,
+      reason: "",
+      requestId: crypto.randomUUID(),
+    });
+  }
+  function beginLifecycle(mode: "exclude" | "reopen") {
+    if (!snapshot || !writable || working || loading || busy) return;
+    setDraft({
+      mode,
+      candidate: snapshot.candidate,
+      version: snapshot.version,
+      reason: "",
+      confirmed: false,
+    });
+  }
   function useLatest() {
     if (!fresh || !snapshot || loading || busy) return;
-    setDraft(
-      snapshot.state === "verified" || !snapshot.candidate
-        ? null
-        : blankDraft(snapshot.candidate, snapshot.version, draft?.reason),
-    );
+    if (draft?.mode === "correct") {
+      if (!snapshot.candidate || snapshot.state === "excluded") return;
+      setDraft({
+        ...draft,
+        candidate: snapshot.candidate,
+        version: snapshot.version,
+        requestId: crypto.randomUUID(),
+      });
+    } else if (draft?.mode === "exclude" || draft?.mode === "reopen") {
+      setDraft(
+        (draft.mode === "reopen") === (snapshot.state === "excluded")
+          ? {
+              ...draft,
+              candidate: snapshot.candidate,
+              version: snapshot.version,
+              confirmed: false,
+            }
+          : null,
+      );
+    } else {
+      setDraft(
+        snapshot.state === "verified" ||
+          snapshot.state === "excluded" ||
+          !snapshot.candidate
+          ? null
+          : blankDraft(snapshot.candidate, snapshot.version, draft?.reason),
+      );
+    }
     setConflict(false);
     setProblem(null);
     imageState(false);
@@ -658,10 +867,15 @@ export function SourceUnderstandingReview({
             {problem !== "conflict" && <p>{copy.conflict}</p>}
             <Button
               className={viewerButtonClass}
-              isDisabled={!fresh || loading || !!busy}
+              isDisabled={
+                !fresh ||
+                loading ||
+                !!busy ||
+                (draft?.mode === "correct" && snapshot?.state === "excluded")
+              }
               onPress={useLatest}
             >
-              {copy.latest}
+              {draft?.mode === "correct" ? copy.rebaseCorrection : copy.latest}
             </Button>
           </div>
         )}
@@ -683,6 +897,17 @@ export function SourceUnderstandingReview({
                 {copy.analyzing}
               </p>
             )}
+            {snapshot.state === "excluded" && (
+              <div
+                className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-amber-950"
+                role="status"
+              >
+                <p className="font-semibold">{copy.excluded}</p>
+                {snapshot.exclusion && (
+                  <p className="mt-2 text-sm">{snapshot.exclusion.reason}</p>
+                )}
+              </div>
+            )}
             {!draft && snapshot.trusted && (
               <p className="rounded-lg border border-emerald-400 bg-emerald-50 p-3 font-semibold">
                 {copy.checked}
@@ -697,7 +922,7 @@ export function SourceUnderstandingReview({
                   {copy.failedAnalysis}
                 </p>
               )}
-            {!draft && snapshot.trusted ? (
+            {draft?.mode === "correct" ? null : !draft && snapshot.trusted ? (
               <SourceUnderstandingContent
                 trusted={snapshot.trusted}
                 language={language}
@@ -722,9 +947,91 @@ export function SourceUnderstandingReview({
               <p className="text-sm text-slate-600">{copy.unavailable}</p>
             )}
             <p className="text-sm text-slate-600">{copy.metadata}</p>
-            {draft && (
+            {draft?.mode === "correct" && (
               <form
-                id="understanding-verification"
+                id={formId}
+                className="space-y-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveCorrection();
+                }}
+              >
+                <SourceUnderstandingEditor
+                  value={draft.content}
+                  language={language}
+                  disabled={!!busy}
+                  onChange={(content) =>
+                    setDraft({
+                      ...draft,
+                      content,
+                      requestId: crypto.randomUUID(),
+                    })
+                  }
+                />
+                <label className="block font-semibold">
+                  {copy.correctionReason}
+                  <textarea
+                    className={cn(inputClass, "mt-2 min-h-24 font-normal")}
+                    maxLength={2000}
+                    value={draft.reason}
+                    disabled={!!busy}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        reason: event.target.value,
+                        requestId: crypto.randomUUID(),
+                      })
+                    }
+                  />
+                </label>
+              </form>
+            )}
+            {(draft?.mode === "exclude" || draft?.mode === "reopen") && (
+              <form
+                id={formId}
+                className="space-y-4 rounded-lg border border-amber-400 p-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void changeLifecycle();
+                }}
+              >
+                <p>
+                  {draft.mode === "exclude"
+                    ? copy.exclusionNotice
+                    : copy.reopenNotice}
+                </p>
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={draft.confirmed}
+                    disabled={!!busy}
+                    onChange={(event) =>
+                      setDraft({ ...draft, confirmed: event.target.checked })
+                    }
+                  />
+                  {draft.mode === "exclude"
+                    ? copy.excludeConsent
+                    : copy.reopenConsent}
+                </label>
+                <label className="block font-semibold">
+                  {draft.mode === "exclude"
+                    ? copy.excludeReason
+                    : copy.reopenReason}
+                  <textarea
+                    className={cn(inputClass, "mt-2 min-h-24 font-normal")}
+                    maxLength={2000}
+                    value={draft.reason}
+                    disabled={!!busy}
+                    onChange={(event) =>
+                      setDraft({ ...draft, reason: event.target.value })
+                    }
+                  />
+                </label>
+              </form>
+            )}
+            {draft?.mode === "verify" && (
+              <form
+                id={formId}
                 className="space-y-4 rounded-lg border border-slate-400 p-4"
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -843,11 +1150,25 @@ export function SourceUnderstandingReview({
           <>
             <Button
               type="submit"
-              form="understanding-verification"
+              form={formId}
               className={primary}
-              isDisabled={!canConfirm}
+              isDisabled={
+                !(draft.mode === "verify"
+                  ? canConfirm
+                  : draft.mode === "correct"
+                    ? canSaveCorrection
+                    : canChangeLifecycle)
+              }
             >
-              {busy === "verify" ? copy.working : copy.confirm}
+              {busy
+                ? copy.working
+                : draft.mode === "verify"
+                  ? copy.confirm
+                  : draft.mode === "correct"
+                    ? copy.saveCorrection
+                    : draft.mode === "exclude"
+                      ? copy.excludeSubmit
+                      : copy.reopenSubmit}
             </Button>
             <Button
               className={viewerButtonClass}
@@ -857,7 +1178,7 @@ export function SourceUnderstandingReview({
                 setConflict(false);
               }}
             >
-              {copy.cancel}
+              {draft.mode === "verify" ? copy.cancel : copy.cancelAction}
             </Button>
           </>
         ) : (
@@ -872,6 +1193,30 @@ export function SourceUnderstandingReview({
                 }}
               >
                 {copy.review}
+              </Button>
+            )}
+            {snapshot?.candidate && snapshot.state !== "excluded" && (
+              <Button
+                className={viewerButtonClass}
+                isDisabled={
+                  !mayCorrect || !imageReady || loading || !!busy || !fresh
+                }
+                onPress={beginCorrection}
+              >
+                {copy.correct}
+              </Button>
+            )}
+            {role === "admin" && snapshot && (
+              <Button
+                className={viewerButtonClass}
+                isDisabled={!writable || working || loading || !!busy || !fresh}
+                onPress={() =>
+                  beginLifecycle(
+                    snapshot.state === "excluded" ? "reopen" : "exclude",
+                  )
+                }
+              >
+                {snapshot.state === "excluded" ? copy.reopen : copy.exclude}
               </Button>
             )}
             {role === "admin" &&

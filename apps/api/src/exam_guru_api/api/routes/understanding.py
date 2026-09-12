@@ -1,3 +1,4 @@
+import json
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -5,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -22,7 +23,7 @@ from exam_guru_api.documents.page_images import (
     PageImageError,
     create_page_image_artifacts,
 )
-from exam_guru_api.documents.understanding_contracts import Key
+from exam_guru_api.documents.understanding_contracts import Key, PageUnderstanding
 from exam_guru_api.documents.understanding_jobs import (
     UnderstandingJobDispatcher,
     UnderstandingJobNotFoundError,
@@ -37,6 +38,8 @@ from exam_guru_api.documents.understanding_runtime import UnderstandingRuntime
 from exam_guru_api.documents.understanding_service import (
     PageUnderstandingService,
     UnderstandingConflictError,
+    UnderstandingPageExclusion,
+    UnderstandingPageSnapshot,
     UnderstandingSourceError,
 )
 from exam_guru_api.documents.understanding_verification import (
@@ -97,6 +100,45 @@ class UnderstandingVerifyRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+def _page_content(value: object) -> PageUnderstanding:
+    if isinstance(value, PageUnderstanding):
+        return PageUnderstanding.model_validate(value)
+    return PageUnderstanding.model_validate_json(
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+    )
+
+
+class UnderstandingCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    parent_candidate_id: UUID
+    request_id: UUID
+    expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
+    content: Annotated[PageUnderstanding, BeforeValidator(_page_content)]
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class UnderstandingExclusionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
+    confirm_exclusion: ExplicitConfirmation
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class UnderstandingReopenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
+    confirm_reopen: ExplicitConfirmation
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class UnderstandingMutationResponse(BaseModel):
+    document_id: UUID
+    page_number: int
+    version: int
+    state: str
+    candidate_id: UUID | None
+
+
 class UnderstandingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -125,6 +167,8 @@ class UnderstandingPageResponse(BaseModel):
     report: PageVerificationReport | None
     trusted: TrustedPageKnowledge | None
     active_job_id: UUID | None
+    parent_candidate_id: UUID | None = None
+    exclusion: UnderstandingPageExclusion | None = None
     latest_job: UnderstandingJobResponse | None = None
     provider_available: bool = False
 
@@ -135,6 +179,7 @@ router = APIRouter(
 )
 DatabaseSession = Annotated[AsyncSession, Depends(get_database_session)]
 ReadPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))]
+WritePrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_WRITE))]
 TrustPrincipal = Annotated[Principal, Depends(require_permission(Permission.SOURCE_TRUST))]
 Storage = Annotated[ObjectStorage, Depends(get_object_storage)]
 ApplicationSettings = Annotated[Settings, Depends(get_settings)]
@@ -287,6 +332,99 @@ async def verify_source_understanding(
             artifacts=create_page_image_artifacts(settings),
         ),
     )
+
+
+def _mutation_response(page: UnderstandingPageSnapshot) -> UnderstandingMutationResponse:
+    return UnderstandingMutationResponse(
+        document_id=page.document_id,
+        page_number=page.page_number,
+        version=page.version,
+        state=page.state,
+        candidate_id=None if page.candidate is None else page.candidate.id,
+    )
+
+
+@router.post(
+    "/materials/{document_id}/pages/{page_number}/understanding/corrections",
+    operation_id="correct_source_understanding",
+    response_model=ObservationCandidate,
+)
+async def correct_source_understanding(
+    document_id: UUID,
+    page_number: PageNumber,
+    body: UnderstandingCorrectionRequest,
+    principal: WritePrincipal,
+    session: DatabaseSession,
+    storage: Storage,
+    settings: ApplicationSettings,
+) -> ObservationCandidate:
+    return await _run(
+        session,
+        lambda: PageUnderstandingService(session).correct(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            parent_candidate_id=body.parent_candidate_id,
+            request_id=body.request_id,
+            expected_version=body.expected_version,
+            content=body.content,
+            reason=body.reason,
+            storage=storage,
+            artifacts=create_page_image_artifacts(settings),
+        ),
+    )
+
+
+@router.post(
+    "/materials/{document_id}/pages/{page_number}/understanding/exclude",
+    operation_id="exclude_source_understanding_page",
+    response_model=UnderstandingMutationResponse,
+)
+async def exclude_source_understanding_page(
+    document_id: UUID,
+    page_number: PageNumber,
+    body: UnderstandingExclusionRequest,
+    principal: TrustPrincipal,
+    session: DatabaseSession,
+) -> UnderstandingMutationResponse:
+    page = await _run(
+        session,
+        lambda: PageUnderstandingService(session).exclude(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            expected_version=body.expected_version,
+            confirm_exclusion=body.confirm_exclusion,
+            reason=body.reason,
+        ),
+    )
+    return _mutation_response(page)
+
+
+@router.post(
+    "/materials/{document_id}/pages/{page_number}/understanding/reopen",
+    operation_id="reopen_source_understanding_page",
+    response_model=UnderstandingMutationResponse,
+)
+async def reopen_source_understanding_page(
+    document_id: UUID,
+    page_number: PageNumber,
+    body: UnderstandingReopenRequest,
+    principal: TrustPrincipal,
+    session: DatabaseSession,
+) -> UnderstandingMutationResponse:
+    page = await _run(
+        session,
+        lambda: PageUnderstandingService(session).reopen(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+            expected_version=body.expected_version,
+            confirm_reopen=body.confirm_reopen,
+            reason=body.reason,
+        ),
+    )
+    return _mutation_response(page)
 
 
 @router.post(

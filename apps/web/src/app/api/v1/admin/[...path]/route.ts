@@ -6,6 +6,7 @@ import { guardBrowserRequest } from "@/lib/browser-request-guard";
 import { parseWebAppConfig } from "@/lib/web-app-config";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_CORRECTION_BODY_BYTES = 1024 * 1024 + MAX_BODY_BYTES;
 const MAX_UPLOAD_BODY_BYTES = 26 * 1024 * 1024;
 const MAX_CHUNK_BODY_BYTES = 4_194_304;
 const SOURCE_HEADER_TIMEOUT_MS = 30_000;
@@ -33,6 +34,16 @@ export function bodyLimitForRequest(
       "application/octet-stream"
   )
     return MAX_CHUNK_BODY_BYTES;
+  if (
+    method === "POST" &&
+    path.length === 6 &&
+    path[0] === "materials" &&
+    path[2] === "pages" &&
+    path[4] === "understanding" &&
+    path[5] === "corrections" &&
+    contentType.toLowerCase().split(";", 1)[0].trim() === "application/json"
+  )
+    return MAX_CORRECTION_BODY_BYTES;
   return method === "POST" &&
     path.length === 1 &&
     path[0] === "source-documents" &&
