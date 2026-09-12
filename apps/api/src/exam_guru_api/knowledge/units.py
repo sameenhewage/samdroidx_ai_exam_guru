@@ -6,6 +6,7 @@ from uuid import UUID, uuid5
 
 from pydantic import Field, model_validator
 
+from exam_guru_api.documents.domain import SourceDocumentType
 from exam_guru_api.documents.understanding_contracts import (
     EducationalUnderstanding,
     PageObservation,
@@ -30,10 +31,17 @@ class KnowledgeDerivationError(ValueError):
     pass
 
 
+class UnsearchableKnowledgeUnitError(KnowledgeDerivationError):
+    pass
+
+
 class KnowledgeScope(UnderstandingModel):
-    schema_version: Literal["knowledge-scope.v1"] = "knowledge-scope.v1"
+    schema_version: Literal["knowledge-scope.v2"] = "knowledge-scope.v2"
     document_id: UUID
     source_sha256: Checksum
+    material_type: SourceDocumentType
+    year: int | None = Field(ge=1900, le=2100)
+    paper_code: str | None = Field(min_length=1, max_length=64)
     metadata_scope_version: int = Field(ge=0, le=2_147_483_646)
     curriculum_version_id: UUID
     grade: int = Field(ge=1, le=13)
@@ -260,7 +268,9 @@ def project_knowledge_unit(unit: KnowledgeUnit) -> KnowledgeProjection:
         meaningful = True
         lines.extend(claim.kind + ": " + claim.description for claim in unit.education.claims)
     if not meaningful:
-        raise KnowledgeDerivationError("projection has no retrievable observed or accepted content")
+        raise UnsearchableKnowledgeUnitError(
+            "projection has no retrievable observed or accepted content"
+        )
     text = unicodedata.normalize("NFC", "\n".join(lines))
     raw = text.encode("utf-8")
     if len(text) > MAX_PROJECTION_CHARACTERS or len(raw) > MAX_PROJECTION_BYTES:

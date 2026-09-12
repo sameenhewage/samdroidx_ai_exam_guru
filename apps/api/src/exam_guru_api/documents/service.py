@@ -57,6 +57,7 @@ from exam_guru_api.infrastructure.object_storage import (
     validate_source_object_key,
 )
 from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
+from exam_guru_api.knowledge.unit_models import KnowledgeUnitModel
 
 
 class SourceCurriculumNotFoundError(LookupError):
@@ -1156,6 +1157,9 @@ class SourceDocumentService:
                         .exists(),
                         select(KnowledgeChunkModel.id)
                         .where(KnowledgeChunkModel.source_document_id == document_id)
+                        .exists(),
+                        select(KnowledgeUnitModel.id)
+                        .where(KnowledgeUnitModel.document_id == document_id)
                         .exists(),
                     )
                 )

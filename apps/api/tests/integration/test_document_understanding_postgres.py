@@ -79,8 +79,11 @@ def test_structured_source_fingerprints_have_the_same_canonical_bytes_in_postgre
 
 async def page_input(
     session: AsyncSession,
+    *,
+    document_id: UUID | None = None,
+    page_number: int = 1,
 ) -> tuple[UnderstandingRequest, UnderstandingProviderResult, SourceCandidateImageMetadata]:
-    document_id = await add_source(session, total=1)
+    document_id = document_id or await add_source(session, total=page_number)
     document = await session.get(SourceDocumentModel, document_id)
     assert document is not None
     fixture = fixture_request()
@@ -90,7 +93,7 @@ async def page_input(
                 "source": PageArtifactIdentity(
                     document_id=document_id,
                     source_sha256=document.checksum_sha256,
-                    page_number=1,
+                    page_number=page_number,
                     image_sha256=fixture.source.image_sha256,
                 )
             }
@@ -115,7 +118,7 @@ async def page_input(
             "source_checksum_sha256": document.checksum_sha256,
             "source_object_key": document.object_key,
             "source_size_bytes": document.size_bytes,
-            "page_number": 1,
+            "page_number": page_number,
             "sha256": request.source.image_sha256,
             "width": width,
             "height": height,

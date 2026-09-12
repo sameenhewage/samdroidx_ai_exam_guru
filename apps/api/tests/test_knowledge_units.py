@@ -1,14 +1,25 @@
+import asyncio
 import hashlib
 import unicodedata
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid5
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from exam_guru_api.documents.domain import SourceDocumentType
 from exam_guru_api.documents.understanding_verification import (
     TrustedPageKnowledge,
     accept_trusted_page,
     verify_understanding,
+)
+from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
+from exam_guru_api.knowledge.unit_service import (
+    KnowledgePreparationError,
+    KnowledgeUnitService,
+    _projection,
+    _unit,
 )
 from exam_guru_api.knowledge.units import (
     KnowledgeDerivationError,
@@ -26,6 +37,9 @@ def scope(trusted: TrustedPageKnowledge, grade: int = 5) -> KnowledgeScope:
     return KnowledgeScope(
         document_id=trusted.source.document_id,
         source_sha256=trusted.source.source_sha256,
+        material_type=SourceDocumentType.TEACHER_GUIDE,
+        year=None,
+        paper_code=None,
         metadata_scope_version=1,
         curriculum_version_id=UUID(int=99301),
         grade=grade,
@@ -246,6 +260,65 @@ def test_empty_decorative_evidence_is_retained_but_not_invented_as_retrieval_tex
     assert unit.observation.regions[0].kind == "decorative_image"
     with pytest.raises(KnowledgeDerivationError, match="no retrievable"):
         project_knowledge_unit(unit)
+
+
+def test_persisted_snapshot_hashes_are_revalidated_before_readback() -> None:
+    trusted = approve(candidate())
+    unit = derive_knowledge_units(trusted, scope(trusted))[0]
+    row = KnowledgeUnitModel.from_domain(
+        unit, actor_id=ADMIN.subject_id, audit_event_id=UUID(int=99321)
+    )
+    row.fingerprint = "f" * 64
+    with pytest.raises(KnowledgePreparationError, match="stored_knowledge_unit"):
+        _unit(row)
+    projection = project_knowledge_unit(unit)
+    projected = KnowledgeProjectionModel.from_domain(
+        projection, actor_id=ADMIN.subject_id, audit_event_id=UUID(int=99321)
+    )
+    projected.text = "Different index text"
+    with pytest.raises(KnowledgePreparationError, match="stored_knowledge_projection"):
+        _projection(projected)
+
+
+@pytest.mark.parametrize(
+    "field", ["trusted_page_id", "candidate_id", "metadata_scope_version", "catalogue_version"]
+)
+def test_unit_readback_rejects_conflicting_index_and_version_columns(field: str) -> None:
+    trusted = approve(candidate())
+    unit = derive_knowledge_units(trusted, scope(trusted))[0]
+    row = KnowledgeUnitModel.from_domain(
+        unit, actor_id=ADMIN.subject_id, audit_event_id=UUID(int=99324)
+    )
+    setattr(row, field, 99 if field.endswith("version") else UUID(int=99325))
+    with pytest.raises(KnowledgePreparationError, match="stored_knowledge_unit"):
+        _unit(row)
+
+
+@pytest.mark.parametrize("field", ["unit_fingerprint", "transformation_version"])
+def test_projection_readback_rejects_conflicting_lineage_columns(field: str) -> None:
+    trusted = approve(candidate())
+    projection = project_knowledge_unit(derive_knowledge_units(trusted, scope(trusted))[0])
+    row = KnowledgeProjectionModel.from_domain(
+        projection, actor_id=ADMIN.subject_id, audit_event_id=UUID(int=99324)
+    )
+    setattr(row, field, "f" * 64 if field == "unit_fingerprint" else "unknown-projection.v2")
+    with pytest.raises(KnowledgePreparationError, match="stored_knowledge_projection"):
+        _projection(row)
+
+
+@pytest.mark.parametrize("page_number", [0, -1, True])
+def test_invalid_preparation_page_never_touches_storage(page_number: int) -> None:
+    session = AsyncMock(spec=AsyncSession)
+    with pytest.raises(KnowledgePreparationError, match="page_invalid"):
+        asyncio.run(
+            KnowledgeUnitService(session).prepare_page(
+                principal=ADMIN,
+                document_id=UUID(int=99322),
+                page_number=page_number,
+                expected_trusted_page_id=UUID(int=99323),
+            )
+        )
+    session.execute.assert_not_awaited()
 
 
 def test_oversized_projections_fail_explicitly_instead_of_truncating_source() -> None:
