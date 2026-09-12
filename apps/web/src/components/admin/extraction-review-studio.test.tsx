@@ -211,7 +211,7 @@ it("keeps known Grade 3 font corruption visible beside the original and allows c
     expect(warnings).toHaveTextContent(text);
   }
   expect(screen.queryByText("do-not-show-this")).not.toBeInTheDocument();
-  expect(screen.getByTitle("Original PDF preview")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Original PDF page 1" })).toBeInTheDocument();
   const corrected = screen.getByLabelText("Corrected text for page 1");
   expect(corrected).toHaveValue("Original text");
   fireEvent.change(corrected, { target: { value: "Manual correction" } });
@@ -331,7 +331,7 @@ it.each(["materials", "advanced"] as const)(
     expect(corrected).toBeInTheDocument();
     expect(trust).toBeDisabled();
     if (experience === "materials")
-      expect(screen.getByTitle("Original PDF preview")).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Original PDF page 1" })).toBeInTheDocument();
   },
 );
 
@@ -451,7 +451,7 @@ it("reframes extraction review as an accessible teacher text-check flow", async 
     within(originalPdf).getByRole("img", { name: "Original PDF page 1" }),
   ).toHaveAttribute(
     "src",
-    `${window.location.origin}/api/v1/admin/source-documents/${documentId}/pages/1/preview`,
+    `${window.location.origin}/api/v1/admin/materials/${documentId}/pages/1/image`,
   );
   expect(
     screen.getByRole("region", { name: "Extracted and corrected text" }),
@@ -550,26 +550,26 @@ it("shows the authorized original PDF beside corrected text and follows page nav
   const preview = within(original).getByRole("img", {
     name: "Original PDF page 1",
   });
-  const firstUrl = `/api/v1/admin/source-documents/${documentId}/content#page=1&view=FitH`;
+  const firstUrl = `/api/v1/admin/materials/${documentId}/original`;
   expect(preview).toHaveAttribute(
     "src",
-    `${window.location.origin}/api/v1/admin/source-documents/${documentId}/pages/1/preview`,
+    `${window.location.origin}/api/v1/admin/materials/${documentId}/pages/1/image`,
   );
   expect(original.querySelector("iframe")).toBeNull();
   expect(preview).toHaveAttribute("referrerpolicy", "no-referrer");
   fireEvent.error(preview);
   expect(within(original).getByRole("alert")).toHaveTextContent(
-    "Page preview could not be loaded",
+    "The original page could not be loaded",
   );
   expect(screen.getByLabelText("Corrected text for page 1")).toHaveValue(
     "Original text",
   );
   expect(
-    within(original).getByRole("link", { name: "Open original PDF" }),
+    within(original).getByRole("link", { name: "Download original PDF" }),
   ).toHaveAttribute("href", firstUrl);
   expect(
-    within(original).getByRole("link", { name: "Open original PDF" }),
-  ).toHaveAttribute("rel", "noreferrer noopener");
+    within(original).getByRole("link", { name: "Download original PDF" }),
+  ).toHaveAttribute("download");
   expect(
     screen.getByRole("region", { name: "Extracted and corrected text" }),
   ).toHaveTextContent("Original text");
@@ -584,15 +584,15 @@ it("shows the authorized original PDF beside corrected text and follows page nav
       within(original).getByRole("img", { name: "Original PDF page 2" }),
     ).toHaveAttribute(
       "src",
-      `${window.location.origin}/api/v1/admin/source-documents/${documentId}/pages/2/preview`,
+      `${window.location.origin}/api/v1/admin/materials/${documentId}/pages/2/image`,
     ),
   );
   expect(within(original).queryByRole("alert")).not.toBeInTheDocument();
   expect(
-    within(original).getByRole("link", { name: "Open original PDF" }),
+    within(original).getByRole("link", { name: "Download original PDF" }),
   ).toHaveAttribute(
     "href",
-    `/api/v1/admin/source-documents/${documentId}/content#page=2&view=FitH`,
+    `/api/v1/admin/materials/${documentId}/original`,
   );
   expect(
     screen.getByRole("region", { name: "Extracted and corrected text" }),
@@ -603,7 +603,7 @@ it("shows the authorized original PDF beside corrected text and follows page nav
     within(original).getByRole("img", { name: "Original PDF page 1" }),
   ).toHaveAttribute(
     "src",
-    `${window.location.origin}/api/v1/admin/source-documents/${documentId}/pages/1/preview`,
+    `${window.location.origin}/api/v1/admin/materials/${documentId}/pages/1/image`,
   );
 });
 

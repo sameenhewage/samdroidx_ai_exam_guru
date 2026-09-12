@@ -5,7 +5,6 @@ import {
   type components,
   type paths,
 } from "@exam-guru/api-client";
-import Image from "next/image";
 import Link from "next/link";
 import {
   useCallback,
@@ -15,6 +14,8 @@ import {
   useState,
   type FormEvent,
 } from "react";
+
+import { OriginalPageViewer } from "./original-page-viewer";
 
 type SourceDocument = components["schemas"]["SourceDocumentResponse"];
 type SourcePage = components["schemas"]["SourcePageResponse"];
@@ -70,7 +71,7 @@ const MAX_ENGINE_VERSION_CHARACTERS = 128;
 const MAX_OCR_PAGE_NUMBERS = 50;
 const MAX_SOURCE_PAGE_NUMBER = 1_000;
 const SOURCE_CONTENT_ROUTE: keyof paths =
-  "/api/v1/admin/source-documents/{document_id}/content";
+  "/api/v1/admin/materials/{document_id}/original";
 const unsafeTextControls = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const secretConfigSegments = new Set([
   "apikey",
@@ -92,49 +93,8 @@ function plainText(value: string): string {
   return value.replace(unsafeTextControls, "�");
 }
 
-function sourceContentUrl(documentId: string, pageNumber: number): string {
-  const path = SOURCE_CONTENT_ROUTE.replace(
-    "{document_id}",
-    encodeURIComponent(documentId),
-  );
-  return `${path}#page=${pageNumber}&view=FitH`;
-}
-
-function OriginalPagePreview({
-  documentId,
-  pageNumber,
-}: {
-  documentId: string;
-  pageNumber: number;
-}) {
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  return (
-    <div className="mt-4">
-      {state === "loading" && <p role="status">Loading original page…</p>}
-      {state === "error" && (
-        <p
-          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
-          role="alert"
-        >
-          Page preview could not be loaded. Use Open original PDF or try this
-          page again.
-        </p>
-      )}
-      <Image
-        alt={`Original PDF page ${pageNumber}`}
-        className="h-auto w-full rounded-md border border-slate-300 bg-white"
-        height={1414}
-        loading="eager"
-        onError={() => setState("error")}
-        onLoad={() => setState("ready")}
-        referrerPolicy="no-referrer"
-        src={`/api/v1/admin/source-documents/${encodeURIComponent(documentId)}/pages/${pageNumber}/preview`}
-        title="Original PDF preview"
-        unoptimized
-        width={1000}
-      />
-    </div>
-  );
+function sourceContentUrl(documentId: string): string {
+  return SOURCE_CONTENT_ROUTE.replace("{document_id}", encodeURIComponent(documentId));
 }
 
 function boundedIdentity(
@@ -897,7 +857,7 @@ export function ExtractionReviewStudio({
     const canEdit =
       role === "admin" && document.extraction_status === "in_review";
     const originalPdfUrl = selectedPage
-      ? sourceContentUrl(documentId, selectedPage.page_number)
+      ? sourceContentUrl(documentId)
       : null;
 
     return (
@@ -1029,22 +989,21 @@ export function ExtractionReviewStudio({
                     <a
                       className={secondaryButton}
                       href={originalPdfUrl}
-                      rel="noreferrer noopener"
-                      target="_blank"
+                      download
                     >
-                      Open original PDF
+                      Download original PDF
                     </a>
                   )}
                 </div>
-                <OriginalPagePreview
+                <OriginalPageViewer
                   documentId={documentId}
-                  key={`${documentId}:${selectedPage.page_number}`}
                   pageNumber={selectedPage.page_number}
+                  labels={{ original: "Original PDF page" }}
+                  className="mt-4 h-[65dvh] min-h-80"
                 />
                 <p className="mt-3 text-xs leading-5 text-slate-600">
-                  This page image does not change the original PDF. Use Open
-                  original PDF for the full file, protected by your signed-in
-                  Studio session.
+                  This read-only page viewer does not change the original PDF.
+                  Download original PDF only when you want a separate copy of the file.
                 </p>
               </section>
 

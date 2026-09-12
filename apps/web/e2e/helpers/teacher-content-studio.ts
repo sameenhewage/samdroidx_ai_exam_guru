@@ -1466,6 +1466,14 @@ export async function installTeacherStudioFixture(
       );
     }
 
+    const originalImage = path.match(/^\/api\/v1\/admin\/materials\/([^/]+)\/pages\/(\d+)\/image$/);
+    if (method === "GET" && originalImage) {
+      const material = state.materials.find(item => item.id === originalImage[1]);
+      const pageNumber = Number(originalImage[2]);
+      if (!material || pageNumber < 1 || pageNumber > (material.page_count ?? 1)) return json(route, { detail: { code: "source_page_not_found" } }, 404);
+      return route.fulfill({ body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
+        contentType: "image/png", headers: { "Cache-Control": "private, no-store" }, status: 200 });
+    }
     if (
       method === "GET" &&
       ((path.includes("/source-documents/") && path.endsWith("/content")) ||

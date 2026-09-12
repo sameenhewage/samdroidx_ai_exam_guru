@@ -1,7 +1,6 @@
 "use client";
 
 import { createApiClient, type components } from "@exam-guru/api-client";
-import Image from "next/image";
 import Link from "next/link";
 import {
   useCallback,
@@ -22,9 +21,11 @@ import {
   ModalOverlay,
 } from "react-aria-components";
 
+import { reviewLanguageKey, savedReviewLanguage, subscribeReviewLanguage, type ReviewLanguage } from "@/lib/review-language";
 import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
+import { OriginalPageViewer } from "./original-page-viewer";
 
 type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
 type Page = components["schemas"]["PageReviewView"];
@@ -281,23 +282,6 @@ const sinhala: Copy = {
   diagnostics: "කියවීමේ තාක්ෂණික විස්තර",
 };
 
-export type ReviewLanguage = "en" | "si";
-export const reviewLanguageKey = "exam-guru:review-language:v1";
-
-export function savedReviewLanguage(): ReviewLanguage | null {
-  try {
-    const language = window.localStorage.getItem(reviewLanguageKey);
-    return language === "si" || language === "en" ? language : null;
-  } catch {
-    return null;
-  }
-}
-
-export function subscribeReviewLanguage(onChange: () => void) {
-  window.addEventListener("storage", onChange);
-  return () => window.removeEventListener("storage", onChange);
-}
-
 function textLanguage(language: string): "si" | "ta" | "en" {
   const code = language.toLowerCase().split(/[-_]/)[0];
   if (["si", "sin", "sinhala"].includes(code)) return "si";
@@ -386,106 +370,6 @@ function RecoveredText({ page, copy }: { page: Page; copy: Copy }) {
       >
         {page.system_text}
       </pre>
-    </section>
-  );
-}
-
-function OriginalPage({
-  page,
-  copy,
-  onReady,
-}: {
-  page: Page;
-  copy: Copy;
-  onReady: (ready: boolean) => void;
-}) {
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [attempt, setAttempt] = useState(0);
-  const [zoom, setZoom] = useState(100);
-  return (
-    <section
-      aria-label={copy.original}
-      className="min-h-0 overflow-auto overscroll-contain rounded-lg border border-slate-300 bg-slate-100"
-      tabIndex={0}
-    >
-      <header className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-slate-300 bg-white p-2">
-        <h2 className="mr-auto font-semibold">{copy.original}</h2>
-        <Button
-          aria-label={copy.zoomOut}
-          className={buttonClass}
-          isDisabled={zoom <= 50}
-          onPress={() => setZoom((value) => Math.max(50, value - 25))}
-        >
-          −
-        </Button>
-        <output aria-label={copy.zoom} className="min-w-12 text-center text-sm">
-          {zoom}%
-        </output>
-        <Button
-          aria-label={copy.zoomIn}
-          className={buttonClass}
-          isDisabled={zoom >= 200}
-          onPress={() => setZoom((value) => Math.min(200, value + 25))}
-        >
-          +
-        </Button>
-        <Button
-          aria-label={copy.zoomReset}
-          className={cn(buttonClass, "w-10 shrink-0 px-0")}
-          onPress={() => setZoom(100)}
-        >
-          <NavigationIcon name="refresh" />
-        </Button>
-        <a
-          className="rounded p-2 text-sm underline focus-visible:ring-2 focus-visible:ring-amber-600"
-          href={page.preview_url}
-          rel="noreferrer noopener"
-          target="_blank"
-        >
-          {copy.openOriginal}
-        </a>
-      </header>
-      {state === "loading" && (
-        <p className="p-3 text-sm" role="status">
-          {copy.previewLoading}
-        </p>
-      )}
-      {state === "error" && (
-        <div className={`${alertClass} m-3`} role="alert">
-          <p>{copy.previewError}</p>
-          <Button
-            className={`${buttonClass} mt-2`}
-            onPress={() => {
-              setState("loading");
-              onReady(false);
-              setAttempt((value) => value + 1);
-            }}
-          >
-            {copy.imageRetry}
-          </Button>
-        </div>
-      )}
-      <div className="p-2" style={{ width: `${zoom}%` }}>
-        <Image
-          alt={`${copy.original} ${page.page_number}`}
-          className="block h-auto w-full max-w-none bg-white"
-          height={1414}
-          key={attempt}
-          loading="eager"
-          onError={() => {
-            setState("error");
-            onReady(false);
-          }}
-          onLoad={() => {
-            setState("ready");
-            onReady(true);
-          }}
-          referrerPolicy="no-referrer"
-          src={page.preview_url}
-          unoptimized
-          width={1000}
-        />
-      </div>
     </section>
   );
 }
@@ -1363,11 +1247,14 @@ function ReviewSession({
           aria-label={copy.comparison}
           className="grid h-[75dvh] min-h-0 grid-rows-2 gap-3 overflow-hidden lg:h-auto lg:flex-1 lg:grid-cols-2 lg:grid-rows-1"
         >
-          <OriginalPage
-            copy={copy}
+          <OriginalPageViewer
+            documentId={documentId}
+            pageNumber={page.page_number}
+            previewUrl={page.preview_url}
+            language={language}
+            labels={copy}
             key={loaded?.requestId}
             onReady={setPreviewReady}
-            page={page}
           />
           <section
             aria-label={copy.systemText}

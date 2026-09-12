@@ -4,12 +4,13 @@ You are implementing the next product-quality correction for Exam Guru.
 
 This is not a mockup task and not a CSS-only task.
 
+For source-to-RAG work, apply the visual document-understanding correction in `docs/SYSTEM_ARCHITECTURE.md` §4.8. Source observations and educational meaning remain distinct candidates until independently verified; only current TrustedPageKnowledge may create the new KnowledgeUnits/projections/indexes. Preserve existing originals, evidence and reviews without automatic legacy promotion. The contract-only groundwork is not a completed provider/RAG rollout or permission for broad corpus backfill.
+
 The goal is to make the existing private Teacher Studio behave like a real teacher-facing product while preserving the strong backend architecture, RAG, deterministic blueprinting, validation, audit, review, publishing and security contracts already built.
 
 Work like a senior cross-functional software team: product engineer + frontend engineer + backend/domain engineer + QA + security/reliability reviewer.
 
 Do not stop after fixing one screenshot. Continue the engineering loop until the complete teacher workflow is coherent, runtime-proven and regression-protected.
-
 
 ---
 
@@ -60,7 +61,6 @@ Do not hand this build to teachers merely because architecture, unit tests, or i
 The build is **TEACHER-PILOT READY** only when the complete Grade 5 acceptance flow described later in this prompt passes end to end in a clean runtime with real representative data.
 
 If required Grade 3/4/Grade 5 source material or human-reviewed extraction/eval evidence is missing, report that as a concrete pilot blocker. Do not label the system teacher-ready.
-
 
 ---
 
@@ -160,7 +160,7 @@ Before making broad changes, run the current application and inspect the real te
 Create a concise implementation gap matrix:
 
 | Area | Current runtime | Reference expectation | Root cause | Planned fix | Test |
-|---|---|---|---|---|---|
+| ---- | --------------- | --------------------- | ---------- | ----------- | ---- |
 
 Cover at least:
 
@@ -843,7 +843,6 @@ Grade 3/4 source records exist to satisfy the Grade 5 Scholarship programme cove
 
 Treat this as important real-data input for this implementation loop.
 
-
 For **teacher-pilot readiness**, inventory whether the local corpus contains sufficient official/reviewable material for the Grade 5 Scholarship programme:
 
 - Grade 3 supporting syllabus/teacher-guide material needed by Paper II;
@@ -886,18 +885,20 @@ Do not directly insert fake trusted chunks into the DB to make a demo pass.
 
 Use the real system flow as much as possible:
 
-1. upload/import through the supported application/service boundary;
-2. extraction/native PDF parsing;
-3. OCR only when required;
-4. review/correction;
-5. Ready for AI promotion;
-6. semantic chunking;
-7. embeddings/indexing;
-8. RAG retrieval;
-9. paper generation;
-10. validation;
-11. teacher review;
-12. publication where acceptance data permits.
+1. upload/import through the supported application/service boundary and preserve the original;
+2. render bounded pages/regions and retain native/OCR/font/layout evidence;
+3. obtain source-faithful visual observation and separate educational-understanding candidates;
+4. independently verify and review/correct exact source facts, relationships and uncertainty;
+5. create versioned TrustedPageKnowledge through authorized, current-source decisions;
+6. derive educational KnowledgeUnits with source-region links and approved scope;
+7. build deterministic, versioned projections and current lexical/vector indexes;
+8. retrieve trusted knowledge with hard scope and freshness checks;
+9. generate from structured evidence/meaning bundles and deterministic blueprints;
+10. validate against the current trusted lineage;
+11. obtain teacher review;
+12. publish only where acceptance data permits, without changing historical publications.
+
+Use the fixed counting, multiplication and legacy-guide cases plus controlled before/after retrieval/generation evaluations before broad Grade 3/4/5 backfill. Unresolved pages/relationships remain untrusted.
 
 If a bulk local-import helper is genuinely needed, implement it as a bounded first-party operator workflow that goes through the same domain invariants and provenance rules, not a DB bypass.
 
@@ -1632,14 +1633,16 @@ Return a concise but evidence-rich release report:
    - list any failed gate by name
 
 10. **Teacher test handoff**
-   - if and only if READY FOR TEACHER PILOT, provide the exact teacher tasks to run
-   - do not ask teachers to test engineering internals
+
+- if and only if READY FOR TEACHER PILOT, provide the exact teacher tasks to run
+- do not ask teachers to test engineering internals
 
 11. **Remaining blockers**
-   - external credentials
-   - human-reviewed OCR/eval labels
-   - real subject-teacher adjudication
-   - anything else factual
+
+- external credentials
+- human-reviewed OCR/eval labels
+- real subject-teacher adjudication
+- anything else factual
 
 Do not say the system is fully correct merely because automated tests are green.
 

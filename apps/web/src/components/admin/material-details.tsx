@@ -2,9 +2,13 @@
 
 import { createApiClient, type components } from "@exam-guru/api-client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+
+import { reviewLanguageKey, savedReviewLanguage, subscribeReviewLanguage, type ReviewLanguage } from "@/lib/review-language";
 
 import type { AdminRole } from "./admin-header";
+import { sourceViewerCopy } from "./original-page-viewer";
+import { SourceDocumentViewer } from "./source-document-viewer";
 
 type CatalogueEntry = components["schemas"]["MaterialCatalogueEntry"];
 type Material = components["schemas"]["MaterialListItemResponse"];
@@ -174,6 +178,8 @@ export function MaterialDetails({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const storedLanguage = useSyncExternalStore(subscribeReviewLanguage, savedReviewLanguage, () => null);
+  const [languageChoice, setLanguageChoice] = useState<ReviewLanguage | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,6 +285,10 @@ export function MaterialDetails({
     ? (intake?.document_type_label ?? "Unverified material type")
     : materialTypeLabels[material.material_type];
 
+  const hint = material.medium ?? intake?.medium_label ?? "";
+  const language = languageChoice ?? storedLanguage ?? (/^(si|sin|sinhala|සිංහල)(?:[-_]|$)/i.test(hint) ? "si" : "en");
+  const viewerCopy = sourceViewerCopy(language);
+
   return (
     <article className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:py-12">
       <Link
@@ -313,6 +323,7 @@ export function MaterialDetails({
                   : "The PDF is being read. Return later to review the extracted text."}
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
+          <a className={secondaryButton} href="#original-pdf-heading" lang={language}>{viewerCopy.view}</a>
           <Link
             className={secondaryButton}
             href={`/admin/materials/${documentId}/review-text`}
@@ -355,19 +366,18 @@ export function MaterialDetails({
           <a
             className={secondaryButton}
             href={`/api/v1/admin/materials/${documentId}/original`}
-            rel="noreferrer"
-            target="_blank"
+            download
+            lang={language}
           >
-            Open original PDF in a new tab
+            {viewerCopy.download}
           </a>
         </div>
-        <iframe
-          className="mt-4 h-[70vh] min-h-[32rem] w-full rounded-xl border border-slate-300 bg-white"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={`/api/v1/admin/materials/${documentId}/original`}
-          title={`Original PDF: ${material.title}`}
-        />
+        <SourceDocumentViewer documentId={documentId} title={material.title} pageCount={material.page_count} language={language}
+          onRetryDetails={() => void load()}
+          onLanguageChange={value => {
+            setLanguageChoice(value);
+            try { window.localStorage.setItem(reviewLanguageKey, value); } catch { return; }
+          }} />
       </section>
 
       <section aria-labelledby="material-details-heading" className="mt-8">

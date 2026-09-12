@@ -1,21 +1,24 @@
 # AI Exam Guru V1 — Master Plan
 
 ## 1. Product objective
+
 Build a Grade 5 Scholarship examination practice platform for Sri Lanka that turns trusted curriculum material and historical examinations into validated AI-assisted practice papers, then later exposes those papers to subscribed students with marking and progress analytics.
 
 V1 is intentionally split into two **strict priorities**, not two independent products.
 
 ### Priority 1 — Admin + Exam Intelligence + RAG + LLM
+
 This is the foundation and must be 100% complete before Priority 2 implementation begins.
 
 The admin must be able to:
+
 1. create/manage Grade 5 curriculum metadata and taxonomy;
 2. upload syllabus, teacher guides, past papers, marking schemes, and related trusted source material;
-3. extract native PDF text and process scanned documents using an OCR adapter;
-4. review/correct extracted content before it becomes trusted knowledge;
+3. understand rendered visual pages while retaining native PDF/OCR/layout evidence as candidates;
+4. review source-faithful observations and separate educational interpretation before producing versioned TrustedPageKnowledge;
 5. normalize historical questions into structured records;
 6. classify questions by competency, skill, sub-skill, question archetype, difficulty, marks, year, paper and source;
-7. build embeddings and searchable chunks in PostgreSQL + pgvector;
+7. derive educational KnowledgeUnits and deterministic, freshness-bound lexical/vector projections in PostgreSQL + pgvector;
 8. retrieve grounded curriculum/history context through hybrid RAG;
 9. analyze historical coverage, frequency, marks, recency and question patterns;
 10. run rolling historical backtests against held-out papers;
@@ -29,9 +32,11 @@ The admin must be able to:
 18. observe quality, token usage, cost, latency and failure reasons.
 
 ### Priority 2 — Student Experience
+
 Starts only after the Priority 1 acceptance gate is DONE.
 
 The student product must support:
+
 1. account/authentication and Grade 5 profile;
 2. subscription/access control;
 3. browsing available published practice papers;
@@ -44,6 +49,7 @@ The student product must support:
 10. simple next-paper/weak-skill recommendations.
 
 ## 2. V1 non-goals
+
 The following are explicitly out of V1 unless the master plan is intentionally revised:
 
 - AI conversational tutor
@@ -61,39 +67,47 @@ The following are explicitly out of V1 unless the master plan is intentionally r
 - separate managed vector database
 
 ## 3. Core product principle
+
 The LLM is a replaceable generator/reasoner, not the product's source of truth.
 
 The durable intelligence belongs to us:
 
-`trusted sources -> structured curriculum/question data -> historical evidence -> RAG -> deterministic blueprint -> generated candidate -> validators/evals -> human review -> published paper`
+`immutable original -> rendered evidence -> source observation + educational understanding -> verification -> TrustedPageKnowledge -> KnowledgeUnits/projections -> hard-scoped RAG -> deterministic blueprint -> generated candidate -> validators/evals -> human review -> published paper`
+
+The binding document-understanding correction and truthful rollout status are in `docs/SYSTEM_ARCHITECTURE.md` §4.8. Native/OCR evidence, prior source history and published snapshots remain intact; legacy trust is not automatically migrated into the new knowledge boundary.
 
 ## 4. V1 technical architecture
 
 ### Web
+
 - Next.js + React + TypeScript
 - shadcn/ui + React Aria + Tailwind CSS
 
 ### Backend
+
 - Python + FastAPI + Pydantic
 - REST/OpenAPI
 - SQLAlchemy 2 + Alembic
 - modular monolith
 
 ### Data
+
 - PostgreSQL
 - pgvector
 - Valkey for cache/jobs
-- S3-compatible object storage for uploaded source documents and generated artifacts
+- private durable local-filesystem source/artifact storage by default; S3/MinIO remain optional adapters
 
 ### AI/document intelligence
-- native PDF extraction first
-- pluggable open-source OCR adapter for scans; benchmark real Sinhala Grade 5 material before locking the engine
+
+- first-party rendered-page document-understanding provider with candidate-only structured output
+- native extraction, pluggable OCR, geometry and font/script/math checks retained as independent evidence; benchmark representative real Sinhala/visual pages before quality claims
 - provider-independent LLM interface
 - OpenAI initially, with model benchmarking/evals deciding exact task routing
 - provider-independent embedding interface
 - first-party RAG retrieval and context-building logic
 
 ## 5. Major domain entities
+
 At minimum the domain model must cover:
 
 - User / Admin / Reviewer / Student
@@ -101,9 +115,11 @@ At minimum the domain model must cover:
 - Exam / Grade / Medium / PaperType
 - CurriculumVersion
 - Competency / Skill / SubSkill / LearningConcept
-- SourceDocument / SourcePage / ExtractedBlock
+- SourceDocument / SourcePage / PageRegion / retained extraction evidence
+- DocumentUnderstandingRun / ObservationCandidate / PageObservation / EducationalUnderstanding
+- VerificationFinding / PageVerificationDecision / TrustedPageKnowledge
 - HistoricalPaper / HistoricalQuestion / HistoricalAnswer
-- KnowledgeChunk / Embedding
+- KnowledgeUnit / KnowledgeSourceLink / KnowledgeProjection / Embedding
 - ForecastRun / ForecastScore / BacktestRun / BacktestResult
 - PaperBlueprint / BlueprintSlot
 - GeneratedQuestion / GenerationRun
@@ -115,6 +131,7 @@ At minimum the domain model must cover:
 - SkillPerformance / ProgressSnapshot / Recommendation
 
 ## 6. Paper generation contract
+
 Paper generation is asynchronous and offline from the student runtime.
 
 1. Admin requests a paper generation run.
@@ -128,9 +145,11 @@ Paper generation is asynchronous and offline from the student runtime.
 9. Published paper versions are stored and served without calling an LLM.
 
 ## 7. Forecasting contract
+
 Forecasting is an evidence-based practice-priority engine, not a promise about the future exam.
 
 Possible factors:
+
 - curriculum importance
 - historical frequency
 - marks distribution
@@ -142,6 +161,7 @@ Possible factors:
 Every forecasting method must be backtested using rolling historical holdouts and compared with a simple syllabus-balanced baseline. If it cannot demonstrate value, the product must fall back to syllabus-balanced practice rather than misleading prediction claims.
 
 ## 8. Validation contract
+
 Every generated question must pass an explicit pipeline such as:
 
 - schema/structured-output validation
@@ -159,9 +179,11 @@ Every generated question must pass an explicit pipeline such as:
 A failure creates a traceable validation finding and must never be silently ignored.
 
 ## 9. TDD/evaluation contract
+
 TDD is mandatory for deterministic code. AI quality must additionally use eval-driven development.
 
 Required evidence includes:
+
 - unit tests
 - real database integration tests
 - API contract tests
@@ -175,6 +197,7 @@ Required evidence includes:
 Every production defect becomes a regression test or eval case before the fix.
 
 ## 10. Delivery model
+
 Development is continuous loop engineering, not prompt-per-phase implementation.
 
 `inspect -> choose highest-priority failing/unfinished acceptance item -> RED -> GREEN -> REFACTOR -> integration/eval -> review -> fix -> full gate -> tracker update -> repeat`
@@ -182,11 +205,13 @@ Development is continuous loop engineering, not prompt-per-phase implementation.
 The tracker provides evidence/status. It must not force artificial hand-offs between closely related work.
 
 ## 11. Priority gate
+
 **Priority 2 work is blocked until all Priority 1 phases in `PHASE_TRACKER.md` are DONE and the Priority 1 release gate has passed.**
 
 Minimal student UI scaffolding is allowed only if technically necessary for shared project bootstrap; no student feature implementation may distract from Priority 1.
 
 ## 12. V1 success outcome
+
 A successful Priority 1 demo begins with real Grade 5 documents and ends with a reviewed/published practice paper whose questions can be traced to curriculum evidence, whose retrieval/generation/validation behavior is testable, and whose historical forecasting claims have measurable backtest evidence.
 
 A successful full V1 then allows a subscribed Grade 5 student to take those published papers and see trustworthy score/skill/progress analytics without depending on live LLM availability.

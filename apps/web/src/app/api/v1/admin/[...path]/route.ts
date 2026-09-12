@@ -8,6 +8,9 @@ import { parseWebAppConfig } from "@/lib/web-app-config";
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 26 * 1024 * 1024;
 const MAX_CHUNK_BODY_BYTES = 4_194_304;
+const SOURCE_HEADER_TIMEOUT_MS = 30_000;
+const SOURCE_STREAM_IDLE_TIMEOUT_MS = 30_000;
+const SOURCE_STREAM_MAX_MS = 15 * 60_000;
 const checksumPattern = /^[0-9a-f]{64}$/;
 
 function isChunkUpload(method: string, path: readonly string[]): boolean {
@@ -220,6 +223,39 @@ function safeInlineDisposition(value: string | null): string | null {
     : null;
 }
 
+function boundedSourceResponse(
+  body: ReadableStream<Uint8Array<ArrayBuffer>>,
+  abort: AbortController,
+  signal: AbortSignal,
+): ReadableStream<Uint8Array<ArrayBuffer>> {
+  const expire = () =>
+    abort.abort(new DOMException("Source transfer timed out", "TimeoutError"));
+  let idle = setTimeout(expire, SOURCE_STREAM_IDLE_TIMEOUT_MS);
+  const total = setTimeout(expire, SOURCE_STREAM_MAX_MS);
+  idle.unref?.();
+  total.unref?.();
+  const output = new TransformStream<
+    Uint8Array<ArrayBuffer>,
+    Uint8Array<ArrayBuffer>
+  >({
+    transform(chunk, controller) {
+      if (chunk.byteLength === 0) return;
+      clearTimeout(idle);
+      idle = setTimeout(expire, SOURCE_STREAM_IDLE_TIMEOUT_MS);
+      idle.unref?.();
+      controller.enqueue(chunk);
+    },
+  });
+  void body
+    .pipeTo(output.writable, { signal })
+    .catch(() => abort.abort())
+    .finally(() => {
+      clearTimeout(idle);
+      clearTimeout(total);
+    });
+  return output.readable;
+}
+
 async function proxy(request: NextRequest, context: RouteContext) {
   const config = parseWebAppConfig();
   const rejection = guardBrowserRequest(request, config);
@@ -284,6 +320,23 @@ async function proxy(request: NextRequest, context: RouteContext) {
     upstreamHeaders["Accept-Encoding"] = "identity";
   }
 
+  const sourceAbort = new AbortController();
+  const upstreamSignal = AbortSignal.any([
+    request.signal,
+    sourceContentRequest
+      ? sourceAbort.signal
+      : AbortSignal.timeout(config.httpTimeoutMs),
+  ]);
+  const sourceHeaderTimer = sourceContentRequest
+    ? setTimeout(
+        () =>
+          sourceAbort.abort(
+            new DOMException("Source headers timed out", "TimeoutError"),
+          ),
+        SOURCE_HEADER_TIMEOUT_MS,
+      )
+    : undefined;
+  sourceHeaderTimer?.unref?.();
   let response: Response;
   try {
     // The display-only role cookie is deliberately ignored. Every target API endpoint receives
@@ -294,18 +347,19 @@ async function proxy(request: NextRequest, context: RouteContext) {
       headers: upstreamHeaders,
       method: request.method,
       redirect: "error",
-      signal: AbortSignal.any([
-        request.signal,
-        AbortSignal.timeout(config.httpTimeoutMs),
-      ]),
+      signal: upstreamSignal,
     });
   } catch (error) {
     if (isTimeoutError(error)) {
       return errorResponse("upstream_timeout", 504);
     }
     return errorResponse("upstream_unavailable", 502);
+  } finally {
+    clearTimeout(sourceHeaderTimer);
   }
   if (response.status >= 300 && response.status < 400) {
+    sourceAbort.abort();
+    await response.body?.cancel().catch(() => undefined);
     return errorResponse("upstream_unavailable", 502);
   }
 
@@ -329,6 +383,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     sourceImageRequest &&
     !["image/png", "image/jpeg", "image/webp"].includes(mediaType);
   if (response.ok && (invalidPdf || invalidImage)) {
+    sourceAbort.abort();
     await response.body?.cancel().catch(() => undefined);
     return errorResponse("upstream_unavailable", 502);
   }
@@ -369,8 +424,20 @@ async function proxy(request: NextRequest, context: RouteContext) {
     if (modified && safeHttpDate(modified))
       responseHeaders["Last-Modified"] = modified;
   }
+  let responseBody = response.body;
+  if (request.method === "HEAD") {
+    sourceAbort.abort();
+    await responseBody?.cancel().catch(() => undefined);
+    responseBody = null;
+  } else if (sourceContentRequest && responseBody) {
+    responseBody = boundedSourceResponse(
+      responseBody,
+      sourceAbort,
+      upstreamSignal,
+    );
+  }
   // Original PDFs and image bodies remain streams; never buffer a complete source here.
-  return new NextResponse(request.method === "HEAD" ? null : response.body, {
+  return new NextResponse(responseBody, {
     headers: responseHeaders,
     status: response.status,
   });

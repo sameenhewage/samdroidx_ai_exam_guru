@@ -157,7 +157,7 @@ test("contract 2: Grade 5 opens a searchable, filtered uploaded-material list", 
     .filter({ hasText: "grade-5-maths-syllabus.pdf" });
   const previewResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/original") &&
+      /\/materials\/[^/]+\/pages\/1\/image$/.test(response.url()) &&
       response.request().method() === "GET",
   );
   await syllabus.getByRole("link", { name: "View", exact: true }).click();
@@ -165,11 +165,12 @@ test("contract 2: Grade 5 opens a searchable, filtered uploaded-material list", 
     page.getByRole("heading", { level: 1, name: "grade-5-maths-syllabus.pdf" }),
   ).toBeVisible();
   await expect(
-    page.getByTitle("Original PDF: grade-5-maths-syllabus.pdf"),
-  ).toHaveAttribute("src", /\/api\/v1\/admin\/materials\/.+\/original$/);
+    page.getByTitle("Original PDF: grade-5-maths-syllabus.pdf").getByRole("img"),
+  ).toHaveAttribute("src", /\/api\/v1\/admin\/materials\/.+\/pages\/1\/image$/);
+  await expect(page.locator("iframe, embed, object")).toHaveCount(0);
   const response = await previewResponse;
   expect(response.status()).toBe(200);
-  expect(response.headers()["content-type"]).toContain("application/pdf");
+  expect(response.headers()["content-type"]).toContain("image/png");
 });
 
 test("contract 3: an exact duplicate upload is stopped and links to the existing item", async ({
@@ -352,12 +353,9 @@ test("contract 5: text correction compares immutable and editable extraction", a
       secondPreview.evaluate((image: HTMLImageElement) => image.naturalWidth),
     )
     .toBeGreaterThan(0);
-  await expect(
-    page.getByRole("link", { name: "Open original page" }),
-  ).toHaveAttribute(
-    "href",
-    `/api/v1/admin/materials/${fixture.materialIds.ocr}/pages/2/image`,
-  );
+  await expect(page.locator("[data-original-page-viewer]")).toHaveCount(1);
+  await expect(page.locator("iframe, object, embed")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open original page" })).toHaveCount(0);
   await page
     .getByRole("button", { name: "Previous page", exact: true })
     .click();

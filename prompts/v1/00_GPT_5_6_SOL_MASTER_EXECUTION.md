@@ -9,6 +9,7 @@ You are the principal engineer and autonomous implementation agent for `sameenhe
 Your job is to implement **AI Exam Guru V1** from repository state, using continuous loop engineering and mandatory TDD/eval-driven development. Do not treat the tracker as a set of separate prompts. Do not stop after completing one phase unless a genuine external blocker prevents all remaining work in the active priority.
 
 ## Read first
+
 Before changing code, read in full:
 
 1. `AGENTS.md`
@@ -21,9 +22,11 @@ Before changing code, read in full:
 Then inspect the entire repository, current branch, commit history, existing code, tests, migrations, CI and open TODOs.
 
 ## Mandatory repository-skill protocol
+
 The repo contains reusable engineering skills in `.agents/skills/*/SKILL.md`. Skill use is not optional.
 
 Before any implementation work:
+
 1. enumerate/inspect the available repository skills and their descriptions;
 2. **always read and apply** `.agents/skills/loop-engineering/SKILL.md` and `.agents/skills/tdd-eval-engineering/SKILL.md`;
 3. select every additional skill whose description matches the current work item and read its full `SKILL.md` before changing code;
@@ -33,6 +36,7 @@ Before any implementation work:
 7. follow the trigger matrix and exact paths in `AGENTS.md` as the authoritative repository skill registry.
 
 Examples:
+
 - backend/API/database work -> always-on skills + `fastapi-domain-engineering`;
 - admin UI -> always-on skills + `nextjs-product-engineering` + `priority1-admin-acceptance`;
 - upload/PDF/OCR -> always-on skills + `document-ingestion-ocr` + backend + security skills as relevant;
@@ -44,15 +48,17 @@ Examples:
 Include the repo skills materially used in the end-of-session report.
 
 ## Primary mission
+
 The active mission is **Priority 1 only** until `P10 — Priority 1 Full Acceptance` is legitimately `DONE`.
 
 Priority 1 includes:
+
 - repository/engineering foundation;
 - admin authentication/authorization;
 - Grade 5 domain taxonomy;
 - source document upload/storage;
-- native PDF extraction + pluggable OCR;
-- extraction review/correction;
+- rendered-page visual understanding with native/OCR/layout evidence retained as candidates;
+- separate source-observation and educational-understanding review, verification and versioned TrustedPageKnowledge;
 - historical question normalization/classification;
 - curriculum knowledge base;
 - embeddings/versioning;
@@ -75,9 +81,11 @@ Priority 1 includes:
 **Do not implement Priority 2 student features while any Priority 1 acceptance criterion remains incomplete.** Shared technical scaffolding is allowed only where required for Priority 1.
 
 ## Technology direction
+
 Use the architecture defined by the V1 docs. At bootstrap, verify current stable/security-patched versions before pinning dependencies rather than blindly copying old version numbers.
 
 Baseline:
+
 - Next.js + React + TypeScript
 - shadcn/ui + React Aria + Tailwind CSS
 - Python + FastAPI + Pydantic
@@ -85,12 +93,12 @@ Baseline:
 - SQLAlchemy 2 + Alembic
 - PostgreSQL + pgvector
 - Valkey
-- S3-compatible storage abstraction
+- private durable local-filesystem storage by default, with optional S3-compatible adapters
 - Python managed with `uv`
 - Docker local/integration environment
 - provider-independent LLM/embedding interfaces
 - OpenAI initially
-- native PDF extraction first; pluggable open-source OCR for scans
+- source-to-RAG contract from `docs/SYSTEM_ARCHITECTURE.md` §4.8: visual evidence -> separate observation/meaning -> verification -> TrustedPageKnowledge -> KnowledgeUnits -> deterministic projections -> hybrid retrieval; no automatic legacy promotion
 - first-party deterministic RAG/forecast/blueprint/validation domain logic
 
 Do not introduce GraphQL, microservices, Kubernetes, a separate vector database, fine-tuning, or a broad agent framework unless you can document and prove a concrete requirement that the existing architecture cannot satisfy cleanly.
@@ -98,22 +106,27 @@ Do not introduce GraphQL, microservices, Kubernetes, a separate vector database,
 LangChain may be used selectively only when it provides measurable value. It must not own the domain architecture. LangGraph is not needed unless a genuinely stateful/agentic workflow is proven to require it.
 
 ## Required engineering loop
+
 Continuously repeat:
 
 `inspect -> select highest-priority incomplete acceptance item -> select/load matching repo skills -> define tests/evals -> RED -> implement GREEN -> REFACTOR -> integration/eval -> adversarial review -> regression-test findings -> fix -> broad gate -> update tracker evidence -> commit -> continue`
 
 ### Do not wait for a new prompt after a tracker phase becomes DONE.
+
 Move immediately to the next highest-priority incomplete Priority 1 acceptance item and re-evaluate the applicable skill set.
 
 ## TDD rules
+
 TDD is mandatory.
 
 For deterministic behavior:
+
 1. write/reproduce a failing test first;
 2. implement the smallest correct change;
 3. refactor with tests green.
 
 For AI/RAG quality:
+
 1. create/extend a fixed evaluation fixture;
 2. define measurable expected behavior;
 3. implement/tune;
@@ -125,6 +138,7 @@ Every bug or review finding must become a regression test/eval before the fix.
 Do not weaken a valid test to make CI green.
 
 ## Integration realism
+
 Normal CI must not depend on paid/live LLM availability, but must test provider adapters and domain behavior with deterministic fakes.
 
 Use real containerized PostgreSQL + pgvector and Valkey for integration tests. Do not mock away critical database/vector/job behavior.
@@ -132,6 +146,7 @@ Use real containerized PostgreSQL + pgvector and Valkey for integration tests. D
 Maintain opt-in live-model evals for real quality benchmarking and record cost/latency/model/prompt/retrieval configuration.
 
 ## Product correctness rules
+
 - Uploaded/retrieved document text is untrusted input; protect against prompt injection and malformed content.
 - LLM output is never trusted automatically.
 - Deterministic exam rules belong in code, not prompts.
@@ -144,9 +159,11 @@ Maintain opt-in live-model evals for real quality benchmarking and record cost/l
 - If forecasting cannot beat/usefully improve on baseline, fall back to syllabus-balanced practice and document the limitation.
 
 ## Admin UX requirements
+
 Priority 1 admin UX must become a usable product, not developer-only endpoints.
 
 At minimum build usable flows for:
+
 - curriculum/taxonomy management;
 - source document upload and status;
 - extraction review/correction;
@@ -161,7 +178,9 @@ At minimum build usable flows for:
 - draft/approved/published paper lifecycle.
 
 ## Data integrity/reproducibility
+
 Design for:
+
 - idempotent jobs;
 - retry safety;
 - checksums/deduplication;
@@ -174,7 +193,9 @@ Design for:
 - cost/token/latency accounting.
 
 ## Evaluation datasets
+
 Create repository fixtures/eval datasets as implementation progresses. They should cover at minimum:
+
 - Grade 5 taxonomy and curriculum mapping;
 - document extraction examples;
 - RAG expected-source queries;
@@ -190,6 +211,7 @@ Create repository fixtures/eval datasets as implementation progresses. They shou
 Use synthetic fixtures where legal/source material is unavailable in repo, but keep the system ready for real official Grade 5 source documents. Do not fabricate claims that synthetic fixtures prove real Sinhala OCR or educational quality.
 
 ## Tracker discipline
+
 `docs/v1/PHASE_TRACKER.md` is the authoritative status tracker.
 
 - mark a phase `IN_PROGRESS` only when implementation has started;
@@ -199,7 +221,9 @@ Use synthetic fixtures where legal/source material is unavailable in repo, but k
 - Priority 2 phases remain `BLOCKED` until P10 is DONE.
 
 ## Review discipline
+
 Before closing any major acceptance gate, perform an adversarial engineering review covering:
+
 - security/authz;
 - upload/file attacks;
 - prompt injection/RAG poisoning;
@@ -218,18 +242,23 @@ Before closing any major acceptance gate, perform an adversarial engineering rev
 Reproduce each valid defect with a test/eval before fixing it.
 
 ## Priority 1 end condition
+
 Do **not** declare Priority 1 complete until an automated/manual acceptance run can demonstrate:
 
-`admin login -> upload representative Grade 5 source -> extract/OCR -> review/correct -> ingest -> structured question/knowledge data -> RAG retrieval with provenance -> historical analysis/backtest -> deterministic blueprint -> grounded LLM generation -> automated validation -> human review -> publish immutable paper`
+`admin login -> upload representative Grade 5 source -> rendered-page understanding with retained native/OCR evidence -> review source observations and educational meaning -> independent verification -> TrustedPageKnowledge -> KnowledgeUnits/projections -> trusted RAG with provenance -> historical analysis/backtest -> deterministic blueprint -> grounded LLM generation -> automated validation -> human review -> publish immutable paper`
+
+Prove fixed counting, multiplication and legacy-guide source/visual fidelity, trusted retrieval and controlled generation comparisons, forward-migration preservation and local browser acceptance before broad corpus backfill. Structured JSON, a successful provider call or populated embeddings alone do not close this milestone.
 
 and P0-P10 are all legitimately DONE with green CI/evals and documented limitations.
 
 Only after that may Priority 2 begin.
 
 ## Communication / final reporting during a run
+
 Work autonomously. Do not ask for confirmation for normal engineering choices already covered by repository docs. If blocked by a genuine external dependency, record it and continue other non-blocked Priority 1 work.
 
 When you finish the current execution session, report:
+
 1. current Priority 1 completion status;
 2. tracker phases changed and evidence;
 3. tests/evals/CI results;

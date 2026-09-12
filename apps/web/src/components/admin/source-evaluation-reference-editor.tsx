@@ -1,7 +1,6 @@
 "use client";
 
 import { createApiClient, type components } from "@exam-guru/api-client";
-import Image from "next/image";
 import {
   useEffect,
   useId,
@@ -20,7 +19,9 @@ import {
   savedReviewLanguage,
   subscribeReviewLanguage,
   type ReviewLanguage,
-} from "./source-page-review-workspace";
+} from "@/lib/review-language";
+
+import { OriginalPageViewer } from "./original-page-viewer";
 
 type Preview = components["schemas"]["EvaluationPreviewResponse"];
 type Reference = components["schemas"]["EvaluationReferenceResponse"];
@@ -155,8 +156,6 @@ export function SourceEvaluationReferenceEditor({
   const [reason, setReason] = useState("");
   const [checked, setChecked] = useState(false);
   const [imageReady, setImageReady] = useState(false);
-  const [imageError, setImageError] = useState(false);
-  const [imageAttempt, setImageAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [error, setError] = useState<number | null>(null);
@@ -164,7 +163,6 @@ export function SourceEvaluationReferenceEditor({
   const [latest, setLatest] = useState<Reference | null>(null);
   const [saved, setSaved] = useState(false);
   const [discard, setDiscard] = useState(false);
-  const [zoom, setZoom] = useState(100);
   const textId = useId();
   const reasonId = useId();
   const alive = useRef(true);
@@ -176,7 +174,6 @@ export function SourceEvaluationReferenceEditor({
     Boolean(reason.trim());
   const canSave =
     imageReady &&
-    !imageError &&
     !saving &&
     !loadingLatest &&
     !conflicted &&
@@ -392,75 +389,16 @@ export function SourceEvaluationReferenceEditor({
         className="flex min-h-0 flex-1 flex-col gap-2 lg:overflow-hidden"
       >
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2">
-          <section
-            aria-label={copy.original}
-            className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-300 bg-white"
-          >
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-300 p-2">
-              <Button
-                className={buttonClass}
-                isDisabled={zoom <= 50}
-                onPress={() => setZoom((value) => Math.max(50, value - 25))}
-              >
-                {copy.zoomOut}
-              </Button>
-              <Button
-                className={buttonClass}
-                isDisabled={zoom >= 250}
-                onPress={() => setZoom((value) => Math.min(250, value + 25))}
-              >
-                {copy.zoomIn}
-              </Button>
-              <Button className={buttonClass} onPress={() => setZoom(100)}>
-                {copy.reset}
-              </Button>
-              <span>{zoom}%</span>
-            </div>
-            <div
-              className="h-[60dvh] min-h-64 overflow-auto overscroll-contain p-3 lg:h-auto lg:min-h-0 lg:flex-1"
-              tabIndex={0}
-            >
-              <Image
-                key={imageAttempt}
-                alt={`${copy.original} ${preview.page_number}`}
-                src={preview.preview_url}
-                width={preview.image_width}
-                height={preview.image_height}
-                unoptimized
-                className="h-auto max-w-none"
-                style={{ width: `${zoom}%` }}
-                onLoad={(event) => {
-                  const image = event.currentTarget;
-                  const ready =
-                    image.naturalWidth === preview.image_width &&
-                    image.naturalHeight === preview.image_height;
-                  setImageReady(ready);
-                  setImageError(!ready);
-                }}
-                onError={() => {
-                  setImageReady(false);
-                  setImageError(true);
-                }}
-              />
-            </div>
-            {imageError && (
-              <div className="shrink-0 p-3 text-sm text-red-900">
-                <p role="alert">{copy.imageError}</p>
-                <Button
-                  className={cn(buttonClass, "mt-2")}
-                  isDisabled={saving}
-                  onPress={() => {
-                    setImageReady(false);
-                    setImageError(false);
-                    setChecked(false);
-                    setImageAttempt((value) => value + 1);
-                  }}
-                >
-                  {copy.retryImage}
-                </Button>
-              </div>
-            )}
-          </section>
+          <OriginalPageViewer
+            documentId={preview.document_id}
+            pageNumber={preview.page_number}
+            previewUrl={preview.preview_url}
+            language={language}
+            labels={{ original: copy.original, previewError: copy.imageError, imageRetry: copy.retryImage, zoomReset: copy.reset }}
+            expectedDimensions={{ width: preview.image_width, height: preview.image_height }}
+            className="h-[60dvh] min-h-64 lg:h-auto lg:min-h-0"
+            onReady={ready => { setImageReady(ready); if (!ready) setChecked(false); }}
+          />
           <section
             aria-label="Human reference entry"
             className="flex min-h-0 flex-col gap-2 rounded-lg border border-slate-300 bg-white p-3"

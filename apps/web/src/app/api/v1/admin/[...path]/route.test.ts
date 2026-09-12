@@ -15,6 +15,19 @@ vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 const uploadId = "00000000-0000-0000-0000-000000000981";
 const uploadPath = ["source-uploads", uploadId, "chunks"];
 const chunkBytes = 4_194_304;
+const originalPath = ["materials", uploadId, "original"];
+const pdfHeaders = {
+  "Content-Type": "application/pdf",
+  "Content-Disposition":
+    "inline; filename=\"source.pdf\"; filename*=UTF-8''source.pdf",
+};
+
+function originalRequest(signal?: AbortSignal) {
+  return new NextRequest(
+    `http://localhost:3000/api/v1/admin/materials/${uploadId}/original`,
+    { signal },
+  );
+}
 
 function adminSession() {
   vi.mocked(cookies).mockResolvedValue({
@@ -132,6 +145,8 @@ describe("admin API proxy browser request boundary", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
@@ -334,6 +349,237 @@ describe("admin API proxy browser request boundary", () => {
     expect(response.headers.get("Retry-After")).toBe("17");
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(response.headers.has("Set-Cookie")).toBe(false);
+  });
+
+  it("keeps a progressing original-PDF stream alive after the ordinary HTTP deadline", async () => {
+    adminSession();
+    vi.useFakeTimers();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((milliseconds) => {
+        const controller = new AbortController();
+        setTimeout(
+          () =>
+            controller.abort(
+              new DOMException("Request timed out", "TimeoutError"),
+            ),
+          milliseconds,
+        );
+        return controller.signal;
+      });
+    let signal: AbortSignal | null | undefined;
+    let upstreamResponse: Response | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: URL, options: RequestInit) => {
+        signal = options.signal;
+        const chunks = ["%PDF-", "source", "-end"];
+        upstreamResponse = new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              signal?.addEventListener(
+                "abort",
+                () => controller.error(signal?.reason),
+                { once: true },
+              );
+            },
+            async pull(controller) {
+              await new Promise((resolve) => setTimeout(resolve, 80));
+              if (signal?.aborted) return;
+              const chunk = chunks.shift();
+              if (chunk === undefined) controller.close();
+              else controller.enqueue(new TextEncoder().encode(chunk));
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/pdf",
+              "Content-Disposition":
+                "inline; filename=\"source.pdf\"; filename*=UTF-8''source.pdf",
+            },
+          },
+        );
+        return upstreamResponse;
+      }),
+    );
+    try {
+      const response = await GET(
+        new NextRequest(
+          `http://localhost:3000/api/v1/admin/materials/${uploadId}/original`,
+        ),
+        {
+          params: Promise.resolve({
+            path: ["materials", uploadId, "original"],
+          }),
+        },
+      );
+      const buffering = vi.spyOn(upstreamResponse!, "arrayBuffer");
+      const received = response.text().then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      await vi.advanceTimersByTimeAsync(400);
+      expect(await received).toEqual({ value: "%PDF-source-end" });
+      expect(signal?.aborted).toBe(false);
+      expect(buffering).not.toHaveBeenCalled();
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains a finite source-header deadline without applying the ordinary timeout to integrity checking", async () => {
+    adminSession();
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: URL, options: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    let finished = false;
+    const pending = GET(originalRequest(), {
+      params: Promise.resolve({ path: originalPath }),
+    }).then((response) => {
+      finished = true;
+      return response;
+    });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const response = await pending;
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toEqual({
+      detail: { code: "upstream_timeout" },
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["idle", "client", "consumer", "failure"])(
+    "releases the source stream and timers on %s termination",
+    async (mode) => {
+      adminSession();
+      vi.useFakeTimers();
+      const client = new AbortController();
+      let signal: AbortSignal | null | undefined;
+      let upstreamController!: ReadableStreamDefaultController<Uint8Array>;
+      const cancelled = vi.fn();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: URL, options: RequestInit) => {
+          signal = options.signal;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                upstreamController = controller;
+              },
+              cancel: cancelled,
+            }),
+            { headers: pdfHeaders },
+          );
+        }),
+      );
+      const response = await GET(originalRequest(client.signal), {
+        params: Promise.resolve({ path: originalPath }),
+      });
+      if (mode === "consumer") await response.body!.cancel();
+      else {
+        const received = response.text().then(
+          () => "completed",
+          (error) => error.name,
+        );
+        if (mode === "client") client.abort();
+        else if (mode === "failure")
+          upstreamController.error(new Error("Source disconnected"));
+        else await vi.advanceTimersByTimeAsync(30_001);
+        expect(await received).not.toBe("completed");
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(signal?.aborted).toBe(true);
+      if (mode !== "failure") expect(cancelled).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("keeps a total source-transfer bound even while bytes continue to arrive", async () => {
+    adminSession();
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    let chunks = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: URL, options: RequestInit) => {
+        signal = options.signal;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(controller) {
+              await new Promise((resolve) => setTimeout(resolve, 10_000));
+              if (!signal?.aborted) {
+                chunks += 1;
+                controller.enqueue(new Uint8Array([1]));
+              }
+            },
+          }),
+          { headers: pdfHeaders },
+        );
+      }),
+    );
+    const response = await GET(originalRequest(), {
+      params: Promise.resolve({ path: originalPath }),
+    });
+    const received = response.text().then(
+      () => "completed",
+      (error) => error.name,
+    );
+    await vi.advanceTimersByTimeAsync(899_999);
+    expect(signal?.aborted).toBe(false);
+    expect(chunks).toBeGreaterThan(80);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await received).toBe("TimeoutError");
+    expect(signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not treat empty upstream chunks as download progress", async () => {
+    adminSession();
+    vi.useFakeTimers();
+    const client = new AbortController();
+    let signal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: URL, options: RequestInit) => {
+        signal = options.signal;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(controller) {
+              await new Promise((resolve) => setTimeout(resolve, 10_000));
+              if (!signal?.aborted) controller.enqueue(new Uint8Array());
+            },
+          }),
+          { headers: pdfHeaders },
+        );
+      }),
+    );
+    const response = await GET(originalRequest(client.signal), {
+      params: Promise.resolve({ path: originalPath }),
+    });
+    const received = response.text().catch(() => null);
+    try {
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      client.abort();
+      await received;
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
   });
 
   it("streams new original PDF ranges with safe conditional headers and private PDF sandboxing", async () => {
