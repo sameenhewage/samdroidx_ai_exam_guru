@@ -23,6 +23,7 @@ from exam_guru_api.api.routes.studio_safety import router as studio_safety_route
 from exam_guru_api.api.routes.subject_quality import router as subject_quality_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
 from exam_guru_api.api.routes.teacher_papers import router as teacher_paper_router
+from exam_guru_api.api.routes.understanding import router as understanding_router
 from exam_guru_api.api.routes.validation import router as validation_router
 
 api_router = APIRouter()
@@ -36,6 +37,7 @@ api_router.include_router(document_router, prefix="/admin", tags=["admin-documen
 api_router.include_router(source_fidelity_router, prefix="/admin", tags=["source-fidelity"])
 api_router.include_router(source_uploads_router, prefix="/admin", tags=["source-uploads"])
 api_router.include_router(page_images_router, prefix="/admin", tags=["source-images"])
+api_router.include_router(understanding_router, prefix="/admin", tags=["source-understanding"])
 api_router.include_router(studio_safety_router, prefix="/admin", tags=["studio-safety"])
 api_router.include_router(
     analytics_router,

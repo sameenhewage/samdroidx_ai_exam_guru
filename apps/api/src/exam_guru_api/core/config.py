@@ -29,6 +29,7 @@ OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
 )
 TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 TEACHER_PAPER_ACTOR_MAX_EXECUTION_SECONDS = 10 * 60
 EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 STORAGE_RECONCILIATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
@@ -159,6 +160,7 @@ class Settings(BaseSettings):
     )
     rate_limit_source_upload: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_extraction_trigger: int = Field(default=60, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
+    rate_limit_document_understanding: int = Field(default=5, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_embedding_job_create: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_retrieval_explore: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_generation_create_retry: int = Field(
@@ -257,6 +259,37 @@ class Settings(BaseSettings):
         default=600,
         ge=MIN_EMBEDDING_WORKER_LEASE_SECONDS,
         le=86_400,
+    )
+    document_understanding_provider: Literal["deterministic", "openai"] | None = None
+    document_understanding_fixture_runtime_id: str | None = Field(
+        default=None, strict=True, pattern=r"^ai-exam-guru-e2e-[a-z0-9][a-z0-9-]{0,47}$"
+    )
+    document_understanding_openai_api_key: SecretStr | None = None
+    document_understanding_model: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
+    )
+    document_understanding_model_version: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
+    )
+    document_understanding_pricing_version: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
+    )
+    document_understanding_input_microusd_per_million_tokens: int | None = Field(
+        default=None, ge=1, le=100_000_000_000
+    )
+    document_understanding_output_microusd_per_million_tokens: int | None = Field(
+        default=None, ge=1, le=100_000_000_000
+    )
+    document_understanding_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    document_understanding_image_input_verified: bool = False
+    document_understanding_structured_output_verified: bool = False
+    document_understanding_timeout_ms: int = Field(default=30_000, ge=1, le=60_000)
+    document_understanding_max_output_tokens: int = Field(default=8_192, ge=1, le=16_384)
+    document_understanding_max_cost_microusd: int = Field(default=1_000_000, ge=1, le=100_000_000)
+    document_understanding_recovery_batch_size: int = Field(default=20, ge=1, le=100)
+    document_understanding_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
+    document_understanding_worker_lease_seconds: int = Field(
+        default=600, ge=DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS + 1, le=86_400
     )
     generation_provider: Literal["deterministic", "openai"] | None = None
     generation_openai_api_key: SecretStr | None = None
@@ -424,6 +457,57 @@ class Settings(BaseSettings):
                 is None
             ):
                 raise ValueError("test_runtime_id must identify an isolated E2E Compose project")
+        return self
+
+    @model_validator(mode="after")
+    def validate_document_understanding(self) -> Self:
+        provider_values = (
+            self.document_understanding_openai_api_key,
+            self.document_understanding_model,
+            self.document_understanding_model_version,
+            self.document_understanding_pricing_version,
+            self.document_understanding_input_microusd_per_million_tokens,
+            self.document_understanding_output_microusd_per_million_tokens,
+            self.document_understanding_temperature,
+        )
+        fixture_id = self.document_understanding_fixture_runtime_id
+        if fixture_id is not None and (
+            self.environment != "test"
+            or self.document_understanding_provider != "deterministic"
+            or (self.test_runtime_id is not None and fixture_id != self.test_runtime_id)
+        ):
+            raise ValueError("document understanding fixture identity must match its test runtime")
+        if self.document_understanding_provider == "deterministic" and (
+            self.environment != "test" or (fixture_id is None and self.test_runtime_id is None)
+        ):
+            raise ValueError(
+                "fixture document understanding requires an isolated test runtime identity"
+            )
+        if self.document_understanding_provider == "openai":
+            if self.environment == "test":
+                raise ValueError("test configuration cannot use paid document understanding")
+            if any(value is None for value in provider_values):
+                raise ValueError("document understanding requires explicit model, pricing and key")
+            if (
+                not self.document_understanding_image_input_verified
+                or not self.document_understanding_structured_output_verified
+            ):
+                raise ValueError(
+                    "document understanding capabilities require explicit verification"
+                )
+            key = cast(SecretStr, self.document_understanding_openai_api_key).get_secret_value()
+            if (
+                not key
+                or len(key) > 4096
+                or any(character.isspace() or not character.isprintable() for character in key)
+            ):
+                raise ValueError("document understanding API key must be bounded secret text")
+        elif (
+            any(value is not None for value in provider_values)
+            or self.document_understanding_image_input_verified
+            or self.document_understanding_structured_output_verified
+        ):
+            raise ValueError("document understanding settings require an explicit OpenAI provider")
         return self
 
     @model_validator(mode="after")

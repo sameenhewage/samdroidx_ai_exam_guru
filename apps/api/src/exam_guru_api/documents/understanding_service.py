@@ -53,6 +53,7 @@ class UnderstandingPageSnapshot:
     candidate: ObservationCandidate | None
     report: PageVerificationReport | None
     trusted: TrustedPageKnowledge | None
+    active_job_id: UUID | None = None
 
 
 def _candidate(row: ObservationCandidateModel) -> ObservationCandidate:
@@ -147,6 +148,32 @@ class PageUnderstandingService:
             raise UnderstandingConflictError("source_understanding_version_conflict")
 
     @staticmethod
+    def _validate_image(
+        source: SourceDocumentModel,
+        request: UnderstandingRequest,
+        metadata: SourceCandidateImageMetadata,
+    ) -> None:
+        if (
+            source.checksum_sha256 != request.source.source_sha256
+            or metadata.document_id != str(source.id)
+            or metadata.source_checksum_sha256 != source.checksum_sha256
+            or metadata.source_object_key != source.object_key
+            or metadata.source_size_bytes != source.size_bytes
+            or metadata.page_number != request.source.page_number
+            or metadata.sha256 != request.source.image_sha256
+            or metadata.artifact.size_bytes != len(request.image_png)
+            or metadata.artifact.chunk_sha256
+            != tuple(
+                hashlib.sha256(
+                    request.image_png[offset : offset + metadata.artifact.chunk_bytes]
+                ).hexdigest()
+                for offset in range(0, len(request.image_png), metadata.artifact.chunk_bytes)
+            )
+            or (metadata.width, metadata.height) != request.image_dimensions
+        ):
+            raise ValueError("understanding image provenance does not match the original")
+
+    @staticmethod
     def _audit(
         principal: Principal,
         page: PageUnderstandingStateModel,
@@ -186,6 +213,7 @@ class PageUnderstandingService:
         request: UnderstandingRequest,
         result: UnderstandingProviderResult,
         image_metadata: SourceCandidateImageMetadata,
+        job_id: UUID | None = None,
     ) -> ObservationCandidate:
         authorize(principal, Permission.SOURCE_WRITE)
         request = UnderstandingRequest.model_validate(request)
@@ -211,25 +239,7 @@ class PageUnderstandingService:
             source = await self._source(
                 request.source.document_id, request.source.page_number, write=True
             )
-            if (
-                source.checksum_sha256 != request.source.source_sha256
-                or metadata.document_id != str(source.id)
-                or metadata.source_checksum_sha256 != source.checksum_sha256
-                or metadata.source_object_key != source.object_key
-                or metadata.source_size_bytes != source.size_bytes
-                or metadata.page_number != request.source.page_number
-                or metadata.sha256 != request.source.image_sha256
-                or metadata.artifact.size_bytes != len(request.image_png)
-                or metadata.artifact.chunk_sha256
-                != tuple(
-                    hashlib.sha256(
-                        request.image_png[offset : offset + metadata.artifact.chunk_bytes]
-                    ).hexdigest()
-                    for offset in range(0, len(request.image_png), metadata.artifact.chunk_bytes)
-                )
-                or (metadata.width, metadata.height) != request.image_dimensions
-            ):
-                raise ValueError("understanding image provenance does not match the original")
+            self._validate_image(source, request, metadata)
             page = await self._page(source.id, request.source.page_number, principal, create=True)
             existing = await self.session.scalar(
                 select(DocumentUnderstandingRunModel).where(
@@ -252,6 +262,8 @@ class PageUnderstandingService:
                 await self.session.commit()
                 return _candidate(row)
             self._version(page, expected_version)
+            if page.active_job_id != job_id:
+                raise UnderstandingConflictError("source_understanding_job_conflict")
             candidate = ObservationCandidate(
                 id=uuid4(),
                 run_id=uuid4(),
@@ -343,6 +355,7 @@ class PageUnderstandingService:
             page.current_candidate_id = candidate.id
             page.current_report_id = report_id
             page.current_trusted_id = None
+            page.active_job_id = None
             page.candidate_revision = candidate.revision
             page.state = report.state
             page.version += 1
@@ -394,6 +407,7 @@ class PageUnderstandingService:
             None if row is None else _candidate(row),
             report,
             trusted,
+            page.active_job_id,
         )
 
     async def verify(
@@ -415,7 +429,11 @@ class PageUnderstandingService:
             await self._source(document_id, page_number, write=True)
             page = await self._page(document_id, page_number, principal, create=False)
             self._version(page, expected_version)
-            if page.current_candidate_id != candidate_id or page.current_report_id is None:
+            if (
+                page.active_job_id is not None
+                or page.current_candidate_id != candidate_id
+                or page.current_report_id is None
+            ):
                 raise UnderstandingConflictError("source_understanding_version_conflict")
             row = await self.session.get(ObservationCandidateModel, candidate_id)
             stored_report = await self.session.get(

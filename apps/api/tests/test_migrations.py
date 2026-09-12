@@ -45,13 +45,13 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_document_understanding_is_the_single_bounded_revision_head() -> None:
+def test_understanding_jobs_are_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0043_document_understanding"]
-    revision = scripts.get_revision("0043_document_understanding")
+    assert scripts.get_heads() == ["0044_understanding_jobs"]
+    revision = scripts.get_revision("0044_understanding_jobs")
     assert revision is not None
-    assert revision.down_revision == "0042_evaluation_references"
+    assert revision.down_revision == "0043_document_understanding"
     assert len(revision.revision) <= 32
 
 

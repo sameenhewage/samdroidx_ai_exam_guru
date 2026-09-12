@@ -45,6 +45,29 @@ class ClosingStorage:
         self.close_calls += 1
 
 
+def test_application_exposes_injected_understanding_without_provider_construction() -> None:
+    from exam_guru_api.documents.understanding_jobs import UnderstandingJobDispatcher
+    from exam_guru_api.documents.understanding_runtime import UnderstandingRuntime
+
+    dispatcher = cast(UnderstandingJobDispatcher, object())
+    runtime = cast(UnderstandingRuntime, object())
+    app = create_app(understanding_dispatcher=dispatcher, understanding_runtime=runtime)
+    assert app.state.understanding_dispatcher is dispatcher
+    assert app.state.understanding_runtime is runtime
+    assert (
+        "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/jobs"
+        in app.openapi()["paths"]
+    )
+    app.state.object_storage.close()
+
+
+def test_understanding_is_not_activated_by_application_startup() -> None:
+    app = create_app(settings=Settings(environment="test"))
+    assert app.state.understanding_runtime is None
+    assert app.state.understanding_dispatcher is not None
+    app.state.object_storage.close()
+
+
 def test_application_exposes_injected_page_reading_dispatcher() -> None:
     from exam_guru_api.documents.page_reading_jobs import SourceReadDispatcher
 

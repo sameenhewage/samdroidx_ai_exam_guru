@@ -19,6 +19,24 @@ def test_docker_context_excludes_private_corpus_storage_and_evidence() -> None:
     } <= ignored
 
 
+def test_isolated_runner_separates_fixture_understanding_from_live_settings() -> None:
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "scripts/run_isolated_e2e.sh").read_text()
+    assert "export COMPOSE_DISABLE_ENV_FILE=1" in script
+    assert 'export EXAM_GURU_DOCUMENT_UNDERSTANDING_PROVIDER="deterministic"' in script
+    assert 'export EXAM_GURU_DOCUMENT_UNDERSTANDING_FIXTURE_RUNTIME_ID="$project_name"' in script
+    for suffix in (
+        "OPENAI_API_KEY",
+        "MODEL",
+        "MODEL_VERSION",
+        "PRICING_VERSION",
+        "INPUT_MICROUSD_PER_MILLION_TOKENS",
+        "OUTPUT_MICROUSD_PER_MILLION_TOKENS",
+        "TEMPERATURE",
+    ):
+        assert f'export EXAM_GURU_DOCUMENT_UNDERSTANDING_{suffix}=""' in script
+
+
 def test_worker_image_includes_tamil_for_mixed_real_sources() -> None:
     root = Path(__file__).resolve().parents[3]
     assert "tesseract-ocr-tam" in (root / "apps/api/Dockerfile").read_text()
@@ -83,6 +101,9 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
     assert api["environment"]["EXAM_GURU_GENERATION_PROVIDER"] == ""
+    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_PROVIDER"] == ""
+    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_IMAGE_INPUT_VERIFIED"] == "false"
+    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_MAX_OUTPUT_TOKENS"] == "8192"
     assert api["environment"]["EXAM_GURU_GENERATION_TEMPERATURE"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_MODEL"] == (
@@ -95,6 +116,7 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     )
     for secret_name in (
         "EXAM_GURU_GENERATION_OPENAI_API_KEY",
+        "EXAM_GURU_DOCUMENT_UNDERSTANDING_OPENAI_API_KEY",
         "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY",
         "EXAM_GURU_RETRIEVAL_EMBEDDING_OPENAI_API_KEY",
     ):

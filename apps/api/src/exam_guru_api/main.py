@@ -19,6 +19,14 @@ from exam_guru_api.documents.page_reading_jobs import (
     SourceReadDispatcher,
     create_source_read_dispatcher,
 )
+from exam_guru_api.documents.understanding_jobs import (
+    UnderstandingJobDispatcher,
+    create_understanding_dispatcher,
+)
+from exam_guru_api.documents.understanding_runtime import (
+    UnderstandingRuntime,
+    create_understanding_runtime,
+)
 from exam_guru_api.documents.upload_jobs import (
     SourceUploadDispatcher,
     create_source_upload_dispatcher,
@@ -59,6 +67,8 @@ def create_app(
     object_storage: ObjectStorage | None = None,
     extraction_dispatcher: ExtractionDispatcher | None = None,
     source_read_dispatcher: SourceReadDispatcher | None = None,
+    understanding_dispatcher: UnderstandingJobDispatcher | None = None,
+    understanding_runtime: UnderstandingRuntime | None = None,
     source_upload_dispatcher: SourceUploadDispatcher | None = None,
     generation_dispatcher: GenerationDispatcher | None = None,
     paper_generation_dispatcher: PaperGenerationDispatcher | None = None,
@@ -119,6 +129,16 @@ def create_app(
         source_read_dispatcher
         if source_read_dispatcher is not None
         else create_source_read_dispatcher(resolved_settings)
+    )
+    application.state.understanding_dispatcher = (
+        understanding_dispatcher
+        if understanding_dispatcher is not None
+        else create_understanding_dispatcher(resolved_settings)
+    )
+    application.state.understanding_runtime = (
+        understanding_runtime
+        if understanding_runtime is not None
+        else create_understanding_runtime(resolved_settings)
     )
     application.state.source_upload_limits = create_upload_limits(resolved_settings)
     application.state.source_upload_artifacts = create_upload_artifacts(resolved_settings)

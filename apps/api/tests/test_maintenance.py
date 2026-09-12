@@ -8,6 +8,10 @@ import pytest
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.jobs import recover_extraction_jobs
 from exam_guru_api.documents.page_reading_jobs import read_source, recover_source_read_jobs
+from exam_guru_api.documents.understanding_jobs import (
+    recover_understanding_page_jobs,
+    understand_source_page,
+)
 from exam_guru_api.documents.upload_jobs import recover_source_upload_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
@@ -99,6 +103,7 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         RecordingRecoveryActor("teacher_papers", calls),
         RecordingRecoveryActor("source_page_reading", calls),
         RecordingRecoveryActor("source_upload_finalization", calls),
+        RecordingRecoveryActor("source_understanding", calls),
     )
 
     result = enqueue_recovery_jobs(
@@ -109,9 +114,10 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         teacher_paper_actor=actors[4],
         source_read_actor=actors[5],
         source_upload_actor=actors[6],
+        understanding_actor=actors[7],
     )
 
-    assert result == MaintenanceTickResult(enqueued=6, failures=1)
+    assert result == MaintenanceTickResult(enqueued=7, failures=1)
     assert calls == [
         "extraction",
         "generation",
@@ -120,6 +126,7 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         "teacher_papers",
         "source_page_reading",
         "source_upload_finalization",
+        "source_understanding",
     ]
     assert logger.errors == ["maintenance recovery enqueue failed: generation"]
     assert "private" not in repr(logger.errors)
@@ -223,7 +230,9 @@ def test_maintenance_broker_registers_only_internal_recovery_actors() -> None:
             recover_teacher_papers.actor_name,
             recover_source_read_jobs.actor_name,
             recover_source_upload_jobs.actor_name,
+            recover_understanding_page_jobs.actor_name,
         }
+        assert recover_understanding_page_jobs.broker is broker
         assert recover_source_upload_jobs.broker is broker
         assert recover_source_read_jobs.broker is broker
         assert recover_extraction_jobs.broker is broker
@@ -241,6 +250,11 @@ def test_worker_registers_restart_safe_source_page_actors() -> None:
     broker = create_broker(Settings(environment="test"))
     try:
         assert broker.get_actor(read_source.actor_name) is read_source
+        assert broker.get_actor(understand_source_page.actor_name) is understand_source_page
+        assert (
+            broker.get_actor(recover_understanding_page_jobs.actor_name)
+            is recover_understanding_page_jobs
+        )
         assert broker.get_actor(recover_source_read_jobs.actor_name) is recover_source_read_jobs
     finally:
         broker.close()
@@ -284,7 +298,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         assert interval_seconds == 17
         assert stop_signal is stop
         result = tick()
-        assert result == MaintenanceTickResult(enqueued=7, failures=0)
+        assert result == MaintenanceTickResult(enqueued=8, failures=0)
         handler = cast(Callable[[int, FrameType | None], None], handlers[0])
         handler(signal.SIGTERM, None)
         assert stop.is_set()
@@ -298,6 +312,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         RecordingRecoveryActor("teacher_papers", calls),
         RecordingRecoveryActor("source_page_reading", calls),
         RecordingRecoveryActor("source_upload_finalization", calls),
+        RecordingRecoveryActor("source_understanding", calls),
     )
 
     monkeypatch.setattr(maintenance, "Settings", lambda: settings)
@@ -317,6 +332,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         "teacher_papers",
         "source_page_reading",
         "source_upload_finalization",
+        "source_understanding",
     ]
     assert handlers == [handlers[0], previous_handler]
     assert broker.closed is True

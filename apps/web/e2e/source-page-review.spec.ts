@@ -14,6 +14,8 @@ type Source = components["schemas"]["SourceDocumentResponse"];
 type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
 type ReadJob = components["schemas"]["SourceReadJobResponse"];
 type Benchmark = components["schemas"]["SourceBenchmarkResponse"];
+type UnderstandingJob = components["schemas"]["UnderstandingJobResponse"];
+type UnderstandingPage = components["schemas"]["UnderstandingPageResponse"];
 
 // Synthetic ASCII pages prove workflow mechanics, never real-source accuracy.
 function syntheticBook(marker: string, count = 40): Buffer {
@@ -147,6 +149,111 @@ async function expectReadableButton(button: Locator) {
   await expect(button).toHaveCSS("opacity", "1");
   return computed;
 }
+
+test("real worker: visual analysis survives reload without granting source trust", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await login(page, "admin");
+  expect(
+    await json(
+      await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+    ),
+  ).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `UnderstandingFixture-${randomUUID().slice(0, 8)}`;
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: syntheticBook(marker, 1),
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "English",
+          subject_label: "Synthetic workflow only",
+        }),
+      },
+    }),
+    201,
+  );
+  const readJob = await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(
+              `/api/v1/admin/source-read-jobs/${readJob.id}`,
+            ),
+          )
+        ).status,
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+  const legacyBefore = await workspace(page, source.id);
+  const path = `/api/v1/admin/materials/${source.id}/pages/1/understanding`;
+  const before = await json<UnderstandingPage>(await page.request.get(path));
+  expect(before.state).toBe("unprocessed");
+  expect(before.provider_available).toBe(true);
+  expect(before.latest_job).toBeNull();
+  const body = {
+    request_id: randomUUID(),
+    expected_version: before.version,
+    reason: "Exercise isolated visual worker and source-trust separation",
+  };
+  const created = await json<UnderstandingJob>(
+    await page.request.post(`${path}/jobs`, { headers, data: body }),
+    202,
+  );
+  const replay = await json<UnderstandingJob>(
+    await page.request.post(`${path}/jobs`, { headers, data: body }),
+    202,
+  );
+  expect(replay.id).toBe(created.id);
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<UnderstandingJob>(
+            await page.request.get(
+              `/api/v1/admin/materials/understanding/jobs/${created.id}`,
+            ),
+          )
+        ).status,
+      { timeout: 45_000 },
+    )
+    .toBe("succeeded");
+  await page.reload();
+  const after = await json<UnderstandingPage>(await page.request.get(path));
+  expect(after.active_job_id).toBeNull();
+  expect(after.latest_job?.id).toBe(created.id);
+  expect(after.latest_job?.attempts).toBe(1);
+  expect(after.latest_job?.accounting?.cost_microusd).toBe(0);
+  expect(after.state).toBe("needs_human_review");
+  expect(after.candidate?.content.observation.regions[0].exact_text).toContain(
+    "Synthetic",
+  );
+  expect(after.trusted).toBeNull();
+  const legacyAfter = await workspace(page, source.id);
+  expect(legacyAfter.page?.version).toBe(legacyBefore.page?.version);
+  expect(legacyAfter.progress.verified_pages).toBe(0);
+  expect(legacyAfter.ready_for_ai).toBe(false);
+});
 
 test("real APIs: independent evaluation references preserve blocked sources and concurrent human drafts", async ({
   page,
@@ -350,7 +457,9 @@ test("real APIs: independent evaluation references preserve blocked sources and 
     .getByRole("checkbox", { name: /I compared this reference/ })
     .check();
   await save.click();
-  await expect(editor.getByText("Reference saved for evaluation only.", { exact: true })).toBeVisible();
+  await expect(
+    editor.getByText("Reference saved for evaluation only.", { exact: true }),
+  ).toBeVisible();
   const history = await json<
     components["schemas"]["EvaluationReferenceResponse"][]
   >(await page.request.get(`${path}/evaluation-references`));
@@ -379,34 +488,83 @@ test("real APIs: independent evaluation references preserve blocked sources and 
   ).toHaveValue(draft);
 });
 
-test("real APIs: application-owned 371-page viewing never fetches a PDF until explicit download", async ({ page }, testInfo) => {
+test("real APIs: application-owned 371-page viewing never fetches a PDF until explicit download", async ({
+  page,
+}, testInfo) => {
   test.setTimeout(180_000);
   const runtime = requireIsolatedE2ERuntime(process.env);
   await login(page, "admin");
-  expect(await json(await page.request.get("/api/v1/admin/studio-safety/runtime-identity"))).toMatchObject({ application_env: "test", test_runtime_id: runtime.composeProjectName });
+  expect(
+    await json(
+      await page.request.get("/api/v1/admin/studio-safety/runtime-identity"),
+    ),
+  ).toMatchObject({
+    application_env: "test",
+    test_runtime_id: runtime.composeProjectName,
+  });
   const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
   const marker = `ViewerFixture-${randomUUID().slice(0, 8)}`;
-  const source = await json<Source>(await page.request.post("/api/v1/admin/source-documents", { headers,
-    multipart: { file: { name: `${marker}.pdf`, mimeType: "application/pdf", buffer: syntheticBook(marker, 371) },
-      document_type: "other_approved", intake_metadata: JSON.stringify({ candidate_grade: 5, medium_label: "English", subject_label: "Synthetic viewer mechanics only" }) },
-  }), 201);
-  await json<ReadJob>(await page.request.post(`/api/v1/admin/source-documents/${source.id}/read`, { headers }), 202);
-  await expect.poll(async () => (await workspace(page, source.id)).progress.total_pages, { timeout: 90_000 }).toBe(371);
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: syntheticBook(marker, 371),
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 5,
+          medium_label: "English",
+          subject_label: "Synthetic viewer mechanics only",
+        }),
+      },
+    }),
+    201,
+  );
+  await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(async () => (await workspace(page, source.id)).progress.total_pages, {
+      timeout: 90_000,
+    })
+    .toBe(371);
   const before = await workspace(page, source.id);
-  const images: number[] = [], rawRequests: string[] = [], writes: string[] = [];
-  let allowDownload = false, downloads = 0;
-  page.on("download", () => { downloads += 1; });
-  page.on("request", request => {
+  const images: number[] = [],
+    rawRequests: string[] = [],
+    writes: string[] = [];
+  let allowDownload = false,
+    downloads = 0;
+  page.on("download", () => {
+    downloads += 1;
+  });
+  page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    const match = path.match(new RegExp(`/materials/${source.id}/pages/(\\d+)/image$`));
+    const match = path.match(
+      new RegExp(`/materials/${source.id}/pages/(\\d+)/image$`),
+    );
     if (match) images.push(Number(match[1]));
   });
-  await page.route("**/api/v1/admin/**", async route => {
-    const request = route.request(), path = new URL(request.url()).pathname;
-    if (request.method() !== "GET" && request.method() !== "HEAD") { writes.push(path); await route.abort(); return; }
+  await page.route("**/api/v1/admin/**", async (route) => {
+    const request = route.request(),
+      path = new URL(request.url()).pathname;
+    if (request.method() !== "GET" && request.method() !== "HEAD") {
+      writes.push(path);
+      await route.abort();
+      return;
+    }
     if (path.endsWith("/original") || path.endsWith("/content")) {
       rawRequests.push(path);
-      if (!allowDownload) { await route.abort(); return; }
+      if (!allowDownload) {
+        await route.abort();
+        return;
+      }
     }
     await route.continue();
   });
@@ -416,43 +574,74 @@ test("real APIs: application-owned 371-page viewing never fetches a PDF until ex
   const viewer = page.getByTitle(`Original PDF: ${marker}.pdf`);
   await expect(viewer.locator("[data-original-page-viewer]")).toHaveCount(1);
   await expect(page.locator("iframe, embed, object")).toHaveCount(0);
-  expect(rawRequests).toEqual([]); expect(downloads).toBe(0); expect(page.context().pages()).toHaveLength(1);
+  expect(rawRequests).toEqual([]);
+  expect(downloads).toBe(0);
+  expect(page.context().pages()).toHaveLength(1);
   await viewer.getByRole("button", { name: "Last page", exact: true }).click();
   await imageReady(page, 371);
   const failedImage = `**/materials/${source.id}/pages/185/image`;
-  await page.route(failedImage, route => route.abort("failed"));
-  await viewer.getByRole("spinbutton", { name: "Page number", exact: true }).fill("185");
+  await page.route(failedImage, (route) => route.abort("failed"));
+  await viewer
+    .getByRole("spinbutton", { name: "Page number", exact: true })
+    .fill("185");
   await viewer.getByRole("button", { name: "Go to page", exact: true }).click();
-  await expect(viewer.getByRole("alert")).toContainText("PDF will not be downloaded automatically");
-  expect(rawRequests).toEqual([]); expect(downloads).toBe(0);
+  await expect(viewer.getByRole("alert")).toContainText(
+    "PDF will not be downloaded automatically",
+  );
+  expect(rawRequests).toEqual([]);
+  expect(downloads).toBe(0);
   await page.unroute(failedImage);
-  await viewer.getByRole("button", { name: "Try image again", exact: true }).click();
+  await viewer
+    .getByRole("button", { name: "Try image again", exact: true })
+    .click();
   await imageReady(page, 185);
   expect(images).toEqual([1, 371, 185, 185]);
   const requestsBeforeZoom = images.length;
   await viewer.getByRole("button", { name: "Reset zoom", exact: true }).click();
   await viewer.getByRole("button", { name: "Zoom in", exact: true }).click();
-  await expect(viewer.getByLabel("Page zoom", { exact: true })).toHaveText("125%");
+  await expect(viewer.getByLabel("Page zoom", { exact: true })).toHaveText(
+    "125%",
+  );
   await viewer.getByRole("button", { name: "Zoom out", exact: true }).click();
-  await expect(viewer.getByLabel("Page zoom", { exact: true })).toHaveText("100%");
+  await expect(viewer.getByLabel("Page zoom", { exact: true })).toHaveText(
+    "100%",
+  );
   await viewer.getByRole("button", { name: "Fit page", exact: true }).click();
-  const geometry = await viewer.locator("[data-original-page-viewer]").evaluate(element => {
-    const image = element.querySelector("img")!.getBoundingClientRect();
-    return { imageHeight: image.height, available: element.clientHeight - element.querySelector("header")!.getBoundingClientRect().height, images: element.querySelectorAll("img").length };
-  });
+  const geometry = await viewer
+    .locator("[data-original-page-viewer]")
+    .evaluate((element) => {
+      const image = element.querySelector("img")!.getBoundingClientRect();
+      return {
+        imageHeight: image.height,
+        available:
+          element.clientHeight -
+          element.querySelector("header")!.getBoundingClientRect().height,
+        images: element.querySelectorAll("img").length,
+      };
+    });
   expect(geometry.imageHeight).toBeLessThanOrEqual(geometry.available);
-  expect(geometry.images).toBe(1); expect(images.length).toBe(requestsBeforeZoom);
-  await testInfo.attach("application-owned-viewer", { body: await page.screenshot(), contentType: "image/png" });
+  expect(geometry.images).toBe(1);
+  expect(images.length).toBe(requestsBeforeZoom);
+  await testInfo.attach("application-owned-viewer", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await page.getByRole("link", { name: "Review text", exact: true }).click();
   await imageReady(page, 1);
   await expect(page.locator("[data-original-page-viewer]")).toHaveCount(1);
-  await expect(page.getByRole("region", { name: "System-read text", exact: true })).toBeVisible();
-  expect(rawRequests).toEqual([]); expect(downloads).toBe(0); expect(writes).toEqual([]);
+  await expect(
+    page.getByRole("region", { name: "System-read text", exact: true }),
+  ).toBeVisible();
+  expect(rawRequests).toEqual([]);
+  expect(downloads).toBe(0);
+  expect(writes).toEqual([]);
   await page.goto(`/admin/materials/${source.id}`);
   await imageReady(page, 1);
   allowDownload = true;
   const pending = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Download original PDF", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Download original PDF", exact: true })
+    .click();
   const download = await pending;
   const stream = await download.createReadStream();
   expect(stream).not.toBeNull();
@@ -460,8 +649,14 @@ test("real APIs: application-owned 371-page viewing never fetches a PDF until ex
   for await (const chunk of stream!) hash.update(chunk);
   expect(hash.digest("hex")).toBe(source.checksum_sha256);
   expect(downloads).toBe(1);
-  expect(download.url()).toBe(`${runtime.baseURL}/api/v1/admin/materials/${source.id}/original`);
-  expect(rawRequests.every(path => path === `/api/v1/admin/materials/${source.id}/original`)).toBe(true);
+  expect(download.url()).toBe(
+    `${runtime.baseURL}/api/v1/admin/materials/${source.id}/original`,
+  );
+  expect(
+    rawRequests.every(
+      (path) => path === `/api/v1/admin/materials/${source.id}/original`,
+    ),
+  ).toBe(true);
   const after = await workspace(page, source.id);
   expect(after.document_id).toBe(before.document_id);
   expect(after.progress.total_pages).toBe(371);

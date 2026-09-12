@@ -1041,6 +1041,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/materials/understanding/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Understanding Job */
+        get: operations["get_source_understanding_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/materials/{document_id}/metadata-candidates": {
         parameters: {
             query?: never;
@@ -1171,6 +1188,40 @@ export interface paths {
         put?: never;
         /** Reread Page */
         post: operations["reread_source_page"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Page Understanding */
+        get: operations["get_source_page_understanding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Understanding Job */
+        post: operations["create_source_understanding_job"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3223,6 +3274,25 @@ export interface components {
             /** Total Marks */
             total_marks: number;
         };
+        /** EducationalClaim */
+        EducationalClaim: {
+            /** Description */
+            description: string;
+            /** Key */
+            key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "topic" | "concept" | "skill" | "learning_objective" | "educational_purpose" | "activity_type" | "worked_example" | "relationship" | "prerequisite";
+            /** Region Keys */
+            region_keys: string[];
+        };
+        /** EducationalUnderstanding */
+        EducationalUnderstanding: {
+            /** Claims */
+            claims: components["schemas"]["EducationalClaim"][];
+        };
         /** EmbeddingConfigRequest */
         EmbeddingConfigRequest: {
             /** Config Fingerprint */
@@ -3790,6 +3860,22 @@ export interface components {
             trust: components["schemas"]["ContextTrust"];
             /** Vector Rank */
             vector_rank: number | null;
+        };
+        /**
+         * GenerationAccounting
+         * @description Exact per-attempt token, micro-USD cost, and latency accounting.
+         */
+        GenerationAccounting: {
+            /** Cost Microusd */
+            cost_microusd: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
         };
         /** GenerationAttemptResponse */
         GenerationAttemptResponse: {
@@ -4715,9 +4801,77 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** NormalizedPoint */
+        NormalizedPoint: {
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
         /** ObjectStorageOperationsResponse */
         ObjectStorageOperationsResponse: {
             reconciliation: components["schemas"]["StorageReconciliationOperationsResponse"];
+        };
+        /** ObservationCandidate */
+        ObservationCandidate: {
+            content: components["schemas"]["PageUnderstanding"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "native" | "ocr" | "visual_ai" | "human";
+            /** Revision */
+            revision: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            source: components["schemas"]["PageArtifactIdentity"];
+        };
+        /** ObservedCell */
+        ObservedCell: {
+            /** Column */
+            column: number;
+            /** Column Span */
+            column_span: number;
+            /** Exact Text */
+            exact_text: string;
+            /** Row */
+            row: number;
+            /** Row Span */
+            row_span: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "visible" | "blank" | "unreadable";
+        };
+        /** ObservedRelationship */
+        ObservedRelationship: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "label_for" | "answer_area_for" | "grouped_with" | "aligned_with" | "part_of" | "reading_next" | "illustrates";
+            /** Source Key */
+            source_key: string;
+            /** Target Key */
+            target_key: string;
+        };
+        /** ObservedTable */
+        ObservedTable: {
+            /** Cells */
+            cells: components["schemas"]["ObservedCell"][];
+            /** Columns */
+            columns: number;
+            /** Rows */
+            rows: number;
         };
         /** OperationsDataBoundsResponse */
         OperationsDataBoundsResponse: {
@@ -4791,6 +4945,20 @@ export interface components {
              */
             start: string;
         };
+        /** PageArtifactIdentity */
+        PageArtifactIdentity: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Image Sha256 */
+            image_sha256: string;
+            /** Page Number */
+            page_number: number;
+            /** Source Sha256 */
+            source_sha256: string;
+        };
         /** PageConfirmRequest */
         PageConfirmRequest: {
             /**
@@ -4828,6 +4996,42 @@ export interface components {
             expected_version: number;
             /** Reason */
             reason: string;
+        };
+        /** PageObservation */
+        PageObservation: {
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "si" | "ta" | "en" | "mixed" | "und";
+            /** Regions */
+            regions: components["schemas"]["PageRegionObservation"][];
+            /** Relationships */
+            relationships: components["schemas"]["ObservedRelationship"][];
+        };
+        /** PageRegionObservation */
+        PageRegionObservation: {
+            bounds: components["schemas"]["RegionBounds"] | null;
+            /** Equations */
+            equations: string[];
+            /** Exact Text */
+            exact_text: string;
+            /** Key */
+            key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "heading" | "paragraph" | "instruction" | "question" | "worked_example" | "equation" | "vertical_arithmetic" | "table" | "grid" | "chart" | "diagram" | "illustration" | "repeated_object_group" | "label" | "blank_answer_area" | "page_number" | "footer" | "decorative_image";
+            /** Parent Key */
+            parent_key: string | null;
+            /** Polygon */
+            polygon: components["schemas"]["NormalizedPoint"][];
+            /** Reading Order */
+            reading_order: number;
+            table: components["schemas"]["ObservedTable"] | null;
+            /** Visual Facts */
+            visual_facts: components["schemas"]["VisualFact"][];
         };
         /** PageRereadRequest */
         PageRereadRequest: {
@@ -4922,6 +5126,94 @@ export interface components {
             ready_for_ai: boolean;
             /** Source Active */
             source_active: boolean;
+        };
+        /** PageUnderstanding */
+        PageUnderstanding: {
+            education: components["schemas"]["EducationalUnderstanding"];
+            observation: components["schemas"]["PageObservation"];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "page-understanding.v1";
+            /** Uncertainties */
+            uncertainties: components["schemas"]["UnderstandingUncertainty"][];
+        };
+        /** PageVerificationDecision */
+        PageVerificationDecision: {
+            /** Accepted Claim Keys */
+            accepted_claim_keys: string[];
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Compared With Original
+             * @constant
+             */
+            compared_with_original: true;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Policy Version
+             * @default page-understanding-verification.v1
+             * @constant
+             */
+            policy_version: "page-understanding-verification.v1";
+            /** Reason */
+            reason: string;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Resolved Uncertainty Keys */
+            resolved_uncertainty_keys: string[];
+            /** Reviewed Region Keys */
+            reviewed_region_keys: string[];
+            source: components["schemas"]["PageArtifactIdentity"];
+            /** Source Checker Version */
+            source_checker_version: string;
+            /** Verified Content Fingerprint */
+            verified_content_fingerprint: string;
+        };
+        /** PageVerificationReport */
+        PageVerificationReport: {
+            /**
+             * Anchor Evidence Ids
+             * @default []
+             */
+            anchor_evidence_ids: string[];
+            /**
+             * Anchor Fingerprint
+             * @default 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+             */
+            anchor_fingerprint: string;
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Findings */
+            findings: components["schemas"]["UnderstandingFinding"][];
+            /**
+             * Policy Version
+             * @default page-understanding-verification.v1
+             * @constant
+             */
+            policy_version: "page-understanding-verification.v1";
+            /** Source Checker Version */
+            source_checker_version: string;
         };
         /** PaperAggregateResponse */
         PaperAggregateResponse: {
@@ -5911,7 +6203,7 @@ export interface components {
          * RateLimitScope
          * @enum {string}
          */
-        RateLimitScope: "source_upload" | "extraction_trigger" | "embedding_job_create" | "retrieval_explore" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
+        RateLimitScope: "source_upload" | "extraction_trigger" | "document_understanding" | "embedding_job_create" | "retrieval_explore" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
         /** RateLimiterUnavailableDetail */
         RateLimiterUnavailableDetail: {
             /**
@@ -5932,6 +6224,17 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "unavailable";
+        };
+        /** RegionBounds */
+        RegionBounds: {
+            /** Bottom */
+            bottom: number;
+            /** Left */
+            left: number;
+            /** Right */
+            right: number;
+            /** Top */
+            top: number;
         };
         /** RestoreSourceFixtureRequest */
         RestoreSourceFixtureRequest: {
@@ -8270,6 +8573,179 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** TrustedPageKnowledge */
+        TrustedPageKnowledge: {
+            decision: components["schemas"]["PageVerificationDecision"];
+            education: components["schemas"]["EducationalUnderstanding"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            observation: components["schemas"]["PageObservation"];
+            /** Resolved Uncertainties */
+            resolved_uncertainties: components["schemas"]["UnderstandingUncertainty"][];
+            /** Revision */
+            revision: number;
+            source: components["schemas"]["PageArtifactIdentity"];
+        };
+        /** UnderstandingBudget */
+        UnderstandingBudget: {
+            /**
+             * Max Cost Microusd
+             * @default 1000000
+             */
+            max_cost_microusd: number;
+            /**
+             * Max Image Bytes
+             * @default 8388608
+             */
+            max_image_bytes: number;
+            /**
+             * Max Image Pixels
+             * @default 16000000
+             */
+            max_image_pixels: number;
+            /**
+             * Max Output Tokens
+             * @default 8192
+             */
+            max_output_tokens: number;
+            /**
+             * Timeout Ms
+             * @default 30000
+             */
+            timeout_ms: number;
+        };
+        /** UnderstandingFinding */
+        UnderstandingFinding: {
+            /** Code */
+            code: string;
+            /** Evidence Id */
+            evidence_id?: string | null;
+            /** Region Keys */
+            region_keys: string[];
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "block" | "review";
+            /** Summary */
+            summary: string;
+        };
+        /** UnderstandingJobCreateRequest */
+        UnderstandingJobCreateRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /** UnderstandingJobResponse */
+        UnderstandingJobResponse: {
+            accounting: components["schemas"]["GenerationAccounting"] | null;
+            /** Attempts */
+            attempts: number;
+            budget: components["schemas"]["UnderstandingBudget"];
+            /** Candidate Id */
+            candidate_id: string | null;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Expected Page Version */
+            expected_page_version: number;
+            /** Failure Code */
+            failure_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Page Number */
+            page_number: number;
+            profile: components["schemas"]["UnderstandingProviderProfile"];
+            /** Retry Depth */
+            retry_depth: number;
+            /** Run Id */
+            run_id: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed" | "unknown";
+            /** Version */
+            version: number;
+        };
+        /** UnderstandingPageResponse */
+        UnderstandingPageResponse: {
+            /** Active Job Id */
+            active_job_id: string | null;
+            candidate: components["schemas"]["ObservationCandidate"] | null;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            latest_job?: components["schemas"]["UnderstandingJobResponse"] | null;
+            /** Page Number */
+            page_number: number;
+            /**
+             * Provider Available
+             * @default false
+             */
+            provider_available: boolean;
+            report: components["schemas"]["PageVerificationReport"] | null;
+            /** State */
+            state: string;
+            trusted: components["schemas"]["TrustedPageKnowledge"] | null;
+            /** Version */
+            version: number;
+        };
+        /** UnderstandingProviderProfile */
+        UnderstandingProviderProfile: {
+            /** Input Microusd Per Million Tokens */
+            input_microusd_per_million_tokens: number;
+            /** Model */
+            model: string;
+            /** Model Version */
+            model_version: string;
+            /** Output Microusd Per Million Tokens */
+            output_microusd_per_million_tokens: number;
+            /** Pricing Version */
+            pricing_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Provider Version */
+            provider_version: string;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "page-understanding.v1";
+            /** Temperature */
+            temperature: number;
+        };
+        /** UnderstandingUncertainty */
+        UnderstandingUncertainty: {
+            /** Alternatives */
+            alternatives: string[];
+            /** Field */
+            field: string;
+            /** Key */
+            key: string;
+            /** Reason */
+            reason: string;
+            /** Region Keys */
+            region_keys: string[];
+        };
         /** UniquenessPolicyRequest */
         UniquenessPolicyRequest: {
             /**
@@ -8567,6 +9043,19 @@ export interface components {
             pass: number;
             /** Warn */
             warn: number;
+        };
+        /** VisualFact */
+        VisualFact: {
+            /** Description */
+            description: string;
+            /** Group Count */
+            group_count: number | null;
+            /** Items Per Group */
+            items_per_group: number | null;
+            /** Key */
+            key: string;
+            /** Printed Total */
+            printed_total: string | null;
         };
         /** PracticePriorityResponse */
         exam_guru_api__analytics__schemas__PracticePriorityResponse: {
@@ -12187,6 +12676,91 @@ export interface operations {
             };
         };
     };
+    get_source_understanding_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnderstandingJobResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     correct_material_metadata_candidate: {
         parameters: {
             query?: never;
@@ -12732,6 +13306,182 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_source_page_understanding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnderstandingPageResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    create_source_understanding_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                page_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnderstandingJobCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnderstandingJobResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -153,6 +153,7 @@ def test_factory_uses_existing_resource_valkey_and_exact_per_scope_settings() ->
         rate_limit_window_seconds=60,
         rate_limit_source_upload=11,
         rate_limit_extraction_trigger=12,
+        rate_limit_document_understanding=18,
         rate_limit_embedding_job_create=13,
         rate_limit_retrieval_explore=14,
         rate_limit_generation_create_retry=15,
@@ -167,7 +168,7 @@ def test_factory_uses_existing_resource_valkey_and_exact_per_scope_settings() ->
 
     asyncio.run(consume_all_scopes())
 
-    assert [call[3] for call in valkey.calls] == [11, 12, 13, 14, 15, 16, 17]
+    assert [call[3] for call in valkey.calls] == [11, 12, 18, 13, 14, 15, 16, 17]
     assert all(call[4] == 60_000 for call in valkey.calls)
 
 
@@ -186,6 +187,7 @@ def test_all_public_scope_values_are_fixed_safe_allowlisted_tokens() -> None:
     assert tuple(scope.value for scope in RateLimitScope) == (
         "source_upload",
         "extraction_trigger",
+        "document_understanding",
         "embedding_job_create",
         "retrieval_explore",
         "generation_create_retry",

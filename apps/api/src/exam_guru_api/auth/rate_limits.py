@@ -60,6 +60,7 @@ return {1, ttl_ms}
 class RateLimitScope(StrEnum):
     SOURCE_UPLOAD = "source_upload"
     EXTRACTION_TRIGGER = "extraction_trigger"
+    DOCUMENT_UNDERSTANDING = "document_understanding"
     EMBEDDING_JOB_CREATE = "embedding_job_create"
     RETRIEVAL_EXPLORE = "retrieval_explore"
     GENERATION_CREATE_RETRY = "generation_create_retry"
@@ -134,6 +135,7 @@ def create_rate_limiter(settings: Settings, resources: object) -> RateLimiter:
     limits = {
         RateLimitScope.SOURCE_UPLOAD: settings.rate_limit_source_upload,
         RateLimitScope.EXTRACTION_TRIGGER: settings.rate_limit_extraction_trigger,
+        RateLimitScope.DOCUMENT_UNDERSTANDING: settings.rate_limit_document_understanding,
         RateLimitScope.EMBEDDING_JOB_CREATE: settings.rate_limit_embedding_job_create,
         RateLimitScope.RETRIEVAL_EXPLORE: settings.rate_limit_retrieval_explore,
         RateLimitScope.GENERATION_CREATE_RETRY: settings.rate_limit_generation_create_retry,

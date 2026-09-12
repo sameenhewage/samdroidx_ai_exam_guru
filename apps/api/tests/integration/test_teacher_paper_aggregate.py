@@ -2751,7 +2751,7 @@ def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
             await engine.dispose()
 
     history = asyncio.run(snapshot())
-    assert history["head"] == "0043_document_understanding"
+    assert history["head"] == "0044_understanding_jobs"
     assert history["candidates"]
     assert history["chunks"]
     with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):

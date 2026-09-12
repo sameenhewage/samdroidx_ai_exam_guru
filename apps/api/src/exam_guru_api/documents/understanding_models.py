@@ -12,6 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,6 +25,12 @@ _CANDIDATE_SNAPSHOT = """jsonb_build_object(
         'page_number',page_number,'image_sha256',image_sha256),
     'content',jsonb_build_object('schema_version','page-understanding.v1',
         'observation',observation,'education',educational_understanding,'uncertainties',uncertainties))"""
+
+
+_JOB_REQUEST_SNAPSHOT = """jsonb_build_object(
+    'document_id',document_id::text,'page_number',page_number,'source_sha256',source_sha256,
+    'expected_version',expected_page_version-1,'profile',profile,'budget',budget,'reason',reason,
+    'retry_of_job_id',retry_of_job_id::text)"""
 
 
 class _Created:
@@ -393,6 +400,21 @@ class PageUnderstandingStateModel(Base):
             "(state='verified')=(current_trusted_id IS NOT NULL)",
             name="ck_understanding_page_trust",
         ),
+        ForeignKeyConstraint(
+            ["active_job_id", "document_id", "page_number"],
+            [
+                "source_understanding_jobs.id",
+                "source_understanding_jobs.document_id",
+                "source_understanding_jobs.page_number",
+            ],
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_understanding_page_job",
+        ),
+        CheckConstraint(
+            "(state='processing')=(active_job_id IS NOT NULL)", name="ck_understanding_page_job"
+        ),
         Index("ix_understanding_page_state", "document_id", "state", "page_number"),
     )
     document_id: Mapped[UUID] = mapped_column(
@@ -406,6 +428,7 @@ class PageUnderstandingStateModel(Base):
     current_candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     current_report_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     current_trusted_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    active_job_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     event_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
             "admin_audit_events.id", ondelete="RESTRICT", deferrable=True, initially="DEFERRED"
@@ -413,6 +436,152 @@ class PageUnderstandingStateModel(Base):
         nullable=True,
     )
     updated_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DocumentUnderstandingJobModel(_Created, Base):
+    __tablename__ = "source_understanding_jobs"
+    __table_args__ = (
+        UniqueConstraint("created_by", "request_id", name="uq_understanding_job_request"),
+        UniqueConstraint("id", "document_id", "page_number", name="uq_understanding_job_source"),
+        ForeignKeyConstraint(
+            ["candidate_id", "document_id", "page_number"],
+            [
+                "source_understanding_candidates.id",
+                "source_understanding_candidates.document_id",
+                "source_understanding_candidates.page_number",
+            ],
+            ondelete="RESTRICT",
+            name="fk_understanding_job_candidate",
+        ),
+        CheckConstraint(
+            "page_number>0 AND expected_page_version>0 AND version>=0",
+            name="ck_understanding_job_versions",
+        ),
+        CheckConstraint(
+            "attempts BETWEEN 0 AND 3 AND retry_depth BETWEEN 0 AND 3",
+            name="ck_understanding_job_retries",
+        ),
+        CheckConstraint(
+            "(retry_of_job_id IS NULL)=(retry_depth=0)", name="ck_understanding_job_retry_parent"
+        ),
+        CheckConstraint(
+            "source_sha256 ~ '^[0-9a-f]{64}$' AND request_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_understanding_job_hashes",
+        ),
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','failed','unknown')",
+            name="ck_understanding_job_status",
+        ),
+        CheckConstraint(
+            "(status='running' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) "
+            "OR (status<>'running' AND lease_token IS NULL AND lease_expires_at IS NULL)",
+            name="ck_understanding_job_lease",
+        ),
+        CheckConstraint(
+            f"request_fingerprint=public.source_understanding_fingerprint({_JOB_REQUEST_SNAPSHOT})",
+            name="ck_understanding_job_request_hash",
+        ),
+        CheckConstraint(
+            "(status IN ('succeeded','failed','unknown'))=(completed_at IS NOT NULL)",
+            name="ck_understanding_job_completed",
+        ),
+        CheckConstraint(
+            "(status IN ('failed','unknown'))=(failure_code IS NOT NULL)",
+            name="ck_understanding_job_failure",
+        ),
+        CheckConstraint(
+            "(status='succeeded')=(candidate_id IS NOT NULL)", name="ck_understanding_job_candidate"
+        ),
+        CheckConstraint(
+            "status<>'succeeded' OR (run_id IS NOT NULL AND accounting IS NOT NULL)",
+            name="ck_understanding_job_success",
+        ),
+        CheckConstraint(
+            "(provider_started_at IS NULL AND provider_request_key IS NULL) OR "
+            "(provider_started_at IS NOT NULL AND image_metadata IS NOT NULL "
+            "AND provider_request_key IS NOT NULL AND provider_request_key ~ '^[0-9a-f]{64}$')",
+            name="ck_understanding_job_dispatch",
+        ),
+        CheckConstraint(
+            "accounting IS NULL OR provider_started_at IS NOT NULL",
+            name="ck_understanding_job_accounted",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(profile)='object' AND octet_length(profile::text)<=16384",
+            name="ck_understanding_job_profile",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(budget)='object' AND octet_length(budget::text)<=4096",
+            name="ck_understanding_job_budget",
+        ),
+        CheckConstraint(
+            "image_metadata IS NULL OR (jsonb_typeof(image_metadata)='object' "
+            "AND octet_length(image_metadata::text)<=65536)",
+            name="ck_understanding_job_image",
+        ),
+        CheckConstraint(
+            "accounting IS NULL OR (jsonb_typeof(accounting)='object' "
+            "AND octet_length(accounting::text)<=4096)",
+            name="ck_understanding_job_accounting",
+        ),
+        CheckConstraint(
+            "char_length(reason) BETWEEN 1 AND 2000 AND reason=btrim(reason) "
+            "AND reason !~ '^[[:space:]]*$|[[:cntrl:]]'",
+            name="ck_understanding_job_reason",
+        ),
+        Index("ix_understanding_job_recovery", "status", "lease_expires_at", "created_at"),
+        Index(
+            "ix_understanding_job_page_history",
+            "document_id",
+            "page_number",
+            "expected_page_version",
+        ),
+        Index(
+            "uq_understanding_job_active_page",
+            "document_id",
+            "page_number",
+            unique=True,
+            postgresql_where=text("status IN ('queued','running')"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_page_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    budget: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="queued")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    retry_of_job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("source_understanding_jobs.id", ondelete="RESTRICT"), nullable=True
+    )
+    retry_depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_request_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    image_metadata: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    accounting: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("source_understanding_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    candidate_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

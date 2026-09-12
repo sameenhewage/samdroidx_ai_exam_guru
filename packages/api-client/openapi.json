@@ -2319,6 +2319,73 @@
         "title": "DistributionBucketResponse",
         "type": "object"
       },
+      "EducationalClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "topic",
+              "concept",
+              "skill",
+              "learning_objective",
+              "educational_purpose",
+              "activity_type",
+              "worked_example",
+              "relationship",
+              "prerequisite"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "region_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Region Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "description",
+          "region_keys"
+        ],
+        "title": "EducationalClaim",
+        "type": "object"
+      },
+      "EducationalUnderstanding": {
+        "additionalProperties": false,
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/EducationalClaim"
+            },
+            "maxItems": 128,
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "required": [
+          "claims"
+        ],
+        "title": "EducationalUnderstanding",
+        "type": "object"
+      },
       "EmbeddingConfigRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3646,6 +3713,40 @@
           "scope"
         ],
         "title": "FusedRetrievalCandidateResponse",
+        "type": "object"
+      },
+      "GenerationAccounting": {
+        "description": "Exact per-attempt token, micro-USD cost, and latency accounting.",
+        "properties": {
+          "cost_microusd": {
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "cost_microusd",
+          "latency_ms"
+        ],
+        "title": "GenerationAccounting",
         "type": "object"
       },
       "GenerationAttemptResponse": {
@@ -6350,6 +6451,29 @@
         "title": "MediumUpdate",
         "type": "object"
       },
+      "NormalizedPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "NormalizedPoint",
+        "type": "object"
+      },
       "ObjectStorageOperationsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6361,6 +6485,174 @@
           "reconciliation"
         ],
         "title": "ObjectStorageOperationsResponse",
+        "type": "object"
+      },
+      "ObservationCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/PageUnderstanding"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "native",
+              "ocr",
+              "visual_ai",
+              "human"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "revision",
+          "method",
+          "source",
+          "content"
+        ],
+        "title": "ObservationCandidate",
+        "type": "object"
+      },
+      "ObservedCell": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "maximum": 63.0,
+            "minimum": 0.0,
+            "title": "Column",
+            "type": "integer"
+          },
+          "column_span": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Column Span",
+            "type": "integer"
+          },
+          "exact_text": {
+            "maxLength": 100000,
+            "title": "Exact Text",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 63.0,
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "row_span": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Row Span",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "visible",
+              "blank",
+              "unreadable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "column",
+          "row_span",
+          "column_span",
+          "state",
+          "exact_text"
+        ],
+        "title": "ObservedCell",
+        "type": "object"
+      },
+      "ObservedRelationship": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "label_for",
+              "answer_area_for",
+              "grouped_with",
+              "aligned_with",
+              "part_of",
+              "reading_next",
+              "illustrates"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "source_key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Source Key",
+            "type": "string"
+          },
+          "target_key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Target Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_key",
+          "target_key",
+          "kind"
+        ],
+        "title": "ObservedRelationship",
+        "type": "object"
+      },
+      "ObservedTable": {
+        "additionalProperties": false,
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ObservedCell"
+            },
+            "maxItems": 512,
+            "minItems": 1,
+            "title": "Cells",
+            "type": "array"
+          },
+          "columns": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "rows": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "columns",
+          "cells"
+        ],
+        "title": "ObservedTable",
         "type": "object"
       },
       "OperationsDataBoundsResponse": {
@@ -6511,6 +6803,40 @@
         "title": "OperationsWindowResponse",
         "type": "object"
       },
+      "PageArtifactIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "image_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Image Sha256",
+            "type": "string"
+          },
+          "page_number": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "source_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "source_sha256",
+          "page_number",
+          "image_sha256"
+        ],
+        "title": "PageArtifactIdentity",
+        "type": "object"
+      },
       "PageConfirmRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6600,6 +6926,163 @@
           "reason"
         ],
         "title": "PageExcludeRequest",
+        "type": "object"
+      },
+      "PageObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "enum": [
+              "si",
+              "ta",
+              "en",
+              "mixed",
+              "und"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/PageRegionObservation"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Regions",
+            "type": "array"
+          },
+          "relationships": {
+            "items": {
+              "$ref": "#/components/schemas/ObservedRelationship"
+            },
+            "maxItems": 512,
+            "title": "Relationships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "language",
+          "regions",
+          "relationships"
+        ],
+        "title": "PageObservation",
+        "type": "object"
+      },
+      "PageRegionObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegionBounds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "equations": {
+            "items": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Equations",
+            "type": "array"
+          },
+          "exact_text": {
+            "maxLength": 100000,
+            "title": "Exact Text",
+            "type": "string"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "heading",
+              "paragraph",
+              "instruction",
+              "question",
+              "worked_example",
+              "equation",
+              "vertical_arithmetic",
+              "table",
+              "grid",
+              "chart",
+              "diagram",
+              "illustration",
+              "repeated_object_group",
+              "label",
+              "blank_answer_area",
+              "page_number",
+              "footer",
+              "decorative_image"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "polygon": {
+            "items": {
+              "$ref": "#/components/schemas/NormalizedPoint"
+            },
+            "maxItems": 64,
+            "title": "Polygon",
+            "type": "array"
+          },
+          "reading_order": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Reading Order",
+            "type": "integer"
+          },
+          "table": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservedTable"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visual_facts": {
+            "items": {
+              "$ref": "#/components/schemas/VisualFact"
+            },
+            "maxItems": 64,
+            "title": "Visual Facts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "reading_order",
+          "parent_key",
+          "bounds",
+          "polygon",
+          "exact_text",
+          "equations",
+          "table",
+          "visual_facts"
+        ],
+        "title": "PageRegionObservation",
         "type": "object"
       },
       "PageRereadRequest": {
@@ -6873,6 +7356,203 @@
           "next_flagged_page"
         ],
         "title": "PageReviewWorkspaceResponse",
+        "type": "object"
+      },
+      "PageUnderstanding": {
+        "additionalProperties": false,
+        "properties": {
+          "education": {
+            "$ref": "#/components/schemas/EducationalUnderstanding"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/PageObservation"
+          },
+          "schema_version": {
+            "const": "page-understanding.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "uncertainties": {
+            "items": {
+              "$ref": "#/components/schemas/UnderstandingUncertainty"
+            },
+            "maxItems": 128,
+            "title": "Uncertainties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "observation",
+          "education",
+          "uncertainties"
+        ],
+        "title": "PageUnderstanding",
+        "type": "object"
+      },
+      "PageVerificationDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_claim_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Accepted Claim Keys",
+            "type": "array"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "candidate_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Fingerprint",
+            "type": "string"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "compared_with_original": {
+            "const": true,
+            "title": "Compared With Original",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "policy_version": {
+            "const": "page-understanding-verification.v1",
+            "default": "page-understanding-verification.v1",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "report_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Report Fingerprint",
+            "type": "string"
+          },
+          "resolved_uncertainty_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Resolved Uncertainty Keys",
+            "type": "array"
+          },
+          "reviewed_region_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Reviewed Region Keys",
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          },
+          "source_checker_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Checker Version",
+            "type": "string"
+          },
+          "verified_content_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Verified Content Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor_id",
+          "source",
+          "candidate_id",
+          "candidate_fingerprint",
+          "report_fingerprint",
+          "verified_content_fingerprint",
+          "source_checker_version",
+          "compared_with_original",
+          "reviewed_region_keys",
+          "accepted_claim_keys",
+          "resolved_uncertainty_keys",
+          "reason"
+        ],
+        "title": "PageVerificationDecision",
+        "type": "object"
+      },
+      "PageVerificationReport": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_evidence_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 512,
+            "title": "Anchor Evidence Ids",
+            "type": "array"
+          },
+          "anchor_fingerprint": {
+            "default": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Anchor Fingerprint",
+            "type": "string"
+          },
+          "candidate_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Fingerprint",
+            "type": "string"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/UnderstandingFinding"
+            },
+            "maxItems": 1024,
+            "title": "Findings",
+            "type": "array"
+          },
+          "policy_version": {
+            "const": "page-understanding-verification.v1",
+            "default": "page-understanding-verification.v1",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "source_checker_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Checker Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "candidate_fingerprint",
+          "source_checker_version",
+          "findings"
+        ],
+        "title": "PageVerificationReport",
         "type": "object"
       },
       "PaperAggregateResponse": {
@@ -9262,6 +9942,7 @@
         "enum": [
           "source_upload",
           "extraction_trigger",
+          "document_understanding",
           "embedding_job_create",
           "retrieval_explore",
           "generation_create_retry",
@@ -9318,6 +9999,43 @@
           "checks"
         ],
         "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RegionBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "bottom": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Bottom",
+            "type": "number"
+          },
+          "left": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Left",
+            "type": "number"
+          },
+          "right": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Right",
+            "type": "number"
+          },
+          "top": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "top",
+          "right",
+          "bottom"
+        ],
+        "title": "RegionBounds",
         "type": "object"
       },
       "RestoreSourceFixtureRequest": {
@@ -15672,6 +16390,516 @@
         "title": "TermOption",
         "type": "object"
       },
+      "TrustedPageKnowledge": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/PageVerificationDecision"
+          },
+          "education": {
+            "$ref": "#/components/schemas/EducationalUnderstanding"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/PageObservation"
+          },
+          "resolved_uncertainties": {
+            "items": {
+              "$ref": "#/components/schemas/UnderstandingUncertainty"
+            },
+            "maxItems": 128,
+            "title": "Resolved Uncertainties",
+            "type": "array"
+          },
+          "revision": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "revision",
+          "observation",
+          "education",
+          "resolved_uncertainties",
+          "decision"
+        ],
+        "title": "TrustedPageKnowledge",
+        "type": "object"
+      },
+      "UnderstandingBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "max_cost_microusd": {
+            "default": 1000000,
+            "maximum": 100000000.0,
+            "minimum": 1.0,
+            "title": "Max Cost Microusd",
+            "type": "integer"
+          },
+          "max_image_bytes": {
+            "default": 8388608,
+            "maximum": 8388608.0,
+            "minimum": 8.0,
+            "title": "Max Image Bytes",
+            "type": "integer"
+          },
+          "max_image_pixels": {
+            "default": 16000000,
+            "maximum": 16000000.0,
+            "minimum": 1.0,
+            "title": "Max Image Pixels",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "default": 8192,
+            "maximum": 16384.0,
+            "minimum": 1.0,
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "maximum": 60000.0,
+            "minimum": 1.0,
+            "title": "Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "title": "UnderstandingBudget",
+        "type": "object"
+      },
+      "UnderstandingFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[a-z][a-z0-9_.]{0,127}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "region_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Region Keys",
+            "type": "array"
+          },
+          "severity": {
+            "enum": [
+              "block",
+              "review"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "region_keys",
+          "summary"
+        ],
+        "title": "UnderstandingFinding",
+        "type": "object"
+      },
+      "UnderstandingJobCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "maximum": 2147483646.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expected_version",
+          "reason"
+        ],
+        "title": "UnderstandingJobCreateRequest",
+        "type": "object"
+      },
+      "UnderstandingJobResponse": {
+        "properties": {
+          "accounting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationAccounting"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/UnderstandingBudget"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "expected_page_version": {
+            "title": "Expected Page Version",
+            "type": "integer"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/UnderstandingProviderProfile"
+          },
+          "retry_depth": {
+            "title": "Retry Depth",
+            "type": "integer"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "page_number",
+          "status",
+          "version",
+          "expected_page_version",
+          "attempts",
+          "retry_depth",
+          "candidate_id",
+          "run_id",
+          "failure_code",
+          "accounting",
+          "profile",
+          "budget"
+        ],
+        "title": "UnderstandingJobResponse",
+        "type": "object"
+      },
+      "UnderstandingPageResponse": {
+        "properties": {
+          "active_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Job Id"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservationCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "latest_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnderstandingJobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "provider_available": {
+            "default": false,
+            "title": "Provider Available",
+            "type": "boolean"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVerificationReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "trusted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrustedPageKnowledge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "page_number",
+          "version",
+          "state",
+          "candidate",
+          "report",
+          "trusted",
+          "active_job_id"
+        ],
+        "title": "UnderstandingPageResponse",
+        "type": "object"
+      },
+      "UnderstandingProviderProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "input_microusd_per_million_tokens": {
+            "maximum": 100000000000.0,
+            "minimum": 0.0,
+            "title": "Input Microusd Per Million Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Model",
+            "type": "string"
+          },
+          "model_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Model Version",
+            "type": "string"
+          },
+          "output_microusd_per_million_tokens": {
+            "maximum": 100000000000.0,
+            "minimum": 0.0,
+            "title": "Output Microusd Per Million Tokens",
+            "type": "integer"
+          },
+          "pricing_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Pricing Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+\\-]*$",
+            "title": "Provider Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "page-understanding.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "temperature": {
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "type": "number"
+          }
+        },
+        "required": [
+          "provider",
+          "provider_version",
+          "model",
+          "model_version",
+          "prompt_version",
+          "schema_version",
+          "pricing_version",
+          "input_microusd_per_million_tokens",
+          "output_microusd_per_million_tokens",
+          "temperature"
+        ],
+        "title": "UnderstandingProviderProfile",
+        "type": "object"
+      },
+      "UnderstandingUncertainty": {
+        "additionalProperties": false,
+        "properties": {
+          "alternatives": {
+            "items": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Alternatives",
+            "type": "array"
+          },
+          "field": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Field",
+            "type": "string"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "region_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Region Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "region_keys",
+          "field",
+          "reason",
+          "alternatives"
+        ],
+        "title": "UnderstandingUncertainty",
+        "type": "object"
+      },
       "UniquenessPolicyRequest": {
         "additionalProperties": false,
         "properties": {
@@ -16288,6 +17516,70 @@
           "fail"
         ],
         "title": "ValidationStatusCountsResponse",
+        "type": "object"
+      },
+      "VisualFact": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "group_count": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Count"
+          },
+          "items_per_group": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items Per Group"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "printed_total": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Total"
+          }
+        },
+        "required": [
+          "key",
+          "description",
+          "group_count",
+          "items_per_group",
+          "printed_total"
+        ],
+        "title": "VisualFact",
         "type": "object"
       },
       "exam_guru_api__analytics__schemas__PracticePriorityResponse": {
@@ -22805,6 +24097,114 @@
         ]
       }
     },
+    "/api/v1/admin/materials/understanding/jobs/{job_id}": {
+      "get": {
+        "operationId": "get_source_understanding_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderstandingJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Understanding Job",
+        "tags": [
+          "source-understanding"
+        ]
+      }
+    },
     "/api/v1/admin/materials/{document_id}/metadata-candidates": {
       "post": {
         "operationId": "correct_material_metadata_candidate",
@@ -23620,6 +25020,254 @@
         "summary": "Reread Page",
         "tags": [
           "source-fidelity"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding": {
+      "get": {
+        "operationId": "get_source_page_understanding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "maximum": 2147483646,
+              "minimum": 1,
+              "title": "Page Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderstandingPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Page Understanding",
+        "tags": [
+          "source-understanding"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/pages/{page_number}/understanding/jobs": {
+      "post": {
+        "operationId": "create_source_understanding_job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_number",
+            "required": true,
+            "schema": {
+              "maximum": 2147483646,
+              "minimum": 1,
+              "title": "Page Number",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnderstandingJobCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderstandingJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Understanding Job",
+        "tags": [
+          "source-understanding"
         ]
       }
     },
