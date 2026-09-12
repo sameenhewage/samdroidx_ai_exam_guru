@@ -6,7 +6,9 @@ This document defines when Exam Guru is ready to be handed to real teachers for 
 
 The teacher pilot is **not** an architecture test. Teachers should receive a coherent product they can actually use to prepare, review and approve Grade 5 papers.
 
-## Current verdict — NOT READY (10 September 2026 local inspection)
+## Current verdict — NOT READY (12 September 2026 local verification)
+
+Release `59ad760` and forward migration `0042_evaluation_references` are now live. The [current nine-page reference-only queue](http://localhost:3000/admin/materials/benchmark-review?benchmark_id=9fd3f582-44c2-4f96-a8ed-55d3931e9f50) covers the four multiplication pages, the one-page English source and guide pages 1/56/185/371. Every original image opened at 1280×720 with a 257-pixel reference editor, visible disabled save controls, blank text and unchecked attestations. No human reference or source approval was supplied. Current totals remain **three originals / 376 pages, 370 failed / six needing review, zero verified pages, ground truth, chunks or embeddings**. This enables human reference collection but does not establish Sinhala/Tamil accuracy, resolve Maths/table failures, admit curriculum or unlock the teacher-generation pilot.
 
 The actual Windows Docker Desktop Studio was inspected directly, rather than inferred from the historical rollout below. At the initial checkpoint its database contained **one checksum-matched real corpus source / four page-review states**, 24 candidate versions and 33 page events, with **zero current verified pages, ground truth, benchmarks, chunks, embeddings or admitted curricula**. Legacy `source_pages` and `extracted_blocks` are both empty; those tables are distinct from the newer page-review records. The sole subject is an exactly identified migration bootstrap placeholder, not a proven E2E fixture. No reset, deletion, quarantine or fabricated admission was performed.
 
