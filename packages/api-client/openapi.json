@@ -6629,6 +6629,85 @@
         "title": "MaterialGradeSummaryResponse",
         "type": "object"
       },
+      "MaterialKnowledgePreparationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "failed_pages": {
+            "minimum": 0.0,
+            "title": "Failed Pages",
+            "type": "integer"
+          },
+          "pending_pages": {
+            "minimum": 0.0,
+            "title": "Pending Pages",
+            "type": "integer"
+          },
+          "prepared_pages": {
+            "minimum": 0.0,
+            "title": "Prepared Pages",
+            "type": "integer"
+          },
+          "projection_count": {
+            "minimum": 0.0,
+            "title": "Projection Count",
+            "type": "integer"
+          },
+          "requested": {
+            "title": "Requested",
+            "type": "boolean"
+          },
+          "scope_ready": {
+            "title": "Scope Ready",
+            "type": "boolean"
+          },
+          "source_ready": {
+            "title": "Source Ready",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "not_requested",
+              "waiting",
+              "preparing",
+              "prepared",
+              "needs_attention",
+              "removed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "unit_count": {
+            "minimum": 0.0,
+            "title": "Unit Count",
+            "type": "integer"
+          },
+          "verified_pages": {
+            "minimum": 0.0,
+            "title": "Verified Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "requested",
+          "source_ready",
+          "scope_ready",
+          "status",
+          "verified_pages",
+          "prepared_pages",
+          "unit_count",
+          "projection_count",
+          "pending_pages",
+          "failed_pages"
+        ],
+        "title": "MaterialKnowledgePreparationResponse",
+        "type": "object"
+      },
       "MaterialListItemResponse": {
         "properties": {
           "curriculum": {
@@ -25377,6 +25456,94 @@
         "summary": "Get Understanding Job",
         "tags": [
           "source-understanding"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/knowledge-preparation": {
+      "get": {
+        "operationId": "get_material_knowledge_preparation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialKnowledgePreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Material Knowledge Preparation",
+        "tags": [
+          "material-knowledge-preparation"
         ]
       }
     },

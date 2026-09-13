@@ -49,6 +49,7 @@ from exam_guru_api.documents.understanding_verification import (
 )
 from exam_guru_api.generation.domain import GenerationAccounting
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
+from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 
 _PRIVATE_HEADERS = {
     "Cache-Control": "private, no-store",
@@ -319,7 +320,9 @@ async def verify_source_understanding(
 ) -> TrustedPageKnowledge:
     return await _run(
         session,
-        lambda: PageUnderstandingService(session).verify_against_original(
+        lambda: PageUnderstandingService(
+            session, preparation_recorder=MaterialKnowledgeRequestRecorder(session)
+        ).verify_against_original(
             principal=principal,
             document_id=document_id,
             page_number=page_number,
@@ -391,7 +394,9 @@ async def exclude_source_understanding_page(
 ) -> UnderstandingMutationResponse:
     page = await _run(
         session,
-        lambda: PageUnderstandingService(session).exclude(
+        lambda: PageUnderstandingService(
+            session, preparation_recorder=MaterialKnowledgeRequestRecorder(session)
+        ).exclude(
             principal=principal,
             document_id=document_id,
             page_number=page_number,

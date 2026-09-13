@@ -1092,6 +1092,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/materials/{document_id}/knowledge-preparation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Material Knowledge Preparation */
+        get: operations["get_material_knowledge_preparation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/materials/{document_id}/metadata-candidates": {
         parameters: {
             query?: never;
@@ -5018,6 +5035,37 @@ export interface components {
             removed_count: number;
             /** Subject Count */
             subject_count: number;
+        };
+        /** MaterialKnowledgePreparationResponse */
+        MaterialKnowledgePreparationResponse: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Failed Pages */
+            failed_pages: number;
+            /** Pending Pages */
+            pending_pages: number;
+            /** Prepared Pages */
+            prepared_pages: number;
+            /** Projection Count */
+            projection_count: number;
+            /** Requested */
+            requested: boolean;
+            /** Scope Ready */
+            scope_ready: boolean;
+            /** Source Ready */
+            source_ready: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "not_requested" | "waiting" | "preparing" | "prepared" | "needs_attention" | "removed";
+            /** Unit Count */
+            unit_count: number;
+            /** Verified Pages */
+            verified_pages: number;
         };
         /** MaterialListItemResponse */
         MaterialListItemResponse: {
@@ -13379,6 +13427,73 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_material_knowledge_preparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialKnowledgePreparationResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2,6 +2,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 from uuid import UUID, uuid4, uuid5
 
 import anyio
@@ -123,9 +124,38 @@ def _snapshot[Snapshot: UnderstandingModel](
     return value
 
 
+class PreparationRequestRecorder(Protocol):
+    async def __call__(
+        self,
+        *,
+        principal: Principal,
+        document_id: UUID,
+        source_sha256: str,
+        source_audit_event_id: UUID,
+    ) -> None: ...
+
+
 class PageUnderstandingService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        preparation_recorder: PreparationRequestRecorder | None = None,
+    ) -> None:
         self.session = session
+        self.preparation_recorder = preparation_recorder
+
+    async def _record_preparation(
+        self, principal: Principal, source: SourceDocumentModel, audit: AdminAuditEventModel
+    ) -> None:
+        if self.preparation_recorder is not None:
+            await self.session.flush()
+            await self.preparation_recorder(
+                principal=principal,
+                document_id=source.id,
+                source_sha256=source.checksum_sha256,
+                source_audit_event_id=audit.id,
+            )
 
     async def _source(
         self, document_id: UUID, page_number: int, *, write: bool
@@ -613,6 +643,8 @@ class PageUnderstandingService:
                 and previous.payload.get("reason") == reason
                 and previous.payload.get(confirmation) is True
             ):
+                if not reopen:
+                    await self._record_preparation(principal, source, previous)
                 await self.session.commit()
                 return await self.get_page(
                     principal=principal, document_id=document_id, page_number=page_number
@@ -660,6 +692,8 @@ class PageUnderstandingService:
             page.event_id = audit.id
             page.updated_by = principal.subject_id
             page.updated_at = datetime.now(UTC)
+            if not reopen:
+                await self._record_preparation(principal, source, audit)
             await self.session.commit()
             return await self.get_page(
                 principal=principal, document_id=document_id, page_number=page_number
@@ -846,7 +880,7 @@ class PageUnderstandingService:
     ) -> TrustedPageKnowledge:
         authorize(principal, Permission.SOURCE_TRUST)
         try:
-            await self._source(document_id, page_number, write=True)
+            source = await self._source(document_id, page_number, write=True)
             page = await self._page(document_id, page_number, principal, create=False)
             self._version(page, expected_version)
             if (
@@ -922,6 +956,7 @@ class PageUnderstandingService:
             page.event_id = audit.id
             page.updated_by = principal.subject_id
             page.updated_at = datetime.now(UTC)
+            await self._record_preparation(principal, source, audit)
             await self.session.commit()
             return trusted
         except Exception:

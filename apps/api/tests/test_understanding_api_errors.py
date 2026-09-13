@@ -19,6 +19,7 @@ from exam_guru_api.documents.understanding_service import (
     UnderstandingPageSnapshot,
     UnderstandingSourceError,
 )
+from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 from tests.test_document_understanding_contracts import counting_candidate, parse
 from tests.test_document_understanding_provider import request as fixture_request
 
@@ -73,13 +74,18 @@ def test_lifecycle_routes_return_the_applied_version_without_claiming_trust(
     session = AsyncMock(spec=AsyncSession)
     excluded = UnderstandingPageSnapshot(identifier, 1, 1, "excluded", None, None, None)
     reopened = UnderstandingPageSnapshot(identifier, 1, 2, "unprocessed", None, None, None)
-    monkeypatch.setattr(
-        routes,
-        "PageUnderstandingService",
-        lambda _: SimpleNamespace(
+    recorders: list[object | None] = []
+
+    def service_factory(
+        actual: AsyncSession, *, preparation_recorder: object | None = None
+    ) -> SimpleNamespace:
+        assert actual is session
+        recorders.append(preparation_recorder)
+        return SimpleNamespace(
             exclude=AsyncMock(return_value=excluded), reopen=AsyncMock(return_value=reopened)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(routes, "PageUnderstandingService", service_factory)
     result = asyncio.run(
         routes.exclude_source_understanding_page(
             identifier,
@@ -106,6 +112,9 @@ def test_lifecycle_routes_return_the_applied_version_without_claiming_trust(
     )
     assert result.version == 2
     assert result.state == "unprocessed"
+    assert isinstance(recorders[0], MaterialKnowledgeRequestRecorder)
+    assert recorders[0].session is session
+    assert recorders[1] is None
 
 
 def test_missing_queue_configuration_is_explicit_and_read_only() -> None:

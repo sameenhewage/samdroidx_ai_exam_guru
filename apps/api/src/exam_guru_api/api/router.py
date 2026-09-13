@@ -11,6 +11,7 @@ from exam_guru_api.api.routes.embedding_jobs import router as embedding_job_rout
 from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
+from exam_guru_api.api.routes.knowledge_preparation import router as knowledge_preparation_router
 from exam_guru_api.api.routes.knowledge_units import router as knowledge_unit_router
 from exam_guru_api.api.routes.operations import router as operations_router
 from exam_guru_api.api.routes.page_images import router as page_images_router
@@ -39,6 +40,9 @@ api_router.include_router(source_fidelity_router, prefix="/admin", tags=["source
 api_router.include_router(source_uploads_router, prefix="/admin", tags=["source-uploads"])
 api_router.include_router(page_images_router, prefix="/admin", tags=["source-images"])
 api_router.include_router(understanding_router, prefix="/admin", tags=["source-understanding"])
+api_router.include_router(
+    knowledge_preparation_router, prefix="/admin", tags=["material-knowledge-preparation"]
+)
 api_router.include_router(studio_safety_router, prefix="/admin", tags=["studio-safety"])
 api_router.include_router(
     analytics_router,

@@ -2751,7 +2751,7 @@ def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
             await engine.dispose()
 
     history = asyncio.run(snapshot())
-    assert history["head"] == "0051_programme_eval_replay"
+    assert history["head"] == "0052_knowledge_preparation"
     assert history["candidates"]
     assert history["chunks"]
     replay_history = any(

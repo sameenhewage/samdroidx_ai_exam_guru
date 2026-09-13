@@ -32,6 +32,10 @@ def _register_actors(broker: RedisBroker) -> None:
     )
     from exam_guru_api.generation.jobs import generate_question, recover_generation_jobs
     from exam_guru_api.knowledge.embedding_jobs import ingest_embeddings, recover_embedding_jobs
+    from exam_guru_api.knowledge.preparation_jobs import (
+        prepare_knowledge_page,
+        recover_material_knowledge,
+    )
     from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
     from exam_guru_api.teacher_papers.jobs import advance_teacher_paper, recover_teacher_papers
 
@@ -48,6 +52,8 @@ def _register_actors(broker: RedisBroker) -> None:
         recover_generation_jobs,
         ingest_embeddings,
         recover_embedding_jobs,
+        prepare_knowledge_page,
+        recover_material_knowledge,
         reconcile_source_objects,
         advance_teacher_paper,
         recover_teacher_papers,

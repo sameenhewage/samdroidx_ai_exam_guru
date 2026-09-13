@@ -31,6 +31,10 @@ from exam_guru_api.infrastructure.migrations import (
     upgrade_database,
 )
 from exam_guru_api.knowledge.embedding_jobs import EMBEDDING_QUEUE_NAME, recover_embedding_jobs
+from exam_guru_api.knowledge.preparation_jobs import (
+    PREPARATION_QUEUE_NAME,
+    recover_material_knowledge,
+)
 from exam_guru_api.main import create_app
 from exam_guru_api.maintenance import create_maintenance_broker, enqueue_recovery_jobs
 from exam_guru_api.storage_reconciliation.jobs import (
@@ -156,7 +160,7 @@ def test_clean_database_migration_enables_pgvector(database_url: str) -> None:
     ) = asyncio.run(read_database_state())
 
     assert vector_version == "0.8.6"
-    assert migration_revision == "0051_programme_eval_replay"
+    assert migration_revision == "0052_knowledge_preparation"
     assert blueprint_columns == {
         "id",
         "curriculum_version_id",
@@ -921,7 +925,7 @@ def test_extraction_outbox_migration_backfills_honestly_and_downgrades_cleanly(
     }
     assert indexes == {"ix_source_documents_extraction_outbox"}
     assert triggers == {"enforce_source_document_extraction_queue_identity_trigger"}
-    assert revision == "0051_programme_eval_replay"
+    assert revision == "0052_knowledge_preparation"
 
     command.downgrade(_config_for_database(database_url), "0018_embedding_jobs")
 
@@ -1081,12 +1085,13 @@ def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
         SOURCE_READ_QUEUE_NAME: recover_source_read_jobs.actor_name,
         SOURCE_UPLOAD_QUEUE_NAME: recover_source_upload_jobs.actor_name,
         UNDERSTANDING_QUEUE_NAME: recover_understanding_page_jobs.actor_name,
+        PREPARATION_QUEUE_NAME: recover_material_knowledge.actor_name,
     }
 
     try:
         result = enqueue_recovery_jobs()
 
-        assert result.enqueued == 8
+        assert result.enqueued == 9
         assert result.failures == 0
         assert {queue: broker.do_qsize(queue) for queue in expected} == dict.fromkeys(
             expected,

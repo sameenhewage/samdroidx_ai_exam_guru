@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
+import { MaterialKnowledgePreparation } from "./material-knowledge-preparation";
 import { sourceViewerCopy } from "./original-page-viewer";
 import { SourceDocumentViewer } from "./source-document-viewer";
 
@@ -391,6 +392,11 @@ export function MaterialDetails({
           විෂයමාලා තොරතුරු තහවුරු කිරීමට අවශ්‍යයි
         </p>
       )}
+
+      <MaterialKnowledgePreparation
+        documentId={documentId}
+        language={language}
+      />
 
       <section aria-labelledby="original-pdf-heading" className="mt-8">
         <div className="flex flex-wrap items-end justify-between gap-3">

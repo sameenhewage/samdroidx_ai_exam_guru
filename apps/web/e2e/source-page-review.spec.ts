@@ -9,6 +9,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 
 import { requireIsolatedE2ERuntime } from "../playwright-runtime";
+import { seedAdmittedScope } from "./helpers/teacher-content-studio";
 
 type Source = components["schemas"]["SourceDocumentResponse"];
 type Workspace = components["schemas"]["PageReviewWorkspaceResponse"];
@@ -152,6 +153,289 @@ async function expectReadableButton(button: Locator) {
   await expect(button).toHaveCSS("opacity", "1");
   return computed;
 }
+
+test("Materials prepares checked content after the last exclusion and independent metadata admission", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const runtime = requireIsolatedE2ERuntime(process.env);
+  await login(page, "admin");
+  const scope = await seedAdmittedScope(page.request, 7);
+  const headers = { Origin: runtime.baseURL, "Sec-Fetch-Site": "same-origin" };
+  const marker = `KnowledgePreparation-${randomUUID()}`;
+  const source = await json<Source>(
+    await page.request.post("/api/v1/admin/source-documents", {
+      headers,
+      multipart: {
+        file: {
+          name: `${marker}.pdf`,
+          mimeType: "application/pdf",
+          buffer: Buffer.concat([
+            syntheticBook(marker, 2, "Synthetic visual-understanding fixture."),
+            Buffer.from(`\n% ${marker}\n`, "ascii"),
+          ]),
+        },
+        document_type: "other_approved",
+        intake_metadata: JSON.stringify({
+          candidate_grade: 7,
+          medium_label: "English",
+          subject_label: "Mathematics",
+        }),
+      },
+    }),
+    201,
+  );
+  const read = await json<ReadJob>(
+    await page.request.post(
+      `/api/v1/admin/source-documents/${source.id}/read`,
+      { headers },
+    ),
+    202,
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<ReadJob>(
+            await page.request.get(`/api/v1/admin/source-read-jobs/${read.id}`),
+          )
+        ).status,
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+  const preparationPath = `/api/v1/admin/materials/${source.id}/knowledge-preparation`;
+  type Preparation =
+    components["schemas"]["MaterialKnowledgePreparationResponse"];
+  const preparation = () =>
+    page.request
+      .get(preparationPath)
+      .then((response) => json<Preparation>(response));
+  expect(await preparation()).toMatchObject({
+    requested: false,
+    status: "not_requested",
+    prepared_pages: 0,
+  });
+
+  await page.goto(`/admin/materials/${source.id}/review-content`);
+  await page.getByRole("button", { name: "English", exact: true }).click();
+  await page.getByRole("button", { name: "Analyze page", exact: true }).click();
+  const firstPagePath = `/api/v1/admin/materials/${source.id}/pages/1/understanding`;
+  await expect
+    .poll(
+      async () =>
+        (await json<UnderstandingPage>(await page.request.get(firstPagePath)))
+          .latest_job?.status,
+      { timeout: 45_000 },
+    )
+    .toBe("succeeded");
+  await imageReady(page, 1);
+  const observed = await json<UnderstandingPage>(
+    await page.request.get(firstPagePath),
+  );
+  await page
+    .getByRole("button", { name: "Review this reading", exact: true })
+    .click();
+  await page
+    .getByRole("checkbox", {
+      name: "I compared this reading with the original page.",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("checkbox", {
+      name: "I checked every visible source detail.",
+      exact: true,
+    })
+    .check();
+  for (const uncertainty of observed.candidate!.content.uncertainties) {
+    await page
+      .getByRole("checkbox", { name: uncertainty.reason, exact: true })
+      .check();
+  }
+  await page
+    .getByRole("textbox", {
+      name: "Reason for accepting this reading",
+      exact: true,
+    })
+    .fill(
+      "Compared the synthetic original; this tests workflow mechanics, not real educational quality.",
+    );
+  await page
+    .getByRole("button", { name: "Confirm checked page", exact: true })
+    .click();
+  await expect(
+    page.getByText("Page checked against the original", { exact: true }),
+  ).toBeVisible();
+  const checked = await json<UnderstandingPage>(
+    await page.request.get(firstPagePath),
+  );
+  expect(await preparation()).toMatchObject({
+    requested: true,
+    source_ready: false,
+    scope_ready: false,
+    status: "waiting",
+    prepared_pages: 0,
+  });
+
+  await jump(page, 2);
+  await page
+    .getByRole("button", { name: "Do not use this page", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", {
+      name: "Reason for excluding this page",
+      exact: true,
+    })
+    .fill(
+      "Exclude the second synthetic page for this isolated workflow proof.",
+    );
+  await page
+    .getByRole("checkbox", {
+      name: "I understand this page will not be used for AI.",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "Exclude page", exact: true }).click();
+  await expect(
+    page.getByText(
+      "This page is excluded from AI use. Its history is preserved.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(await preparation()).toMatchObject({
+    requested: true,
+    source_ready: true,
+    scope_ready: false,
+    status: "waiting",
+    verified_pages: 1,
+    prepared_pages: 0,
+  });
+
+  await page
+    .getByRole("link", { name: "Back to material", exact: true })
+    .click();
+  const panel = page.getByRole("region", {
+    name: "Content preparation",
+    exact: true,
+  });
+  await expect(
+    panel.getByText("Waiting for material review", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText("Confirm the material details and curriculum assignment.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  const assigned = await json<Source>(
+    await page.request.patch(`/api/v1/admin/materials/${source.id}/scope`, {
+      headers,
+      data: {
+        curriculum_version_id: scope.curriculum.id,
+        unit_id: null,
+        lesson_id: null,
+        expected_version: source.metadata_scope_version,
+        confirm_intake_metadata: true,
+      } satisfies components["schemas"]["MaterialScopeCorrectionRequest"],
+    }),
+  );
+  expect(assigned.metadata_review_required).toBe(false);
+  await panel
+    .getByRole("button", { name: "Refresh status", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await preparation()).status, { timeout: 90_000 })
+    .toBe("prepared");
+  await expect(
+    panel.getByText("Checked content prepared", { exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
+  const prepared = await preparation();
+  expect(prepared).toMatchObject({
+    requested: true,
+    source_ready: true,
+    scope_ready: true,
+    verified_pages: 1,
+    prepared_pages: 1,
+    pending_pages: 0,
+    failed_pages: 0,
+  });
+  expect(prepared.unit_count).toBeGreaterThan(0);
+  expect(prepared.projection_count).toBeGreaterThan(0);
+  await expect(
+    panel.getByText(
+      "Curriculum mappings and final AI readiness still need their own checks.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(panel.getByText(/^Ready for AI$/)).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", { name: /approve|generate|vector|embedding/i }),
+  ).toHaveCount(0);
+  const refresh = panel.getByRole("button", {
+    name: "Refresh status",
+    exact: true,
+  });
+  await page.mouse.move(0, 0);
+  await refresh.evaluate((element: HTMLElement) => element.blur());
+  const normalStyle = await expectReadableButton(refresh);
+  expect(normalStyle.cursor).toBe("pointer");
+  await refresh.hover();
+  const hoverStyle = await expectReadableButton(refresh);
+  await page.mouse.move(0, 0);
+  await refresh.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(refresh).toBeFocused();
+  const focusStyle = await expectReadableButton(refresh);
+  let resumeResponse: () => void = () => undefined;
+  const responseGate = new Promise<void>((resolve) => {
+    resumeResponse = resolve;
+  });
+  const preparationRoute = `**${preparationPath}`;
+  await page.route(preparationRoute, async (route) => {
+    const response = await route.fetch();
+    await responseGate;
+    await route.fulfill({ response });
+  });
+  let disabledStyle:
+    | Awaited<ReturnType<typeof expectReadableButton>>
+    | undefined;
+  try {
+    await refresh.click();
+    await expect(refresh).toBeDisabled();
+    disabledStyle = await expectReadableButton(refresh);
+    expect(disabledStyle.cursor).toBe("not-allowed");
+    resumeResponse();
+    await expect(refresh).toBeEnabled();
+  } finally {
+    resumeResponse();
+    await page.unroute(preparationRoute);
+  }
+  await page.reload();
+  await expect(
+    panel.getByText("Checked content prepared", { exact: true }),
+  ).toBeVisible();
+  expect(await preparation()).toEqual(prepared);
+  const retained = await json<UnderstandingPage>(
+    await page.request.get(firstPagePath),
+  );
+  expect(retained.trusted).toEqual(checked.trusted);
+  const legacyTextProgress = (await workspace(page, source.id)).progress;
+  expect(legacyTextProgress.verified_pages).toBe(0);
+  await testInfo.attach("material-knowledge-preparation", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  console.log(
+    "MATERIAL_PREPARATION_EVIDENCE",
+    JSON.stringify({
+      prepared,
+      normalStyle,
+      hoverStyle,
+      focusStyle,
+      disabledStyle,
+    }),
+  );
+});
 
 test("teacher lifecycle: exact-image review, correction and exclusion stay distinct", async ({
   page,

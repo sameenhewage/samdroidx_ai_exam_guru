@@ -407,6 +407,21 @@ function fixtureApi(options: FixtureOptions = {}) {
       if (request.method === "GET" && path.endsWith("/material-catalogue")) {
         return Response.json(options.catalogue ?? catalogue);
       }
+      if (request.method === "GET" && path.endsWith("/knowledge-preparation")) {
+        return Response.json({
+          document_id: path.split("/").at(-2),
+          requested: false,
+          source_ready: false,
+          scope_ready: false,
+          status: "not_requested",
+          verified_pages: 0,
+          prepared_pages: 0,
+          unit_count: 0,
+          projection_count: 0,
+          pending_pages: 0,
+          failed_pages: 0,
+        });
+      }
       if (request.method === "GET" && path.endsWith("/exam-configurations")) {
         return Response.json([
           {
@@ -1676,6 +1691,32 @@ describe("MaterialsLibrary", () => {
     expect(fixture.requests.every((request) => request.method === "GET")).toBe(
       true,
     );
+  });
+
+  it("shows read-only preparation progress in normal Material Details", async () => {
+    const fixture = fixtureApi({ initialMaterials: [materials[1]] });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    render(<MaterialDetails documentId={ids.guide} role="admin" />);
+    await screen.findByRole("heading", { name: materials[1].title });
+    expect(
+      await screen.findByRole("heading", { name: "Content preparation" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByText("Automatic preparation not started"),
+    ).toBeVisible();
+    expect(
+      fixture.requests.some(
+        (request) =>
+          new URL(request.url).pathname ===
+          `/api/v1/admin/materials/${ids.guide}/knowledge-preparation`,
+      ),
+    ).toBe(true);
+    expect(fixture.requests.every((request) => request.method === "GET")).toBe(
+      true,
+    );
+    expect(
+      screen.queryByRole("button", { name: /prepare|vector|embedding/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("owns PDF viewing in-app and requests only the selected page of a 371-page source", async () => {
