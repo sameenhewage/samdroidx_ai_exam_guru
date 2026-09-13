@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -12,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.api.routes.subject_quality import _execute_quality_operation
 from exam_guru_api.auth.domain import AdminRole, Principal
+from exam_guru_api.generation.domain import ProgrammeContextBinding
 from exam_guru_api.papers.models import QuestionCandidateRevisionModel
+from exam_guru_api.subject_quality import service as quality_service
 from exam_guru_api.subject_quality.domain import (
     EvalCaseState,
     FeedbackAction,
@@ -55,6 +58,7 @@ from exam_guru_api.subject_quality.service import (
 )
 from exam_guru_api.validation.domain import FindingStatus
 from exam_guru_api.validation.pipeline import ValidationPipeline
+from tests.test_programme_replay import programme_replay_snapshot
 from tests.test_subject_quality_feedback import CURRICULUM_ID, FixedValidator, replay_snapshot
 
 NOW = datetime(2026, 8, 26, tzinfo=UTC)
@@ -318,6 +322,57 @@ def test_replay_candidate_helper_covers_short_answers_and_marking_fallbacks() ->
     assert cast(dict[str, object], _candidate_for_replay(original, short)["answer"])[
         "accepted_responses"
     ] == ["seven"]
+
+
+def test_eval_readback_preserves_its_stored_runner_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(quality_service, "EVAL_RUNNER_VERSION", "subject-quality-eval-runner.v2")
+    response = _eval_run_response(StoredEvalRun(run=run_model(), results=()))
+    assert response.runner_version == "subject-quality-eval-runner.v1"
+
+
+def test_programme_replay_capture_copies_exact_retained_policy_and_source_metadata() -> None:
+    snapshot = programme_replay_snapshot()
+    proof = snapshot["programme_context"]
+    source = action_source()
+    source.generation.id = UUID(proof["generation_run_id"])
+    source.generation.blueprint_slot_snapshot = proof["slot"]
+    source.generation.context_snapshot = {
+        "programme_binding": proof["binding"],
+        "retrieval_filters": proof["filters"],
+        "items": [
+            {"context_id": key, "retrieval_scope": value} for key, value in proof["sources"].items()
+        ],
+    }
+    source.validation.input_snapshot = snapshot
+    job = action_job()
+    job.medium_id = UUID(proof["medium"]["id"])
+    repository = cast(
+        SubjectQualityRepository,
+        SimpleNamespace(programme_policy_snapshot=AsyncMock(return_value=proof["policy_snapshot"])),
+    )
+    captured = asyncio.run(quality_service._programme_replay_evidence(repository, job, source))
+    assert captured is not None
+    assert captured == proof
+    assert captured is not proof
+    assert captured["policy_snapshot"] is not proof["policy_snapshot"]
+
+
+@pytest.mark.parametrize("policy", [None, {}])
+def test_programme_replay_capture_requires_policy_and_validation(
+    policy: dict[str, object] | None,
+) -> None:
+    source = action_source(validation=policy is None)
+    source.generation.context_snapshot = {
+        "programme_binding": ProgrammeContextBinding(
+            UUID(int=99501), "a" * 64, (UUID(int=99502),)
+        ).to_snapshot()
+    }
+    repository = cast(
+        SubjectQualityRepository,
+        SimpleNamespace(programme_policy_snapshot=AsyncMock(return_value=policy)),
+    )
+    with pytest.raises(SubjectQualityFeedbackPersistenceError, match="retained policy"):
+        asyncio.run(quality_service._programme_replay_evidence(repository, action_job(), source))
 
 
 def test_feedback_snapshot_helpers_fail_closed_without_validation() -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.auth.domain import Permission, Principal, authorize
+from exam_guru_api.generation.domain import ProgrammeContextBinding
 from exam_guru_api.subject_quality.domain import (
     EVAL_EXPORT_SCHEMA_VERSION,
     EVAL_INPUT_SCHEMA_VERSION,
@@ -18,6 +19,7 @@ from exam_guru_api.subject_quality.domain import (
     DefectCategory,
     EvalCaseState,
     EvalComparisonOutcome,
+    EvalRunnerVersion,
     FeedbackAction,
     ReviewReasonCode,
     canonical_fingerprint,
@@ -29,6 +31,7 @@ from exam_guru_api.subject_quality.models import (
     SubjectQualityEvalRunModel,
     SubjectQualityFeedbackModel,
 )
+from exam_guru_api.subject_quality.programme_replay import programme_replay_scopes
 from exam_guru_api.subject_quality.repository import (
     StoredEvalRun,
     SubjectQualityEvalCaseNotFoundError,
@@ -191,11 +194,51 @@ def _scope_snapshot(job: TeacherPaperJobModel, source: ReviewSlotSource) -> dict
     }
 
 
+async def _programme_replay_evidence(
+    repository: SubjectQualityRepository, job: TeacherPaperJobModel, source: ReviewSlotSource
+) -> dict[str, object] | None:
+    context = source.generation.context_snapshot
+    if "programme_binding" not in context:
+        return None
+    binding = ProgrammeContextBinding.from_snapshot(context["programme_binding"])
+    policy = await repository.programme_policy_snapshot(binding)
+    if policy is None or source.validation is None:
+        raise SubjectQualityFeedbackPersistenceError(
+            "programme replay requires retained policy evidence"
+        )
+    stored = source.validation.input_snapshot
+    evidence: dict[str, object] = {
+        "schema_version": "programme-replay-evidence.v1",
+        "generation_run_id": str(source.generation.id),
+        "medium": {
+            "id": str(job.medium_id),
+            "code": cast(dict[str, object], stored["subject_scope"])["medium"],
+        },
+        "binding": binding.to_snapshot(),
+        "policy_snapshot": deepcopy(policy),
+        "slot": deepcopy(source.generation.blueprint_slot_snapshot),
+        "filters": deepcopy(context["retrieval_filters"]),
+        "sources": {
+            cast(str, item["context_id"]): deepcopy(item["retrieval_scope"])
+            for item in cast(list[dict[str, object]], context["items"])
+        },
+    }
+    programme_replay_scopes(
+        evidence,
+        expected_curriculum_version_id=job.curriculum_version_id,
+        subject_scope=cast(dict[str, object], stored["subject_scope"]),
+        blueprint=cast(dict[str, object], stored["blueprint"]),
+        generation=cast(dict[str, object], stored["generation"]),
+    )
+    return evidence
+
+
 def _replay_input_snapshot(
     source: ReviewSlotSource,
     *,
     replay_content: dict[str, object],
     replay_content_fingerprint: str,
+    programme_evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
     validation = source.validation
     if validation is None:
@@ -217,6 +260,7 @@ def _replay_input_snapshot(
             cast(list[dict[str, object]], stored["duplicate_references"])
         ),
         "generation": deepcopy(cast(dict[str, object], stored["generation"])),
+        **({"programme_context": programme_evidence} if programme_evidence is not None else {}),
     }
 
 
@@ -330,10 +374,12 @@ class SubjectQualityFeedbackService:
         provenance = _provenance_snapshot(source)
         original_fingerprint = canonical_fingerprint(original_content)
         current_fingerprint = canonical_fingerprint(current_content)
+        programme_evidence = await _programme_replay_evidence(self._repository, job, source)
         replay_input = _replay_input_snapshot(
             source,
             replay_content=replay_content,
             replay_content_fingerprint=canonical_fingerprint(replay_content),
+            programme_evidence=programme_evidence,
         )
         idempotency_hash = (
             None
@@ -752,6 +798,15 @@ def _export_case(model: SubjectQualityEvalCaseVersionModel) -> SubjectQualityEva
     snapshot = model.replay_input_snapshot
     generation = cast(dict[str, object], snapshot.get("generation", {}))
     allowed_generation_fields = (
+        "generation_run_id",
+        "generation_attempt_id",
+        "paper_blueprint_id",
+        "request_fingerprint",
+        "generation_result_fingerprint",
+        "blueprint_version",
+        "pricing_version",
+        "attempt_number",
+        "retry_of_attempt_id",
         "prompt_id",
         "prompt_version",
         "provider",
@@ -767,6 +822,14 @@ def _export_case(model: SubjectQualityEvalCaseVersionModel) -> SubjectQualityEva
         source_feedback_id=model.source_feedback_id,
         case_fingerprint=model.case_fingerprint,
         subject_scope=deepcopy(cast(dict[str, object], snapshot["subject_scope"])),
+        generated_scope=deepcopy(cast(dict[str, object], snapshot["generated_scope"])),
+        context_scope_bindings=tuple(
+            deepcopy(cast(list[dict[str, object]], snapshot["context_scope_bindings"]))
+        ),
+        programme_context=deepcopy(
+            cast(dict[str, object] | None, snapshot.get("programme_context"))
+        ),
+        candidate_id=cast(str, snapshot["candidate_id"]),
         candidate=deepcopy(cast(dict[str, object], snapshot["candidate"])),
         blueprint=deepcopy(cast(dict[str, object], snapshot["blueprint"])),
         grounding_sources=tuple(
@@ -782,6 +845,7 @@ def _export_case(model: SubjectQualityEvalCaseVersionModel) -> SubjectQualityEva
                     "page_number",
                     "chunk_id",
                     "trust",
+                    "knowledge_evidence",
                 }
             }
             for source in cast(list[dict[str, object]], snapshot["grounding_sources"])
@@ -859,7 +923,7 @@ def _eval_run_response(
     run = stored.run
     return SubjectQualityEvalRunResponse(
         run_id=run.id,
-        runner_version=EVAL_RUNNER_VERSION,
+        runner_version=cast(EvalRunnerVersion, run.runner_version),
         pipeline_version=run.pipeline_version,
         pipeline_fingerprint=run.pipeline_fingerprint,
         request_fingerprint=run.request_fingerprint,

@@ -401,7 +401,7 @@ class SubjectQualityEvalRunModel(Base):
     __table_args__ = (
         UniqueConstraint("request_fingerprint", name="uq_subject_quality_eval_runs_request"),
         CheckConstraint(
-            "runner_version = 'subject-quality-eval-runner.v1'",
+            "runner_version IN ('subject-quality-eval-runner.v1','subject-quality-eval-runner.v2')",
             name="ck_subject_quality_eval_runs_runner",
         ),
         CheckConstraint(

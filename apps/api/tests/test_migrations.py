@@ -43,11 +43,12 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_programme_knowledge_context_is_the_single_bounded_revision_head() -> None:
+def test_programme_eval_replay_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0050_programme_knowledge_context"]
+    assert scripts.get_heads() == ["0051_programme_eval_replay"]
     for identifier, parent in (
+        ("0051_programme_eval_replay", "0050_programme_knowledge_context"),
         ("0050_programme_knowledge_context", "0049_knowledge_generation"),
         ("0049_knowledge_generation", "0048_projection_embeddings"),
         ("0048_projection_embeddings", "0047_knowledge_unit_review"),

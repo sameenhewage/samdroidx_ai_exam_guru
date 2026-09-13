@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
+from exam_guru_api.generation.domain import ProgrammeContextBinding
 from exam_guru_api.papers.models import QuestionCandidateRevisionModel
 from exam_guru_api.subject_quality.models import (
     SubjectQualityEvalCaseVersionModel,
@@ -16,6 +17,7 @@ from exam_guru_api.subject_quality.models import (
     SubjectQualityEvalRunModel,
     SubjectQualityFeedbackModel,
 )
+from exam_guru_api.teacher_papers.models import AssessmentProgrammePolicyVersionModel
 
 
 class SubjectQualityFeedbackNotFoundError(LookupError):
@@ -39,6 +41,21 @@ class StoredEvalRun:
 class SubjectQualityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def programme_policy_snapshot(
+        self, binding: ProgrammeContextBinding
+    ) -> dict[str, object] | None:
+        return cast(
+            dict[str, object] | None,
+            await self.session.scalar(
+                select(AssessmentProgrammePolicyVersionModel.review_snapshot).where(
+                    AssessmentProgrammePolicyVersionModel.id == binding.policy_id,
+                    AssessmentProgrammePolicyVersionModel.content_hash
+                    == binding.policy_content_hash,
+                    AssessmentProgrammePolicyVersionModel.state.in_(("reviewed", "retired")),
+                )
+            ),
+        )
 
     async def revision(self, candidate_id: UUID, revision: int) -> QuestionCandidateRevisionModel:
         model = await self.session.get(

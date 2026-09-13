@@ -2876,6 +2876,13 @@
         "title": "EvalComparisonOutcome",
         "type": "string"
       },
+      "EvalRunnerVersion": {
+        "enum": [
+          "subject-quality-eval-runner.v1",
+          "subject-quality-eval-runner.v2"
+        ],
+        "type": "string"
+      },
       "EvaluationPreviewResponse": {
         "properties": {
           "benchmark_id": {
@@ -15155,9 +15162,29 @@
             "title": "Candidate",
             "type": "object"
           },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
           "case_fingerprint": {
             "title": "Case Fingerprint",
             "type": "string"
+          },
+          "context_scope_bindings": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Context Scope Bindings",
+            "type": "array"
           },
           "duplicate_references": {
             "items": {
@@ -15175,6 +15202,11 @@
           "expected": {
             "$ref": "#/components/schemas/SubjectQualityEvalExportExpectedResponse"
           },
+          "generated_scope": {
+            "additionalProperties": true,
+            "title": "Generated Scope",
+            "type": "object"
+          },
           "generation_versions": {
             "additionalProperties": true,
             "title": "Generation Versions",
@@ -15187,6 +15219,18 @@
             },
             "title": "Grounding Sources",
             "type": "array"
+          },
+          "programme_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Programme Context"
           },
           "source_feedback_id": {
             "format": "uuid",
@@ -15274,12 +15318,13 @@
             "type": "integer"
           },
           "runner_version": {
-            "const": "subject-quality-eval-runner.v1",
-            "title": "Runner Version",
-            "type": "string"
+            "$ref": "#/components/schemas/EvalRunnerVersion"
           },
           "schema_version": {
-            "const": "subject-quality-eval-export.v1",
+            "enum": [
+              "subject-quality-eval-export.v1",
+              "subject-quality-eval-export.v2"
+            ],
             "title": "Schema Version",
             "type": "string"
           }
@@ -15456,9 +15501,7 @@
             "type": "string"
           },
           "runner_version": {
-            "const": "subject-quality-eval-runner.v1",
-            "title": "Runner Version",
-            "type": "string"
+            "$ref": "#/components/schemas/EvalRunnerVersion"
           },
           "unavailable_count": {
             "title": "Unavailable Count",

@@ -9,6 +9,7 @@ from typing import Literal, cast
 from uuid import UUID
 
 from exam_guru_api.knowledge.units import KnowledgeEvidence
+from exam_guru_api.subject_quality.programme_replay import programme_replay_scopes
 from exam_guru_api.validation.domain import (
     BlueprintRequirements,
     ContextScopeBinding,
@@ -25,10 +26,11 @@ from exam_guru_api.validation.pipeline import ValidationPipeline
 
 FEEDBACK_SCHEMA_VERSION = "subject-quality-feedback.v1"
 EVAL_INPUT_SCHEMA_VERSION = "subject-quality-eval-input.v1"
-EVAL_EXPORT_SCHEMA_VERSION: Literal["subject-quality-eval-export.v1"] = (
-    "subject-quality-eval-export.v1"
+type EvalRunnerVersion = Literal["subject-quality-eval-runner.v1", "subject-quality-eval-runner.v2"]
+EVAL_EXPORT_SCHEMA_VERSION: Literal["subject-quality-eval-export.v2"] = (
+    "subject-quality-eval-export.v2"
 )
-EVAL_RUNNER_VERSION: Literal["subject-quality-eval-runner.v1"] = "subject-quality-eval-runner.v1"
+EVAL_RUNNER_VERSION: EvalRunnerVersion = "subject-quality-eval-runner.v2"
 MAX_REVIEW_NOTE_CHARACTERS = 768
 MAX_EXPECTED_FINDING_CODES = 32
 
@@ -228,6 +230,17 @@ def validation_input_from_eval_snapshot(
     ):
         raise ValueError("eval snapshot curriculum scope conflicts with its trusted source")
 
+    programme_scopes = (
+        programme_replay_scopes(
+            root["programme_context"],
+            expected_curriculum_version_id=expected_curriculum_version_id,
+            subject_scope=trusted,
+            blueprint=_mapping(root.get("blueprint"), "blueprint"),
+            generation=_mapping(root.get("generation"), "generation"),
+        )
+        if "programme_context" in root
+        else {}
+    )
     bindings = tuple(
         ContextScopeBinding(
             context_id=_text(item.get("context_id"), "binding context_id"),
@@ -243,6 +256,7 @@ def validation_input_from_eval_snapshot(
             snapshot_lesson_id=_optional_uuid(
                 item.get("snapshot_lesson_id"), "binding snapshot_lesson_id"
             ),
+            programme_authorized=cast(str, item.get("context_id")) in programme_scopes,
         )
         for item in (
             _mapping(value, "context scope binding")
@@ -253,7 +267,23 @@ def validation_input_from_eval_snapshot(
             )
         )
     )
-    if any(item.curriculum_version_id != expected_curriculum_version_id for item in bindings):
+    if programme_scopes:
+        if set(programme_scopes) != {binding.context_id for binding in bindings} or len(
+            bindings
+        ) != len(programme_scopes):
+            raise ValueError("programme replay source identities differ from validation")
+        for binding in bindings:
+            scope = programme_scopes[binding.context_id]
+            if (
+                binding.curriculum_version_id != scope.curriculum_version_id
+                or binding.subject_id != scope.subject_id
+                or (() if binding.unit_id is None else (binding.unit_id,)) != scope.unit_ids
+                or (() if binding.lesson_id is None else (binding.lesson_id,)) != scope.lesson_ids
+                or binding.snapshot_unit_id != binding.unit_id
+                or binding.snapshot_lesson_id != binding.lesson_id
+            ):
+                raise ValueError("programme replay binding differs from its recorded scope")
+    elif any(item.curriculum_version_id != expected_curriculum_version_id for item in bindings):
         raise ValueError("eval context binding crosses curriculum scope")
 
     sources: list[GroundingSource] = []
@@ -270,6 +300,33 @@ def validation_input_from_eval_snapshot(
                 json.dumps(evidence_payload, ensure_ascii=False, allow_nan=False)
             )
         )
+        if evidence is not None and programme_scopes:
+            knowledge_scope = programme_scopes.get(cast(str, item.get("context_id")))
+            observed = evidence.unit.scope
+            if (
+                knowledge_scope is None
+                or (
+                    knowledge_scope.curriculum_version_id,
+                    knowledge_scope.grade,
+                    knowledge_scope.medium_id,
+                    knowledge_scope.subject_id,
+                )
+                != (
+                    observed.curriculum_version_id,
+                    observed.grade,
+                    observed.medium_id,
+                    observed.subject_id,
+                )
+                or (
+                    observed.curriculum_unit_id is not None
+                    and knowledge_scope.unit_ids != (observed.curriculum_unit_id,)
+                )
+                or (
+                    observed.lesson_id is not None
+                    and knowledge_scope.lesson_ids != (observed.lesson_id,)
+                )
+            ):
+                raise ValueError("programme replay knowledge conflicts with its source scope")
         sources.append(
             GroundingSource(
                 context_id=_text(item.get("context_id"), "source context_id"),
@@ -298,6 +355,11 @@ def validation_input_from_eval_snapshot(
             )
         )
 
+    if programme_scopes and (
+        {source.context_id for source in sources} != set(programme_scopes)
+        or len(sources) != len(programme_scopes)
+    ):
+        raise ValueError("programme replay grounding sources are incomplete")
     duplicates: list[DuplicateReference] = []
     for value in _sequence(
         root.get("duplicate_references"), "duplicate_references", maximum=10_000

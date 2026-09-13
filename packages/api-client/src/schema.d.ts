@@ -3607,6 +3607,8 @@ export interface components {
          * @enum {string}
          */
         EvalComparisonOutcome: "pass" | "regression" | "unavailable";
+        /** @enum {string} */
+        EvalRunnerVersion: "subject-quality-eval-runner.v1" | "subject-quality-eval-runner.v2";
         /** EvaluationPreviewResponse */
         EvaluationPreviewResponse: {
             /**
@@ -8226,8 +8228,17 @@ export interface components {
             candidate: {
                 [key: string]: unknown;
             };
+            /** Candidate Id */
+            candidate_id?: string | null;
             /** Case Fingerprint */
             case_fingerprint: string;
+            /**
+             * Context Scope Bindings
+             * @default []
+             */
+            context_scope_bindings: {
+                [key: string]: unknown;
+            }[];
             /** Duplicate References */
             duplicate_references: {
                 [key: string]: unknown;
@@ -8238,6 +8249,10 @@ export interface components {
              */
             eval_case_id: string;
             expected: components["schemas"]["SubjectQualityEvalExportExpectedResponse"];
+            /** Generated Scope */
+            generated_scope?: {
+                [key: string]: unknown;
+            };
             /** Generation Versions */
             generation_versions: {
                 [key: string]: unknown;
@@ -8246,6 +8261,10 @@ export interface components {
             grounding_sources: {
                 [key: string]: unknown;
             }[];
+            /** Programme Context */
+            programme_context?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Source Feedback Id
              * Format: uuid
@@ -8275,16 +8294,12 @@ export interface components {
             next_offset: number | null;
             /** Offset */
             offset: number;
-            /**
-             * Runner Version
-             * @constant
-             */
-            runner_version: "subject-quality-eval-runner.v1";
+            runner_version: components["schemas"]["EvalRunnerVersion"];
             /**
              * Schema Version
-             * @constant
+             * @enum {string}
              */
-            schema_version: "subject-quality-eval-export.v1";
+            schema_version: "subject-quality-eval-export.v1" | "subject-quality-eval-export.v2";
         };
         /** SubjectQualityEvalResultResponse */
         SubjectQualityEvalResultResponse: {
@@ -8361,11 +8376,7 @@ export interface components {
              * Format: uuid
              */
             run_id: string;
-            /**
-             * Runner Version
-             * @constant
-             */
-            runner_version: "subject-quality-eval-runner.v1";
+            runner_version: components["schemas"]["EvalRunnerVersion"];
             /** Unavailable Count */
             unavailable_count: number;
         };

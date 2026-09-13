@@ -2437,7 +2437,7 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
         )
         assert exported.status_code == 200
         export_body = exported.json()
-        assert export_body["schema_version"] == "subject-quality-eval-export.v1"
+        assert export_body["schema_version"] == "subject-quality-eval-export.v2"
         exported_case = next(
             item for item in export_body["cases"] if item["eval_case_id"] == str(eval_case_id)
         )
@@ -2501,7 +2501,7 @@ def test_feedback_promotion_second_reviewer_cas_export_replay_and_append_only_gu
             headers={"Authorization": "Bearer admin-token"},
         )
         assert replayed.status_code == 201, replayed.json()
-        assert replayed.json()["runner_version"] == "subject-quality-eval-runner.v1"
+        assert replayed.json()["runner_version"] == "subject-quality-eval-runner.v2"
         assert replayed.json()["results"][0]["outcome"] == "unavailable"
         assert replayed.json()["results"][0]["passed"] is False
         assert replayed.json()["results"][0]["fingerprint"].startswith("sha256:")
@@ -2751,10 +2751,22 @@ def test_guarded_downgrade_refuses_to_destroy_quality_and_teacher_lineage(
             await engine.dispose()
 
     history = asyncio.run(snapshot())
-    assert history["head"] == "0050_programme_knowledge_context"
+    assert history["head"] == "0051_programme_eval_replay"
     assert history["candidates"]
     assert history["chunks"]
-    with pytest.raises(DBAPIError, match="cannot discard source fidelity v2 protections"):
+    replay_history = any(
+        run["runner_version"] == "subject-quality-eval-runner.v2"
+        for run in cast(list[dict[str, object]], history["quality_runs"] or [])
+    ) or any(
+        "programme_context" in cast(dict[str, object], feedback["replay_input_snapshot"])
+        for feedback in cast(list[dict[str, object]], history["quality_feedback"] or [])
+    )
+    expected_guard = (
+        "cannot discard programme evaluation replay history"
+        if replay_history
+        else "cannot discard source fidelity v2 protections"
+    )
+    with pytest.raises(DBAPIError, match=expected_guard):
         command.downgrade(
             _config_for_database(aggregate_seed.database_url),
             "0024_subject_quality_validation_scope",

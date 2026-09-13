@@ -11,6 +11,7 @@ from exam_guru_api.subject_quality.domain import (
     DefectCategory,
     EvalCaseState,
     EvalComparisonOutcome,
+    EvalRunnerVersion,
     FeedbackAction,
 )
 from exam_guru_api.validation.domain import FindingStatus
@@ -176,11 +177,15 @@ class SubjectQualityEvalExportCaseResponse(_FrozenStrictModel):
     duplicate_references: tuple[dict[str, object], ...]
     generation_versions: dict[str, object]
     expected: SubjectQualityEvalExportExpectedResponse
+    candidate_id: str | None = None
+    generated_scope: dict[str, object] = Field(default_factory=dict)
+    context_scope_bindings: tuple[dict[str, object], ...] = ()
+    programme_context: dict[str, object] | None = None
 
 
 class SubjectQualityEvalExportResponse(_FrozenStrictModel):
-    schema_version: Literal["subject-quality-eval-export.v1"]
-    runner_version: Literal["subject-quality-eval-runner.v1"]
+    schema_version: Literal["subject-quality-eval-export.v1", "subject-quality-eval-export.v2"]
+    runner_version: EvalRunnerVersion
     cases: tuple[SubjectQualityEvalExportCaseResponse, ...]
     limit: int
     offset: int
@@ -206,7 +211,7 @@ class SubjectQualityEvalResultResponse(_FrozenStrictModel):
 
 class SubjectQualityEvalRunResponse(_FrozenStrictModel):
     run_id: UUID
-    runner_version: Literal["subject-quality-eval-runner.v1"]
+    runner_version: EvalRunnerVersion
     pipeline_version: str
     pipeline_fingerprint: str
     request_fingerprint: str

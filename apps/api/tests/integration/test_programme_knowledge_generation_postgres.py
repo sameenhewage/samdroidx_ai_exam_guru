@@ -1,6 +1,6 @@
 import asyncio
 from copy import deepcopy
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,6 +33,11 @@ from exam_guru_api.papers.publication_service import PaperPublicationService
 from exam_guru_api.papers.review_service import ReviewCandidateService
 from exam_guru_api.retrieval.domain import deserialize_retrieval_filters
 from exam_guru_api.retrieval.embeddings import DEFAULT_DETERMINISTIC_EMBEDDING_CONFIG
+from exam_guru_api.subject_quality.domain import (
+    canonical_fingerprint,
+    validation_input_from_eval_snapshot,
+)
+from exam_guru_api.subject_quality.models import SubjectQualityFeedbackModel
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
 from exam_guru_api.teacher_papers.models import (
     AssessmentProgrammePolicyScopeModel,
@@ -291,14 +296,163 @@ def test_teacher_programme_regeneration_retains_bound_scope_without_a_subject_in
         )
         assert regenerated.status_code == 202
         replacement_id = UUID(regenerated.json()["question_id"])
+        feedback_id = UUID(regenerated.json()["quality_feedback_id"])
 
     async def inspect() -> None:
         async with database_session(aggregate_seed.database_url) as session:
             replacement = await session.get(GenerationRunModel, replacement_id)
             assert replacement is not None
             assert replacement.context_snapshot == expected_context
+            feedback = await session.get(SubjectQualityFeedbackModel, feedback_id)
+            assert feedback is not None
+            replay = validation_input_from_eval_snapshot(
+                feedback.replay_input_snapshot,
+                expected_curriculum_version_id=feedback.curriculum_version_id,
+            )
+            assert any(
+                binding.programme_authorized
+                and binding.curriculum_version_id != feedback.curriculum_version_id
+                for binding in replay.context_scope_bindings
+            )
+            assert any(source.knowledge_evidence is not None for source in replay.grounding_sources)
+            relabeled = deepcopy(feedback.replay_input_snapshot)
+            proof = cast(dict[str, Any], relabeled["programme_context"])
+            source = next(
+                item
+                for item in cast(list[dict[str, Any]], relabeled["grounding_sources"])
+                if "knowledge_evidence" in item
+            )
+            alternate = next(
+                scope
+                for scope in proof["filters"]["scopes"]
+                if scope["curriculum_version_id"] == str(CURRICULUM_ID)
+            )
+            proof["sources"][source["context_id"]] = alternate
+            scoped = next(
+                item
+                for item in cast(list[dict[str, Any]], relabeled["context_scope_bindings"])
+                if item["context_id"] == source["context_id"]
+            )
+            scoped.update(
+                curriculum_version_id=alternate["curriculum_version_id"],
+                subject_id=alternate["subject_id"],
+                unit_id=alternate["unit_ids"][0],
+                lesson_id=alternate["lesson_ids"][0],
+                snapshot_unit_id=alternate["unit_ids"][0],
+                snapshot_lesson_id=alternate["lesson_ids"][0],
+            )
+            with pytest.raises(ValueError, match="knowledge conflicts"):
+                validation_input_from_eval_snapshot(
+                    relabeled, expected_curriculum_version_id=CURRICULUM_ID
+                )
+
+            async def insert_probe(values: dict[str, object]) -> None:
+                async with session.begin_nested():
+                    session.add(SubjectQualityFeedbackModel(**values))
+                    await session.flush()
+
+            for corruption in ("binding", "sources", "grounding", "missing", "rehash_policy"):
+                identifier = uuid4()
+                values = {
+                    column.name: deepcopy(getattr(feedback, column.name))
+                    for column in SubjectQualityFeedbackModel.__table__.columns
+                }
+                values.update(
+                    id=identifier,
+                    action_fingerprint=canonical_fingerprint({"action": str(identifier)}),
+                    feedback_fingerprint=canonical_fingerprint({"feedback": str(identifier)}),
+                    idempotency_key_hash=canonical_fingerprint({"request": str(identifier)}),
+                )
+                snapshot = cast(dict[str, object], values["replay_input_snapshot"])
+                proof = cast(dict[str, object], snapshot["programme_context"])
+                if corruption == "binding":
+                    cast(dict[str, object], proof["binding"])["policy_content_hash"] = "f" * 64
+                elif corruption == "sources":
+                    proof["sources"] = {}
+                elif corruption == "grounding":
+                    snapshot["grounding_sources"] = []
+                elif corruption == "rehash_policy":
+                    policy = cast(dict[str, object], proof["policy_snapshot"])
+                    policy["title"] = "Invented policy evidence"
+                    cast(dict[str, object], proof["binding"])["policy_content_hash"] = (
+                        canonical_fingerprint(policy).removeprefix("sha256:")
+                    )
+                else:
+                    snapshot.pop("programme_context")
+                with pytest.raises(IntegrityError, match="programme replay"):
+                    await insert_probe(values)
 
     asyncio.run(inspect())
+    with api_client(
+        aggregate_seed,
+        DeterministicPaperGenerationDispatcher(),
+        DeterministicGenerationDispatcher(),
+    ) as client:
+        response = client.get(
+            "/api/v1/admin/subject-quality/feedback",
+            params={"candidate_id": str(programme_context_run)},
+            headers=REVIEWER_HEADERS,
+        )
+        assert response.status_code == 200
+        feedback = next(item for item in response.json()["items"] if item["id"] == str(feedback_id))
+        findings = feedback["findings_at_action"]
+        promoted = client.post(
+            f"/api/v1/admin/subject-quality/feedback/{feedback_id}/promote",
+            headers={**REVIEWER_HEADERS, "Idempotency-Key": "programme-eval-" + str(uuid4())},
+            json={
+                "expected_status": findings["overall_status"],
+                "expected_finding_codes": sorted(
+                    item["code"] for item in findings["findings"] if item["status"] != "pass"
+                ),
+                "defect_category": "scope_alignment",
+            },
+        )
+        assert promoted.status_code == 201
+        case_id = promoted.json()["eval_case_id"]
+        approved = client.post(
+            f"/api/v1/admin/subject-quality/eval-cases/{case_id}/approve",
+            headers=ADMIN_HEADERS,
+            json={"expected_version": 1},
+        )
+        assert approved.status_code == 200
+        exported = client.get(
+            "/api/v1/admin/subject-quality/eval-cases/export", headers=REVIEWER_HEADERS
+        )
+        assert exported.status_code == 200
+        case = next(item for item in exported.json()["cases"] if item["eval_case_id"] == case_id)
+        assert case["programme_context"]["binding"] == expected_context["programme_binding"]
+        assert any(item.get("knowledge_evidence") for item in case["grounding_sources"])
+        assert case["context_scope_bindings"]
+        export_snapshot = {
+            key: case[key]
+            for key in (
+                "candidate_id",
+                "candidate",
+                "blueprint",
+                "subject_scope",
+                "generated_scope",
+                "context_scope_bindings",
+                "grounding_sources",
+                "duplicate_references",
+                "programme_context",
+            )
+        }
+        export_snapshot.update(
+            schema_version="subject-quality-eval-input.v1", generation=case["generation_versions"]
+        )
+        exported_replay = validation_input_from_eval_snapshot(
+            export_snapshot, expected_curriculum_version_id=CURRICULUM_ID
+        )
+        assert any(
+            binding.programme_authorized for binding in exported_replay.context_scope_bindings
+        )
+        evaluated = client.post(
+            "/api/v1/admin/subject-quality/eval-runs",
+            headers=ADMIN_HEADERS,
+            json={"case_ids": [case_id]},
+        )
+        assert evaluated.status_code == 201
+        assert evaluated.json()["runner_version"] == "subject-quality-eval-runner.v2"
 
 
 def test_retired_programme_cannot_publish_again_but_preserves_published_history(
@@ -400,12 +554,14 @@ def test_programme_context_migration_refuses_to_discard_bound_history(
             assert run is not None
             assert (
                 await session.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0050_programme_knowledge_context"
+                == "0051_programme_eval_replay"
             )
             return deepcopy(run.context_snapshot)
 
     before = asyncio.run(snapshot())
-    with pytest.raises(DBAPIError, match="cannot discard programme knowledge context history"):
+    with pytest.raises(
+        DBAPIError, match=r"cannot discard programme (knowledge context|evaluation replay) history"
+    ):
         command.downgrade(
             _config_for_database(aggregate_seed.database_url), "0049_knowledge_generation"
         )
