@@ -1,10 +1,11 @@
 from collections.abc import Callable
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 
+from exam_guru_api.validation import domain as validation_domain
 from exam_guru_api.validation.domain import (
     REPORT_LIMITATIONS,
     BlueprintRequirements,
@@ -20,7 +21,51 @@ from exam_guru_api.validation.domain import (
     ValidationReport,
     canonical_text_sha256,
 )
+from tests.test_generation_domain import knowledge_context_item
 from tests.test_validation_fixtures import blueprint, source, valid_candidate, validation_input
+
+
+def knowledge_source() -> GroundingSource:
+    item = knowledge_context_item()
+    return GroundingSource(
+        context_id=item.context_id,
+        text=item.text,
+        source_document_id=item.provenance.source_document_id,
+        source_version=item.provenance.source_version,
+        page_number=item.provenance.page_number,
+        chunk_id=item.provenance.chunk_id,
+        knowledge_evidence=item.knowledge_evidence,
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"knowledge_evidence": None},
+        {"knowledge_evidence": object()},
+        {"text": "Invented source meaning"},
+        {"page_number": True},
+        {"source_document_id": None},
+    ],
+)
+def test_grounding_rejects_missing_or_mismatched_knowledge(changes: dict[str, object]) -> None:
+    with pytest.raises(ValidationContractError, match="evidence"):
+        replace(knowledge_source(), **cast(dict[str, Any], changes))
+
+
+def test_grounding_revalidates_evidence_and_enforces_its_full_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actual = knowledge_source()
+    assert actual.knowledge_evidence is not None
+    invalid = actual.knowledge_evidence.model_copy(
+        update={"unit": actual.knowledge_evidence.unit.model_copy(update={"fingerprint": "f" * 64})}
+    )
+    with pytest.raises(ValidationContractError, match="malformed"):
+        replace(actual, knowledge_evidence=invalid)
+    monkeypatch.setattr(validation_domain, "MAX_SOURCE_TEXT_CHARACTERS", len(actual.text) + 1)
+    with pytest.raises(ValidationContractError, match="size bound"):
+        replace(actual)
 
 
 def evidence(

@@ -13,6 +13,9 @@ from typing import cast
 from uuid import UUID
 
 from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+from exam_guru_api.knowledge.units import (
+    KnowledgeProjectionReference as KnowledgeProjectionReference,
+)
 
 MAX_RECORD_CHARACTERS = 100_000
 MAX_FINGERPRINT_CHARACTERS = 512
@@ -299,6 +302,7 @@ class SourceProvenance:
     source_document_id: UUID
     page_number: int
     source_block_id: UUID | None = None
+    knowledge_reference: KnowledgeProjectionReference | None = None
 
     def __post_init__(self) -> None:
         _require_uuid(self.source_document_id, field_name="source_document_id")
@@ -309,6 +313,18 @@ class SourceProvenance:
         ):
             raise RetrievalContractError("page_number must be a positive integer")
         _require_optional_uuid(self.source_block_id, field_name="source_block_id")
+        if self.knowledge_reference is not None:
+            if (
+                not isinstance(self.knowledge_reference, KnowledgeProjectionReference)
+                or self.source_block_id is not None
+            ):
+                raise RetrievalContractError(
+                    "projection provenance requires its own source reference"
+                )
+            try:
+                KnowledgeProjectionReference.model_validate(self.knowledge_reference)
+            except ValueError:
+                raise RetrievalContractError("invalid knowledge projection reference") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +352,11 @@ class RetrievalRecord:
             raise RetrievalContractError("record scope must be a RetrievalScope")
         if not isinstance(self.provenance, SourceProvenance):
             raise RetrievalContractError("record provenance must be SourceProvenance")
+        if (
+            self.provenance.knowledge_reference is not None
+            and self.provenance.knowledge_reference.projection_id != self.chunk_id
+        ):
+            raise RetrievalContractError("projection reference does not match the retrieved record")
 
 
 @dataclass(frozen=True, slots=True)

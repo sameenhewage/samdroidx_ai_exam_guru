@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from uuid import UUID
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import Float, Text, and_, bindparam, func, literal, or_, select, union
-from sqlalchemy.dialects.postgresql import REGCONFIG
+from sqlalchemy.dialects.postgresql import JSONB, REGCONFIG
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -40,7 +41,10 @@ from exam_guru_api.knowledge.models import (
     KnowledgeChunkModel,
     KnowledgeEmbeddingModel,
 )
+from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
+from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
 from exam_guru_api.retrieval.domain import (
+    KnowledgeProjectionReference,
     LexicalCandidate,
     RetrievalContractError,
     RetrievalFilters,
@@ -74,6 +78,7 @@ _RECORD_COLUMNS = (
     "source_document_id",
     "page_number",
     "source_block_id",
+    "knowledge_reference",
 )
 
 
@@ -283,6 +288,7 @@ class PostgresHybridRetrievalRepository:
                 KnowledgeChunkModel.source_document_id.label("source_document_id"),
                 KnowledgeChunkModel.page_number.label("page_number"),
                 KnowledgeChunkModel.source_block_id.label("source_block_id"),
+                literal(None, type_=JSONB).label("knowledge_reference"),
             )
             .select_from(KnowledgeChunkModel)
             .join(
@@ -438,6 +444,7 @@ class PostgresHybridRetrievalRepository:
                 HistoricalQuestionModel.source_document_id.label("source_document_id"),
                 HistoricalQuestionModel.page_number.label("page_number"),
                 HistoricalQuestionModel.source_block_id.label("source_block_id"),
+                literal(None, type_=JSONB).label("knowledge_reference"),
             )
             .select_from(HistoricalQuestionModel)
             .join(
@@ -508,6 +515,100 @@ class PostgresHybridRetrievalRepository:
             .where(*conditions)
         )
 
+    def _projection_scope_select(self, filters: RetrievalScope) -> Select[Any]:
+        previous = aliased(KnowledgeUnitReviewModel, name="projection_review_history")
+        latest_version = (
+            select(func.max(previous.version))
+            .where(previous.unit_id == KnowledgeUnitModel.id)
+            .correlate(KnowledgeUnitModel)
+            .scalar_subquery()
+        )
+        conditions: list[Any] = [
+            KnowledgeUnitReviewModel.state == "reviewed",
+            KnowledgeUnitReviewModel.confirmed_mapping.is_(True),
+            func.knowledge_projection_is_current(KnowledgeProjectionModel.id).is_(True),
+            func.knowledge_unit_review_is_eligible(KnowledgeUnitReviewModel.id).is_(True),
+            ExamConfigurationModel.grade == filters.grade,
+            ExamConfigurationModel.id == filters.exam_id,
+            CurriculumVersionModel.medium_id == filters.medium_id,
+            CurriculumVersionModel.subject_id == filters.subject_id,
+            CurriculumVersionModel.id == filters.curriculum_version_id,
+            KnowledgeUnitReviewModel.competency_id == filters.taxonomy.competency_id,
+        ]
+        for column, value in (
+            (KnowledgeUnitReviewModel.skill_id, filters.taxonomy.skill_id),
+            (KnowledgeUnitReviewModel.sub_skill_id, filters.taxonomy.sub_skill_id),
+            (KnowledgeUnitReviewModel.learning_concept_id, filters.taxonomy.learning_concept_id),
+        ):
+            if value is not None:
+                conditions.append(column == value)
+        if filters.unit_ids:
+            conditions.append(KnowledgeUnitReviewModel.curriculum_unit_id.in_(filters.unit_ids))
+        if filters.lesson_ids:
+            conditions.append(KnowledgeUnitReviewModel.lesson_id.in_(filters.lesson_ids))
+        reference = func.jsonb_build_object(
+            "schema_version",
+            "knowledge-projection-reference.v1",
+            "projection_id",
+            KnowledgeProjectionModel.id,
+            "projection_fingerprint",
+            KnowledgeProjectionModel.fingerprint,
+            "unit_id",
+            KnowledgeUnitModel.id,
+            "unit_fingerprint",
+            KnowledgeUnitModel.fingerprint,
+            "trusted_page_id",
+            KnowledgeUnitModel.trusted_page_id,
+            "trusted_fingerprint",
+            KnowledgeUnitModel.payload["trusted_fingerprint"].astext,
+            "review_id",
+            KnowledgeUnitReviewModel.id,
+            "review_fingerprint",
+            KnowledgeUnitReviewModel.fingerprint,
+            "review_version",
+            KnowledgeUnitReviewModel.version,
+        )
+        return (
+            select(
+                literal("knowledge_projection").label("record_kind"),
+                KnowledgeProjectionModel.id.label("record_id"),
+                KnowledgeProjectionModel.text.label("text"),
+                ExamConfigurationModel.grade.label("grade"),
+                ExamConfigurationModel.id.label("exam_id"),
+                CurriculumVersionModel.medium_id.label("medium_id"),
+                CurriculumVersionModel.subject_id.label("subject_id"),
+                CurriculumVersionModel.id.label("curriculum_version_id"),
+                KnowledgeUnitReviewModel.curriculum_unit_id.label("unit_id"),
+                KnowledgeUnitReviewModel.lesson_id.label("lesson_id"),
+                KnowledgeUnitReviewModel.competency_id.label("competency_id"),
+                KnowledgeUnitReviewModel.skill_id.label("skill_id"),
+                KnowledgeUnitReviewModel.sub_skill_id.label("sub_skill_id"),
+                KnowledgeUnitReviewModel.learning_concept_id.label("learning_concept_id"),
+                KnowledgeUnitModel.document_id.label("source_document_id"),
+                KnowledgeUnitModel.page_number.label("page_number"),
+                literal(None).label("source_block_id"),
+                reference.label("knowledge_reference"),
+            )
+            .select_from(KnowledgeProjectionModel)
+            .join(KnowledgeUnitModel, KnowledgeUnitModel.id == KnowledgeProjectionModel.unit_id)
+            .join(
+                KnowledgeUnitReviewModel,
+                and_(
+                    KnowledgeUnitReviewModel.unit_id == KnowledgeUnitModel.id,
+                    KnowledgeUnitReviewModel.version == latest_version,
+                ),
+            )
+            .join(
+                CurriculumVersionModel,
+                CurriculumVersionModel.id == KnowledgeUnitModel.curriculum_version_id,
+            )
+            .join(
+                ExamConfigurationModel,
+                ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
+            )
+            .where(*conditions)
+        )
+
     def _scoped_records(self, filters: RetrievalFilters) -> CTE:
         scopes = filters.scopes if isinstance(filters, RetrievalScopeSet) else (filters,)
         statements = tuple(
@@ -516,6 +617,7 @@ class PostgresHybridRetrievalRepository:
             for statement in (
                 self._chunk_scope_select(scope),
                 self._question_scope_select(scope),
+                self._projection_scope_select(scope),
             )
         )
         return union(*statements).cte("reviewed_scoped_records")
@@ -565,10 +667,18 @@ class PostgresHybridRetrievalRepository:
                 scoped.c.record_kind == "knowledge_chunk",
                 KnowledgeEmbeddingModel.knowledge_chunk_id == scoped.c.record_id,
                 KnowledgeEmbeddingModel.historical_question_id.is_(None),
+                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
             ),
             and_(
                 scoped.c.record_kind == "historical_question",
                 KnowledgeEmbeddingModel.historical_question_id == scoped.c.record_id,
+                KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
+                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
+            ),
+            and_(
+                scoped.c.record_kind == "knowledge_projection",
+                KnowledgeEmbeddingModel.knowledge_projection_id == scoped.c.record_id,
+                KnowledgeEmbeddingModel.historical_question_id.is_(None),
                 KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
             ),
         )
@@ -654,6 +764,19 @@ class PostgresHybridRetrievalRepository:
 
     @staticmethod
     def _record_from_row(row: RowMapping) -> RetrievalRecord:
+        reference_payload = row.get("knowledge_reference")
+        if (row.get("record_kind") == "knowledge_projection") != (reference_payload is not None):
+            raise RetrievalContractError(
+                "retrieval projection reference identity is missing or unexpected"
+            )
+        reference = None
+        if reference_payload is not None:
+            try:
+                reference = KnowledgeProjectionReference.model_validate_json(
+                    json.dumps(reference_payload, allow_nan=False)
+                )
+            except (TypeError, ValueError):
+                raise RetrievalContractError("retrieval projection reference is invalid") from None
         taxonomy = TaxonomyScope(
             competency_id=cast(UUID, row["competency_id"]),
             skill_id=cast(UUID | None, row["skill_id"]),
@@ -682,5 +805,6 @@ class PostgresHybridRetrievalRepository:
                 source_document_id=cast(UUID, row["source_document_id"]),
                 page_number=cast(int, row["page_number"]),
                 source_block_id=cast(UUID | None, row["source_block_id"]),
+                knowledge_reference=reference,
             ),
         )

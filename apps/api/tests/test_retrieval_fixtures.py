@@ -2,6 +2,7 @@ from dataclasses import replace
 from uuid import UUID
 
 from exam_guru_api.retrieval.domain import (
+    KnowledgeProjectionReference,
     LexicalCandidate,
     RetrievalRecord,
     RetrievalScope,
@@ -79,6 +80,22 @@ def retrieval_record(
             source_block_id=UUID(int=block_id) if block_id is not None else None,
         ),
     )
+
+
+def projection_record(identifier: int, text: str) -> RetrievalRecord:
+    record = retrieval_record(identifier, text)
+    reference = KnowledgeProjectionReference(
+        projection_id=record.chunk_id,
+        projection_fingerprint=f"{identifier:064x}",
+        unit_id=UUID(int=identifier + 10_000),
+        unit_fingerprint=f"{identifier + 10_000:064x}",
+        trusted_page_id=UUID(int=20_000),
+        trusted_fingerprint="a" * 64,
+        review_id=UUID(int=identifier + 30_000),
+        review_fingerprint=f"{identifier + 30_000:064x}",
+        review_version=1,
+    )
+    return replace(record, provenance=replace(record.provenance, knowledge_reference=reference))
 
 
 def lexical(record: RetrievalRecord, score: float) -> LexicalCandidate:

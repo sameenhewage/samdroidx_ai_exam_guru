@@ -43,11 +43,12 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_projection_embeddings_are_the_single_bounded_revision_head() -> None:
+def test_knowledge_generation_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0048_projection_embeddings"]
+    assert scripts.get_heads() == ["0049_knowledge_generation"]
     for identifier, parent in (
+        ("0049_knowledge_generation", "0048_projection_embeddings"),
         ("0048_projection_embeddings", "0047_knowledge_unit_review"),
         ("0047_knowledge_unit_review", "0046_knowledge_units"),
         ("0046_knowledge_units", "0045_understanding_review"),

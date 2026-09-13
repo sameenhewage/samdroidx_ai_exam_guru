@@ -11,6 +11,7 @@ from exam_guru_api.blueprints import (
     QuestionType,
     generate_blueprint,
 )
+from exam_guru_api.generation import domain as generation_domain
 from exam_guru_api.generation.domain import (
     MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_ITEM_CHARACTERS,
@@ -34,7 +35,15 @@ from exam_guru_api.generation.domain import (
     QuestionOption,
     RetrievedContextItem,
 )
+from exam_guru_api.knowledge.units import (
+    KnowledgeEvidence,
+    KnowledgeProjectionReference,
+    derive_knowledge_units,
+    project_knowledge_unit,
+)
 from tests.test_blueprint_domain import make_uniform_specification
+from tests.test_document_understanding_verification import approve, candidate
+from tests.test_knowledge_units import scope
 
 ATTEMPT_ID = UUID(int=102)
 PAPER_BLUEPRINT = generate_blueprint(make_uniform_specification((1,), 2), seed=17)
@@ -68,6 +77,89 @@ def context_item(
 
 def provenance_context(*items: RetrievedContextItem) -> ProvenanceContext:
     return ProvenanceContext(items=items or (context_item(),))
+
+
+def knowledge_context_item() -> RetrievedContextItem:
+    trusted = approve(candidate())
+    unit = derive_knowledge_units(trusted, scope(trusted))[1]
+    projection = project_knowledge_unit(unit)
+    reference = KnowledgeProjectionReference(
+        projection_id=projection.id,
+        projection_fingerprint=projection.fingerprint,
+        unit_id=unit.id,
+        unit_fingerprint=unit.fingerprint,
+        trusted_page_id=unit.trusted_page_id,
+        trusted_fingerprint=unit.trusted_fingerprint,
+        review_id=UUID(int=99401),
+        review_fingerprint="d" * 64,
+        review_version=1,
+    )
+    return RetrievedContextItem(
+        context_id="knowledge_projection:" + str(projection.id),
+        text=projection.text,
+        provenance=ContextProvenance(
+            source_document_id=str(unit.source.document_id),
+            source_version="sha256:" + unit.source.source_sha256,
+            page_number=unit.source.page_number,
+            chunk_id=str(projection.id),
+        ),
+        knowledge_evidence=KnowledgeEvidence(unit=unit, reference=reference),
+    )
+
+
+def test_structured_generation_context_is_source_bound_untrusted_and_fully_budgeted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = knowledge_context_item()
+    context = ProvenanceContext(items=(item,))
+    assert context.trust is ContextTrust.UNTRUSTED_DATA
+    assert item.content_character_count > len(item.text)
+    assert context.total_characters == item.content_character_count
+    with pytest.raises(GenerationContractError, match="evidence"):
+        replace(
+            item, provenance=replace(item.provenance, page_number=item.provenance.page_number + 1)
+        )
+    monkeypatch.setattr(generation_domain, "MAX_CONTEXT_ITEM_CHARACTERS", len(item.text) + 1)
+    with pytest.raises(GenerationContractError, match="bound"):
+        knowledge_context_item()
+
+
+@pytest.mark.parametrize(
+    "references",
+    [
+        None,
+        "bad",
+        [True],
+        ["bad"],
+        [str(UUID(int=1))] * 2,
+        [str(UUID(int=2)), str(UUID(int=1))],
+        [str(UUID(int=index)) for index in range(17)],
+        ["FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"],
+    ],
+)
+def test_projection_context_references_reject_noncanonical_identity(references: object) -> None:
+    with pytest.raises(GenerationContractError, match="projection references"):
+        generation_domain.projection_context_ids({"knowledge_projection_ids": references})
+
+
+def test_projection_context_references_preserve_legacy_and_canonical_ids() -> None:
+    assert generation_domain.projection_context_ids({}) == ()
+    assert generation_domain.projection_context_ids(
+        {"knowledge_projection_ids": [str(UUID(int=1))]}
+    ) == (UUID(int=1),)
+
+
+def test_generation_rejects_missing_foreign_and_mutated_structured_evidence() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    for evidence in (None, object()):
+        with pytest.raises(GenerationContractError, match="evidence"):
+            replace(item, knowledge_evidence=cast(KnowledgeEvidence, evidence))
+    invalid = item.knowledge_evidence.model_copy(
+        update={"unit": item.knowledge_evidence.unit.model_copy(update={"fingerprint": "f" * 64})}
+    )
+    with pytest.raises(GenerationContractError, match="snapshot is invalid"):
+        replace(item, knowledge_evidence=invalid)
 
 
 def versions(**changes: str) -> GenerationVersions:

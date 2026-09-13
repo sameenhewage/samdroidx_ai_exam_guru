@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from exam_guru_api.retrieval.domain import (
+    KnowledgeProjectionReference,
     LexicalCandidate,
     RetrievalContractError,
     RetrievalRecord,
@@ -38,6 +39,31 @@ from tests.test_retrieval_fixtures import (
 SUBJECT_ID = UUID(int=51)
 UNIT_ID = UUID(int=52)
 LESSON_ID = UUID(int=53)
+
+
+def test_projection_provenance_binds_the_exact_record_and_strict_review_reference() -> None:
+    record = retrieval_record(500, "1 + 1 = 2")
+    reference = KnowledgeProjectionReference(
+        projection_id=record.chunk_id,
+        projection_fingerprint="a" * 64,
+        unit_id=UUID(int=501),
+        unit_fingerprint="b" * 64,
+        trusted_page_id=UUID(int=502),
+        trusted_fingerprint="c" * 64,
+        review_id=UUID(int=503),
+        review_fingerprint="d" * 64,
+        review_version=1,
+    )
+    provenance = replace(record.provenance, knowledge_reference=reference)
+    assert replace(record, provenance=provenance).provenance.knowledge_reference == reference
+    with pytest.raises(RetrievalContractError, match="projection"):
+        replace(record, chunk_id=UUID(int=504), provenance=provenance)
+    with pytest.raises(RetrievalContractError, match="projection"):
+        replace(provenance, source_block_id=UUID(int=505))
+    with pytest.raises(RetrievalContractError, match="projection"):
+        replace(
+            provenance, knowledge_reference=reference.model_copy(update={"review_version": True})
+        )
 
 
 def test_grade_seven_subject_unit_and_lesson_are_hard_scope_boundaries() -> None:

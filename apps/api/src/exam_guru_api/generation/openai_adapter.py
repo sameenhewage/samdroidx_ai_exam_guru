@@ -456,10 +456,22 @@ class OpenAIGenerationAdapter:
                         "source_version": item.provenance.source_version,
                     },
                     "text": item.text,
+                    **(
+                        {"knowledge_evidence": item.knowledge_evidence.model_dump(mode="json")}
+                        if item.knowledge_evidence is not None
+                        else {}
+                    ),
                 }
                 for item in prompt.untrusted_context.items
             ],
             "trust": prompt.context_trust.value,
+            **(
+                {"schema_version": "generation-knowledge-context.v1"}
+                if any(
+                    item.knowledge_evidence is not None for item in prompt.untrusted_context.items
+                )
+                else {}
+            ),
         }
         serialized_context = _canonical_json(untrusted_payload)
         boundary_digest = sha256(serialized_context.encode("utf-8")).hexdigest()

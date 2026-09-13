@@ -21,6 +21,7 @@ from typing import cast
 from uuid import UUID
 
 from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 
 REPORT_SCHEMA_VERSION = "question-validation-report.v3"
 QUESTION_SCHEMA_VERSION = "question.v1"
@@ -375,6 +376,7 @@ class GroundingSource:
     source_version: str | None = None
     page_number: int | None = None
     chunk_id: str | None = None
+    knowledge_evidence: KnowledgeEvidence | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _require_machine_value(self.context_id, "context_id")
@@ -385,6 +387,29 @@ class GroundingSource:
                 raise ValidationContractError(f"{field_name} must be absent or bounded text")
         if self.page_number is not None and not isinstance(self.page_number, int):
             raise ValidationContractError("page_number must be absent or an integer")
+        if self.knowledge_evidence is None:
+            if self.context_id.startswith("knowledge_projection:"):
+                raise ValidationContractError("projection grounding requires structured evidence")
+        else:
+            if not isinstance(self.knowledge_evidence, KnowledgeEvidence):
+                raise ValidationContractError("knowledge evidence must be a first-party snapshot")
+            try:
+                evidence = KnowledgeEvidence.model_validate(self.knowledge_evidence)
+            except ValueError:
+                raise ValidationContractError("grounding knowledge evidence is malformed") from None
+            if not evidence.matches_context(
+                context_id=self.context_id,
+                text=self.text,
+                source_document_id=self.source_document_id,
+                source_version=self.source_version,
+                page_number=self.page_number,
+                chunk_id=self.chunk_id,
+            ):
+                raise ValidationContractError(
+                    "grounding knowledge evidence does not match provenance"
+                )
+            if len(self.text) + evidence.serialized_character_count > MAX_SOURCE_TEXT_CHARACTERS:
+                raise ValidationContractError("grounding knowledge evidence exceeds its size bound")
 
 
 @dataclass(frozen=True, slots=True)
@@ -663,6 +688,11 @@ class ValidationInput:
                     "source_document_id": item.source_document_id,
                     "source_text_sha256": hashlib.sha256(item.text.encode("utf-8")).hexdigest(),
                     "source_version": item.source_version,
+                    **(
+                        {"knowledge_evidence_fingerprint": item.knowledge_evidence.fingerprint}
+                        if item.knowledge_evidence is not None
+                        else {}
+                    ),
                 }
                 for item in canonical_sources
             ],

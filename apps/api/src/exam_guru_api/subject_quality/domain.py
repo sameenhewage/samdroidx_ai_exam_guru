@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Literal, cast
 from uuid import UUID
 
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 from exam_guru_api.validation.domain import (
     BlueprintRequirements,
     ContextScopeBinding,
@@ -261,6 +262,14 @@ def validation_input_from_eval_snapshot(
         if item.get("trust") != "untrusted_data":
             raise ValueError("grounding source must remain untrusted data")
         page_number = item.get("page_number")
+        evidence_payload = item.get("knowledge_evidence")
+        evidence = (
+            None
+            if evidence_payload is None
+            else KnowledgeEvidence.model_validate_json(
+                json.dumps(evidence_payload, ensure_ascii=False, allow_nan=False)
+            )
+        )
         sources.append(
             GroundingSource(
                 context_id=_text(item.get("context_id"), "source context_id"),
@@ -285,6 +294,7 @@ def validation_input_from_eval_snapshot(
                     if item.get("chunk_id") is None
                     else _text(item.get("chunk_id"), "source chunk id")
                 ),
+                knowledge_evidence=evidence,
             )
         )
 

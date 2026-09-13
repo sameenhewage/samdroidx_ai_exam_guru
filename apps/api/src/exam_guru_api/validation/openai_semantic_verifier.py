@@ -427,7 +427,15 @@ class OpenAISemanticVerifier:
         context_ids = tuple(source.context_id for source in sources)
         if len(context_ids) != len(set(context_ids)):
             raise SemanticVerifierProviderError(SemanticVerifierFailureCode.INVALID_REQUEST)
-        source_bytes = tuple(len(source.text.encode("utf-8")) for source in sources)
+        source_bytes = tuple(
+            len(source.text.encode("utf-8"))
+            + (
+                0
+                if source.knowledge_evidence is None
+                else source.knowledge_evidence.serialized_byte_count
+            )
+            for source in sources
+        )
         if (
             any(size > self._budget.max_source_bytes for size in source_bytes)
             or sum(source_bytes) > self._budget.max_total_source_bytes
@@ -475,9 +483,19 @@ class OpenAISemanticVerifier:
                     "page_number": source.page_number,
                     "chunk_id": source.chunk_id,
                     "trust": "untrusted_data",
+                    **(
+                        {"knowledge_evidence": source.knowledge_evidence.model_dump(mode="json")}
+                        if source.knowledge_evidence is not None
+                        else {}
+                    ),
                 }
                 for source in sources
             ],
+            **(
+                {"schema_version": "semantic-knowledge-context.v1"}
+                if any(source.knowledge_evidence is not None for source in sources)
+                else {}
+            ),
         }
         serialized = json.dumps(
             payload,

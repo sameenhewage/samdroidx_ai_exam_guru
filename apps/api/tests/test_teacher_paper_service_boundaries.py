@@ -24,7 +24,7 @@ from exam_guru_api.papers.review_service import (
     ReviewCandidateStateConflictError,
     ReviewCandidateVersionConflictError,
 )
-from exam_guru_api.retrieval.domain import RetrievalScopeSet
+from exam_guru_api.retrieval.domain import RetrievalScopeSet, deserialize_retrieval_filters
 from exam_guru_api.retrieval.embeddings import (
     ActiveEmbeddingConfigUnavailableError,
     EmbeddingProviderUnavailableError,
@@ -109,6 +109,7 @@ from exam_guru_api.teacher_papers.service import (
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.pipeline import build_default_pipeline
 from tests.test_teacher_paper_domain import curriculum, lesson, programme_scope, target
+from tests.test_validation_run_service import knowledge_context_snapshot
 
 NOW = datetime(2026, 8, 25, tzinfo=UTC)
 JOB_ID = UUID(int=25_910_001)
@@ -1165,14 +1166,19 @@ def test_replacement_generation_enforces_retry_and_cost_caps_before_dispatch(
         )
 
 
+@pytest.mark.parametrize("projections", [False, True])
 def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration(
     monkeypatch: pytest.MonkeyPatch,
+    projections: bool,
 ) -> None:
     from types import SimpleNamespace
 
     from exam_guru_api.teacher_papers import service as service_module
 
     runtime = create_generation_runtime(Settings(environment="test"))
+    context_snapshot = (
+        knowledge_context_snapshot() if projections else {"items": [], "trust": "untrusted_data"}
+    )
 
     async def zero_counts(repository: object, job_id: UUID) -> dict[str, int]:
         del repository, job_id
@@ -1192,7 +1198,18 @@ def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration
             return SimpleNamespace(run=SimpleNamespace(id=UUID(int=401)))
 
         async def create(self, *args: object, **kwargs: object) -> object:
-            del args, kwargs
+            del args
+            if projections:
+                assert kwargs["knowledge_projection_ids"] == tuple(
+                    UUID(value)
+                    for value in cast(list[str], context_snapshot["knowledge_projection_ids"])
+                )
+                assert kwargs["retrieval_filters"] == deserialize_retrieval_filters(
+                    context_snapshot["retrieval_filters"]
+                )
+            else:
+                assert "knowledge_projection_ids" not in kwargs
+                assert "retrieval_filters" not in kwargs
             self.modes.append("create")
             return SimpleNamespace(run=SimpleNamespace(id=UUID(int=402)))
 
@@ -1214,6 +1231,7 @@ def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration
                 slot_id="slot-1",
                 knowledge_chunk_ids=[str(UUID(int=404))],
                 historical_question_ids=[],
+                context_snapshot=context_snapshot,
             )
 
         async def find_slot(self, job_id: UUID, run_id: UUID) -> TeacherPaperSlotModel:

@@ -34,6 +34,7 @@ from exam_guru_api.validation.domain import (
     ValidationReport,
 )
 from exam_guru_api.validation.pipeline import ValidationPipeline, build_default_pipeline
+from tests.test_generation_domain import knowledge_context_item
 
 CURRICULUM_ID = UUID("00000000-0000-0000-0000-000000002601")
 SUBJECT_ID = UUID("00000000-0000-0000-0000-000000002602")
@@ -321,6 +322,50 @@ def test_promotion_approval_and_run_contracts_are_strict_and_bounded() -> None:
         SubjectQualityEvalRunRequest(case_ids=tuple(UUID(int=index) for index in range(1, 102)))
     with pytest.raises(ValidationError):
         SubjectQualityEvalRunRequest(case_ids=(UUID(int=1), UUID(int=1)))
+
+
+def test_subject_eval_replay_preserves_structured_knowledge_without_creating_trust() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    unit = item.knowledge_evidence.unit
+    snapshot = replay_snapshot()
+    for key in ("subject_scope", "generated_scope"):
+        cast(dict[str, object], snapshot[key]).update(
+            grade=unit.scope.grade,
+            medium="si",
+            subject_id=str(unit.scope.subject_id),
+            curriculum_version_id=str(unit.scope.curriculum_version_id),
+            unit_ids=[],
+            lesson_ids=[],
+        )
+    cast(dict[str, object], snapshot["candidate"])["context_references"] = [item.context_id]
+    snapshot["context_scope_bindings"] = [
+        {
+            "context_id": item.context_id,
+            "curriculum_version_id": str(unit.scope.curriculum_version_id),
+            "subject_id": str(unit.scope.subject_id),
+            "unit_id": None,
+            "lesson_id": None,
+            "snapshot_unit_id": None,
+            "snapshot_lesson_id": None,
+        }
+    ]
+    snapshot["grounding_sources"] = [
+        {
+            "context_id": item.context_id,
+            "text": item.text,
+            "source_document_id": item.provenance.source_document_id,
+            "source_version": item.provenance.source_version,
+            "page_number": item.provenance.page_number,
+            "chunk_id": item.provenance.chunk_id,
+            "trust": "untrusted_data",
+            "knowledge_evidence": item.knowledge_evidence.model_dump(mode="json"),
+        }
+    ]
+    replayed = validation_input_from_eval_snapshot(
+        snapshot, expected_curriculum_version_id=unit.scope.curriculum_version_id
+    )
+    assert replayed.grounding_sources[0].knowledge_evidence == item.knowledge_evidence
 
 
 def test_eval_snapshot_reconstructs_exact_trusted_scope_and_rejects_scope_spoofing() -> None:

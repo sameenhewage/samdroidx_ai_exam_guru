@@ -9,9 +9,11 @@ from exam_guru_api.main import create_app
 from exam_guru_api.retrieval.schemas import (
     RetrievalExploreLimitsRequest,
     RetrievalExploreRequest,
+    RetrievalProvenanceResponse,
     RetrievalScopeRequest,
     RetrievalTaxonomyScopeRequest,
 )
+from tests.test_retrieval_fixtures import projection_record, retrieval_record
 
 EXPLORE_PATH = "/api/v1/admin/retrieval/explore"
 
@@ -44,6 +46,20 @@ def _valid_request() -> dict[str, object]:
             "max_context_item_characters": 500,
         },
     }
+
+
+def test_projection_references_survive_api_serialization_without_changing_legacy_provenance() -> (
+    None
+):
+    projected = projection_record(600, "2² = 4")
+    reference = projected.provenance.knowledge_reference
+    assert reference is not None
+    response = RetrievalProvenanceResponse.from_domain(projected.provenance).model_dump(mode="json")
+    assert response["knowledge_reference"] == reference.model_dump(mode="json")
+    legacy = RetrievalProvenanceResponse.from_domain(
+        retrieval_record(601, "Legacy source").provenance
+    ).model_dump(mode="json")
+    assert set(legacy) == {"source_document_id", "page_number", "source_block_id"}
 
 
 def test_retrieval_explorer_openapi_is_authorized_typed_and_vector_free() -> None:

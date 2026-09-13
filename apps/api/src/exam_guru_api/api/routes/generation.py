@@ -29,6 +29,7 @@ from exam_guru_api.generation.run_service import (
     GenerationContextLimitError,
     GenerationContextNotFoundError,
     GenerationContextNotReviewedError,
+    GenerationContextOptions,
     GenerationContextScopeInactiveError,
     GenerationContextSourceUntrustedError,
     GenerationContextTaxonomyMismatchError,
@@ -126,6 +127,11 @@ async def create_generation_run(
     runtime: RuntimeRegistry,
     dispatcher: JobDispatcher,
 ) -> GenerationJobResponse:
+    context_options: GenerationContextOptions = (
+        {"knowledge_projection_ids": request.knowledge_projection_ids}
+        if request.knowledge_projection_ids
+        else {}
+    )
     result = await _execute_generation_operation(
         session,
         lambda: GenerationRunService(session, runtime, dispatcher).create(
@@ -134,6 +140,7 @@ async def create_generation_run(
             slot_id=request.slot_id,
             knowledge_chunk_ids=request.knowledge_chunk_ids,
             historical_question_ids=request.historical_question_ids,
+            **context_options,
             idempotency_key=idempotency_key,
             actor_id=principal.subject_id,
         ),

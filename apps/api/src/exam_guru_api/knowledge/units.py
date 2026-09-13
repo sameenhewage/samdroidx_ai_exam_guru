@@ -148,6 +148,91 @@ class KnowledgeProjection(UnderstandingModel):
         return self
 
 
+class KnowledgeProjectionReference(UnderstandingModel):
+    schema_version: Literal["knowledge-projection-reference.v1"] = (
+        "knowledge-projection-reference.v1"
+    )
+    projection_id: UUID
+    projection_fingerprint: Checksum
+    unit_id: UUID
+    unit_fingerprint: Checksum
+    trusted_page_id: UUID
+    trusted_fingerprint: Checksum
+    review_id: UUID
+    review_fingerprint: Checksum
+    review_version: int = Field(ge=1, le=2_147_483_646)
+
+
+class KnowledgeEvidence(UnderstandingModel):
+    schema_version: Literal["knowledge-evidence.v1"] = "knowledge-evidence.v1"
+    unit: KnowledgeUnit = Field(repr=False)
+    reference: KnowledgeProjectionReference
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256(_canonical_bytes(self)).hexdigest()
+
+    @property
+    def serialized_json(self) -> str:
+        return json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @property
+    def serialized_character_count(self) -> int:
+        return len(self.serialized_json)
+
+    @property
+    def serialized_byte_count(self) -> int:
+        return len(self.serialized_json.encode("utf-8"))
+
+    def matches_context(
+        self,
+        *,
+        context_id: str,
+        text: str,
+        source_document_id: str | None,
+        source_version: str | None,
+        page_number: int | None,
+        chunk_id: str | None,
+    ) -> bool:
+        source = self.unit.source
+        return type(page_number) is int and all(
+            left == right
+            for left, right in (
+                (context_id, "knowledge_projection:" + str(self.reference.projection_id)),
+                (source_document_id, str(source.document_id)),
+                (source_version, "sha256:" + source.source_sha256),
+                (page_number, source.page_number),
+                (chunk_id, str(self.reference.projection_id)),
+                (text, project_knowledge_unit(self.unit).text),
+            )
+        )
+
+    @model_validator(mode="after")
+    def bound_evidence(self) -> Self:
+        projection = project_knowledge_unit(self.unit)
+        if any(
+            left != right
+            for left, right in (
+                (self.reference.unit_id, self.unit.id),
+                (self.reference.unit_fingerprint, self.unit.fingerprint),
+                (self.reference.trusted_page_id, self.unit.trusted_page_id),
+                (self.reference.trusted_fingerprint, self.unit.trusted_fingerprint),
+                (self.reference.projection_id, projection.id),
+                (self.reference.projection_fingerprint, projection.fingerprint),
+            )
+        ):
+            raise KnowledgeDerivationError(
+                "knowledge evidence identity differs from its exact source"
+            )
+        return self
+
+
 def derive_knowledge_units(
     trusted: TrustedPageKnowledge, scope: KnowledgeScope
 ) -> tuple[KnowledgeUnit, ...]:

@@ -8,6 +8,7 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 import exam_guru_api.validation.openai_semantic_verifier as semantic_adapter
+from exam_guru_api.validation.domain import GroundingSource
 from exam_guru_api.validation.openai_semantic_verifier import (
     OPENAI_SEMANTIC_PROVIDER,
     OPENAI_SEMANTIC_PROVIDER_VERSION,
@@ -29,6 +30,7 @@ from exam_guru_api.validation.subject import (
     SubjectFindingCode,
     decompose_factual_claims,
 )
+from tests.test_generation_domain import knowledge_context_item
 from tests.test_subject_quality_feedback import CURRICULUM_ID, LESSON_ID, SUBJECT_ID, UNIT_ID
 from tests.test_subject_validation import factual_input
 
@@ -214,6 +216,42 @@ def sdk_response(status_code: int) -> httpx2.Response:
 def sdk_error(name: str, *args: object, **kwargs: object) -> Exception:
     factory = cast(Callable[..., Exception], getattr(semantic_adapter, name))
     return factory(*args, **kwargs)
+
+
+def test_semantic_verifier_keeps_structured_evidence_and_counts_all_source_bytes() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    source = GroundingSource(
+        context_id=item.context_id,
+        text=item.text,
+        source_document_id=item.provenance.source_document_id,
+        source_version=item.provenance.source_version,
+        page_number=item.provenance.page_number,
+        chunk_id=item.provenance.chunk_id,
+        knowledge_evidence=item.knowledge_evidence,
+    )
+    scoped = replace(
+        request(),
+        subject_id=item.knowledge_evidence.unit.scope.subject_id,
+        subject_code="MATHEMATICS",
+        medium="si",
+        curriculum_version_id=item.knowledge_evidence.unit.scope.curriculum_version_id,
+        selected_scope=CurriculumSelection((), ()),
+        grounding_sources=(source,),
+    )
+    completions = StubCompletions()
+    payload, _serialized = build_adapter(completions)._request_payload(scoped)
+    sources = cast(list[dict[str, object]], payload["sources"])
+    assert sources[0]["knowledge_evidence"] == item.knowledge_evidence.model_dump(mode="json")
+    assert payload["schema_version"] == "semantic-knowledge-context.v1"
+    limited = build_adapter(
+        completions,
+        budget=SemanticVerifierBudget(max_source_bytes=len(item.text.encode("utf-8")) + 1),
+    )
+    with pytest.raises(SemanticVerifierProviderError) as caught:
+        limited._request_payload(scoped)
+    assert caught.value.code is SemanticVerifierFailureCode.RESOURCE_LIMIT
+    assert completions.calls == []
 
 
 def test_adapter_uses_strict_schema_bounded_untrusted_context_and_exact_accounting() -> None:

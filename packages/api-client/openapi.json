@@ -4309,6 +4309,15 @@
             "title": "Knowledge Chunk Ids",
             "type": "array"
           },
+          "knowledge_projection_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Knowledge Projection Ids",
+            "type": "array"
+          },
           "paper_blueprint_id": {
             "format": "uuid",
             "title": "Paper Blueprint Id",
@@ -5668,6 +5677,76 @@
           "learning_concept_id"
         ],
         "title": "KnowledgeClassificationResponse",
+        "type": "object"
+      },
+      "KnowledgeProjectionReference": {
+        "additionalProperties": false,
+        "properties": {
+          "projection_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Projection Fingerprint",
+            "type": "string"
+          },
+          "projection_id": {
+            "format": "uuid",
+            "title": "Projection Id",
+            "type": "string"
+          },
+          "review_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Review Fingerprint",
+            "type": "string"
+          },
+          "review_id": {
+            "format": "uuid",
+            "title": "Review Id",
+            "type": "string"
+          },
+          "review_version": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Review Version",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "knowledge-projection-reference.v1",
+            "default": "knowledge-projection-reference.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "trusted_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Trusted Fingerprint",
+            "type": "string"
+          },
+          "trusted_page_id": {
+            "format": "uuid",
+            "title": "Trusted Page Id",
+            "type": "string"
+          },
+          "unit_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Unit Fingerprint",
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "projection_id",
+          "projection_fingerprint",
+          "unit_id",
+          "unit_fingerprint",
+          "trusted_page_id",
+          "trusted_fingerprint",
+          "review_id",
+          "review_fingerprint",
+          "review_version"
+        ],
+        "title": "KnowledgeProjectionReference",
         "type": "object"
       },
       "KnowledgeProvenanceResponse": {
@@ -11019,6 +11098,16 @@
       },
       "RetrievalProvenanceResponse": {
         "properties": {
+          "knowledge_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeProjectionReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "page_number": {
             "title": "Page Number",
             "type": "integer"

@@ -31,6 +31,10 @@ class GenerationRunCreateRequest(_StrictModel):
         Field(max_length=MAX_GENERATION_CONTEXT_REFERENCES),
     ] = ()
 
+    knowledge_projection_ids: tuple[UUID, ...] = Field(
+        default_factory=tuple, max_length=MAX_GENERATION_CONTEXT_REFERENCES
+    )
+
     @model_validator(mode="after")
     def validate_context_references(self) -> Self:
         references = self.context_references
@@ -43,6 +47,8 @@ class GenerationRunCreateRequest(_StrictModel):
             raise ValueError("knowledge chunk identifiers must be unique")
         if len(set(self.historical_question_ids)) != len(self.historical_question_ids):
             raise ValueError("historical question identifiers must be unique")
+        if len(set(self.knowledge_projection_ids)) != len(self.knowledge_projection_ids):
+            raise ValueError("knowledge projection identifiers must be unique")
         return self
 
     @property
@@ -50,6 +56,7 @@ class GenerationRunCreateRequest(_StrictModel):
         return (
             *(("knowledge_chunk", identifier) for identifier in self.knowledge_chunk_ids),
             *(("historical_question", identifier) for identifier in self.historical_question_ids),
+            *(("knowledge_projection", identifier) for identifier in self.knowledge_projection_ids),
         )
 
 

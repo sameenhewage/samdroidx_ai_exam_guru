@@ -7,12 +7,14 @@ validation before any separate review or publication workflow may consume it.
 """
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
 from exam_guru_api.blueprints.domain import BlueprintSlot, BlueprintVersion, QuestionType
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 
 MAX_CONTEXT_ITEMS = 16
 MAX_CONTEXT_ITEM_CHARACTERS = 8_000
@@ -83,6 +85,28 @@ def _require_integer(
     return value
 
 
+def projection_context_ids(snapshot: Mapping[str, object]) -> tuple[UUID, ...]:
+    values = snapshot.get("knowledge_projection_ids", [])
+    if (
+        not isinstance(values, list)
+        or len(values) > MAX_CONTEXT_ITEMS
+        or any(not isinstance(value, str) for value in values)
+    ):
+        raise GenerationContractError("persisted knowledge projection references are malformed")
+    try:
+        identifiers = tuple(UUID(value) for value in values)
+    except ValueError:
+        raise GenerationContractError(
+            "persisted knowledge projection references are malformed"
+        ) from None
+    if (
+        len(set(identifiers)) != len(identifiers)
+        or [str(value) for value in sorted(identifiers)] != values
+    ):
+        raise GenerationContractError("persisted knowledge projection references are not canonical")
+    return identifiers
+
+
 def _normalized_text(value: str) -> str:
     return " ".join(value.split()).casefold()
 
@@ -110,6 +134,7 @@ class RetrievedContextItem:
     context_id: str
     text: str
     provenance: ContextProvenance
+    knowledge_evidence: KnowledgeEvidence | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _require_identifier(self.context_id, "context_id")
@@ -120,6 +145,37 @@ class RetrievedContextItem:
         )
         if not isinstance(self.provenance, ContextProvenance):
             raise GenerationContractError("provenance must be ContextProvenance")
+        if self.knowledge_evidence is None:
+            if self.context_id.startswith("knowledge_projection:"):
+                raise GenerationContractError("projection context requires structured evidence")
+        else:
+            if not isinstance(self.knowledge_evidence, KnowledgeEvidence):
+                raise GenerationContractError("knowledge evidence must be a first-party snapshot")
+            try:
+                evidence = KnowledgeEvidence.model_validate(self.knowledge_evidence)
+            except ValueError:
+                raise GenerationContractError("knowledge evidence snapshot is invalid") from None
+            if not evidence.matches_context(
+                context_id=self.context_id,
+                text=self.text,
+                source_document_id=self.provenance.source_document_id,
+                source_version=self.provenance.source_version,
+                page_number=self.provenance.page_number,
+                chunk_id=self.provenance.chunk_id,
+            ):
+                raise GenerationContractError(
+                    "knowledge evidence does not match context provenance"
+                )
+            if self.content_character_count > MAX_CONTEXT_ITEM_CHARACTERS:
+                raise GenerationContractError("structured knowledge context exceeds its item bound")
+
+    @property
+    def content_character_count(self) -> int:
+        return len(self.text) + (
+            0
+            if self.knowledge_evidence is None
+            else self.knowledge_evidence.serialized_character_count
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +213,7 @@ class ProvenanceContext:
 
     @property
     def total_characters(self) -> int:
-        return sum(len(item.text) for item in self.items)
+        return sum(item.content_character_count for item in self.items)
 
 
 @dataclass(frozen=True, slots=True)

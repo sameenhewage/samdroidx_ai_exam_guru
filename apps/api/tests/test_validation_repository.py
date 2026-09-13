@@ -87,7 +87,11 @@ class ScriptedSession:
 
 
 def generation() -> GenerationRunModel:
-    return GenerationRunModel(id=GENERATION_ID, candidate={"stem": "Generated bank stem"})
+    return GenerationRunModel(
+        id=GENERATION_ID,
+        candidate={"stem": "Generated bank stem"},
+        context_snapshot={"items": [], "trust": "untrusted_data"},
+    )
 
 
 def attempt() -> GenerationAttemptModel:

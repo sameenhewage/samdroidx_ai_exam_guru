@@ -16,9 +16,10 @@ from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.blueprints.service import BlueprintGenerationService
 from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
+from exam_guru_api.generation.domain import projection_context_ids
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.models import GenerationRunModel, GenerationRunStatus
-from exam_guru_api.generation.run_service import GenerationRunService
+from exam_guru_api.generation.run_service import GenerationContextOptions, GenerationRunService
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry
 from exam_guru_api.papers.domain import CandidateState, ValidationNotPassedError
 from exam_guru_api.papers.publication_service import PaperPublicationService
@@ -30,7 +31,12 @@ from exam_guru_api.papers.review_service import (
 )
 from exam_guru_api.papers.schemas import QuestionContentResponse
 from exam_guru_api.retrieval.context import ContextLimits
-from exam_guru_api.retrieval.domain import RetrievalScope, RetrievalScopeSet, TaxonomyScope
+from exam_guru_api.retrieval.domain import (
+    RetrievalScope,
+    RetrievalScopeSet,
+    TaxonomyScope,
+    deserialize_retrieval_filters,
+)
 from exam_guru_api.retrieval.embeddings import (
     ActiveEmbeddingConfigUnavailableError,
     EmbeddingProviderRegistry,
@@ -242,8 +248,10 @@ def _require_context_ids(
     knowledge_ids: tuple[UUID, ...],
     question_ids: tuple[UUID, ...],
     slot_id: str,
+    *,
+    projection_ids: tuple[UUID, ...] = (),
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
-    if not knowledge_ids and not question_ids:
+    if not knowledge_ids and not question_ids and not projection_ids:
         raise TeacherPaperContextUnavailableError(slot_id)
     return knowledge_ids, question_ids
 
@@ -1552,10 +1560,28 @@ class TeacherPaperWorkerService:
                     for record_id in item.source_chunk_ids
                 )
             )[:16]
-            knowledge_ids, question_ids = _require_context_ids(
-                *(await self._repository.split_context_ids(record_ids)),
-                assignment.slot_id,
+            projection_ids = tuple(
+                sorted(
+                    {
+                        provenance.knowledge_reference.projection_id
+                        for item in retrieval.context.items
+                        for provenance in item.provenances
+                        if provenance.knowledge_reference is not None
+                        and provenance.knowledge_reference.projection_id in record_ids
+                    }
+                )
             )
+            legacy_ids = tuple(
+                identifier for identifier in record_ids if identifier not in projection_ids
+            )
+            knowledge_ids, question_ids = _require_context_ids(
+                *(await self._repository.split_context_ids(legacy_ids)),
+                assignment.slot_id,
+                projection_ids=projection_ids,
+            )
+            context_options: GenerationContextOptions = {"retrieval_filters": retrieval_filters}
+            if projection_ids:
+                context_options["knowledge_projection_ids"] = projection_ids
             generation = await GenerationRunService(
                 self._session,
                 self._runtime,
@@ -1566,9 +1592,9 @@ class TeacherPaperWorkerService:
                 slot_id=assignment.slot_id,
                 knowledge_chunk_ids=knowledge_ids,
                 historical_question_ids=question_ids,
+                **context_options,
                 idempotency_key=f"tp-{job.id.hex}-{assignment.ordinal}-1",
                 actor_id=job.created_by,
-                retrieval_filters=retrieval_filters,
             )
             slot_model = TeacherPaperSlotModel(
                 id=uuid5(_TEACHER_PAPER_NAMESPACE, f"{job.id}:{assignment.slot_id}"),
@@ -1846,6 +1872,14 @@ async def _replace_generation_run(
             actor_id=actor_id,
         )
     else:
+        context_options: GenerationContextOptions = {}
+        if "knowledge_projection_ids" in current_run.context_snapshot:
+            context_options = {
+                "knowledge_projection_ids": projection_context_ids(current_run.context_snapshot),
+                "retrieval_filters": deserialize_retrieval_filters(
+                    current_run.context_snapshot["retrieval_filters"]
+                ),
+            }
         creation = await generation_service.create(
             job.curriculum_version_id,
             paper_blueprint_id=current_run.paper_blueprint_id,
@@ -1854,6 +1888,7 @@ async def _replace_generation_run(
             historical_question_ids=tuple(
                 UUID(value) for value in current_run.historical_question_ids
             ),
+            **context_options,
             idempotency_key=idempotency_key,
             actor_id=actor_id,
         )

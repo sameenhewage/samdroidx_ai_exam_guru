@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import TypedDict, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from sqlalchemy import update
@@ -18,6 +18,8 @@ from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.core.config import MIN_GENERATION_WORKER_LEASE_SECONDS
 from exam_guru_api.core.provider_jobs import MAX_PROVIDER_JOB_RETRY_DEPTH
 from exam_guru_api.generation.domain import (
+    MAX_CONTEXT_ITEM_CHARACTERS,
+    MAX_CONTEXT_ITEMS,
     CandidateDisposition,
     ContextProvenance,
     GeneratedQuestion,
@@ -31,6 +33,7 @@ from exam_guru_api.generation.domain import (
     ProvenanceContext,
     RetrievedContextItem,
 )
+from exam_guru_api.generation.domain import projection_context_ids as _projection_ids
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.models import (
     GenerationAttemptModel,
@@ -64,6 +67,7 @@ from exam_guru_api.generation.service import (
     RetryScheduler,
 )
 from exam_guru_api.knowledge.domain import ReviewState
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.retrieval.domain import (
     RetrievalContractError,
@@ -192,6 +196,11 @@ class GenerationRecoveryResult:
     claims_expired: int
 
 
+class GenerationContextOptions(TypedDict, total=False):
+    knowledge_projection_ids: tuple[UUID, ...]
+    retrieval_filters: RetrievalFilters
+
+
 class GenerationRunService:
     def __init__(
         self,
@@ -216,6 +225,7 @@ class GenerationRunService:
         actor_id: UUID,
         retry_of_run_id: UUID | None = None,
         retrieval_filters: RetrievalFilters | None = None,
+        knowledge_projection_ids: tuple[UUID, ...] = (),
         _persist_retrieval_filters: bool = True,
     ) -> GenerationCreationResult:
         if (
@@ -229,6 +239,12 @@ class GenerationRunService:
             raise GenerationIdempotencyConflictError("invalid idempotency key")
         if not isinstance(_persist_retrieval_filters, bool):
             raise GenerationIdempotencyConflictError("invalid retrieval filter persistence mode")
+        if knowledge_projection_ids and (
+            len(knowledge_chunk_ids) + len(historical_question_ids) + len(knowledge_projection_ids)
+            > MAX_CONTEXT_ITEMS
+            or len(set(knowledge_projection_ids)) != len(knowledge_projection_ids)
+        ):
+            raise GenerationContextLimitError
         config = self._runtime.active_config
         scope = await self._repository.get_scope(curriculum_version_id)
         if scope is None:
@@ -275,15 +291,24 @@ class GenerationRunService:
 
         canonical_chunk_ids = tuple(sorted(knowledge_chunk_ids, key=lambda value: value.int))
         canonical_question_ids = tuple(sorted(historical_question_ids, key=lambda value: value.int))
+        canonical_projection_ids = tuple(
+            sorted(knowledge_projection_ids, key=lambda value: value.int)
+        )
         records = await self._repository.list_context_records(
             canonical_chunk_ids,
             canonical_question_ids,
+            **(
+                {"knowledge_projection_ids": canonical_projection_ids}
+                if canonical_projection_ids
+                else {}
+            ),
         )
         canonical_records = self._validate_context_records(
             active_filters,
             canonical_chunk_ids,
             canonical_question_ids,
             records,
+            projection_ids=canonical_projection_ids,
         )
         context, context_snapshot = _context_snapshot(
             canonical_records,
@@ -305,6 +330,11 @@ class GenerationRunService:
             "blueprint_slot_snapshot": slot_snapshot,
             "knowledge_chunk_ids": [str(value) for value in canonical_chunk_ids],
             "historical_question_ids": [str(value) for value in canonical_question_ids],
+            **(
+                {"knowledge_projection_ids": [str(value) for value in canonical_projection_ids]}
+                if canonical_projection_ids
+                else {}
+            ),
             "context_snapshot": context_snapshot,
             "versions": {
                 "prompt_id": config.prompt.prompt_id,
@@ -426,6 +456,11 @@ class GenerationRunService:
             actor_id=actor_id,
             retry_of_run_id=original.id,
             retrieval_filters=retrieval_filters,
+            **(
+                {"knowledge_projection_ids": _projection_ids(original.context_snapshot)}
+                if "knowledge_projection_ids" in original.context_snapshot
+                else {}
+            ),
             _persist_retrieval_filters=persisted_filters,
         )
 
@@ -479,10 +514,13 @@ class GenerationRunService:
         chunk_ids: tuple[UUID, ...],
         question_ids: tuple[UUID, ...],
         records: tuple[GenerationContextRecord, ...],
+        *,
+        projection_ids: tuple[UUID, ...] = (),
     ) -> tuple[GenerationContextRecord, ...]:
         requested = {
             *(("knowledge_chunk", value) for value in chunk_ids),
             *(("historical_question", value) for value in question_ids),
+            *(("knowledge_projection", value) for value in projection_ids),
         }
         found = {(record.record_kind, record.id) for record in records}
         if requested != found:
@@ -493,9 +531,18 @@ class GenerationRunService:
                 raise GenerationContextNotReviewedError(record.id)
             if (
                 record.source_active_for_ai is not True
-                or record.source_block_id is None
-                or record.source_candidate_id is None
-                or record.source_candidate_sha256 is None
+                or (
+                    record.record_kind != "knowledge_projection"
+                    and (
+                        record.source_block_id is None
+                        or record.source_candidate_id is None
+                        or record.source_candidate_sha256 is None
+                    )
+                )
+                or (
+                    (record.record_kind == "knowledge_projection")
+                    != isinstance(record.knowledge_evidence, KnowledgeEvidence)
+                )
                 or record.source_fidelity_current is not True
                 or record.metadata_resolved is not True
                 or record.catalogue_admitted is not True
@@ -1264,6 +1311,13 @@ def _context_snapshot(
     items: list[RetrievedContextItem] = []
     snapshots: list[dict[str, object]] = []
     for record in records:
+        evidence_size = (
+            0
+            if record.knowledge_evidence is None
+            else record.knowledge_evidence.serialized_character_count
+        )
+        if len(record.text) + evidence_size > MAX_CONTEXT_ITEM_CHARACTERS:
+            raise GenerationContextLimitError
         context_id = f"{record.record_kind}:{record.id}"
         record_scope = record.retrieval_scope
         if record_scope is None and isinstance(retrieval_filters, RetrievalScope):
@@ -1279,6 +1333,7 @@ def _context_snapshot(
                 context_id=context_id,
                 text=record.text,
                 provenance=provenance,
+                knowledge_evidence=record.knowledge_evidence,
             )
         )
         snapshots.append(
@@ -1289,12 +1344,19 @@ def _context_snapshot(
                 "record_version": record.version,
                 "text": record.text,
                 "trust": "untrusted_data",
+                **(
+                    {"knowledge_evidence": record.knowledge_evidence.model_dump(mode="json")}
+                    if record.knowledge_evidence is not None
+                    else {}
+                ),
                 "provenance": {
                     "source_document_id": provenance.source_document_id,
                     "source_version": provenance.source_version,
                     "page_number": provenance.page_number,
                     "chunk_id": provenance.chunk_id,
-                    "source_block_id": str(record.source_block_id),
+                    "source_block_id": _optional_uuid(record.source_block_id)
+                    if record.knowledge_evidence is not None
+                    else str(record.source_block_id),
                     "source_candidate_id": _optional_uuid(record.source_candidate_id),
                     "source_candidate_sha256": record.source_candidate_sha256,
                 },
@@ -1318,6 +1380,12 @@ def _context_snapshot(
     except GenerationContractError as error:
         raise GenerationContextLimitError from error
     snapshot: dict[str, object] = {"items": snapshots, "trust": "untrusted_data"}
+    projection_ids = sorted(
+        record.id for record in records if record.record_kind == "knowledge_projection"
+    )
+    if projection_ids:
+        snapshot["schema_version"] = "generation-knowledge-context.v1"
+        snapshot["knowledge_projection_ids"] = [str(value) for value in projection_ids]
     if retrieval_filters is not None:
         snapshot["retrieval_filters"] = serialize_retrieval_filters(retrieval_filters)
     return context, snapshot
@@ -1398,6 +1466,15 @@ def _persisted_context(snapshot: dict[str, object]) -> ProvenanceContext:
         provenance = raw_item.get("provenance")
         if not isinstance(provenance, dict):
             raise GenerationContractError("persisted context provenance is malformed")
+        evidence_payload = raw_item.get("knowledge_evidence")
+        evidence = None
+        if evidence_payload is not None:
+            try:
+                evidence = KnowledgeEvidence.model_validate_json(
+                    json.dumps(evidence_payload, ensure_ascii=False, allow_nan=False)
+                )
+            except (TypeError, ValueError):
+                raise GenerationContractError("persisted knowledge evidence is malformed") from None
         items.append(
             RetrievedContextItem(
                 context_id=cast(str, raw_item["context_id"]),
@@ -1408,7 +1485,22 @@ def _persisted_context(snapshot: dict[str, object]) -> ProvenanceContext:
                     page_number=cast(int, provenance["page_number"]),
                     chunk_id=cast(str, provenance["chunk_id"]),
                 ),
+                knowledge_evidence=evidence,
             )
+        )
+    references = tuple(
+        sorted(
+            item.knowledge_evidence.reference.projection_id
+            for item in items
+            if item.knowledge_evidence is not None
+        )
+    )
+    if (references or "knowledge_projection_ids" in snapshot) and (
+        snapshot.get("schema_version") != "generation-knowledge-context.v1"
+        or _projection_ids(snapshot) != references
+    ):
+        raise GenerationContractError(
+            "persisted knowledge evidence references differ from the context"
         )
     return ProvenanceContext(items=tuple(items))
 

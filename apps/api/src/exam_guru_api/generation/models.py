@@ -33,6 +33,7 @@ MAX_GENERATION_TOKENS = 30_000_000
 MAX_GENERATION_COST_MICROUSD = 3_000_000_000_000
 MAX_GENERATION_LATENCY_MS = 259_200_000
 _FINGERPRINT_SQL = "^[s][h][a]256:[0-9a-f]{64}$"
+_PROJECTION_IDS_SQL = "coalesce(context_snapshot->'knowledge_projection_ids','[]'::jsonb)"
 
 
 class GenerationRunStatus(StrEnum):
@@ -122,8 +123,10 @@ class GenerationRunModel(Base):
         CheckConstraint(
             "generation_uuid_array_valid(knowledge_chunk_ids, 16) AND "
             "generation_uuid_array_valid(historical_question_ids, 16) AND "
+            f"generation_uuid_array_valid({_PROJECTION_IDS_SQL}, 16) AND "
             "jsonb_array_length(knowledge_chunk_ids) + "
-            "jsonb_array_length(historical_question_ids) BETWEEN 1 AND 16",
+            "jsonb_array_length(historical_question_ids) + "
+            f"jsonb_array_length({_PROJECTION_IDS_SQL}) BETWEEN 1 AND 16",
             name="ck_generation_runs_context_ids",
         ),
         CheckConstraint(
@@ -143,7 +146,8 @@ class GenerationRunModel(Base):
             "jsonb_typeof(context_snapshot->'items') = 'array' AND "
             "jsonb_array_length(context_snapshot->'items') = "
             "jsonb_array_length(knowledge_chunk_ids) + "
-            "jsonb_array_length(historical_question_ids) AND "
+            "jsonb_array_length(historical_question_ids) + "
+            f"jsonb_array_length({_PROJECTION_IDS_SQL}) AND "
             "context_snapshot->>'trust' = 'untrusted_data' AND "
             f"pg_column_size(context_snapshot) <= {MAX_GENERATION_CONTEXT_SNAPSHOT_BYTES}",
             name="ck_generation_runs_context_snapshot",

@@ -22,7 +22,7 @@ MAX_FUSION_RESULTS = 100
 MAX_CANDIDATES_PER_CHANNEL = 10_000
 MAX_RANK_CONSTANT = 10_000
 
-type SegmentKey = tuple[RetrievalScope, UUID, int, str]
+type SegmentKey = tuple[RetrievalScope, UUID, int, str, UUID | None]
 
 
 class VectorSpaceMismatchError(RetrievalContractError):
@@ -137,18 +137,29 @@ class FusedCandidate:
         object.__setattr__(self, "provenances", provenances)
 
 
-def _provenance_sort_key(provenance: SourceProvenance) -> tuple[int, int, int]:
+def _provenance_sort_key(provenance: SourceProvenance) -> tuple[int, int, int, int]:
     block_id = provenance.source_block_id.int if provenance.source_block_id is not None else -1
-    return provenance.source_document_id.int, provenance.page_number, block_id
+    projection_id = (
+        -1
+        if provenance.knowledge_reference is None
+        else provenance.knowledge_reference.projection_id.int
+    )
+    return provenance.source_document_id.int, provenance.page_number, block_id, projection_id
 
 
 def _normalized_segment_key(record: RetrievalRecord) -> SegmentKey:
-    normalized_text = " ".join(unicodedata.normalize("NFKC", record.text).split()).casefold()
+    reference = record.provenance.knowledge_reference
+    normalized_text = (
+        record.text
+        if reference is not None
+        else " ".join(unicodedata.normalize("NFKC", record.text).split()).casefold()
+    )
     return (
         record.scope,
         record.provenance.source_document_id,
         record.provenance.page_number,
         normalized_text,
+        None if reference is None else reference.projection_id,
     )
 
 

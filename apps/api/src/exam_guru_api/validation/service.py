@@ -31,6 +31,7 @@ from exam_guru_api.generation.domain import (
     QuestionAnswer,
     QuestionOption,
     RetrievedContextItem,
+    projection_context_ids,
 )
 from exam_guru_api.generation.models import (
     GenerationAttemptModel,
@@ -38,6 +39,7 @@ from exam_guru_api.generation.models import (
     GenerationRunModel,
     GenerationRunStatus,
 )
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 from exam_guru_api.observability import OperationalTelemetry, get_operational_telemetry
 from exam_guru_api.retrieval.domain import RetrievalContractError as RetrievalScopeError
 from exam_guru_api.retrieval.domain import (
@@ -177,6 +179,12 @@ def _request_fingerprint_payload(run: GenerationRunModel) -> dict[str, object]:
         "blueprint_slot_snapshot": run.blueprint_slot_snapshot,
         "knowledge_chunk_ids": run.knowledge_chunk_ids,
         "historical_question_ids": run.historical_question_ids,
+        **(
+            {"knowledge_projection_ids": run.context_snapshot["knowledge_projection_ids"]}
+            if isinstance(run.context_snapshot, Mapping)
+            and "knowledge_projection_ids" in run.context_snapshot
+            else {}
+        ),
         "context_snapshot": run.context_snapshot,
         "versions": {
             "prompt_id": run.prompt_id,
@@ -242,7 +250,20 @@ def _context_snapshot_root(
         if "retrieval_filters" in raw_keys
         else frozenset({"items", "trust"})
     )
+    if "knowledge_projection_ids" in raw_keys:
+        keys |= {"schema_version", "knowledge_projection_ids", "retrieval_filters"}
     root = _object(snapshot, keys=keys, label="generation context")
+    if "knowledge_projection_ids" in root:
+        try:
+            references = projection_context_ids(root)
+        except GenerationContractError as error:
+            raise ValidationGenerationIntegrityError(
+                "generation projection references are invalid"
+            ) from error
+        if not references or root["schema_version"] != "generation-knowledge-context.v1":
+            raise ValidationGenerationIntegrityError(
+                "generation knowledge context version is invalid"
+            )
     if "retrieval_filters" not in root:
         return root, None
     try:
@@ -254,7 +275,9 @@ def _context_snapshot_root(
     return root, filters
 
 
-def _context_provenance(value: object, *, index: int) -> Mapping[str, object]:
+def _context_provenance(
+    value: object, *, index: int, knowledge: bool = False
+) -> Mapping[str, object]:
     lineage_keys = frozenset({"source_candidate_id", "source_candidate_sha256"})
     keys = frozenset(
         {"source_document_id", "source_version", "page_number", "chunk_id", "source_block_id"}
@@ -265,6 +288,14 @@ def _context_provenance(value: object, *, index: int) -> Mapping[str, object]:
         keys=keys | lineage_keys if has_lineage else keys,
         label=f"generation context provenance {index}",
     )
+    if knowledge:
+        if not has_lineage or any(
+            provenance[name] is not None for name in (*lineage_keys, "source_block_id")
+        ):
+            raise ValidationGenerationIntegrityError(
+                "structured knowledge cannot impersonate text lineage"
+            )
+        return provenance
     if has_lineage:
         candidate_id = _text(provenance["source_candidate_id"], label="source_candidate_id")
         try:
@@ -291,6 +322,7 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     expected_records = {
         *(("knowledge_chunk", value) for value in run.knowledge_chunk_ids),
         *(("historical_question", value) for value in run.historical_question_ids),
+        *(("knowledge_projection", str(value)) for value in projection_context_ids(root)),
     }
     observed_records: set[tuple[str, str]] = set()
     items: list[RetrievedContextItem] = []
@@ -309,6 +341,11 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
     for index, raw_item in enumerate(raw_items):
         raw_item_keys = frozenset(raw_item) if isinstance(raw_item, Mapping) else frozenset()
         item_keys = legacy_item_keys
+        knowledge = (
+            isinstance(raw_item, Mapping) and raw_item.get("record_kind") == "knowledge_projection"
+        )
+        if knowledge:
+            item_keys |= {"knowledge_evidence", "retrieval_scope", "learning_scope"}
         if "learning_scope" in raw_item_keys:
             item_keys |= {"learning_scope"}
         if "retrieval_scope" in raw_item_keys:
@@ -318,7 +355,25 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
             keys=item_keys,
             label=f"generation context item {index}",
         )
-        provenance = _context_provenance(item["provenance"], index=index)
+        provenance = _context_provenance(item["provenance"], index=index, knowledge=knowledge)
+        evidence = None
+        if knowledge:
+            try:
+                evidence = KnowledgeEvidence.model_validate_json(
+                    json.dumps(item["knowledge_evidence"], ensure_ascii=False, allow_nan=False)
+                )
+            except (TypeError, ValueError) as error:
+                raise ValidationGenerationIntegrityError(
+                    "generation knowledge evidence is invalid"
+                ) from error
+            if str(evidence.reference.projection_id) != item[
+                "record_id"
+            ] or evidence.reference.review_version != _integer(
+                item["record_version"], label="record_version"
+            ):
+                raise ValidationGenerationIntegrityError(
+                    "generation knowledge review identity differs"
+                )
         taxonomy = _object(
             item["taxonomy"],
             keys=frozenset({"competency_id", "skill_id", "sub_skill_id", "learning_concept_id"}),
@@ -346,6 +401,21 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
                 raise ValidationGenerationIntegrityError(
                     "generation context retrieval scope is invalid"
                 ) from error
+            if evidence is not None and any(
+                left != right
+                for left, right in (
+                    (
+                        evidence.unit.scope.curriculum_version_id,
+                        retrieval_scope.curriculum_version_id,
+                    ),
+                    (evidence.unit.scope.grade, retrieval_scope.grade),
+                    (evidence.unit.scope.medium_id, retrieval_scope.medium_id),
+                    (evidence.unit.scope.subject_id, retrieval_scope.subject_id),
+                )
+            ):
+                raise ValidationGenerationIntegrityError(
+                    "generation knowledge source scope differs"
+                )
             expected_taxonomy = {
                 "competency_id": str(retrieval_scope.taxonomy.competency_id),
                 "skill_id": (
@@ -405,6 +475,7 @@ def _context_from_snapshot(run: GenerationRunModel) -> ProvenanceContext:
                     page_number=_integer(provenance["page_number"], label="page_number"),
                     chunk_id=_text(provenance["chunk_id"], label="chunk_id"),
                 ),
+                knowledge_evidence=evidence,
             )
         )
     if observed_records != expected_records or len(observed_records) != len(raw_items):
@@ -904,6 +975,11 @@ def _input_snapshot(
                 "page_number": source.page_number,
                 "chunk_id": source.chunk_id,
                 "trust": "untrusted_data",
+                **(
+                    {"knowledge_evidence": source.knowledge_evidence.model_dump(mode="json")}
+                    if source.knowledge_evidence is not None
+                    else {}
+                ),
             }
             for source in validation_input.grounding_sources
         ],

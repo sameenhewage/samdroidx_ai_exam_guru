@@ -163,8 +163,10 @@ def test_generation_integrity_rolls_back_and_success_passes_through() -> None:
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("projections", [False, True])
 def test_generation_route_functions_serialize_commands_and_reads(
     monkeypatch: pytest.MonkeyPatch,
+    projections: bool,
 ) -> None:
     from exam_guru_api.api.routes.generation import (
         create_generation_run,
@@ -187,6 +189,10 @@ def test_generation_route_functions_serialize_commands_and_reads(
 
         class FakeService:
             async def create(self, *args: object, **kwargs: object) -> GenerationCreationResult:
+                if projections:
+                    assert kwargs["knowledge_projection_ids"] == (UUID(int=940_004),)
+                else:
+                    assert "knowledge_projection_ids" not in kwargs
                 return GenerationCreationResult(run, job, deduplicated=False)
 
             async def retry(self, *args: object, **kwargs: object) -> GenerationCreationResult:
@@ -240,6 +246,7 @@ def test_generation_route_functions_serialize_commands_and_reads(
             paper_blueprint_id=RESOURCE_ID,
             slot_id="slot-1",
             knowledge_chunk_ids=(UUID(int=940_003),),
+            knowledge_projection_ids=(UUID(int=940_004),) if projections else (),
         )
         session = cast(AsyncSession, object())
         runtime = cast(GenerationRuntimeRegistry, object())

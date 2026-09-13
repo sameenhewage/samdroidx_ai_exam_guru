@@ -23,7 +23,9 @@ from exam_guru_api.knowledge.unit_service import (
 )
 from exam_guru_api.knowledge.units import (
     KnowledgeDerivationError,
+    KnowledgeEvidence,
     KnowledgeProjection,
+    KnowledgeProjectionReference,
     KnowledgeScope,
     KnowledgeUnit,
     derive_knowledge_units,
@@ -51,6 +53,36 @@ def scope(trusted: TrustedPageKnowledge, grade: int = 5) -> KnowledgeScope:
         curriculum_unit_id=None,
         lesson_id=None,
     )
+
+
+def test_structured_evidence_binds_lossless_unit_and_projection_identities() -> None:
+    trusted = approve(candidate())
+    unit = derive_knowledge_units(trusted, scope(trusted))[1]
+    projection = project_knowledge_unit(unit)
+    reference = KnowledgeProjectionReference(
+        projection_id=projection.id,
+        projection_fingerprint=projection.fingerprint,
+        unit_id=unit.id,
+        unit_fingerprint=unit.fingerprint,
+        trusted_page_id=unit.trusted_page_id,
+        trusted_fingerprint=unit.trusted_fingerprint,
+        review_id=UUID(int=99309),
+        review_fingerprint="d" * 64,
+        review_version=1,
+    )
+    evidence = KnowledgeEvidence(unit=unit, reference=reference)
+    assert evidence.unit.observation == unit.observation
+    assert evidence.unit.education == unit.education
+    for field, value in (
+        ("unit_id", UUID(int=99310)),
+        ("trusted_page_id", UUID(int=99311)),
+        ("projection_id", UUID(int=99312)),
+        ("unit_fingerprint", "e" * 64),
+        ("projection_fingerprint", "f" * 64),
+        ("trusted_fingerprint", "0" * 64),
+    ):
+        with pytest.raises(ValueError, match=r"evidence.*identity"):
+            KnowledgeEvidence(unit=unit, reference=reference.model_copy(update={field: value}))
 
 
 def test_units_are_deterministic_source_components_and_preserve_exact_evidence() -> None:

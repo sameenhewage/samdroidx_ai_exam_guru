@@ -29,6 +29,7 @@ from tests.test_retrieval_fixtures import (
     grade_five_filter,
     grade_five_scope,
     lexical,
+    projection_record,
     retrieval_record,
     vector,
 )
@@ -60,6 +61,25 @@ def test_weighted_reciprocal_rank_fusion_is_deterministic_and_deduplicates_chann
     assert forward[0].lexical_rank == 1
     assert forward[0].vector_rank == 2
     assert forward[0].source_chunk_ids == (first.chunk_id,)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"), [("Equal groups", "Equal groups"), ("2² = 4", "22 = 4")]
+)
+def test_fusion_does_not_collapse_distinct_verified_units_by_projected_text(
+    left: str, right: str
+) -> None:
+    first = projection_record(120, left)
+    second = projection_record(121, right)
+    fused = fuse_candidates(
+        (lexical(first, 2.0), lexical(second, 1.0)),
+        (),
+        filters=grade_five_filter(),
+        embedding_config_fingerprint=EMBEDDING_FINGERPRINT,
+    )
+    assert len(fused) == 2
+    assert tuple(item.source_chunk_ids for item in fused) == ((first.chunk_id,), (second.chunk_id,))
+    assert tuple(item.provenances for item in fused) == ((first.provenance,), (second.provenance,))
 
 
 def test_fusion_deduplicates_normalized_segments_without_losing_provenance() -> None:

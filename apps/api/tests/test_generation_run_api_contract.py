@@ -51,6 +51,31 @@ def test_generation_permissions_separate_admin_commands_from_reviewer_reads() ->
         authorize(reviewer, Permission.GENERATION_RUN)
 
 
+def test_generation_projection_selection_is_optional_bounded_and_ids_only() -> None:
+    payload = {
+        "paper_blueprint_id": str(BLUEPRINT_ID),
+        "slot_id": "slot-001",
+        "knowledge_projection_ids": [str(UUID(int=910_013))],
+    }
+    request = GenerationRunCreateRequest.model_validate(payload)
+    assert request.context_references == (("knowledge_projection", UUID(int=910_013)),)
+    with pytest.raises(ValidationError, match="unique"):
+        GenerationRunCreateRequest.model_validate(
+            {**payload, "knowledge_projection_ids": [str(UUID(int=1))] * 2}
+        )
+    with pytest.raises(ValidationError, match="16"):
+        GenerationRunCreateRequest.model_validate(
+            {**payload, "knowledge_chunk_ids": [str(UUID(int=index)) for index in range(16)]}
+        )
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        GenerationRunCreateRequest.model_validate(
+            {**payload, "knowledge_evidence": {"unit": "client supplied"}}
+        )
+    schema = create_app().openapi()["components"]["schemas"]["GenerationRunCreateRequest"]
+    assert "knowledge_projection_ids" not in schema["required"]
+    assert "default" not in schema["properties"]["knowledge_projection_ids"]
+
+
 def test_create_contract_accepts_only_bounded_server_resolved_identifiers() -> None:
     request = GenerationRunCreateRequest.model_validate(valid_payload())
 
@@ -128,9 +153,11 @@ def test_generation_openapi_exposes_async_jobs_and_bounded_authorized_reads() ->
         "slot_id",
         "knowledge_chunk_ids",
         "historical_question_ids",
+        "knowledge_projection_ids",
     }
     assert request_schema["properties"]["knowledge_chunk_ids"]["maxItems"] == 16
     assert request_schema["properties"]["historical_question_ids"]["maxItems"] == 16
+    assert request_schema["properties"]["knowledge_projection_ids"]["maxItems"] == 16
 
     for response_name in ("GenerationRunSummaryResponse", "GenerationRunResponse"):
         retry_depth = schema["components"]["schemas"][response_name]["properties"]["retry_depth"]

@@ -17,7 +17,12 @@ from pydantic import (
 from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig
 from exam_guru_api.retrieval.context import ContextTrust
-from exam_guru_api.retrieval.domain import RetrievalScope, SourceProvenance, TaxonomyScope
+from exam_guru_api.retrieval.domain import (
+    KnowledgeProjectionReference,
+    RetrievalScope,
+    SourceProvenance,
+    TaxonomyScope,
+)
 from exam_guru_api.retrieval.explorer import (
     MAX_EXPLORER_CANDIDATES,
     RetrievalExplorationResult,
@@ -228,6 +233,9 @@ class RetrievalProvenanceResponse(BaseModel):
     source_document_id: UUID
     page_number: int
     source_block_id: UUID | None
+    knowledge_reference: KnowledgeProjectionReference | None = Field(
+        default_factory=lambda: None, exclude_if=lambda value: value is None
+    )
 
     @classmethod
     def from_domain(cls, provenance: SourceProvenance) -> Self:
@@ -235,6 +243,7 @@ class RetrievalProvenanceResponse(BaseModel):
             source_document_id=provenance.source_document_id,
             page_number=provenance.page_number,
             source_block_id=provenance.source_block_id,
+            knowledge_reference=provenance.knowledge_reference,
         )
 
 

@@ -3,9 +3,10 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, literal, select, update
+from sqlalchemy import and_, func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.curriculum.domain import LEGACY_UNCLASSIFIED_SUBJECT_ID
@@ -20,6 +21,11 @@ from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import HistoricalQuestionModel, KnowledgeChunkModel
+from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
+from exam_guru_api.knowledge.unit_review import _snapshot as _review_snapshot
+from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
+from exam_guru_api.knowledge.unit_service import _projection, _unit
+from exam_guru_api.knowledge.units import KnowledgeEvidence, KnowledgeProjectionReference
 from exam_guru_api.retrieval.domain import RetrievalScope, TaxonomyScope
 
 from .models import (
@@ -74,6 +80,7 @@ class GenerationContextRecord:
     source_fidelity_current: bool = False
     metadata_resolved: bool = False
     catalogue_admitted: bool = False
+    knowledge_evidence: KnowledgeEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +239,7 @@ class SqlAlchemyGenerationRepository:
         self,
         knowledge_chunk_ids: tuple[UUID, ...],
         historical_question_ids: tuple[UUID, ...],
+        knowledge_projection_ids: tuple[UUID, ...] = (),
     ) -> tuple[GenerationContextRecord, ...]:
         records: list[GenerationContextRecord] = []
         if knowledge_chunk_ids:
@@ -306,7 +314,120 @@ class SqlAlchemyGenerationRepository:
                 .execution_options(populate_existing=True)
             )
             records.extend(self._question_context(*row) for row in rows.all())
+        if knowledge_projection_ids:
+            records.extend(await self._projection_context_records(knowledge_projection_ids))
         return tuple(records)
+
+    async def _projection_context_records(
+        self, identifiers: tuple[UUID, ...]
+    ) -> tuple[GenerationContextRecord, ...]:
+        previous = aliased(KnowledgeUnitReviewModel)
+        latest = (
+            select(func.max(previous.version))
+            .where(previous.unit_id == KnowledgeUnitModel.id)
+            .correlate(KnowledgeUnitModel)
+            .scalar_subquery()
+        )
+        rows = (
+            await self._session.execute(
+                select(
+                    KnowledgeUnitModel,
+                    KnowledgeProjectionModel,
+                    KnowledgeUnitReviewModel,
+                    SourceDocumentModel,
+                    CurriculumVersionModel,
+                    ExamConfigurationModel,
+                )
+                .select_from(KnowledgeProjectionModel)
+                .join(KnowledgeUnitModel, KnowledgeUnitModel.id == KnowledgeProjectionModel.unit_id)
+                .join(
+                    KnowledgeUnitReviewModel,
+                    and_(
+                        KnowledgeUnitReviewModel.unit_id == KnowledgeUnitModel.id,
+                        KnowledgeUnitReviewModel.version == latest,
+                    ),
+                )
+                .join(SourceDocumentModel, SourceDocumentModel.id == KnowledgeUnitModel.document_id)
+                .join(
+                    CurriculumVersionModel,
+                    CurriculumVersionModel.id == KnowledgeUnitModel.curriculum_version_id,
+                )
+                .join(
+                    ExamConfigurationModel,
+                    ExamConfigurationModel.id == CurriculumVersionModel.exam_configuration_id,
+                )
+                .where(
+                    KnowledgeProjectionModel.id.in_(identifiers),
+                    func.knowledge_projection_is_current(KnowledgeProjectionModel.id).is_(True),
+                    func.knowledge_unit_review_is_eligible(KnowledgeUnitReviewModel.id).is_(True),
+                )
+                .order_by(KnowledgeProjectionModel.id)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        result: list[GenerationContextRecord] = []
+        for unit_row, projection_row, review_row, document, curriculum, exam in rows:
+            unit, projection, review = (
+                _unit(unit_row),
+                _projection(projection_row),
+                _review_snapshot(review_row),
+            )
+            scope = RetrievalScope(
+                grade=exam.grade,
+                exam_id=exam.id,
+                medium_id=curriculum.medium_id,
+                subject_id=curriculum.subject_id,
+                curriculum_version_id=curriculum.id,
+                unit_ids=() if review.curriculum_unit_id is None else (review.curriculum_unit_id,),
+                lesson_ids=() if review.lesson_id is None else (review.lesson_id,),
+                taxonomy=TaxonomyScope(
+                    competency_id=cast(UUID, review.competency_id),
+                    skill_id=review.skill_id,
+                    sub_skill_id=review.sub_skill_id,
+                    learning_concept_id=review.learning_concept_id,
+                ),
+            )
+            reference = KnowledgeProjectionReference(
+                projection_id=projection.id,
+                projection_fingerprint=projection.fingerprint,
+                unit_id=unit.id,
+                unit_fingerprint=unit.fingerprint,
+                trusted_page_id=unit.trusted_page_id,
+                trusted_fingerprint=unit.trusted_fingerprint,
+                review_id=review.id,
+                review_fingerprint=review.fingerprint,
+                review_version=review.version,
+            )
+            result.append(
+                GenerationContextRecord(
+                    record_kind="knowledge_projection",
+                    id=projection.id,
+                    curriculum_version_id=curriculum.id,
+                    text=projection.text,
+                    version=review.version,
+                    review_state=ReviewState.REVIEWED,
+                    competency_id=review.competency_id,
+                    skill_id=review.skill_id,
+                    sub_skill_id=review.sub_skill_id,
+                    learning_concept_id=review.learning_concept_id,
+                    source_document_id=unit.source.document_id,
+                    source_curriculum_version_id=document.curriculum_version_id,
+                    source_checksum_sha256=document.checksum_sha256,
+                    source_status=document.extraction_status,
+                    page_number=unit.source.page_number,
+                    source_block_id=None,
+                    source_active_for_ai=document.active_for_ai,
+                    unit_id=review.curriculum_unit_id,
+                    lesson_id=review.lesson_id,
+                    retrieval_scope=scope,
+                    scope_active=True,
+                    source_fidelity_current=True,
+                    metadata_resolved=True,
+                    catalogue_admitted=True,
+                    knowledge_evidence=KnowledgeEvidence(unit=unit, reference=reference),
+                )
+            )
+        return tuple(result)
 
     async def context_lineage_is_current(
         self,
@@ -314,10 +435,16 @@ class SqlAlchemyGenerationRepository:
         *,
         lock_sources: bool = False,
     ) -> bool:
+        predicate = (
+            func.generation_knowledge_context_is_current
+            if isinstance(run.context_snapshot, dict)
+            and "knowledge_projection_ids" in run.context_snapshot
+            else func.generation_context_lineage_is_current
+        )
         return (
             await self._session.scalar(
                 select(
-                    func.generation_context_lineage_is_current(
+                    predicate(
                         run.curriculum_version_id,
                         literal(run.knowledge_chunk_ids, type_=JSONB),
                         literal(run.historical_question_ids, type_=JSONB),

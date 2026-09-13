@@ -313,6 +313,32 @@ async def create(
     )
 
 
+@pytest.mark.parametrize(
+    "identifiers", [(UUID(int=951001),) * 2, tuple(UUID(int=951000 + index) for index in range(17))]
+)
+def test_service_rejects_duplicate_or_oversized_projection_selection_before_loading(
+    identifiers: tuple[UUID, ...],
+) -> None:
+    async def check() -> None:
+        repository = FakeGenerationRepository()
+        service, _session, dispatcher = build_service(repository)
+        with pytest.raises(GenerationContextLimitError):
+            await service.create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=BLUEPRINT_DB_ID,
+                slot_id=PAPER.slots[0].slot_id,
+                knowledge_chunk_ids=(),
+                historical_question_ids=(),
+                knowledge_projection_ids=identifiers,
+                idempotency_key="bounded-projection-context",
+                actor_id=ACTOR_ID,
+            )
+        assert repository.by_hash == {}
+        assert dispatcher.dispatched == []
+
+    asyncio.run(check())
+
+
 def test_service_resolves_snapshots_audits_dispatches_and_deduplicates() -> None:
     async def exercise() -> None:
         repository = FakeGenerationRepository()
@@ -865,6 +891,12 @@ def test_context_validation_rejects_missing_unreviewed_untrusted_or_spoofed_reco
             (),
             records,
         )
+
+
+def test_context_item_overflow_uses_the_stable_request_limit_error() -> None:
+    oversized = replace(context_record("knowledge_chunk", CHUNK_ID), text="x" * 8_001)
+    with pytest.raises(GenerationContextLimitError):
+        _context_snapshot((oversized,))
 
 
 def test_context_and_slot_snapshot_boundaries_are_strict() -> None:

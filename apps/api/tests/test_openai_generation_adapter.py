@@ -1,4 +1,5 @@
 import ast
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from exam_guru_api.generation.domain import (
     GenerationAccounting,
     GenerationRequest,
     GenerationVersions,
+    ProvenanceContext,
 )
 from exam_guru_api.generation.openai_adapter import (
     OPENAI_PROVIDER,
@@ -30,6 +32,7 @@ from exam_guru_api.retrieval import (
     openai_embedding_adapter as openai_retrieval_embedding_adapter,
 )
 from exam_guru_api.validation import openai_semantic_verifier
+from tests.test_generation_domain import knowledge_context_item
 from tests.test_generation_provider import request as provider_request
 from tests.test_generation_provider import retry_identity
 
@@ -248,6 +251,24 @@ def sdk_response(
 def sdk_error(name: str, *args: object, **kwargs: object) -> Exception:
     factory = cast(Callable[..., Exception], getattr(openai_adapter, name))
     return factory(*args, **kwargs)
+
+
+def test_adapter_sends_exact_structured_knowledge_as_versioned_untrusted_data() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    completions = StubCompletions()
+    adapter = build_adapter(completions)
+    generation_request = replace(request(), context=ProvenanceContext(items=(item,)))
+    result = adapter.generate(generation_request)
+    messages = cast(list[dict[str, str]], completions.calls[0]["messages"])
+    payload = json.loads(messages[1]["content"].splitlines()[1])
+    assert payload["schema_version"] == "generation-knowledge-context.v1"
+    assert payload["items"][0]["knowledge_evidence"] == item.knowledge_evidence.model_dump(
+        mode="json"
+    )
+    assert payload["trust"] == "untrusted_data"
+    assert "knowledge_evidence" not in messages[0]["content"]
+    assert result.request.context == generation_request.context
 
 
 def test_adapter_uses_exact_versioned_route_strict_schema_and_safe_prompt_boundary() -> None:

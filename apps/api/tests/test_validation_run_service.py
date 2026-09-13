@@ -14,6 +14,7 @@ from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.documents.domain import ExtractionStatus
 from exam_guru_api.generation.domain import (
     ContextProvenance,
+    GenerationContractError,
     GenerationIdentity,
     GenerationResult,
     ProvenanceContext,
@@ -21,7 +22,7 @@ from exam_guru_api.generation.domain import (
 )
 from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRunModel
 from exam_guru_api.generation.repository import GenerationContextRecord
-from exam_guru_api.generation.run_service import _candidate_snapshot
+from exam_guru_api.generation.run_service import _candidate_snapshot, _persisted_context
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.retrieval.domain import (
     RetrievalScope,
@@ -89,6 +90,7 @@ from exam_guru_api.validation.service import (
     reconstruct_generation_result,
     reconstruct_validation_report,
 )
+from tests.test_generation_domain import knowledge_context_item
 from tests.test_operational_telemetry import telemetry
 from tests.test_validation_generation_integration import _PAPER, _result
 
@@ -104,6 +106,124 @@ SOURCE_A_ID = UUID(int=980_007)
 SOURCE_B_ID = UUID(int=980_008)
 BLOCK_A_ID = UUID(int=980_009)
 BLOCK_B_ID = UUID(int=980_010)
+
+
+def knowledge_context_snapshot() -> dict[str, object]:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    unit = item.knowledge_evidence.unit
+    scope = RetrievalScope(
+        grade=unit.scope.grade,
+        exam_id=UUID(int=99001),
+        medium_id=unit.scope.medium_id,
+        subject_id=unit.scope.subject_id,
+        curriculum_version_id=unit.scope.curriculum_version_id,
+        taxonomy=TaxonomyScope(UUID(int=99002)),
+    )
+    serialized_scope = serialize_retrieval_scope(scope)
+    return {
+        "schema_version": "generation-knowledge-context.v1",
+        "trust": "untrusted_data",
+        "knowledge_projection_ids": [item.provenance.chunk_id],
+        "retrieval_filters": serialize_retrieval_filters(scope),
+        "items": [
+            {
+                "context_id": item.context_id,
+                "record_kind": "knowledge_projection",
+                "record_id": item.provenance.chunk_id,
+                "record_version": item.knowledge_evidence.reference.review_version,
+                "text": item.text,
+                "trust": "untrusted_data",
+                "retrieval_scope": serialized_scope,
+                "taxonomy": serialized_scope["taxonomy"],
+                "learning_scope": {"unit_id": None, "lesson_id": None},
+                "provenance": {
+                    "source_document_id": item.provenance.source_document_id,
+                    "source_version": item.provenance.source_version,
+                    "page_number": item.provenance.page_number,
+                    "chunk_id": item.provenance.chunk_id,
+                    "source_block_id": None,
+                    "source_candidate_id": None,
+                    "source_candidate_sha256": None,
+                },
+                "knowledge_evidence": item.knowledge_evidence.model_dump(mode="json"),
+            }
+        ],
+    }
+
+
+def test_generation_and_validation_replay_preserve_the_same_structured_snapshot() -> None:
+    snapshot = knowledge_context_snapshot()
+    run = GenerationRunModel(
+        context_snapshot=snapshot, knowledge_chunk_ids=[], historical_question_ids=[]
+    )
+    assert _persisted_context(snapshot) == validation_service._context_from_snapshot(run)
+    evidence = _persisted_context(snapshot).items[0].knowledge_evidence
+    assert evidence is not None
+    assert (
+        evidence.model_dump(mode="json")
+        == cast(list[dict[str, object]], snapshot["items"])[0]["knowledge_evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "ids_type",
+        "ids_empty",
+        "schema",
+        "legacy_block",
+        "legacy_keys",
+        "evidence",
+        "missing_evidence",
+        "review_version",
+        "projection_id",
+        "source_scope",
+    ],
+)
+def test_validation_replay_rejects_corrupt_knowledge_envelopes(corruption: str) -> None:
+    snapshot = knowledge_context_snapshot()
+    item = cast(list[dict[str, object]], snapshot["items"])[0]
+    if corruption == "ids_type":
+        snapshot["knowledge_projection_ids"] = False
+    elif corruption == "ids_empty":
+        snapshot["knowledge_projection_ids"] = []
+    elif corruption == "schema":
+        snapshot["schema_version"] = "unknown"
+    elif corruption == "legacy_block":
+        cast(dict[str, object], item["provenance"])["source_block_id"] = str(UUID(int=1))
+    elif corruption == "legacy_keys":
+        provenance = cast(dict[str, object], item["provenance"])
+        provenance.pop("source_candidate_id")
+        provenance.pop("source_candidate_sha256")
+    elif corruption == "evidence":
+        item["knowledge_evidence"] = 42
+    elif corruption == "missing_evidence":
+        item.pop("knowledge_evidence")
+    elif corruption == "review_version":
+        item["record_version"] = 2
+    elif corruption == "projection_id":
+        item["record_id"] = str(UUID(int=1))
+    else:
+        cast(dict[str, object], item["retrieval_scope"])["grade"] = 7
+    run = GenerationRunModel(
+        context_snapshot=snapshot, knowledge_chunk_ids=[], historical_question_ids=[]
+    )
+    with pytest.raises(ValidationGenerationIntegrityError):
+        validation_service._context_from_snapshot(run)
+
+
+@pytest.mark.parametrize("corruption", ["evidence", "schema", "ids"])
+def test_generation_worker_replay_rejects_corrupt_knowledge_envelopes(corruption: str) -> None:
+    snapshot = knowledge_context_snapshot()
+    if corruption == "evidence":
+        cast(list[dict[str, object]], snapshot["items"])[0]["knowledge_evidence"] = 42
+    elif corruption == "schema":
+        snapshot["schema_version"] = "unknown"
+    else:
+        snapshot["knowledge_projection_ids"] = [str(UUID(int=1))]
+    with pytest.raises(GenerationContractError, match="knowledge"):
+        _persisted_context(snapshot)
 
 
 def test_validation_age_bounds_follow_the_selected_grade() -> None:

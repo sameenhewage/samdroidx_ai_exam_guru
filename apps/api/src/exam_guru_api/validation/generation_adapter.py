@@ -31,6 +31,7 @@ from exam_guru_api.generation.domain import (
     QuestionOption,
     RetrievedContextItem,
 )
+from exam_guru_api.knowledge.units import KnowledgeEvidence
 from exam_guru_api.validation.domain import (
     QUESTION_SCHEMA_VERSION,
     BlueprintRequirements,
@@ -99,6 +100,7 @@ def _canonical_result(value: object) -> GenerationResult:
                         page_number=item.provenance.page_number,
                         chunk_id=item.provenance.chunk_id,
                     ),
+                    knowledge_evidence=item.knowledge_evidence,
                 )
                 for item in context.items
             )
@@ -169,10 +171,18 @@ def _canonical_json_default(value: object) -> str:
     raise TypeError(f"unsupported canonical generation value: {type(value).__name__}")
 
 
+def _canonical_result_fields(fields: list[tuple[str, object]]) -> dict[str, object]:
+    return {
+        name: value.model_dump(mode="json") if isinstance(value, KnowledgeEvidence) else value
+        for name, value in fields
+        if name != "knowledge_evidence" or value is not None
+    }
+
+
 def _canonical_result_fingerprint(result: GenerationResult) -> str:
     try:
         payload = json.dumps(
-            asdict(result),
+            asdict(result, dict_factory=_canonical_result_fields),
             default=_canonical_json_default,
             ensure_ascii=False,
             allow_nan=False,
@@ -358,6 +368,7 @@ def adapt_generation_result(
             source_version=item.provenance.source_version,
             page_number=item.provenance.page_number,
             chunk_id=item.provenance.chunk_id,
+            knowledge_evidence=item.knowledge_evidence,
         )
         for item in canonical.request.context.items
     )

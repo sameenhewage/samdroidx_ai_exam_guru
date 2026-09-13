@@ -33,6 +33,7 @@ from tests.test_retrieval_fixtures import (
     SUB_SKILL_ID,
     grade_five_filter,
     grade_five_scope,
+    projection_record,
 )
 
 
@@ -98,6 +99,34 @@ def compile_postgres(statement: Any) -> str:
             compile_kwargs={"render_postcompile": True},
         )
     )
+
+
+def test_projection_rows_reject_missing_conflicting_or_malformed_lineage() -> None:
+    record = projection_record(150, "Exact projection")
+    reference = record.provenance.knowledge_reference
+    assert reference is not None
+    payload = reference.model_dump(mode="json")
+    row = {
+        **candidate_row(record_id=150, score=1.0, text=record.text),
+        "source_block_id": None,
+        "record_kind": "knowledge_projection",
+        "knowledge_reference": payload,
+    }
+    assert (
+        PostgresHybridRetrievalRepository._record_from_row(
+            cast(Any, row)
+        ).provenance.knowledge_reference
+        == reference
+    )
+    for changed in (
+        {"knowledge_reference": None},
+        {"record_kind": "knowledge_chunk"},
+        {"knowledge_reference": "missing structured identity"},
+        {"knowledge_reference": {**payload, "review_version": True}},
+        {"knowledge_reference": {**payload, "projection_id": str(UUID(int=151))}},
+    ):
+        with pytest.raises(RetrievalContractError, match="projection"):
+            PostgresHybridRetrievalRepository._record_from_row(cast(Any, {**row, **changed}))
 
 
 def test_statements_scope_reviewed_records_before_postgres_ranking() -> None:

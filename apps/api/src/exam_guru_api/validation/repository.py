@@ -14,6 +14,7 @@ from exam_guru_api.curriculum.models import (
     MediumModel,
     SubjectModel,
 )
+from exam_guru_api.generation.domain import projection_context_ids
 from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRunModel
 from exam_guru_api.generation.repository import (
     GenerationContextRecord,
@@ -144,6 +145,11 @@ class SqlAlchemyValidationRepository:
         context_records = await SqlAlchemyGenerationRepository(self._session).list_context_records(
             tuple(UUID(value) for value in run.knowledge_chunk_ids),
             tuple(UUID(value) for value in run.historical_question_ids),
+            **(
+                {"knowledge_projection_ids": projection_context_ids(run.context_snapshot)}
+                if "knowledge_projection_ids" in run.context_snapshot
+                else {}
+            ),
         )
         curriculum_ids = {record.curriculum_version_id for record in context_records}
         subject_by_curriculum = {

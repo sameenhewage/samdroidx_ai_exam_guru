@@ -4204,6 +4204,8 @@ export interface components {
              * @default []
              */
             knowledge_chunk_ids: string[];
+            /** Knowledge Projection Ids */
+            knowledge_projection_ids?: string[];
             /**
              * Paper Blueprint Id
              * Format: uuid
@@ -4658,6 +4660,45 @@ export interface components {
             skill_id: string | null;
             /** Sub Skill Id */
             sub_skill_id: string | null;
+        };
+        /** KnowledgeProjectionReference */
+        KnowledgeProjectionReference: {
+            /** Projection Fingerprint */
+            projection_fingerprint: string;
+            /**
+             * Projection Id
+             * Format: uuid
+             */
+            projection_id: string;
+            /** Review Fingerprint */
+            review_fingerprint: string;
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            review_id: string;
+            /** Review Version */
+            review_version: number;
+            /**
+             * Schema Version
+             * @default knowledge-projection-reference.v1
+             * @constant
+             */
+            schema_version: "knowledge-projection-reference.v1";
+            /** Trusted Fingerprint */
+            trusted_fingerprint: string;
+            /**
+             * Trusted Page Id
+             * Format: uuid
+             */
+            trusted_page_id: string;
+            /** Unit Fingerprint */
+            unit_fingerprint: string;
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
         };
         /** KnowledgeProvenanceResponse */
         KnowledgeProvenanceResponse: {
@@ -6705,6 +6746,7 @@ export interface components {
         };
         /** RetrievalProvenanceResponse */
         RetrievalProvenanceResponse: {
+            knowledge_reference?: components["schemas"]["KnowledgeProjectionReference"] | null;
             /** Page Number */
             page_number: number;
             /** Source Block Id */

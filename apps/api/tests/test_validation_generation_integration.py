@@ -1,5 +1,7 @@
+import hashlib
+import json
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import cast
 from uuid import UUID
 
@@ -37,6 +39,7 @@ from exam_guru_api.validation import (
     validate_question,
 )
 from tests.test_blueprint_domain import make_uniform_specification
+from tests.test_generation_domain import knowledge_context_item
 
 _SPECIFICATION = make_uniform_specification((1,), 2)
 _SPECIFICATION = replace(
@@ -187,6 +190,64 @@ def _result(
             latency_ms=35,
         ),
     )
+
+
+def test_legacy_generation_result_fingerprint_does_not_gain_an_empty_evidence_field() -> None:
+    result = _result()
+    historical_payload = asdict(result)
+    for item in historical_payload["request"]["context"]["items"]:
+        item.pop("knowledge_evidence")
+    expected = hashlib.sha256(
+        json.dumps(
+            historical_payload,
+            default=str,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    assert generation_result_fingerprint(result) == expected
+
+
+def test_generation_result_fingerprint_binds_structured_evidence_and_its_review() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    base = _result()
+    result = replace(base, request=replace(base.request, context=ProvenanceContext(items=(item,))))
+    fingerprint = generation_result_fingerprint(result)
+    changed_reference = item.knowledge_evidence.reference.model_copy(
+        update={"review_id": UUID(int=99409)}
+    )
+    changed = replace(
+        item,
+        knowledge_evidence=item.knowledge_evidence.model_copy(
+            update={"reference": changed_reference}
+        ),
+    )
+    changed_result = replace(
+        base, request=replace(base.request, context=ProvenanceContext(items=(changed,)))
+    )
+    assert generation_result_fingerprint(changed_result) != fingerprint
+
+
+def test_validation_grounding_retains_structured_evidence_and_fingerprints_its_review() -> None:
+    item = knowledge_context_item()
+    assert item.knowledge_evidence is not None
+    base = _result()
+    result = replace(base, request=replace(base.request, context=ProvenanceContext(items=(item,))))
+    validated = adapt_generation_result(result, requirements=_requirements(result))
+    source = validated.grounding_sources[0]
+    assert source.knowledge_evidence == item.knowledge_evidence
+    changed_reference = item.knowledge_evidence.reference.model_copy(
+        update={"review_id": UUID(int=99410)}
+    )
+    changed_evidence = item.knowledge_evidence.model_copy(update={"reference": changed_reference})
+    changed = replace(
+        validated, grounding_sources=(replace(source, knowledge_evidence=changed_evidence),)
+    )
+    assert changed.candidate_id == validated.candidate_id
+    assert changed.input_fingerprint != validated.input_fingerprint
 
 
 def _requirements(result: GenerationResult, **changes: object) -> BlueprintRequirements:
