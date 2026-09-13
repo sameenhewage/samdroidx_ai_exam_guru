@@ -5683,6 +5683,115 @@
         "title": "KnowledgeProvenanceResponse",
         "type": "object"
       },
+      "KnowledgeReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "competency_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competency Id"
+          },
+          "confirmed_mapping": {
+            "title": "Confirmed Mapping",
+            "type": "boolean"
+          },
+          "curriculum_unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Unit Id"
+          },
+          "expected_version": {
+            "maximum": 2147483645.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "state": {
+            "enum": [
+              "reviewed",
+              "rejected"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          }
+        },
+        "required": [
+          "state",
+          "confirmed_mapping",
+          "reason",
+          "expected_version"
+        ],
+        "title": "KnowledgeReviewRequest",
+        "type": "object"
+      },
       "KnowledgeReviewTransitionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5701,6 +5810,416 @@
           "expected_version"
         ],
         "title": "KnowledgeReviewTransitionRequest",
+        "type": "object"
+      },
+      "KnowledgeScope": {
+        "additionalProperties": false,
+        "properties": {
+          "catalogue_decision_id": {
+            "format": "uuid",
+            "title": "Catalogue Decision Id",
+            "type": "string"
+          },
+          "catalogue_scope_fingerprint": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Catalogue Scope Fingerprint",
+            "type": "string"
+          },
+          "catalogue_version": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Catalogue Version",
+            "type": "integer"
+          },
+          "curriculum_unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Unit Id"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "grade": {
+            "maximum": 13.0,
+            "minimum": 1.0,
+            "title": "Grade",
+            "type": "integer"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "material_type": {
+            "$ref": "#/components/schemas/SourceDocumentType"
+          },
+          "medium_id": {
+            "format": "uuid",
+            "title": "Medium Id",
+            "type": "string"
+          },
+          "metadata_scope_version": {
+            "maximum": 2147483646.0,
+            "minimum": 0.0,
+            "title": "Metadata Scope Version",
+            "type": "integer"
+          },
+          "paper_code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Code"
+          },
+          "schema_version": {
+            "const": "knowledge-scope.v2",
+            "default": "knowledge-scope.v2",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Sha256",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1900.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "document_id",
+          "source_sha256",
+          "material_type",
+          "year",
+          "paper_code",
+          "metadata_scope_version",
+          "curriculum_version_id",
+          "grade",
+          "medium_id",
+          "subject_id",
+          "catalogue_decision_id",
+          "catalogue_version",
+          "catalogue_scope_fingerprint",
+          "curriculum_unit_id",
+          "lesson_id"
+        ],
+        "title": "KnowledgeScope",
+        "type": "object"
+      },
+      "KnowledgeUnit": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "derivation_version": {
+            "const": "page-region-components.v1",
+            "default": "page-region-components.v1",
+            "title": "Derivation Version",
+            "type": "string"
+          },
+          "education": {
+            "$ref": "#/components/schemas/EducationalUnderstanding"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/PageObservation"
+          },
+          "region_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Region Ids",
+            "type": "array"
+          },
+          "resolved_uncertainties": {
+            "items": {
+              "$ref": "#/components/schemas/UnderstandingUncertainty"
+            },
+            "maxItems": 128,
+            "title": "Resolved Uncertainties",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "knowledge-unit.v1",
+            "default": "knowledge-unit.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/KnowledgeScope"
+          },
+          "sequence": {
+            "maximum": 127.0,
+            "minimum": 0.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          },
+          "trusted_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Trusted Fingerprint",
+            "type": "string"
+          },
+          "trusted_page_id": {
+            "format": "uuid",
+            "title": "Trusted Page Id",
+            "type": "string"
+          },
+          "trusted_revision": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Trusted Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "trusted_page_id",
+          "trusted_revision",
+          "trusted_fingerprint",
+          "candidate_id",
+          "source",
+          "scope",
+          "sequence",
+          "region_ids",
+          "observation",
+          "education",
+          "resolved_uncertainties"
+        ],
+        "title": "KnowledgeUnit",
+        "type": "object"
+      },
+      "KnowledgeUnitReview": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "competency_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competency Id"
+          },
+          "confirmed_mapping": {
+            "title": "Confirmed Mapping",
+            "type": "boolean"
+          },
+          "curriculum_unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Unit Id"
+          },
+          "curriculum_version_id": {
+            "format": "uuid",
+            "title": "Curriculum Version Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "learning_concept_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learning Concept Id"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "knowledge-unit-review.v1",
+            "default": "knowledge-unit-review.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "state": {
+            "enum": [
+              "reviewed",
+              "rejected"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "sub_skill_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Skill Id"
+          },
+          "unit_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Unit Fingerprint",
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "confirmed_mapping",
+          "reason",
+          "id",
+          "unit_id",
+          "unit_fingerprint",
+          "curriculum_version_id",
+          "version",
+          "actor_id"
+        ],
+        "title": "KnowledgeUnitReview",
+        "type": "object"
+      },
+      "KnowledgeUnitWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeUnitReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_current": {
+            "title": "Source Current",
+            "type": "boolean"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/KnowledgeUnit"
+          }
+        },
+        "required": [
+          "unit",
+          "review",
+          "source_current",
+          "eligible"
+        ],
+        "title": "KnowledgeUnitWorkspace",
         "type": "object"
       },
       "LatencyMillisecondsResponse": {
@@ -20332,6 +20851,232 @@
         "summary": "Advance a historical question review state",
         "tags": [
           "admin-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/units/{unit_id}": {
+      "get": {
+        "operationId": "get_knowledge_unit_workspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeUnitWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Knowledge Unit Workspace",
+        "tags": [
+          "verified-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/units/{unit_id}/reviews": {
+      "post": {
+        "operationId": "review_knowledge_unit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Curriculum Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeUnitReview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Review Knowledge Unit",
+        "tags": [
+          "verified-knowledge"
         ]
       }
     },

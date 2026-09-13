@@ -58,6 +58,8 @@ _PRIVATE_HEADERS = {
 
 
 class _PrivateUnderstandingRoute(APIRoute):
+    invalid_request_code = "invalid_source_understanding_request"
+
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         original = super().get_route_handler()
 
@@ -75,7 +77,7 @@ class _PrivateUnderstandingRoute(APIRoute):
             except RequestValidationError:
                 raise HTTPException(
                     422,
-                    detail={"code": "invalid_source_understanding_request"},
+                    detail={"code": self.invalid_request_code},
                     headers=_PRIVATE_HEADERS,
                 ) from None
 

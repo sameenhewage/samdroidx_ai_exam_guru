@@ -11,6 +11,7 @@ from exam_guru_api.api.routes.embedding_jobs import router as embedding_job_rout
 from exam_guru_api.api.routes.generation import router as generation_router
 from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
+from exam_guru_api.api.routes.knowledge_units import router as knowledge_unit_router
 from exam_guru_api.api.routes.operations import router as operations_router
 from exam_guru_api.api.routes.page_images import router as page_images_router
 from exam_guru_api.api.routes.papers import router as paper_router
@@ -94,6 +95,9 @@ api_router.include_router(
     knowledge_router,
     prefix="/admin/curricula",
     tags=["admin-knowledge"],
+)
+api_router.include_router(
+    knowledge_unit_router, prefix="/admin/curricula", tags=["verified-knowledge"]
 )
 api_router.include_router(
     taxonomy_router,

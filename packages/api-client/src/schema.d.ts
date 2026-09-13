@@ -350,6 +350,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/units/{unit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Knowledge Unit Workspace */
+        get: operations["get_knowledge_unit_workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/curricula/{curriculum_version_id}/knowledge/units/{unit_id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Knowledge Unit */
+        post: operations["review_knowledge_unit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/curricula/{curriculum_version_id}/paper-drafts": {
         parameters: {
             query?: never;
@@ -4627,11 +4661,197 @@ export interface components {
              */
             source_document_id: string;
         };
+        /** KnowledgeReviewRequest */
+        KnowledgeReviewRequest: {
+            /** Competency Id */
+            competency_id?: string | null;
+            /** Confirmed Mapping */
+            confirmed_mapping: boolean;
+            /** Curriculum Unit Id */
+            curriculum_unit_id?: string | null;
+            /** Expected Version */
+            expected_version: number;
+            /** Learning Concept Id */
+            learning_concept_id?: string | null;
+            /** Lesson Id */
+            lesson_id?: string | null;
+            /** Reason */
+            reason: string;
+            /** Skill Id */
+            skill_id?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reviewed" | "rejected";
+            /** Sub Skill Id */
+            sub_skill_id?: string | null;
+        };
         /** KnowledgeReviewTransitionRequest */
         KnowledgeReviewTransitionRequest: {
             /** Expected Version */
             expected_version: number;
             target: components["schemas"]["ReviewState"];
+        };
+        /** KnowledgeScope */
+        KnowledgeScope: {
+            /**
+             * Catalogue Decision Id
+             * Format: uuid
+             */
+            catalogue_decision_id: string;
+            /** Catalogue Scope Fingerprint */
+            catalogue_scope_fingerprint: string;
+            /** Catalogue Version */
+            catalogue_version: number;
+            /** Curriculum Unit Id */
+            curriculum_unit_id: string | null;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Grade */
+            grade: number;
+            /** Lesson Id */
+            lesson_id: string | null;
+            material_type: components["schemas"]["SourceDocumentType"];
+            /**
+             * Medium Id
+             * Format: uuid
+             */
+            medium_id: string;
+            /** Metadata Scope Version */
+            metadata_scope_version: number;
+            /** Paper Code */
+            paper_code: string | null;
+            /**
+             * Schema Version
+             * @default knowledge-scope.v2
+             * @constant
+             */
+            schema_version: "knowledge-scope.v2";
+            /** Source Sha256 */
+            source_sha256: string;
+            /**
+             * Subject Id
+             * Format: uuid
+             */
+            subject_id: string;
+            /** Year */
+            year: number | null;
+        };
+        /** KnowledgeUnit */
+        KnowledgeUnit: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Derivation Version
+             * @default page-region-components.v1
+             * @constant
+             */
+            derivation_version: "page-region-components.v1";
+            education: components["schemas"]["EducationalUnderstanding"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            observation: components["schemas"]["PageObservation"];
+            /** Region Ids */
+            region_ids: string[];
+            /** Resolved Uncertainties */
+            resolved_uncertainties: components["schemas"]["UnderstandingUncertainty"][];
+            /**
+             * Schema Version
+             * @default knowledge-unit.v1
+             * @constant
+             */
+            schema_version: "knowledge-unit.v1";
+            scope: components["schemas"]["KnowledgeScope"];
+            /** Sequence */
+            sequence: number;
+            source: components["schemas"]["PageArtifactIdentity"];
+            /** Trusted Fingerprint */
+            trusted_fingerprint: string;
+            /**
+             * Trusted Page Id
+             * Format: uuid
+             */
+            trusted_page_id: string;
+            /** Trusted Revision */
+            trusted_revision: number;
+        };
+        /** KnowledgeUnitReview */
+        KnowledgeUnitReview: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Competency Id */
+            competency_id?: string | null;
+            /** Confirmed Mapping */
+            confirmed_mapping: boolean;
+            /** Curriculum Unit Id */
+            curriculum_unit_id?: string | null;
+            /**
+             * Curriculum Version Id
+             * Format: uuid
+             */
+            curriculum_version_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Learning Concept Id */
+            learning_concept_id?: string | null;
+            /** Lesson Id */
+            lesson_id?: string | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Schema Version
+             * @default knowledge-unit-review.v1
+             * @constant
+             */
+            schema_version: "knowledge-unit-review.v1";
+            /** Skill Id */
+            skill_id?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reviewed" | "rejected";
+            /** Sub Skill Id */
+            sub_skill_id?: string | null;
+            /** Unit Fingerprint */
+            unit_fingerprint: string;
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
+            /** Version */
+            version: number;
+        };
+        /** KnowledgeUnitWorkspace */
+        KnowledgeUnitWorkspace: {
+            /** Eligible */
+            eligible: boolean;
+            review: components["schemas"]["KnowledgeUnitReview"] | null;
+            /** Source Current */
+            source_current: boolean;
+            unit: components["schemas"]["KnowledgeUnit"];
         };
         /** LatencyMillisecondsResponse */
         LatencyMillisecondsResponse: {
@@ -10587,6 +10807,164 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_knowledge_unit_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUnitWorkspace"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    review_knowledge_unit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                curriculum_version_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUnitReview"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

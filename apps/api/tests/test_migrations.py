@@ -45,20 +45,20 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_knowledge_units_are_the_single_bounded_revision_head() -> None:
+def test_knowledge_unit_review_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0046_knowledge_units"]
-    revision = scripts.get_revision("0046_knowledge_units")
-    assert revision is not None
-    assert revision.down_revision == "0045_understanding_review"
-    assert len(revision.revision) <= 32
-    review = scripts.get_revision("0045_understanding_review")
-    assert review is not None
-    assert review.down_revision == "0044_understanding_jobs"
-    jobs = scripts.get_revision("0044_understanding_jobs")
-    assert jobs is not None
-    assert jobs.down_revision == "0043_document_understanding"
+    assert scripts.get_heads() == ["0047_knowledge_unit_review"]
+    for identifier, parent in (
+        ("0047_knowledge_unit_review", "0046_knowledge_units"),
+        ("0046_knowledge_units", "0045_understanding_review"),
+        ("0045_understanding_review", "0044_understanding_jobs"),
+        ("0044_understanding_jobs", "0043_document_understanding"),
+    ):
+        revision = scripts.get_revision(identifier)
+        assert revision is not None
+        assert revision.down_revision == parent
+        assert len(revision.revision) <= 32
 
 
 @pytest.mark.integration
