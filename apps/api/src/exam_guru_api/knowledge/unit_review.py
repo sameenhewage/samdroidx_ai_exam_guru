@@ -115,6 +115,7 @@ class KnowledgeUnitReviewService:
         unit_id: UUID,
         request: KnowledgeReviewRequest,
         curriculum_version_id: UUID | None = None,
+        commit: bool = True,
     ) -> KnowledgeUnitReview:
         authorize(principal, Permission.KNOWLEDGE_WRITE)
         request = KnowledgeReviewRequest.model_validate(request)
@@ -130,7 +131,8 @@ class KnowledgeUnitReviewService:
                 and latest.actor_id == principal.subject_id
                 and all(getattr(latest, key) == value for key, value in fields.items())
             ):
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
                 return latest
             if (0 if latest is None else latest.version) != request.expected_version:
                 raise KnowledgeUnitReviewError("knowledge_review_version_conflict")
@@ -185,10 +187,14 @@ class KnowledgeUnitReviewService:
             self.session.add(
                 KnowledgeUnitReviewModel.from_domain(reviewed, audit_event_id=audit.id)
             )
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
             return reviewed
         except Exception:
-            await self.session.rollback()
+            if commit:
+                await self.session.rollback()
             raise
 
     async def _load_unit(

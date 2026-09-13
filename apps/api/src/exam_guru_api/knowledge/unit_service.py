@@ -83,6 +83,7 @@ class KnowledgeUnitService:
         document_id: UUID,
         page_number: int,
         expected_trusted_page_id: UUID,
+        commit: bool = True,
     ) -> PreparedPageKnowledge:
         authorize(principal, Permission.KNOWLEDGE_WRITE)
         if type(page_number) is not int or page_number < 1:
@@ -149,7 +150,8 @@ class KnowledgeUnitService:
                     or any(by_id[item.id] != item for item in projections)
                 ):
                     raise KnowledgePreparationError("knowledge_preparation_conflict")
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
                 return PreparedPageKnowledge(units, tuple(projections), tuple(unsearchable), False)
             scope_fingerprint = hashlib.sha256(_canonical_bytes(scope)).hexdigest()
             audit = AdminAuditEventModel(
@@ -200,10 +202,14 @@ class KnowledgeUnitService:
                 )
                 for item in projections
             )
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
             return PreparedPageKnowledge(units, tuple(projections), tuple(unsearchable), True)
         except Exception:
-            await self.session.rollback()
+            if commit:
+                await self.session.rollback()
             raise
 
     async def get_unit(self, *, principal: Principal, unit_id: UUID) -> KnowledgeUnit:

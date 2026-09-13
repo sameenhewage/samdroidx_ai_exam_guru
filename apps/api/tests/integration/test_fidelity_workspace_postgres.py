@@ -180,7 +180,7 @@ async def add_source(
 async def add_curriculum(session: AsyncSession, *, medium_name: str = "Sinhala") -> UUID:
     exam = ExamConfigurationModel(
         id=uuid4(),
-        code="G7-" + uuid4().hex[:20].upper(),
+        code="G7-C" + uuid4().hex[:20].upper(),
         name="School Grade 7",
         grade=7,
         created_by=ADMIN.subject_id,
@@ -195,7 +195,7 @@ async def add_curriculum(session: AsyncSession, *, medium_name: str = "Sinhala")
     )
     subject = SubjectModel(
         id=uuid4(),
-        code="MATHS-" + uuid4().hex.upper(),
+        code="MATHS-C" + uuid4().hex.upper(),
         name="Mathematics",
         created_by=ADMIN.subject_id,
         updated_by=ADMIN.subject_id,

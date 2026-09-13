@@ -85,9 +85,9 @@ async def verified_source(
     assert exam is not None
     assert subject is not None
     exam.grade = grade
-    exam.code = f"G{grade}-" + uuid4().hex[:20].upper()
+    exam.code = f"G{grade}-C" + uuid4().hex[:20].upper()
     exam.name = f"School Grade {grade}"
-    subject.code = "SUBJECT-" + uuid4().hex[:20].upper()
+    subject.code = "SUBJECT-C" + uuid4().hex[:20].upper()
     subject.name = subject_name
     curriculum.title = f"{subject_name} curriculum 2026"
     await session.commit()
