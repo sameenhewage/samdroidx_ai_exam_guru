@@ -3493,6 +3493,11 @@ export interface components {
              * @default []
              */
             knowledge_chunk_ids: string[];
+            /**
+             * Knowledge Projection Ids
+             * @default []
+             */
+            knowledge_projection_ids: string[];
         };
         /** EmbeddingJobResponse */
         EmbeddingJobResponse: {
@@ -3533,6 +3538,11 @@ export interface components {
             id: string;
             /** Knowledge Chunk Ids */
             knowledge_chunk_ids: string[];
+            /**
+             * Knowledge Projection Ids
+             * @default []
+             */
+            knowledge_projection_ids: string[];
             /** Queue Message Id */
             queue_message_id: string | null;
             /** Retry Depth */

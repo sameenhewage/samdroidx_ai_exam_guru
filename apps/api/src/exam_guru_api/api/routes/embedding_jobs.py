@@ -134,6 +134,7 @@ async def create_embedding_job(
             curriculum_version_id,
             historical_question_ids=request.historical_question_ids,
             knowledge_chunk_ids=request.knowledge_chunk_ids,
+            knowledge_projection_ids=request.knowledge_projection_ids,
             idempotency_key=idempotency_key,
             actor_id=principal.subject_id,
         ),

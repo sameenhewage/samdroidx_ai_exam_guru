@@ -580,6 +580,7 @@ export function EmbeddingIngestion({
         .filter((candidate) => candidate.kind === "chunks")
         .map((candidate) => candidate.record.id)
         .sort(),
+      knowledge_projection_ids: [],
     } satisfies EmbeddingJobCreateRequest);
   }, [candidatesById, selected]);
   const retryLimitReached =
@@ -904,6 +905,7 @@ export function EmbeddingIngestion({
         .filter((candidate) => candidate.kind === "chunks")
         .map((candidate) => candidate.record.id)
         .sort(),
+      knowledge_projection_ids: [],
     };
     const requestFingerprint = JSON.stringify(body);
     if (requestFingerprint === retryLimitFingerprint) return;

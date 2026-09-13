@@ -6,10 +6,13 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from exam_guru_api.curriculum.models import CurriculumVersionModel
 from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
+from exam_guru_api.documents.understanding_contracts import UnderstandingModel
+from exam_guru_api.documents.understanding_verification import Checksum
 from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.models import (
     EmbeddingJobModel,
@@ -17,6 +20,10 @@ from exam_guru_api.knowledge.models import (
     HistoricalQuestionModel,
     KnowledgeChunkModel,
 )
+from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
+from exam_guru_api.knowledge.unit_review import _snapshot as _review_snapshot
+from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
+from exam_guru_api.knowledge.unit_service import _projection, _unit
 
 
 class EmbeddingJobNotFoundError(LookupError):
@@ -29,9 +36,20 @@ class EmbeddingPersistenceConflictError(RuntimeError):
     pass
 
 
+class ProjectionEmbeddingLineage(UnderstandingModel):
+    schema_version: Literal["projection-embedding-lineage.v1"] = "projection-embedding-lineage.v1"
+    projection_fingerprint: Checksum
+    unit_id: UUID
+    unit_fingerprint: Checksum
+    trusted_page_id: UUID
+    trusted_fingerprint: Checksum
+    review_id: UUID
+    review_fingerprint: Checksum
+
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingSourceRecord:
-    kind: Literal["historical_question", "knowledge_chunk"]
+    kind: Literal["historical_question", "knowledge_chunk", "knowledge_projection"]
     id: UUID
     curriculum_version_id: UUID
     review_state: ReviewState
@@ -43,6 +61,7 @@ class EmbeddingSourceRecord:
     source_fidelity_current: bool = False
     metadata_resolved: bool = False
     catalogue_admitted: bool = False
+    projection_lineage: ProjectionEmbeddingLineage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +88,7 @@ class SqlAlchemyEmbeddingJobRepository:
         self,
         historical_question_ids: tuple[UUID, ...],
         knowledge_chunk_ids: tuple[UUID, ...],
+        knowledge_projection_ids: tuple[UUID, ...] = (),
     ) -> tuple[EmbeddingSourceRecord, ...]:
         """Return the global kind/UUID order workers use when acquiring source-row locks."""
 
@@ -177,7 +197,77 @@ class SqlAlchemyEmbeddingJobRepository:
                 )
                 for chunk, candidate_sha256 in chunks
             )
+        if knowledge_projection_ids:
+            records.extend(await self._projection_sources(knowledge_projection_ids))
         return tuple(sorted(records, key=lambda item: (item.kind, item.id.int)))
+
+    async def _projection_sources(
+        self, identifiers: tuple[UUID, ...]
+    ) -> tuple[EmbeddingSourceRecord, ...]:
+        previous = aliased(KnowledgeUnitReviewModel)
+        version = (
+            select(func.max(previous.version))
+            .where(previous.unit_id == KnowledgeUnitModel.id)
+            .correlate(KnowledgeUnitModel)
+            .scalar_subquery()
+        )
+        rows = (
+            await self._session.execute(
+                select(KnowledgeProjectionModel, KnowledgeUnitModel, KnowledgeUnitReviewModel)
+                .join(KnowledgeUnitModel, KnowledgeUnitModel.id == KnowledgeProjectionModel.unit_id)
+                .outerjoin(
+                    KnowledgeUnitReviewModel,
+                    and_(
+                        KnowledgeUnitReviewModel.unit_id == KnowledgeUnitModel.id,
+                        KnowledgeUnitReviewModel.version == version,
+                    ),
+                )
+                .where(
+                    KnowledgeProjectionModel.id.in_(identifiers),
+                    func.knowledge_projection_is_current(KnowledgeProjectionModel.id).is_(True),
+                    or_(
+                        KnowledgeUnitReviewModel.id.is_(None),
+                        KnowledgeUnitReviewModel.state != "reviewed",
+                        func.knowledge_projection_is_eligible(KnowledgeProjectionModel.id).is_(
+                            True
+                        ),
+                    ),
+                )
+                .order_by(KnowledgeProjectionModel.id)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        records: list[EmbeddingSourceRecord] = []
+        for projected, source, mapped in rows:
+            projection = _projection(projected)
+            unit = _unit(source)
+            review = None if mapped is None else _review_snapshot(mapped)
+            records.append(
+                EmbeddingSourceRecord(
+                    kind="knowledge_projection",
+                    id=projection.id,
+                    curriculum_version_id=unit.scope.curriculum_version_id,
+                    review_state=ReviewState.DRAFT if review is None else ReviewState(review.state),
+                    text=projection.text,
+                    version=0 if review is None else review.version,
+                    active_for_ai=True,
+                    source_fidelity_current=True,
+                    metadata_resolved=True,
+                    catalogue_admitted=True,
+                    projection_lineage=None
+                    if review is None
+                    else ProjectionEmbeddingLineage(
+                        projection_fingerprint=projection.fingerprint,
+                        unit_id=unit.id,
+                        unit_fingerprint=unit.fingerprint,
+                        trusted_page_id=unit.trusted_page_id,
+                        trusted_fingerprint=unit.trusted_fingerprint,
+                        review_id=review.id,
+                        review_fingerprint=review.fingerprint,
+                    ),
+                )
+            )
+        return tuple(records)
 
     async def store_job(self, values: dict[str, object]) -> StoredEmbeddingJob:
         inserted = await self._session.scalar(

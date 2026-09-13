@@ -16,6 +16,7 @@ from exam_guru_api.knowledge.domain import ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingJobNotFoundError,
     EmbeddingSourceRecord,
+    ProjectionEmbeddingLineage,
     SqlAlchemyEmbeddingJobRepository,
 )
 from exam_guru_api.knowledge.embeddings import EmbeddingConfig, EmbeddingContractError
@@ -145,10 +146,21 @@ def _source_fingerprint(records: tuple[EmbeddingSourceRecord, ...]) -> str:
                 "source_fidelity_current": record.source_fidelity_current,
                 "metadata_resolved": record.metadata_resolved,
                 "catalogue_admitted": record.catalogue_admitted,
+                **(
+                    {"projection_lineage": record.projection_lineage.model_dump(mode="json")}
+                    if record.projection_lineage is not None
+                    else {}
+                ),
             }
             for record in records
         ]
     )
+
+
+def _projection_review_id(record: EmbeddingSourceRecord) -> UUID:
+    if not isinstance(record.projection_lineage, ProjectionEmbeddingLineage):
+        raise EmbeddingSourceNotReviewedError("current reviewed projection lineage required")
+    return record.projection_lineage.review_id
 
 
 def _config_snapshot(config: EmbeddingConfig) -> dict[str, object]:
@@ -183,9 +195,12 @@ class EmbeddingJobService:
         knowledge_chunk_ids: tuple[UUID, ...],
         idempotency_key: str,
         actor_id: UUID,
+        knowledge_projection_ids: tuple[UUID, ...] = (),
     ) -> EmbeddingJobCreationResult:
         self._validate_idempotency_key(idempotency_key)
-        requested_count = len(historical_question_ids) + len(knowledge_chunk_ids)
+        requested_count = (
+            len(historical_question_ids) + len(knowledge_chunk_ids) + len(knowledge_projection_ids)
+        )
         if (
             self._active_config.provider == OPENAI_EMBEDDING_PROVIDER
             and requested_count > OPENAI_EMBEDDING_MAX_JOB_RECORDS
@@ -197,8 +212,15 @@ class EmbeddingJobService:
 
         question_ids = tuple(sorted(historical_question_ids, key=lambda value: value.int))
         chunk_ids = tuple(sorted(knowledge_chunk_ids, key=lambda value: value.int))
-        records = await self._repository.load_sources(question_ids, chunk_ids)
-        self._validate_sources(curriculum_version_id, question_ids, chunk_ids, records)
+        projection_ids = tuple(sorted(knowledge_projection_ids, key=lambda value: value.int))
+        records = await self._repository.load_sources(
+            question_ids,
+            chunk_ids,
+            **({"knowledge_projection_ids": projection_ids} if projection_ids else {}),
+        )
+        self._validate_sources(
+            curriculum_version_id, question_ids, chunk_ids, records, projection_ids=projection_ids
+        )
         await self._prevalidate_existing_embeddings(curriculum_version_id, records)
 
         source_fingerprint = _source_fingerprint(records)
@@ -208,6 +230,11 @@ class EmbeddingJobService:
                 "curriculum_version_id": str(curriculum_version_id),
                 "historical_question_ids": [str(value) for value in question_ids],
                 "knowledge_chunk_ids": [str(value) for value in chunk_ids],
+                **(
+                    {"knowledge_projection_ids": [str(value) for value in projection_ids]}
+                    if projection_ids
+                    else {}
+                ),
                 "source_fingerprint": source_fingerprint,
             }
         )
@@ -223,6 +250,7 @@ class EmbeddingJobService:
                 question_ids=question_ids,
                 chunk_ids=chunk_ids,
                 request_fingerprint=request_fingerprint,
+                projection_ids=projection_ids,
             ):
                 raise EmbeddingIdempotencyConflictError(idempotency_key_hash)
             if (
@@ -252,6 +280,7 @@ class EmbeddingJobService:
                 "retry_depth": 0 if retry is None else retry.retry_depth + 1,
                 "historical_question_ids": [str(value) for value in question_ids],
                 "knowledge_chunk_ids": [str(value) for value in chunk_ids],
+                "knowledge_projection_ids": [str(value) for value in projection_ids],
                 "idempotency_key_hash": idempotency_key_hash,
                 "request_fingerprint": request_fingerprint,
                 "source_fingerprint": source_fingerprint,
@@ -278,11 +307,12 @@ class EmbeddingJobService:
             question_ids=question_ids,
             chunk_ids=chunk_ids,
             request_fingerprint=request_fingerprint,
+            projection_ids=projection_ids,
         ):
             raise EmbeddingIdempotencyConflictError(idempotency_key_hash)
 
         if stored.created:
-            self._audit_created(stored.job)
+            self._audit_created(stored.job, records)
             await self._session.commit()
 
         job = stored.job
@@ -303,11 +333,18 @@ class EmbeddingJobService:
                     record.id,
                     self._active_config,
                 )
-            else:
+            elif record.kind == "knowledge_chunk":
                 await persistence.chunk_embedding_exists(
                     curriculum_version_id,
                     record.id,
                     self._active_config,
+                )
+            else:
+                await persistence.projection_embedding_exists(
+                    curriculum_version_id,
+                    record.id,
+                    self._active_config,
+                    expected_review_id=_projection_review_id(record),
                 )
 
     async def _dispatch(self, job: EmbeddingJobModel) -> EmbeddingJobModel:
@@ -328,10 +365,13 @@ class EmbeddingJobService:
         question_ids: tuple[UUID, ...],
         chunk_ids: tuple[UUID, ...],
         records: tuple[EmbeddingSourceRecord, ...],
+        *,
+        projection_ids: tuple[UUID, ...] = (),
     ) -> None:
         requested = {
             *(("historical_question", identifier) for identifier in question_ids),
             *(("knowledge_chunk", identifier) for identifier in chunk_ids),
+            *(("knowledge_projection", identifier) for identifier in projection_ids),
         }
         found = {(record.kind, record.id) for record in records}
         if requested != found or any(
@@ -343,8 +383,14 @@ class EmbeddingJobService:
         if any(record.active_for_ai is not True for record in records):
             raise EmbeddingSourceRemovedError
         if any(
-            record.source_candidate_id is None
-            or record.source_candidate_sha256 is None
+            (
+                record.kind != "knowledge_projection"
+                and (record.source_candidate_id is None or record.source_candidate_sha256 is None)
+            )
+            or (
+                record.kind == "knowledge_projection"
+                and not isinstance(record.projection_lineage, ProjectionEmbeddingLineage)
+            )
             or record.source_fidelity_current is not True
             or record.metadata_resolved is not True
             or record.catalogue_admitted is not True
@@ -360,11 +406,13 @@ class EmbeddingJobService:
         question_ids: tuple[UUID, ...],
         chunk_ids: tuple[UUID, ...],
         request_fingerprint: str,
+        projection_ids: tuple[UUID, ...] = (),
     ) -> bool:
         return (
             job.curriculum_version_id == curriculum_version_id
             and job.historical_question_ids == [str(value) for value in question_ids]
             and job.knowledge_chunk_ids == [str(value) for value in chunk_ids]
+            and (job.knowledge_projection_ids or []) == [str(value) for value in projection_ids]
             and job.request_fingerprint == request_fingerprint
         )
 
@@ -389,7 +437,17 @@ class EmbeddingJobService:
         ):
             raise ValueError("invalid queue message id")
 
-    def _audit_created(self, job: EmbeddingJobModel) -> None:
+    def _audit_created(
+        self, job: EmbeddingJobModel, records: tuple[EmbeddingSourceRecord, ...] = ()
+    ) -> None:
+        projection_sources = [
+            {
+                "projection_id": str(record.id),
+                "lineage": record.projection_lineage.model_dump(mode="json"),
+            }
+            for record in records
+            if record.projection_lineage is not None
+        ]
         self._session.add(
             AdminAuditEventModel(
                 id=uuid4(),
@@ -410,6 +468,7 @@ class EmbeddingJobService:
                     "embedding_version": job.embedding_version,
                     "config_fingerprint": job.config_fingerprint,
                     "status": job.status,
+                    **({"projection_sources": projection_sources} if projection_sources else {}),
                 },
             )
         )
@@ -477,15 +536,18 @@ class EmbeddingWorkerService:
             if job.embedding_config != self._active_config:
                 raise ActiveEmbeddingConfigUnavailableError
             self._providers.ensure_provider(job.embedding_config)
+            projection_ids = tuple(UUID(value) for value in (job.knowledge_projection_ids or []))
             records = await self._repository.load_sources(
                 tuple(UUID(value) for value in job.historical_question_ids),
                 tuple(UUID(value) for value in job.knowledge_chunk_ids),
+                **({"knowledge_projection_ids": projection_ids} if projection_ids else {}),
             )
             EmbeddingJobService._validate_sources(
                 job.curriculum_version_id,
                 tuple(UUID(value) for value in job.historical_question_ids),
                 tuple(UUID(value) for value in job.knowledge_chunk_ids),
                 records,
+                projection_ids=projection_ids,
             )
             if _source_fingerprint(records) != job.source_fingerprint:
                 raise EmbeddingSourceIdentityError
@@ -552,11 +614,19 @@ class EmbeddingWorkerService:
                 job.embedding_config,
                 for_update=True,
             )
-        else:
+        elif record.kind == "knowledge_chunk":
             exists = await persistence.chunk_embedding_exists(
                 job.curriculum_version_id,
                 record.id,
                 job.embedding_config,
+                for_update=True,
+            )
+        else:
+            exists = await persistence.projection_embedding_exists(
+                job.curriculum_version_id,
+                record.id,
+                job.embedding_config,
+                expected_review_id=_projection_review_id(record),
                 for_update=True,
             )
 
@@ -574,12 +644,21 @@ class EmbeddingWorkerService:
                     actor_id=job.created_by,
                     commit=False,
                 )
-            else:
+            elif record.kind == "knowledge_chunk":
                 stored = await persistence.store_curriculum_chunk_embedding(
                     job.curriculum_version_id,
                     record.id,
                     result,
                     actor_id=job.created_by,
+                    commit=False,
+                )
+            else:
+                stored = await persistence.store_curriculum_projection_embedding(
+                    job.curriculum_version_id,
+                    record.id,
+                    result,
+                    actor_id=job.created_by,
+                    expected_review_id=_projection_review_id(record),
                     commit=False,
                 )
             embedded = not stored.deduplicated

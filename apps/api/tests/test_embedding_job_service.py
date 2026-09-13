@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from exam_guru_api.documents.fidelity_models import PageTextCandidateModel
 from exam_guru_api.knowledge.domain import HistoricalQuestion, KnowledgeChunk, ReviewState
 from exam_guru_api.knowledge.embedding_job_repository import (
     EmbeddingSourceRecord,
+    ProjectionEmbeddingLineage,
     StoredEmbeddingJob,
 )
 from exam_guru_api.knowledge.embedding_job_service import (
@@ -38,6 +40,7 @@ from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingWorkerService,
     _config_snapshot,
     _fingerprint,
+    _projection_review_id,
     _source_fingerprint,
 )
 from exam_guru_api.knowledge.embedding_jobs import DeterministicEmbeddingDispatcher
@@ -194,6 +197,56 @@ def _job(
 
 def _providers() -> EmbeddingProviderRegistry:
     return EmbeddingProviderRegistry({"deterministic": DeterministicEmbeddingProvider()})
+
+
+def test_projection_extension_does_not_rewrite_legacy_source_fingerprints() -> None:
+    record = _record()
+    original = [
+        {
+            "id": str(record.id),
+            "kind": record.kind,
+            "source_text_sha256": hashlib.sha256(record.text.encode()).hexdigest(),
+            "version": record.version,
+            "active_for_ai": True,
+            "source_candidate_id": str(record.source_candidate_id),
+            "source_candidate_sha256": record.source_candidate_sha256,
+            "source_fidelity_current": True,
+            "metadata_resolved": True,
+            "catalogue_admitted": True,
+        }
+    ]
+    assert _source_fingerprint((record,)) == _fingerprint(original)
+
+
+def test_projection_fingerprints_bind_exact_review_and_unit_lineage() -> None:
+    lineage = ProjectionEmbeddingLineage(
+        projection_fingerprint="a" * 64,
+        unit_id=UUID(int=1_833_001),
+        unit_fingerprint="b" * 64,
+        trusted_page_id=UUID(int=1_833_002),
+        trusted_fingerprint="c" * 64,
+        review_id=UUID(int=1_833_003),
+        review_fingerprint="d" * 64,
+    )
+    record = replace(
+        _record(),
+        kind="knowledge_projection",
+        projection_lineage=lineage,
+        source_candidate_id=None,
+        source_candidate_sha256=None,
+    )
+    assert _projection_review_id(record) == lineage.review_id
+    changed = replace(
+        record, projection_lineage=lineage.model_copy(update={"review_id": UUID(int=1_833_004)})
+    )
+    assert _source_fingerprint((record,)) != _source_fingerprint((changed,))
+    missing = replace(record, projection_lineage=None)
+    with pytest.raises(EmbeddingSourceNotReviewedError):
+        _projection_review_id(missing)
+    with pytest.raises(EmbeddingSourceNotReviewedError):
+        EmbeddingJobService._validate_sources(
+            CURRICULUM_ID, (), (), (missing,), projection_ids=(missing.id,)
+        )
 
 
 def test_openai_job_size_is_bounded_by_provider_timeout_and_actor_budget() -> None:

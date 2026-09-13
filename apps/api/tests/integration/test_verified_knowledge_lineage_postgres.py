@@ -1766,8 +1766,8 @@ def test_migration_keeps_legacy_chunks_and_vectors_unbound_and_ineligible() -> N
                             )
                         )
                         await session.flush()
-                        session.add(
-                            KnowledgeEmbeddingModel(
+                        await session.execute(
+                            insert(KnowledgeEmbeddingModel).values(
                                 id=vector_id,
                                 knowledge_chunk_id=chunk_id,
                                 embedding_configuration_id=configuration_id,

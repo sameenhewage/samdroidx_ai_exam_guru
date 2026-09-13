@@ -2583,6 +2583,16 @@
             "maxItems": 100,
             "title": "Knowledge Chunk Ids",
             "type": "array"
+          },
+          "knowledge_projection_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Knowledge Projection Ids",
+            "type": "array"
           }
         },
         "title": "EmbeddingJobCreateRequest",
@@ -2671,6 +2681,15 @@
               "type": "string"
             },
             "title": "Knowledge Chunk Ids",
+            "type": "array"
+          },
+          "knowledge_projection_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Knowledge Projection Ids",
             "type": "array"
           },
           "queue_message_id": {

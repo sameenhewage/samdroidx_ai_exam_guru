@@ -133,6 +133,7 @@ function job(overrides: Partial<EmbeddingJob> = {}): EmbeddingJob {
     historical_question_ids: [ids.question],
     id: ids.job,
     knowledge_chunk_ids: [ids.chunk],
+    knowledge_projection_ids: [],
     queue_message_id: "queue-message-1",
     retry_depth: 0,
     retry_of_job_id: null,
@@ -203,15 +204,20 @@ function fixtureApi(options: ApiFixtureOptions = {}) {
     if (request.method === "POST" && url.pathname.endsWith("/embedding-jobs")) {
       if (options.onPost) return options.onPost(request, postIndex++);
       const body = (await request.clone().json()) as EmbeddingJobCreateRequest;
+      const requestedCount =
+        body.historical_question_ids.length +
+        body.knowledge_chunk_ids.length +
+        body.knowledge_projection_ids.length;
       const created = job({
         completed_at: "2026-08-25T00:01:03Z",
         counts: {
           deduplicated: 0,
-          embedded: body.historical_question_ids.length + body.knowledge_chunk_ids.length,
-          requested: body.historical_question_ids.length + body.knowledge_chunk_ids.length,
+          embedded: requestedCount,
+          requested: requestedCount,
         },
         historical_question_ids: body.historical_question_ids,
         knowledge_chunk_ids: body.knowledge_chunk_ids,
+        knowledge_projection_ids: body.knowledge_projection_ids,
         status: "succeeded",
         version: 2,
       });
@@ -325,7 +331,9 @@ describe("EmbeddingIngestion", () => {
     expect(Object.keys(body).sort()).toEqual([
       "historical_question_ids",
       "knowledge_chunk_ids",
+      "knowledge_projection_ids",
     ]);
+    expect(body.knowledge_projection_ids).toEqual([]);
     expect(body.historical_question_ids.length + body.knowledge_chunk_ids.length).toBe(100);
     expect(new Set([...body.historical_question_ids, ...body.knowledge_chunk_ids]).size).toBe(100);
     expect(JSON.stringify(body)).not.toMatch(/text|vector|config|review_state|embedding_status/i);

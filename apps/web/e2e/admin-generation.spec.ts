@@ -1326,12 +1326,14 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   expect(embeddingResponse.request().postDataJSON()).toEqual({
     historical_question_ids: [],
     knowledge_chunk_ids: [reviewedChunk.id],
+    knowledge_projection_ids: [],
   });
   const createdEmbeddingJob = (await embeddingResponse.json()) as EmbeddingJob;
   expect(createdEmbeddingJob).toMatchObject({
     curriculum_version_id: curriculum.id,
     historical_question_ids: [],
     knowledge_chunk_ids: [reviewedChunk.id],
+    knowledge_projection_ids: [],
   });
   expect(createdEmbeddingJob.configuration).toMatchObject({
     dimension: 32,

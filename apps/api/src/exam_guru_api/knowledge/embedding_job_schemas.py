@@ -29,15 +29,25 @@ class EmbeddingJobCreateRequest(_StrictModel):
         max_length=MAX_EMBEDDING_JOB_RECORDS,
     )
 
+    knowledge_projection_ids: tuple[UUID, ...] = Field(
+        default=(), max_length=MAX_EMBEDDING_JOB_RECORDS
+    )
+
     @model_validator(mode="after")
     def validate_record_ids(self) -> Self:
-        total = len(self.historical_question_ids) + len(self.knowledge_chunk_ids)
+        total = (
+            len(self.historical_question_ids)
+            + len(self.knowledge_chunk_ids)
+            + len(self.knowledge_projection_ids)
+        )
         if not 1 <= total <= MAX_EMBEDDING_JOB_RECORDS:
             raise ValueError("embedding job must contain between 1 and 100 records")
         if len(set(self.historical_question_ids)) != len(self.historical_question_ids):
             raise ValueError("historical question identifiers must be unique")
         if len(set(self.knowledge_chunk_ids)) != len(self.knowledge_chunk_ids):
             raise ValueError("knowledge chunk identifiers must be unique")
+        if len(set(self.knowledge_projection_ids)) != len(self.knowledge_projection_ids):
+            raise ValueError("knowledge projection identifiers must be unique")
         return self
 
 
@@ -62,6 +72,7 @@ class EmbeddingJobResponse(_FrozenStrictModel):
     retry_depth: Annotated[int, Field(ge=0, le=MAX_PROVIDER_JOB_RETRY_DEPTH)]
     historical_question_ids: tuple[UUID, ...]
     knowledge_chunk_ids: tuple[UUID, ...]
+    knowledge_projection_ids: tuple[UUID, ...] = ()
     configuration: EmbeddingConfigurationResponse
     status: Literal["queued", "claimed", "succeeded", "failed"]
     version: int
@@ -88,6 +99,9 @@ class EmbeddingJobResponse(_FrozenStrictModel):
             retry_depth=value.retry_depth,
             historical_question_ids=tuple(UUID(item) for item in value.historical_question_ids),
             knowledge_chunk_ids=tuple(UUID(item) for item in value.knowledge_chunk_ids),
+            knowledge_projection_ids=tuple(
+                UUID(item) for item in (value.knowledge_projection_ids or [])
+            ),
             configuration=EmbeddingConfigurationResponse(
                 provider=value.provider,
                 model=value.model,

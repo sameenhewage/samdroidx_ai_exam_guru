@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,31 @@ class RollbackSession:
 
     async def rollback(self) -> None:
         self.rolled_back = True
+
+
+def test_projection_job_requests_share_the_existing_total_bound_and_keep_data_server_owned() -> (
+    None
+):
+    body = EmbeddingJobCreateRequest(knowledge_projection_ids=(RESOURCE_ID,))
+    assert body.knowledge_projection_ids == (RESOURCE_ID,)
+    assert body.historical_question_ids == ()
+    assert body.knowledge_chunk_ids == ()
+    with pytest.raises(ValidationError, match="projection identifiers must be unique"):
+        EmbeddingJobCreateRequest(knowledge_projection_ids=(RESOURCE_ID, RESOURCE_ID))
+    for field in ("historical_question_ids", "knowledge_chunk_ids"):
+        with pytest.raises(ValidationError, match="identifiers must be unique"):
+            EmbeddingJobCreateRequest.model_validate({field: [str(RESOURCE_ID), str(RESOURCE_ID)]})
+    with pytest.raises(TypeError, match="EmbeddingJobModel"):
+        EmbeddingJobResponse.from_model(object())
+    with pytest.raises(ValidationError, match="between 1 and 100"):
+        EmbeddingJobCreateRequest(
+            historical_question_ids=tuple(UUID(int=index) for index in range(1, 101)),
+            knowledge_projection_ids=(RESOURCE_ID,),
+        )
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        EmbeddingJobCreateRequest.model_validate(
+            {"knowledge_projection_ids": [str(RESOURCE_ID)], "text": "client-selected content"}
+        )
 
 
 @pytest.mark.parametrize(

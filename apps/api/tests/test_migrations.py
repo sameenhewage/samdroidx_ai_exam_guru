@@ -9,7 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import MetaData, Table, delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
@@ -32,8 +32,6 @@ from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     configure_database_url_from_environment,
 )
-from exam_guru_api.knowledge.embedding_job_repository import SqlAlchemyEmbeddingJobRepository
-from exam_guru_api.knowledge.models import EmbeddingJobModel
 from tests.integration.test_source_fidelity_postgres import (
     ACTOR,
     add_source,
@@ -45,11 +43,12 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_knowledge_unit_review_is_the_single_bounded_revision_head() -> None:
+def test_projection_embeddings_are_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0047_knowledge_unit_review"]
+    assert scripts.get_heads() == ["0048_projection_embeddings"]
     for identifier, parent in (
+        ("0048_projection_embeddings", "0047_knowledge_unit_review"),
         ("0047_knowledge_unit_review", "0046_knowledge_units"),
         ("0046_knowledge_units", "0045_understanding_review"),
         ("0045_understanding_review", "0044_understanding_jobs"),
@@ -989,12 +988,16 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
                         )
                         await session.commit()
 
-                    embedding = SqlAlchemyEmbeddingJobRepository(session)
+                    embedding = await session.run_sync(
+                        lambda sync: Table(
+                            "embedding_jobs", MetaData(), autoload_with=sync.connection()
+                        )
+                    )
                     embedding_ids: list[UUID] = []
                     for depth in range(3):
                         identifier = UUID(int=2_223_000 + depth)
-                        session.add(
-                            EmbeddingJobModel(
+                        await session.execute(
+                            embedding.insert().values(
                                 id=identifier,
                                 curriculum_version_id=CURRICULUM_VERSION_ID,
                                 retry_of_job_id=embedding_ids[-1] if embedding_ids else None,
@@ -1014,17 +1017,37 @@ def test_0022_retry_depth_backfills_downgrades_cleanly_and_rejects_invalid_legac
                                 created_by=ACTOR_ID,
                             )
                         )
-                        await session.flush()
-                        claim = await embedding.claim(identifier, claimed_at=datetime.now(UTC))
-                        assert claim is not None
-                        terminal = await embedding.complete(
-                            identifier,
-                            expected_version=claim.version,
-                            succeeded=False,
-                            failure_code="migration_fixture_failure",
-                            completed_at=datetime.now(UTC),
+                        claimed_at = datetime.now(UTC)
+                        claim_version = await session.scalar(
+                            embedding.update()
+                            .where(embedding.c.id == identifier, embedding.c.status == "queued")
+                            .values(
+                                status="claimed",
+                                version=embedding.c.version + 1,
+                                claimed_at=claimed_at,
+                                updated_at=claimed_at,
+                            )
+                            .returning(embedding.c.version)
                         )
-                        assert terminal is not None
+                        assert claim_version is not None
+                        completed_at = datetime.now(UTC)
+                        terminal = await session.scalar(
+                            embedding.update()
+                            .where(
+                                embedding.c.id == identifier,
+                                embedding.c.status == "claimed",
+                                embedding.c.version == claim_version,
+                            )
+                            .values(
+                                status="failed",
+                                version=embedding.c.version + 1,
+                                failure_code="migration_fixture_failure",
+                                completed_at=completed_at,
+                                updated_at=completed_at,
+                            )
+                            .returning(embedding.c.id)
+                        )
+                        assert terminal == identifier
                         await session.commit()
                         embedding_ids.append(identifier)
                     return tuple(generation_ids), tuple(embedding_ids)

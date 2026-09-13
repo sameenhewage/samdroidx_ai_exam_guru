@@ -643,8 +643,7 @@ class KnowledgeEmbeddingModel(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "(historical_question_id IS NOT NULL AND knowledge_chunk_id IS NULL) OR "
-            "(historical_question_id IS NULL AND knowledge_chunk_id IS NOT NULL)",
+            "num_nonnulls(historical_question_id,knowledge_chunk_id,knowledge_projection_id)=1",
             name="ck_knowledge_embeddings_single_target",
         ),
         CheckConstraint(
@@ -673,6 +672,13 @@ class KnowledgeEmbeddingModel(Base):
             unique=True,
             postgresql_where=text("knowledge_chunk_id IS NOT NULL"),
         ),
+        Index(
+            "uq_knowledge_embeddings_projection_configuration",
+            "knowledge_projection_id",
+            "embedding_configuration_id",
+            unique=True,
+            postgresql_where=text("knowledge_projection_id IS NOT NULL"),
+        ),
         Index("ix_knowledge_embeddings_configuration", "embedding_configuration_id"),
     )
 
@@ -683,6 +689,14 @@ class KnowledgeEmbeddingModel(Base):
     )
     knowledge_chunk_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("knowledge_chunks.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    knowledge_projection_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "knowledge_projections.id",
+            name="fk_knowledge_embeddings_projection",
+            ondelete="RESTRICT",
+        ),
         nullable=True,
     )
     embedding_configuration_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
@@ -731,8 +745,9 @@ class EmbeddingJobModel(Base):
         CheckConstraint(
             "embedding_job_uuid_array_valid(historical_question_ids, 100) AND "
             "embedding_job_uuid_array_valid(knowledge_chunk_ids, 100) AND "
-            "jsonb_array_length(historical_question_ids) + "
-            "jsonb_array_length(knowledge_chunk_ids) BETWEEN 1 AND 100",
+            "embedding_job_uuid_array_valid(knowledge_projection_ids, 100) AND "
+            "jsonb_array_length(historical_question_ids) + jsonb_array_length(knowledge_chunk_ids) "
+            "+ jsonb_array_length(knowledge_projection_ids) BETWEEN 1 AND 100",
             name="ck_embedding_jobs_record_ids",
         ),
         CheckConstraint(
@@ -772,7 +787,8 @@ class EmbeddingJobModel(Base):
         ),
         CheckConstraint(
             "requested_count = jsonb_array_length(historical_question_ids) + "
-            "jsonb_array_length(knowledge_chunk_ids) AND "
+            "jsonb_array_length(knowledge_chunk_ids) + "
+            "jsonb_array_length(knowledge_projection_ids) AND "
             "requested_count BETWEEN 1 AND 100 AND "
             "embedded_count BETWEEN 0 AND requested_count AND "
             "deduplicated_count BETWEEN 0 AND requested_count AND "
@@ -836,6 +852,12 @@ class EmbeddingJobModel(Base):
     )
     historical_question_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     knowledge_chunk_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    knowledge_projection_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     idempotency_key_hash: Mapped[str] = mapped_column(String(71), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
     source_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)

@@ -499,8 +499,11 @@ class SqlAlchemyKnowledgeRepository:
         historical_question_id: UUID | None,
         knowledge_chunk_id: UUID | None,
         config: EmbeddingConfig,
+        knowledge_projection_id: UUID | None = None,
     ) -> KnowledgeEmbeddingModel | None:
-        _, target_id = self._embedding_target(historical_question_id, knowledge_chunk_id)
+        target_type, target_id = self._embedding_target(
+            historical_question_id, knowledge_chunk_id, knowledge_projection_id
+        )
         configuration = await self._session.scalar(
             select(EmbeddingConfigurationModel).where(
                 EmbeddingConfigurationModel.provider == config.provider,
@@ -513,11 +516,7 @@ class SqlAlchemyKnowledgeRepository:
             return None
         if configuration.to_domain() != config:
             raise EmbeddingSpaceConflictError(config)
-        target_clause = (
-            KnowledgeEmbeddingModel.historical_question_id == target_id
-            if historical_question_id is not None
-            else KnowledgeEmbeddingModel.knowledge_chunk_id == target_id
-        )
+        target_clause = getattr(KnowledgeEmbeddingModel, target_type + "_id") == target_id
         model = await self._session.scalar(
             select(KnowledgeEmbeddingModel).where(
                 target_clause,
@@ -535,10 +534,12 @@ class SqlAlchemyKnowledgeRepository:
         source_text_sha256: str,
         vector: tuple[float, ...],
         actor_id: UUID,
+        knowledge_projection_id: UUID | None = None,
     ) -> RepositoryEmbeddingResult:
         target_type, target_id = self._embedding_target(
             historical_question_id,
             knowledge_chunk_id,
+            knowledge_projection_id,
         )
         embedding_id = uuid5(
             _EMBEDDING_NAMESPACE,
@@ -548,30 +549,23 @@ class SqlAlchemyKnowledgeRepository:
             id=embedding_id,
             historical_question_id=historical_question_id,
             knowledge_chunk_id=knowledge_chunk_id,
+            **(
+                {"knowledge_projection_id": knowledge_projection_id}
+                if knowledge_projection_id is not None
+                else {}
+            ),
             embedding_configuration_id=config.id,
             embedding_dimension=config.dimension,
             source_text_sha256=source_text_sha256,
             embedding=vector,
             created_by=actor_id,
         )
-        if historical_question_id is not None:
-            statement = statement.on_conflict_do_nothing(
-                index_elements=[
-                    KnowledgeEmbeddingModel.historical_question_id,
-                    KnowledgeEmbeddingModel.embedding_configuration_id,
-                ],
-                index_where=KnowledgeEmbeddingModel.historical_question_id.is_not(None),
-            )
-            target_clause = KnowledgeEmbeddingModel.historical_question_id == historical_question_id
-        else:
-            statement = statement.on_conflict_do_nothing(
-                index_elements=[
-                    KnowledgeEmbeddingModel.knowledge_chunk_id,
-                    KnowledgeEmbeddingModel.embedding_configuration_id,
-                ],
-                index_where=KnowledgeEmbeddingModel.knowledge_chunk_id.is_not(None),
-            )
-            target_clause = KnowledgeEmbeddingModel.knowledge_chunk_id == knowledge_chunk_id
+        target_column = getattr(KnowledgeEmbeddingModel, target_type + "_id")
+        statement = statement.on_conflict_do_nothing(
+            index_elements=[target_column, KnowledgeEmbeddingModel.embedding_configuration_id],
+            index_where=target_column.is_not(None),
+        )
+        target_clause = target_column == target_id
 
         inserted_id = await self._session.scalar(statement.returning(KnowledgeEmbeddingModel.id))
         if inserted_id is not None:
@@ -710,14 +704,20 @@ class SqlAlchemyKnowledgeRepository:
     def _embedding_target(
         historical_question_id: UUID | None,
         knowledge_chunk_id: UUID | None,
+        knowledge_projection_id: UUID | None = None,
     ) -> tuple[str, UUID]:
-        if historical_question_id is None:
-            if knowledge_chunk_id is None:
-                raise ValueError("an embedding must have exactly one knowledge target")
-            return "knowledge_chunk", knowledge_chunk_id
-        if knowledge_chunk_id is not None:
+        targets = [
+            (kind, identifier)
+            for kind, identifier in (
+                ("historical_question", historical_question_id),
+                ("knowledge_chunk", knowledge_chunk_id),
+                ("knowledge_projection", knowledge_projection_id),
+            )
+            if identifier is not None
+        ]
+        if len(targets) != 1:
             raise ValueError("an embedding must have exactly one knowledge target")
-        return "historical_question", historical_question_id
+        return targets[0]
 
     @staticmethod
     def _question_values(question: HistoricalQuestion, actor_id: UUID) -> dict[str, object]:

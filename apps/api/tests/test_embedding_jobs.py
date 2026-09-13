@@ -158,7 +158,11 @@ def test_openapi_create_contract_has_only_server_selected_record_ids() -> None:
     assert set(request_schema["properties"]) == {
         "historical_question_ids",
         "knowledge_chunk_ids",
+        "knowledge_projection_ids",
     }
+    for selection in request_schema["properties"].values():
+        assert selection["maxItems"] == 100
+        assert selection["items"] == {"type": "string", "format": "uuid"}
     assert request_schema["additionalProperties"] is False
     response_schema = schema["components"]["schemas"]["EmbeddingJobResponse"]
     assert response_schema["properties"]["retry_depth"] == {

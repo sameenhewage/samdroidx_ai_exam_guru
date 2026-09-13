@@ -1,7 +1,7 @@
 import hashlib
 import math
 import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -30,8 +30,15 @@ from exam_guru_api.knowledge.embeddings import (
 from exam_guru_api.knowledge.repository import (
     ConcurrentKnowledgeVersionError,
     EmbeddingSourceConflictError,
+    KnowledgeRecordNotFoundError,
     SqlAlchemyKnowledgeRepository,
 )
+from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
+from exam_guru_api.knowledge.unit_review import KnowledgeUnitReview
+from exam_guru_api.knowledge.unit_review import _snapshot as _review_snapshot
+from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
+from exam_guru_api.knowledge.unit_service import _projection
+from exam_guru_api.knowledge.units import KnowledgeProjection
 
 
 class FinalKnowledgeRecordError(RuntimeError):
@@ -560,6 +567,97 @@ class KnowledgePersistenceService:
             config=config,
         )
 
+    async def _projection_embedding_source(
+        self,
+        curriculum_version_id: UUID,
+        projection_id: UUID,
+        config: EmbeddingConfig,
+        expected_review_id: UUID,
+        *,
+        for_update: bool,
+    ) -> tuple[KnowledgeProjection, KnowledgeUnitReview]:
+        if for_update and not await self._session.scalar(
+            select(func.lock_projection_embedding_source(projection_id, expected_review_id))
+        ):
+            raise EmbeddingSourceConflictError(
+                projection_id, self._repository.configuration_id(config)
+            )
+        row = (
+            await self._session.execute(
+                select(KnowledgeProjectionModel, KnowledgeUnitReviewModel)
+                .join(KnowledgeUnitModel, KnowledgeUnitModel.id == KnowledgeProjectionModel.unit_id)
+                .join(
+                    KnowledgeUnitReviewModel,
+                    KnowledgeUnitReviewModel.unit_id == KnowledgeUnitModel.id,
+                )
+                .where(
+                    KnowledgeProjectionModel.id == projection_id,
+                    KnowledgeUnitModel.curriculum_version_id == curriculum_version_id,
+                    KnowledgeUnitReviewModel.id == expected_review_id,
+                    func.knowledge_projection_is_current(KnowledgeProjectionModel.id).is_(True),
+                    func.knowledge_unit_review_is_eligible(KnowledgeUnitReviewModel.id).is_(True),
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).one_or_none()
+        if row is None:
+            raise KnowledgeRecordNotFoundError("knowledge_projection", projection_id)
+        return _projection(row[0]), _review_snapshot(row[1])
+
+    async def projection_embedding_exists(
+        self,
+        curriculum_version_id: UUID,
+        projection_id: UUID,
+        config: EmbeddingConfig,
+        *,
+        expected_review_id: UUID,
+        for_update: bool = False,
+    ) -> bool:
+        self._validate_embedding_config(config)
+        projection, _review = await self._projection_embedding_source(
+            curriculum_version_id, projection_id, config, expected_review_id, for_update=for_update
+        )
+        return await self._embedding_exists(
+            historical_question_id=None,
+            knowledge_chunk_id=None,
+            knowledge_projection_id=projection.id,
+            text=projection.text,
+            config=config,
+        )
+
+    async def store_curriculum_projection_embedding(
+        self,
+        curriculum_version_id: UUID,
+        projection_id: UUID,
+        result: EmbeddingResult,
+        *,
+        actor_id: UUID,
+        expected_review_id: UUID,
+        commit: bool = True,
+    ) -> StoredEmbedding:
+        self._validate_embedding(result)
+        projection, review = await self._projection_embedding_source(
+            curriculum_version_id, projection_id, result.config, expected_review_id, for_update=True
+        )
+        return await self._store_embedding(
+            historical_question_id=None,
+            knowledge_chunk_id=None,
+            knowledge_projection_id=projection.id,
+            text=projection.text,
+            record_version=review.version,
+            result=result,
+            actor_id=actor_id,
+            resource_type="knowledge_projection",
+            commit=commit,
+            source_lineage={
+                "unit_id": str(projection.unit_id),
+                "unit_fingerprint": projection.unit_fingerprint,
+                "projection_fingerprint": projection.fingerprint,
+                "review_id": str(review.id),
+                "review_fingerprint": review.fingerprint,
+            },
+        )
+
     async def _embedding_exists(
         self,
         *,
@@ -567,17 +665,25 @@ class KnowledgePersistenceService:
         knowledge_chunk_id: UUID | None,
         text: str,
         config: EmbeddingConfig,
+        knowledge_projection_id: UUID | None = None,
     ) -> bool:
         existing = await self._repository.find_embedding(
             historical_question_id=historical_question_id,
             knowledge_chunk_id=knowledge_chunk_id,
             config=config,
+            **(
+                {"knowledge_projection_id": knowledge_projection_id}
+                if knowledge_projection_id is not None
+                else {}
+            ),
         )
         if existing is None:
             return False
         source_text_sha256 = hashlib.sha256(text.encode()).hexdigest()
         if existing.source_text_sha256 != source_text_sha256:
-            record_id = cast(UUID, historical_question_id or knowledge_chunk_id)
+            record_id = cast(
+                UUID, historical_question_id or knowledge_chunk_id or knowledge_projection_id
+            )
             raise EmbeddingSourceConflictError(record_id, existing.embedding_configuration_id)
         return True
 
@@ -592,6 +698,8 @@ class KnowledgePersistenceService:
         actor_id: UUID,
         resource_type: str,
         commit: bool,
+        knowledge_projection_id: UUID | None = None,
+        source_lineage: dict[str, object] | None = None,
     ) -> StoredEmbedding:
         config, _ = await self._repository.get_or_create_embedding_configuration(
             result.config,
@@ -605,8 +713,15 @@ class KnowledgePersistenceService:
             source_text_sha256=source_text_sha256,
             vector=result.vector,
             actor_id=actor_id,
+            **(
+                {"knowledge_projection_id": knowledge_projection_id}
+                if knowledge_projection_id is not None
+                else {}
+            ),
         )
-        target_id = cast(UUID, historical_question_id or knowledge_chunk_id)
+        target_id = cast(
+            UUID, historical_question_id or knowledge_chunk_id or knowledge_projection_id
+        )
         if stored.created:
             self._audit(
                 action=f"knowledge.{self._resource_action_name(resource_type)}.embedded",
@@ -623,6 +738,12 @@ class KnowledgePersistenceService:
                     "config_fingerprint": config.config_fingerprint,
                     "source_text_sha256": stored.source_text_sha256,
                     "version": record_version,
+                    **({"source_lineage": source_lineage} if source_lineage is not None else {}),
+                    **(
+                        {"accounting": asdict(result.accounting)}
+                        if result.accounting is not None
+                        else {}
+                    ),
                 },
             )
             if commit:
@@ -864,7 +985,13 @@ class KnowledgePersistenceService:
 
     @staticmethod
     def _resource_action_name(resource_type: str) -> str:
-        return "question" if resource_type == "historical_question" else "chunk"
+        return (
+            "question"
+            if resource_type == "historical_question"
+            else "projection"
+            if resource_type == "knowledge_projection"
+            else "chunk"
+        )
 
     def _audit(
         self,

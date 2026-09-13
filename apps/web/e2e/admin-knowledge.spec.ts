@@ -389,6 +389,7 @@ test("admin imports and reviews knowledge, embeds it, then proves scoped hybrid 
       data: {
         historical_question_ids: [importedQuestion.id],
         knowledge_chunk_ids: [importedChunk.id],
+        knowledge_projection_ids: [],
       } satisfies components["schemas"]["EmbeddingJobCreateRequest"],
       headers: { "Idempotency-Key": `embedding-reviewer-denied-${unique}` },
     },

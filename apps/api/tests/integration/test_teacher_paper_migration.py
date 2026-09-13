@@ -105,7 +105,7 @@ def test_0025_teacher_paper_aggregate_is_bounded_restrictive_append_only_and_cle
             await engine.dispose()
 
     revision, tables, job_columns, slot_columns, triggers, non_restrict = asyncio.run(inspect())
-    assert revision == "0047_knowledge_unit_review"
+    assert revision == "0048_projection_embeddings"
     assert tables == {
         "assessment_programme_policy_scopes",
         "assessment_programme_policy_versions",

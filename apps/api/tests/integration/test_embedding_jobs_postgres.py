@@ -666,7 +666,7 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         return columns, constraints, triggers, cast(str | None, revision)
 
     columns, constraints, triggers, revision = asyncio.run(inspect())
-    assert revision == "0047_knowledge_unit_review"
+    assert revision == "0048_projection_embeddings"
     assert columns == {
         "id",
         "curriculum_version_id",
@@ -674,6 +674,7 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         "retry_depth",
         "historical_question_ids",
         "knowledge_chunk_ids",
+        "knowledge_projection_ids",
         "idempotency_key_hash",
         "request_fingerprint",
         "source_fingerprint",
@@ -708,6 +709,7 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         "enforce_embedding_job_insert_trigger",
         "enforce_embedding_job_retry_lineage_insert_trigger",
         "enforce_embedding_job_update_trigger",
+        "guard_projection_embedding_job_trigger",
         "reject_embedding_job_delete_trigger",
         "reject_embedding_job_retry_depth_update_trigger",
     }
