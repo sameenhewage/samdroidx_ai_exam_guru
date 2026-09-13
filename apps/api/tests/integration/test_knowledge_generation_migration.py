@@ -119,6 +119,10 @@ def test_generation_migration_preserves_old_history_and_refuses_new_history_loss
             assert asyncio.run(snapshot(url)) == before
             asyncio.run(seed_structured(url))
             after = asyncio.run(snapshot(url))
+            command.downgrade(config, "0049_knowledge_generation")
+            assert asyncio.run(snapshot(url)) == after
+            command.upgrade(config, "head")
+            assert asyncio.run(snapshot(url)) == after
             with pytest.raises(
                 DBAPIError, match="cannot discard structured knowledge generation history"
             ):

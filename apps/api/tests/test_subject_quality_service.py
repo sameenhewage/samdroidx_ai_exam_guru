@@ -432,7 +432,39 @@ def action_job() -> Any:
         medium_id=MEDIUM_ID,
         subject_id=SUBJECT_ID,
         teacher_intent={"target": {"grade": 7, "medium": "en", "subject": "MATHEMATICS"}},
+        resolution_snapshot={
+            "subject": {"id": str(SUBJECT_ID), "code": "MATHEMATICS", "label": "Maths"}
+        },
     )
+
+
+@pytest.mark.parametrize("subject_hint", [None, "SCIENCE"])
+def test_feedback_subject_comes_from_resolved_state_not_optional_teacher_input(
+    subject_hint: str | None,
+) -> None:
+    _raw_session, typed_session = session_stub()
+    service = SubjectQualityFeedbackService(typed_session)
+    service._repository = cast(Any, FeedbackRepositoryStub())
+    job = action_job()
+    if subject_hint is None:
+        job.teacher_intent["target"].pop("subject")
+    else:
+        job.teacher_intent["target"]["subject"] = subject_hint
+    created = asyncio.run(
+        service.record_action(
+            job=job,
+            source=action_source(),
+            slot_version=3,
+            action=FeedbackAction.REGENERATE,
+            reason_code=ReviewReasonCode.ANSWER_INCORRECT,
+            note="Synthetic scoped feedback",
+            principal=principal(),
+            replacement_generation_run_id=UUID(int=26050),
+            idempotency_key="resolved-feedback-subject",
+        )
+    )
+    assert created.subject_code == "MATHEMATICS"
+    assert created.scope_snapshot["subject_code"] == "MATHEMATICS"
 
 
 def test_feedback_service_deduplicates_builds_exact_snapshots_lists_and_maps_integrity() -> None:

@@ -209,6 +209,10 @@ def test_unavailable_programme_scope_supports_taxonomy_only_retrieval_boundaries
     available_scope = AssessmentProgrammePolicyScopeModel(
         id=UUID(int=25_901_010),
         source_curriculum_version_id=UUID(int=25_901_011),
+        source_grade=3,
+        source_exam_configuration_id=UUID(int=25_901_016),
+        source_medium_id=UUID(int=25_901_017),
+        source_subject_id=UUID(int=25_901_018),
         source_unit_id=None,
         source_lesson_id=None,
         source_competency_id=UUID(int=25_901_012),
@@ -219,6 +223,10 @@ def test_unavailable_programme_scope_supports_taxonomy_only_retrieval_boundaries
     unavailable_scope = AssessmentProgrammePolicyScopeModel(
         id=UUID(int=25_901_013),
         source_curriculum_version_id=UUID(int=25_901_014),
+        source_grade=3,
+        source_exam_configuration_id=UUID(int=25_901_016),
+        source_medium_id=UUID(int=25_901_017),
+        source_subject_id=UUID(int=25_901_018),
         source_unit_id=None,
         source_lesson_id=None,
         source_competency_id=UUID(int=25_901_015),
@@ -226,7 +234,7 @@ def test_unavailable_programme_scope_supports_taxonomy_only_retrieval_boundaries
         source_sub_skill_id=None,
         source_learning_concept_id=None,
     )
-    scripted = ScriptedSession(scalar_results=(True, False, False, False))
+    scripted = ScriptedSession(scalar_results=(True, False))
 
     unavailable = asyncio.run(
         repository(scripted).unavailable_programme_policy_scopes(

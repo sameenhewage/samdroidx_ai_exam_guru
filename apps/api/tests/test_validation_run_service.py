@@ -17,6 +17,7 @@ from exam_guru_api.generation.domain import (
     GenerationContractError,
     GenerationIdentity,
     GenerationResult,
+    ProgrammeContextBinding,
     ProvenanceContext,
     RetrievedContextItem,
 )
@@ -224,6 +225,62 @@ def test_generation_worker_replay_rejects_corrupt_knowledge_envelopes(corruption
         snapshot["knowledge_projection_ids"] = [str(UUID(int=1))]
     with pytest.raises(GenerationContractError, match="knowledge"):
         _persisted_context(snapshot)
+
+
+def programme_context_snapshot() -> dict[str, object]:
+    snapshot = knowledge_context_snapshot()
+    filters = cast(dict[str, object], snapshot["retrieval_filters"])
+    snapshot["retrieval_filters"] = {
+        "kind": "scope_set",
+        "policy_version": "programme:" + "a" * 64,
+        "scopes": [filters["scope"]],
+    }
+    snapshot["schema_version"] = "generation-knowledge-context.v2"
+    snapshot["programme_binding"] = ProgrammeContextBinding(
+        UUID(int=99501), "a" * 64, (UUID(int=99502),)
+    ).to_snapshot()
+    return snapshot
+
+
+def test_programme_context_parsers_preserve_the_versioned_binding() -> None:
+    snapshot = programme_context_snapshot()
+    run = GenerationRunModel(
+        context_snapshot=snapshot, knowledge_chunk_ids=[], historical_question_ids=[]
+    )
+    assert _persisted_context(snapshot) == validation_service._context_from_snapshot(run)
+
+
+@pytest.mark.parametrize("change", ["binding", "empty", "schema"])
+def test_programme_context_parsers_reject_missing_or_inconsistent_metadata(change: str) -> None:
+    snapshot = programme_context_snapshot()
+    if change == "binding":
+        snapshot["programme_binding"] = 42
+    elif change == "empty":
+        snapshot["items"] = []
+        snapshot["knowledge_projection_ids"] = []
+    else:
+        snapshot["schema_version"] = "generation-knowledge-context.v1"
+    with pytest.raises(GenerationContractError):
+        _persisted_context(snapshot)
+    run = GenerationRunModel(
+        context_snapshot=snapshot, knowledge_chunk_ids=[], historical_question_ids=[]
+    )
+    with pytest.raises(ValidationGenerationIntegrityError):
+        validation_service._context_from_snapshot(run)
+
+
+def test_programme_validation_requires_explicit_scope_set_filters() -> None:
+    snapshot = programme_context_snapshot()
+    filters = cast(dict[str, object], snapshot["retrieval_filters"])
+    snapshot["retrieval_filters"] = {
+        "kind": "scope",
+        "scope": cast(list[object], filters["scopes"])[0],
+    }
+    run = GenerationRunModel(
+        context_snapshot=snapshot, knowledge_chunk_ids=[], historical_question_ids=[]
+    )
+    with pytest.raises(ValidationGenerationIntegrityError, match="scope-set"):
+        validation_service._context_from_snapshot(run)
 
 
 def test_validation_age_bounds_follow_the_selected_grade() -> None:

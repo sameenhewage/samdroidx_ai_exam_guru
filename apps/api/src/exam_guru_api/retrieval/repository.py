@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB, REGCONFIG
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
-from sqlalchemy.sql import Select
+from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.sql.selectable import CTE
 
 from exam_guru_api.curriculum.domain import (
@@ -206,7 +206,8 @@ class PostgresHybridRetrievalRepository:
     def candidate_limit(self) -> int:
         return self._candidate_limit
 
-    def _chunk_scope_select(self, filters: RetrievalScope) -> Select[Any]:
+    @staticmethod
+    def _chunk_scope_select(filters: RetrievalScope) -> Select[Any]:
         competency = aliased(TaxonomyNodeModel, name="chunk_competency")
         skill = aliased(TaxonomyNodeModel, name="chunk_skill")
         sub_skill = aliased(TaxonomyNodeModel, name="chunk_sub_skill")
@@ -357,7 +358,8 @@ class PostgresHybridRetrievalRepository:
             .where(*conditions)
         )
 
-    def _question_scope_select(self, filters: RetrievalScope) -> Select[Any]:
+    @staticmethod
+    def _question_scope_select(filters: RetrievalScope) -> Select[Any]:
         competency = aliased(TaxonomyNodeModel, name="question_competency")
         skill = aliased(TaxonomyNodeModel, name="question_skill")
         sub_skill = aliased(TaxonomyNodeModel, name="question_sub_skill")
@@ -515,7 +517,8 @@ class PostgresHybridRetrievalRepository:
             .where(*conditions)
         )
 
-    def _projection_scope_select(self, filters: RetrievalScope) -> Select[Any]:
+    @staticmethod
+    def _projection_scope_select(filters: RetrievalScope) -> Select[Any]:
         previous = aliased(KnowledgeUnitReviewModel, name="projection_review_history")
         latest_version = (
             select(func.max(previous.version))
@@ -609,18 +612,43 @@ class PostgresHybridRetrievalRepository:
             .where(*conditions)
         )
 
-    def _scoped_records(self, filters: RetrievalFilters) -> CTE:
-        scopes = filters.scopes if isinstance(filters, RetrievalScopeSet) else (filters,)
+    @classmethod
+    def scoped_records(cls, filters: RetrievalFilters) -> CTE:
+        valid = _validate_filters(filters)
+        scopes = valid.scopes if isinstance(valid, RetrievalScopeSet) else (valid,)
         statements = tuple(
             statement
             for scope in scopes
             for statement in (
-                self._chunk_scope_select(scope),
-                self._question_scope_select(scope),
-                self._projection_scope_select(scope),
+                cls._chunk_scope_select(scope),
+                cls._question_scope_select(scope),
+                cls._projection_scope_select(scope),
             )
         )
         return union(*statements).cte("reviewed_scoped_records")
+
+    @staticmethod
+    def embedding_target_predicate(scoped: CTE) -> ColumnElement[bool]:
+        return or_(
+            and_(
+                scoped.c.record_kind == "knowledge_chunk",
+                KnowledgeEmbeddingModel.knowledge_chunk_id == scoped.c.record_id,
+                KnowledgeEmbeddingModel.historical_question_id.is_(None),
+                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
+            ),
+            and_(
+                scoped.c.record_kind == "historical_question",
+                KnowledgeEmbeddingModel.historical_question_id == scoped.c.record_id,
+                KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
+                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
+            ),
+            and_(
+                scoped.c.record_kind == "knowledge_projection",
+                KnowledgeEmbeddingModel.knowledge_projection_id == scoped.c.record_id,
+                KnowledgeEmbeddingModel.historical_question_id.is_(None),
+                KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
+            ),
+        )
 
     def build_lexical_statement(
         self,
@@ -632,7 +660,7 @@ class PostgresHybridRetrievalRepository:
 
         valid_query = _validate_query(query)
         valid_filters = _validate_filters(filters)
-        scoped = self._scoped_records(valid_filters)
+        scoped = self.scoped_records(valid_filters)
         regconfig = literal("simple", type_=REGCONFIG)
         tsquery = func.websearch_to_tsquery(
             regconfig,
@@ -661,27 +689,8 @@ class PostgresHybridRetrievalRepository:
             expected_dimension=self._embedding_config.dimension,
         )
         valid_filters = _validate_filters(filters)
-        scoped = self._scoped_records(valid_filters)
-        target_join = or_(
-            and_(
-                scoped.c.record_kind == "knowledge_chunk",
-                KnowledgeEmbeddingModel.knowledge_chunk_id == scoped.c.record_id,
-                KnowledgeEmbeddingModel.historical_question_id.is_(None),
-                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
-            ),
-            and_(
-                scoped.c.record_kind == "historical_question",
-                KnowledgeEmbeddingModel.historical_question_id == scoped.c.record_id,
-                KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
-                KnowledgeEmbeddingModel.knowledge_projection_id.is_(None),
-            ),
-            and_(
-                scoped.c.record_kind == "knowledge_projection",
-                KnowledgeEmbeddingModel.knowledge_projection_id == scoped.c.record_id,
-                KnowledgeEmbeddingModel.historical_question_id.is_(None),
-                KnowledgeEmbeddingModel.knowledge_chunk_id.is_(None),
-            ),
-        )
+        scoped = self.scoped_records(valid_filters)
+        target_join = self.embedding_target_predicate(scoped)
         configured = (
             select(
                 *(scoped.c[name] for name in _RECORD_COLUMNS),

@@ -30,6 +30,7 @@ from exam_guru_api.generation.domain import (
     GenerationRequest,
     GenerationResult,
     GenerationVersions,
+    ProgrammeContextBinding,
     ProvenanceContext,
     RetrievedContextItem,
 )
@@ -198,7 +199,8 @@ class GenerationRecoveryResult:
 
 class GenerationContextOptions(TypedDict, total=False):
     knowledge_projection_ids: tuple[UUID, ...]
-    retrieval_filters: RetrievalFilters
+    retrieval_filters: RetrievalFilters | None
+    programme_binding: ProgrammeContextBinding
 
 
 class GenerationRunService:
@@ -226,6 +228,7 @@ class GenerationRunService:
         retry_of_run_id: UUID | None = None,
         retrieval_filters: RetrievalFilters | None = None,
         knowledge_projection_ids: tuple[UUID, ...] = (),
+        programme_binding: ProgrammeContextBinding | None = None,
         _persist_retrieval_filters: bool = True,
     ) -> GenerationCreationResult:
         if (
@@ -288,6 +291,21 @@ class GenerationRunService:
         if slot is None:
             raise GenerationSlotNotFoundError(slot_id)
         active_filters = _generation_retrieval_filters(scope, slot, retrieval_filters)
+        if knowledge_projection_ids and isinstance(active_filters, RetrievalScopeSet):
+            if (
+                not isinstance(programme_binding, ProgrammeContextBinding)
+                or not _persist_retrieval_filters
+            ):
+                raise GenerationContextCrossCurriculumError(
+                    "structured programme context requires a binding"
+                )
+            programme_binding = ProgrammeContextBinding.from_snapshot(
+                programme_binding.to_snapshot()
+            )
+        elif programme_binding is not None:
+            raise GenerationContextCrossCurriculumError(
+                "programme binding requires structured scope-set context"
+            )
 
         canonical_chunk_ids = tuple(sorted(knowledge_chunk_ids, key=lambda value: value.int))
         canonical_question_ids = tuple(sorted(historical_question_ids, key=lambda value: value.int))
@@ -313,6 +331,7 @@ class GenerationRunService:
         context, context_snapshot = _context_snapshot(
             canonical_records,
             retrieval_filters=(active_filters if _persist_retrieval_filters else None),
+            **({"programme_binding": programme_binding} if programme_binding is not None else {}),
         )
         del context
         slot_snapshot = _slot_snapshot(blueprint_model.blueprint, slot_id)
@@ -444,6 +463,13 @@ class GenerationRunService:
             raise GenerationRetryLimitExceededError(run_id)
         persisted_filters = "retrieval_filters" in original.context_snapshot
         retrieval_filters = _filters_from_context_snapshot(original.context_snapshot)
+        context_options: GenerationContextOptions = {"retrieval_filters": retrieval_filters}
+        if "knowledge_projection_ids" in original.context_snapshot:
+            context_options["knowledge_projection_ids"] = _projection_ids(original.context_snapshot)
+        if "programme_binding" in original.context_snapshot:
+            context_options["programme_binding"] = ProgrammeContextBinding.from_snapshot(
+                original.context_snapshot["programme_binding"]
+            )
         return await self.create(
             curriculum_version_id,
             paper_blueprint_id=original.paper_blueprint_id,
@@ -455,12 +481,7 @@ class GenerationRunService:
             idempotency_key=idempotency_key,
             actor_id=actor_id,
             retry_of_run_id=original.id,
-            retrieval_filters=retrieval_filters,
-            **(
-                {"knowledge_projection_ids": _projection_ids(original.context_snapshot)}
-                if "knowledge_projection_ids" in original.context_snapshot
-                else {}
-            ),
+            **context_options,
             _persist_retrieval_filters=persisted_filters,
         )
 
@@ -1307,6 +1328,7 @@ def _context_snapshot(
     records: tuple[GenerationContextRecord, ...],
     *,
     retrieval_filters: RetrievalFilters | None = None,
+    programme_binding: ProgrammeContextBinding | None = None,
 ) -> tuple[ProvenanceContext, dict[str, object]]:
     items: list[RetrievedContextItem] = []
     snapshots: list[dict[str, object]] = []
@@ -1386,6 +1408,9 @@ def _context_snapshot(
     if projection_ids:
         snapshot["schema_version"] = "generation-knowledge-context.v1"
         snapshot["knowledge_projection_ids"] = [str(value) for value in projection_ids]
+        if programme_binding is not None:
+            snapshot["schema_version"] = "generation-knowledge-context.v2"
+            snapshot["programme_binding"] = programme_binding.to_snapshot()
     if retrieval_filters is not None:
         snapshot["retrieval_filters"] = serialize_retrieval_filters(retrieval_filters)
     return context, snapshot
@@ -1495,9 +1520,14 @@ def _persisted_context(snapshot: dict[str, object]) -> ProvenanceContext:
             if item.knowledge_evidence is not None
         )
     )
+    expected_schema = "generation-knowledge-context.v1"
+    if "programme_binding" in snapshot:
+        ProgrammeContextBinding.from_snapshot(snapshot["programme_binding"])
+        if not references:
+            raise GenerationContractError("programme context requires structured knowledge")
+        expected_schema = "generation-knowledge-context.v2"
     if (references or "knowledge_projection_ids" in snapshot) and (
-        snapshot.get("schema_version") != "generation-knowledge-context.v1"
-        or _projection_ids(snapshot) != references
+        snapshot.get("schema_version") != expected_schema or _projection_ids(snapshot) != references
     ):
         raise GenerationContractError(
             "persisted knowledge evidence references differ from the context"

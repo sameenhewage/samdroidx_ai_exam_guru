@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Select, and_, func, or_, select, update
@@ -27,16 +27,11 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
     TaxonomyNodeModel,
 )
-from exam_guru_api.documents.domain import ExtractionStatus
-from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.generation.models import GenerationJobModel, GenerationRunModel
-from exam_guru_api.knowledge.domain import ReviewState
-from exam_guru_api.knowledge.models import (
-    HistoricalQuestionModel,
-    KnowledgeChunkModel,
-    KnowledgeEmbeddingModel,
-)
+from exam_guru_api.knowledge.models import KnowledgeEmbeddingModel
 from exam_guru_api.papers.models import QuestionCandidateModel, QuestionCandidateRevisionModel
+from exam_guru_api.retrieval.domain import RetrievalScope, TaxonomyScope
+from exam_guru_api.retrieval.repository import PostgresHybridRetrievalRepository
 from exam_guru_api.teacher_papers.domain import (
     ResolvedCurriculum,
     ResolvedLesson,
@@ -200,76 +195,34 @@ class TeacherPaperRepository:
     ) -> tuple[UUID, ...]:
         unavailable: list[UUID] = []
         for scope in scopes:
-            chunk_conditions: list[Any] = [
-                KnowledgeChunkModel.curriculum_version_id == scope.source_curriculum_version_id,
-                KnowledgeChunkModel.review_state == ReviewState.REVIEWED,
-                KnowledgeChunkModel.competency_id == scope.source_competency_id,
-                KnowledgeChunkModel.skill_id.is_(scope.source_skill_id)
-                if scope.source_skill_id is None
-                else KnowledgeChunkModel.skill_id == scope.source_skill_id,
-                KnowledgeChunkModel.sub_skill_id.is_(scope.source_sub_skill_id)
-                if scope.source_sub_skill_id is None
-                else KnowledgeChunkModel.sub_skill_id == scope.source_sub_skill_id,
-                KnowledgeChunkModel.learning_concept_id.is_(scope.source_learning_concept_id)
-                if scope.source_learning_concept_id is None
-                else KnowledgeChunkModel.learning_concept_id == scope.source_learning_concept_id,
-                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
-                SourceDocumentModel.active_for_ai.is_(True),
-                KnowledgeEmbeddingModel.knowledge_chunk_id == KnowledgeChunkModel.id,
-            ]
-            question_conditions: list[Any] = [
-                HistoricalQuestionModel.curriculum_version_id == scope.source_curriculum_version_id,
-                HistoricalQuestionModel.review_state == ReviewState.REVIEWED,
-                HistoricalQuestionModel.competency_id == scope.source_competency_id,
-                HistoricalQuestionModel.skill_id.is_(scope.source_skill_id)
-                if scope.source_skill_id is None
-                else HistoricalQuestionModel.skill_id == scope.source_skill_id,
-                HistoricalQuestionModel.sub_skill_id.is_(scope.source_sub_skill_id)
-                if scope.source_sub_skill_id is None
-                else HistoricalQuestionModel.sub_skill_id == scope.source_sub_skill_id,
-                HistoricalQuestionModel.learning_concept_id.is_(scope.source_learning_concept_id)
-                if scope.source_learning_concept_id is None
-                else HistoricalQuestionModel.learning_concept_id
-                == scope.source_learning_concept_id,
-                SourceDocumentModel.extraction_status == ExtractionStatus.TRUSTED,
-                SourceDocumentModel.active_for_ai.is_(True),
-                KnowledgeEmbeddingModel.historical_question_id == HistoricalQuestionModel.id,
-            ]
-            if scope.source_unit_id is not None:
-                chunk_conditions.append(KnowledgeChunkModel.unit_id == scope.source_unit_id)
-                question_conditions.append(HistoricalQuestionModel.unit_id == scope.source_unit_id)
-            if scope.source_lesson_id is not None:
-                chunk_conditions.append(KnowledgeChunkModel.lesson_id == scope.source_lesson_id)
-                question_conditions.append(
-                    HistoricalQuestionModel.lesson_id == scope.source_lesson_id
-                )
-            chunk_available = await self._session.scalar(
-                select(func.count(KnowledgeChunkModel.id) > 0)
-                .select_from(KnowledgeChunkModel)
-                .join(
-                    SourceDocumentModel,
-                    SourceDocumentModel.id == KnowledgeChunkModel.source_document_id,
-                )
-                .join(
-                    KnowledgeEmbeddingModel,
-                    KnowledgeEmbeddingModel.knowledge_chunk_id == KnowledgeChunkModel.id,
-                )
-                .where(*chunk_conditions)
+            filters = RetrievalScope(
+                grade=scope.source_grade,
+                exam_id=scope.source_exam_configuration_id,
+                medium_id=scope.source_medium_id,
+                subject_id=scope.source_subject_id,
+                curriculum_version_id=scope.source_curriculum_version_id,
+                unit_ids=() if scope.source_unit_id is None else (scope.source_unit_id,),
+                lesson_ids=() if scope.source_lesson_id is None else (scope.source_lesson_id,),
+                taxonomy=TaxonomyScope(
+                    competency_id=scope.source_competency_id,
+                    skill_id=scope.source_skill_id,
+                    sub_skill_id=scope.source_sub_skill_id,
+                    learning_concept_id=scope.source_learning_concept_id,
+                ),
             )
-            question_available = await self._session.scalar(
-                select(func.count(HistoricalQuestionModel.id) > 0)
-                .select_from(HistoricalQuestionModel)
-                .join(
-                    SourceDocumentModel,
-                    SourceDocumentModel.id == HistoricalQuestionModel.source_document_id,
+            scoped = PostgresHybridRetrievalRepository.scoped_records(filters)
+            available = await self._session.scalar(
+                select(
+                    select(scoped.c.record_id)
+                    .select_from(scoped)
+                    .join(
+                        KnowledgeEmbeddingModel,
+                        PostgresHybridRetrievalRepository.embedding_target_predicate(scoped),
+                    )
+                    .exists()
                 )
-                .join(
-                    KnowledgeEmbeddingModel,
-                    KnowledgeEmbeddingModel.historical_question_id == HistoricalQuestionModel.id,
-                )
-                .where(*question_conditions)
             )
-            if not chunk_available and not question_available:
+            if available is not True:
                 unavailable.append(scope.id)
         return tuple(unavailable)
 

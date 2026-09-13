@@ -16,7 +16,7 @@ from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.blueprints.serialization import deserialize_blueprint
 from exam_guru_api.blueprints.service import BlueprintGenerationService
 from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
-from exam_guru_api.generation.domain import projection_context_ids
+from exam_guru_api.generation.domain import ProgrammeContextBinding, projection_context_ids
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.models import GenerationRunModel, GenerationRunStatus
 from exam_guru_api.generation.run_service import GenerationContextOptions, GenerationRunService
@@ -1582,6 +1582,19 @@ class TeacherPaperWorkerService:
             context_options: GenerationContextOptions = {"retrieval_filters": retrieval_filters}
             if projection_ids:
                 context_options["knowledge_projection_ids"] = projection_ids
+                if scope.programme is not None:
+                    context_options["programme_binding"] = ProgrammeContextBinding(
+                        policy_id=scope.programme.policy_id,
+                        policy_content_hash=scope.programme.content_hash,
+                        scope_ids=tuple(
+                            sorted(
+                                mapping.scope_id
+                                for mapping in scope.programme.mappings
+                                if mapping.anchor_lesson_id == assignment.lesson.id
+                                and mapping.anchor_target == assignment.taxonomy_target.domain
+                            )
+                        ),
+                    )
             generation = await GenerationRunService(
                 self._session,
                 self._runtime,
@@ -1880,6 +1893,10 @@ async def _replace_generation_run(
                     current_run.context_snapshot["retrieval_filters"]
                 ),
             }
+        if "programme_binding" in current_run.context_snapshot:
+            context_options["programme_binding"] = ProgrammeContextBinding.from_snapshot(
+                current_run.context_snapshot["programme_binding"]
+            )
         creation = await generation_service.create(
             job.curriculum_version_id,
             paper_blueprint_id=current_run.paper_blueprint_id,

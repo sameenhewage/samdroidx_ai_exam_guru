@@ -174,11 +174,12 @@ def _provenance_snapshot(source: ReviewSlotSource) -> list[dict[str, object]]:
 
 def _scope_snapshot(job: TeacherPaperJobModel, source: ReviewSlotSource) -> dict[str, object]:
     target = cast(dict[str, object], job.teacher_intent["target"])
+    subject = cast(dict[str, object], job.resolution_snapshot["subject"])
     return {
         "grade": target["grade"],
         "medium": target["medium"],
         "medium_id": str(job.medium_id),
-        "subject_code": target["subject"],
+        "subject_code": subject["code"],
         "subject_id": str(job.subject_id),
         "curriculum_version_id": str(job.curriculum_version_id),
         "unit_id": str(source.slot.unit_id),
@@ -376,9 +377,7 @@ class SubjectQualityFeedbackService:
             lesson_id=source.slot.lesson_id,
             grade=cast(int, cast(dict[str, object], job.teacher_intent["target"])["grade"]),
             medium_code=cast(str, cast(dict[str, object], job.teacher_intent["target"])["medium"]),
-            subject_code=cast(
-                str, cast(dict[str, object], job.teacher_intent["target"])["subject"]
-            ),
+            subject_code=cast(str, scope["subject_code"]),
             lesson_number=source.slot.lesson_number,
             candidate_id=candidate.id,
             candidate_revision=candidate.current_revision,

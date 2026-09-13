@@ -14,6 +14,7 @@ from exam_guru_api.blueprints.models import PaperBlueprintModel
 from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.domain import ExtractionStatus
+from exam_guru_api.generation.domain import ProgrammeContextBinding
 from exam_guru_api.generation.jobs import DeterministicGenerationDispatcher
 from exam_guru_api.generation.models import GenerationJobModel, GenerationRunModel
 from exam_guru_api.generation.repository import (
@@ -54,6 +55,7 @@ from tests.test_blueprint_domain import (
     SKILL_A,
     make_uniform_specification,
 )
+from tests.test_validation_run_service import programme_context_snapshot
 
 ACTOR_ID = UUID(int=950_001)
 BLUEPRINT_DB_ID = UUID(int=950_002)
@@ -335,6 +337,79 @@ def test_service_rejects_duplicate_or_oversized_projection_selection_before_load
             )
         assert repository.by_hash == {}
         assert dispatcher.dispatched == []
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "problem", ["missing", "type", "unpersisted", "no_projection", "single_scope"]
+)
+def test_programme_context_requires_an_explicit_matching_binding(problem: str) -> None:
+    async def check() -> None:
+        repository = FakeGenerationRepository()
+        service, _session, dispatcher = build_service(repository)
+        binding = ProgrammeContextBinding(UUID(int=99501), "a" * 64, (UUID(int=99502),))
+        provided = (
+            None
+            if problem == "missing"
+            else cast(ProgrammeContextBinding, object())
+            if problem == "type"
+            else binding
+        )
+        filters = (
+            retrieval_filters()
+            if problem == "single_scope"
+            else RetrievalScopeSet(
+                policy_version="programme:" + "a" * 64, scopes=(retrieval_filters(),)
+            )
+        )
+        with pytest.raises(GenerationContextCrossCurriculumError):
+            await service.create(
+                CURRICULUM_VERSION_ID,
+                paper_blueprint_id=BLUEPRINT_DB_ID,
+                slot_id=PAPER.slots[0].slot_id,
+                knowledge_chunk_ids=(CHUNK_ID,),
+                historical_question_ids=(),
+                knowledge_projection_ids=() if problem == "no_projection" else (UUID(int=99503),),
+                programme_binding=provided,
+                retrieval_filters=filters,
+                _persist_retrieval_filters=problem != "unpersisted",
+                idempotency_key="programme-binding-boundary",
+                actor_id=ACTOR_ID,
+            )
+        assert repository.by_hash == {}
+        assert dispatcher.dispatched == []
+
+    asyncio.run(check())
+
+
+def test_failed_retry_preserves_the_programme_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def check() -> None:
+        repository = FakeGenerationRepository()
+        service, _session, _dispatcher = build_service(repository)
+        original = await create(service)
+        original.run.status = "failed"
+        original.run.context_snapshot = programme_context_snapshot()
+        captured: dict[str, object] = {}
+
+        async def recreate(*args: object, **kwargs: object) -> GenerationCreationResult:
+            captured.update(kwargs)
+            return original
+
+        monkeypatch.setattr(service, "create", recreate)
+        assert (
+            await service.retry(
+                CURRICULUM_VERSION_ID,
+                original.run.id,
+                idempotency_key="programme-retry",
+                actor_id=ACTOR_ID,
+            )
+            is original
+        )
+        assert captured["programme_binding"] == ProgrammeContextBinding.from_snapshot(
+            original.run.context_snapshot["programme_binding"]
+        )
+        assert captured["_persist_retrieval_filters"] is True
 
     asyncio.run(check())
 

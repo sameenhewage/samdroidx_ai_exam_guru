@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
+from typing import Self
 from uuid import UUID
 
 from exam_guru_api.blueprints.domain import BlueprintSlot, BlueprintVersion, QuestionType
@@ -109,6 +110,75 @@ def projection_context_ids(snapshot: Mapping[str, object]) -> tuple[UUID, ...]:
 
 def _normalized_text(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+@dataclass(frozen=True, slots=True)
+class ProgrammeContextBinding:
+    policy_id: UUID
+    policy_content_hash: str
+    scope_ids: tuple[UUID, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.policy_id, UUID):
+            raise GenerationContractError("programme policy identity must be a UUID")
+        if (
+            not isinstance(self.policy_content_hash, str)
+            or len(self.policy_content_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.policy_content_hash)
+        ):
+            raise GenerationContractError("programme policy content hash must be canonical SHA-256")
+        if (
+            not isinstance(self.scope_ids, tuple)
+            or not 1 <= len(self.scope_ids) <= 64
+            or any(not isinstance(identifier, UUID) for identifier in self.scope_ids)
+            or len(set(self.scope_ids)) != len(self.scope_ids)
+            or self.scope_ids != tuple(sorted(self.scope_ids))
+        ):
+            raise GenerationContractError(
+                "programme scope identities must be bounded, unique and canonical"
+            )
+
+    def to_snapshot(self) -> dict[str, object]:
+        return {
+            "schema_version": "knowledge-programme-binding.v1",
+            "policy_id": str(self.policy_id),
+            "policy_content_hash": self.policy_content_hash,
+            "scope_ids": [str(value) for value in self.scope_ids],
+        }
+
+    @classmethod
+    def from_snapshot(cls, value: object) -> Self:
+        if not isinstance(value, Mapping) or set(value) != {
+            "schema_version",
+            "policy_id",
+            "policy_content_hash",
+            "scope_ids",
+        }:
+            raise GenerationContractError("programme context binding has an invalid shape")
+        if (
+            value["schema_version"] != "knowledge-programme-binding.v1"
+            or not isinstance(value["scope_ids"], list)
+            or not 1 <= len(value["scope_ids"]) <= 64
+        ):
+            raise GenerationContractError(
+                "programme context binding version or identities are invalid"
+            )
+        try:
+            binding = cls(
+                policy_id=UUID(_require_identifier(value["policy_id"], "policy_id", maximum=36)),
+                policy_content_hash=_require_identifier(
+                    value["policy_content_hash"], "policy_content_hash", maximum=64
+                ),
+                scope_ids=tuple(
+                    UUID(_require_identifier(identifier, "scope_id", maximum=36))
+                    for identifier in value["scope_ids"]
+                ),
+            )
+        except ValueError:
+            raise GenerationContractError("programme context binding is invalid") from None
+        if binding.to_snapshot() != dict(value):
+            raise GenerationContractError("programme context binding is not canonical")
+        return binding
 
 
 @dataclass(frozen=True, slots=True)

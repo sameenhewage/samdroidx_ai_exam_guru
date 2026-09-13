@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -160,6 +160,64 @@ def test_generation_rejects_missing_foreign_and_mutated_structured_evidence() ->
     )
     with pytest.raises(GenerationContractError, match="snapshot is invalid"):
         replace(item, knowledge_evidence=invalid)
+
+
+def test_programme_binding_roundtrips_only_explicit_policy_identity() -> None:
+    binding = generation_domain.ProgrammeContextBinding(
+        policy_id=UUID(int=99501),
+        policy_content_hash="a" * 64,
+        scope_ids=(UUID(int=99502), UUID(int=99503)),
+    )
+    snapshot = binding.to_snapshot()
+    assert snapshot == {
+        "schema_version": "knowledge-programme-binding.v1",
+        "policy_id": str(UUID(int=99501)),
+        "policy_content_hash": "a" * 64,
+        "scope_ids": [str(UUID(int=99502)), str(UUID(int=99503))],
+    }
+    assert generation_domain.ProgrammeContextBinding.from_snapshot(snapshot) == binding
+    corruptions: tuple[dict[str, object], ...] = (
+        {"schema_version": "unknown"},
+        {"policy_id": True},
+        {"policy_content_hash": "bad"},
+        {"scope_ids": []},
+        {"scope_ids": [str(UUID(int=99502))] * 2},
+        {"unexpected": "authority"},
+    )
+    for changes in corruptions:
+        with pytest.raises(GenerationContractError):
+            generation_domain.ProgrammeContextBinding.from_snapshot({**snapshot, **changes})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("policy_id", "not-a-uuid"),
+        ("policy_content_hash", None),
+        ("policy_content_hash", "A" * 64),
+        ("scope_ids", []),
+        ("scope_ids", ()),
+        ("scope_ids", (object(),)),
+        ("scope_ids", (UUID(int=2), UUID(int=1))),
+        ("scope_ids", tuple(UUID(int=value) for value in range(65))),
+    ],
+)
+def test_programme_binding_rejects_malformed_or_unbounded_constructor_values(
+    field: str, value: object
+) -> None:
+    binding = generation_domain.ProgrammeContextBinding(UUID(int=1), "a" * 64, (UUID(int=2),))
+    with pytest.raises(GenerationContractError):
+        replace(binding, **cast(dict[str, Any], {field: value}))
+
+
+def test_programme_binding_rejects_noncanonical_snapshot_identity() -> None:
+    binding = generation_domain.ProgrammeContextBinding(UUID(int=99501), "a" * 64, (UUID(int=2),))
+    with pytest.raises(GenerationContractError, match="not canonical"):
+        generation_domain.ProgrammeContextBinding.from_snapshot(
+            {**binding.to_snapshot(), "policy_id": str(binding.policy_id).upper()}
+        )
+    with pytest.raises(GenerationContractError, match="shape"):
+        generation_domain.ProgrammeContextBinding.from_snapshot(None)
 
 
 def versions(**changes: str) -> GenerationVersions:

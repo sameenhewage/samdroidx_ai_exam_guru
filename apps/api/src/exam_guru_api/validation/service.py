@@ -27,6 +27,7 @@ from exam_guru_api.generation.domain import (
     GenerationVersions,
     MarkingCriterion,
     MarkingScheme,
+    ProgrammeContextBinding,
     ProvenanceContext,
     QuestionAnswer,
     QuestionOption,
@@ -250,9 +251,20 @@ def _context_snapshot_root(
         if "retrieval_filters" in raw_keys
         else frozenset({"items", "trust"})
     )
-    if "knowledge_projection_ids" in raw_keys:
+    if "knowledge_projection_ids" in raw_keys or "programme_binding" in raw_keys:
         keys |= {"schema_version", "knowledge_projection_ids", "retrieval_filters"}
+    if "programme_binding" in raw_keys:
+        keys |= {"programme_binding"}
     root = _object(snapshot, keys=keys, label="generation context")
+    expected_schema = "generation-knowledge-context.v1"
+    if "programme_binding" in root:
+        try:
+            ProgrammeContextBinding.from_snapshot(root["programme_binding"])
+        except GenerationContractError as error:
+            raise ValidationGenerationIntegrityError(
+                "generation programme binding is invalid"
+            ) from error
+        expected_schema = "generation-knowledge-context.v2"
     if "knowledge_projection_ids" in root:
         try:
             references = projection_context_ids(root)
@@ -260,7 +272,7 @@ def _context_snapshot_root(
             raise ValidationGenerationIntegrityError(
                 "generation projection references are invalid"
             ) from error
-        if not references or root["schema_version"] != "generation-knowledge-context.v1":
+        if not references or root["schema_version"] != expected_schema:
             raise ValidationGenerationIntegrityError(
                 "generation knowledge context version is invalid"
             )
@@ -272,6 +284,8 @@ def _context_snapshot_root(
         raise ValidationGenerationIntegrityError(
             "generation retrieval filters are invalid"
         ) from error
+    if "programme_binding" in root and not isinstance(filters, RetrievalScopeSet):
+        raise ValidationGenerationIntegrityError("programme binding requires scope-set filters")
     return root, filters
 
 

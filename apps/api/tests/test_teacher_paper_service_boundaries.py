@@ -14,6 +14,7 @@ from exam_guru_api.blueprints.generator import generate_blueprint
 from exam_guru_api.blueprints.serialization import serialize_blueprint
 from exam_guru_api.core.config import Settings
 from exam_guru_api.curriculum.admission import CurriculumNotAdmittedError
+from exam_guru_api.generation.domain import ProgrammeContextBinding
 from exam_guru_api.generation.jobs import DeterministicGenerationDispatcher
 from exam_guru_api.generation.models import GenerationRunModel, GenerationRunStatus
 from exam_guru_api.generation.runtime import create_generation_runtime
@@ -109,7 +110,7 @@ from exam_guru_api.teacher_papers.service import (
 from exam_guru_api.validation.models import ValidationFindingModel, ValidationRunModel
 from exam_guru_api.validation.pipeline import build_default_pipeline
 from tests.test_teacher_paper_domain import curriculum, lesson, programme_scope, target
-from tests.test_validation_run_service import knowledge_context_snapshot
+from tests.test_validation_run_service import knowledge_context_snapshot, programme_context_snapshot
 
 NOW = datetime(2026, 8, 25, tzinfo=UTC)
 JOB_ID = UUID(int=25_910_001)
@@ -1166,19 +1167,22 @@ def test_replacement_generation_enforces_retry_and_cost_caps_before_dispatch(
         )
 
 
-@pytest.mark.parametrize("projections", [False, True])
+@pytest.mark.parametrize("context_kind", ["legacy", "knowledge", "programme"])
 def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration(
     monkeypatch: pytest.MonkeyPatch,
-    projections: bool,
+    context_kind: str,
 ) -> None:
     from types import SimpleNamespace
 
     from exam_guru_api.teacher_papers import service as service_module
 
     runtime = create_generation_runtime(Settings(environment="test"))
+    projections = context_kind != "legacy"
     context_snapshot = (
         knowledge_context_snapshot() if projections else {"items": [], "trust": "untrusted_data"}
     )
+    if context_kind == "programme":
+        context_snapshot = programme_context_snapshot()
 
     async def zero_counts(repository: object, job_id: UUID) -> dict[str, int]:
         del repository, job_id
@@ -1210,6 +1214,12 @@ def test_replacement_generation_records_both_failed_retry_and_fresh_regeneration
             else:
                 assert "knowledge_projection_ids" not in kwargs
                 assert "retrieval_filters" not in kwargs
+            if context_kind == "programme":
+                assert kwargs["programme_binding"] == ProgrammeContextBinding.from_snapshot(
+                    context_snapshot["programme_binding"]
+                )
+            else:
+                assert "programme_binding" not in kwargs
             self.modes.append("create")
             return SimpleNamespace(run=SimpleNamespace(id=UUID(int=402)))
 

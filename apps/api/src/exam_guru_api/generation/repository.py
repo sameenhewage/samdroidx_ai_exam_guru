@@ -441,20 +441,17 @@ class SqlAlchemyGenerationRepository:
             and "knowledge_projection_ids" in run.context_snapshot
             else func.generation_context_lineage_is_current
         )
-        return (
-            await self._session.scalar(
-                select(
-                    predicate(
-                        run.curriculum_version_id,
-                        literal(run.knowledge_chunk_ids, type_=JSONB),
-                        literal(run.historical_question_ids, type_=JSONB),
-                        literal(run.context_snapshot, type_=JSONB),
-                        lock_sources,
-                    )
-                )
-            )
-            is True
-        )
+        arguments: list[object] = [
+            run.curriculum_version_id,
+            literal(run.knowledge_chunk_ids, type_=JSONB),
+            literal(run.historical_question_ids, type_=JSONB),
+            literal(run.context_snapshot, type_=JSONB),
+        ]
+        if isinstance(run.context_snapshot, dict) and "programme_binding" in run.context_snapshot:
+            predicate = func.generation_programme_context_is_current
+            arguments.append(literal(run.blueprint_slot_snapshot, type_=JSONB))
+        arguments.append(lock_sources)
+        return await self._session.scalar(select(predicate(*arguments))) is True
 
     async def store_run(
         self,
