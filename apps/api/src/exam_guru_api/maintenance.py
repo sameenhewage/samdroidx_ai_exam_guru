@@ -16,6 +16,7 @@ from exam_guru_api.documents.understanding_jobs import recover_understanding_pag
 from exam_guru_api.documents.upload_jobs import recover_source_upload_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
+from exam_guru_api.knowledge.material_index_jobs import recover_material_knowledge_indexing
 from exam_guru_api.knowledge.preparation_jobs import recover_material_knowledge
 from exam_guru_api.storage_reconciliation.jobs import reconcile_source_objects
 from exam_guru_api.teacher_papers.jobs import recover_teacher_papers
@@ -55,6 +56,7 @@ _RECOVERY_ACTORS = (
     cast(RecoveryActor, recover_source_upload_jobs),
     cast(RecoveryActor, recover_understanding_page_jobs),
     cast(RecoveryActor, recover_material_knowledge),
+    cast(RecoveryActor, recover_material_knowledge_indexing),
 )
 _RECOVERY_NAMES = (
     "extraction",
@@ -66,6 +68,7 @@ _RECOVERY_NAMES = (
     "source_upload_finalization",
     "source_understanding",
     "material_knowledge_preparation",
+    "material_knowledge_indexing",
 )
 
 
@@ -79,6 +82,7 @@ def enqueue_recovery_jobs(
     source_upload_actor: RecoveryActor = _RECOVERY_ACTORS[6],
     understanding_actor: RecoveryActor = _RECOVERY_ACTORS[7],
     preparation_actor: RecoveryActor = _RECOVERY_ACTORS[8],
+    material_indexing_actor: RecoveryActor = _RECOVERY_ACTORS[9],
 ) -> MaintenanceTickResult:
     enqueued = 0
     failures = 0
@@ -94,6 +98,7 @@ def enqueue_recovery_jobs(
             source_upload_actor,
             understanding_actor,
             preparation_actor,
+            material_indexing_actor,
         ),
         strict=True,
     ):

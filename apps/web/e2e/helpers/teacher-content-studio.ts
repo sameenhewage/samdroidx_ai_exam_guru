@@ -839,7 +839,23 @@ export const SYNTHETIC_WORKFLOW_EVIDENCE =
   "Disposable synthetic workflow fixture, NOT real educational approval";
 
 /** Explicit printable lines prevent clipping or silent changes to imported source spans. */
-export function syntheticTextPdf(lines: readonly string[]) {
+export function syntheticTextPdf(lines: readonly string[], identity?: string) {
+  if (
+    identity !== undefined &&
+    (typeof identity !== "string" ||
+      identity.length < 1 ||
+      identity.length > 128 ||
+      [...identity].some(
+        (character) =>
+          character.charCodeAt(0) < 32 || character.charCodeAt(0) > 126,
+      ))
+  ) {
+    throw new Error(
+      "Synthetic PDF identity must be 1 to 128 printable ASCII characters",
+    );
+  }
+  const identityComment =
+    identity === undefined ? "" : `% fixture-identity: ${identity}\n`;
   if (
     lines.length < 1 ||
     lines.length > 40 ||
@@ -878,11 +894,32 @@ export function syntheticTextPdf(lines: readonly string[]) {
   const xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}`;
   return {
     bytes: Buffer.from(
-      `${body}${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+      `${body}${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n${identityComment}`,
       "ascii",
     ),
     text: lines.join("\n"),
   };
+}
+
+export function syntheticGenerationSource(identity: string) {
+  const forbiddenMarker = "Incorrect example";
+  const retrievalMarker = "Human correction";
+  const correctedText = `${retrievalMarker}: Four is an even number.`;
+  const forbiddenText = `${forbiddenMarker}: Four is odd.`;
+  return {
+    correctedText,
+    forbiddenText,
+    forbiddenMarker,
+    retrievalMarker,
+    fixture: syntheticTextPdf([correctedText, forbiddenText], identity),
+  };
+}
+
+export function syntheticHistoricalQuestion(year: number, identity: string) {
+  return syntheticTextPdf(
+    [`Historical choice ${year}: A three; B four; answer B.`],
+    identity,
+  );
 }
 
 function assertSyntheticPageText(page: PageView, text: string) {

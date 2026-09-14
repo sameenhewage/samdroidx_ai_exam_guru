@@ -1109,6 +1109,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/materials/{document_id}/knowledge-units": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Material Knowledge Units */
+        get: operations["list_material_knowledge_units"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Material Knowledge Unit Workspace */
+        get: operations["get_material_knowledge_unit_workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}/curriculum-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Material Knowledge Unit */
+        post: operations["review_material_knowledge_unit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}/indexing-retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Material Knowledge Indexing */
+        post: operations["retry_material_knowledge_indexing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/materials/{document_id}/metadata-candidates": {
         parameters: {
             query?: never;
@@ -5036,6 +5104,31 @@ export interface components {
             /** Subject Count */
             subject_count: number;
         };
+        /** MaterialKnowledgeIndexRetryRequest */
+        MaterialKnowledgeIndexRetryRequest: {
+            /** Confirmed Retry */
+            confirmed_retry: boolean;
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** MaterialKnowledgeIndexingStatus */
+        MaterialKnowledgeIndexingStatus: {
+            /** Intent Id */
+            intent_id: string | null;
+            /** Ready */
+            ready: boolean;
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "not_requested" | "waiting_configuration" | "pending" | "queued" | "ready" | "needs_attention" | "superseded" | "not_searchable" | "configuration_changed";
+            /** Version */
+            version: number | null;
+        };
         /** MaterialKnowledgePreparationResponse */
         MaterialKnowledgePreparationResponse: {
             /**
@@ -5066,6 +5159,55 @@ export interface components {
             unit_count: number;
             /** Verified Pages */
             verified_pages: number;
+        };
+        /** MaterialKnowledgeUnitSummary */
+        MaterialKnowledgeUnitSummary: {
+            /** Has Projection */
+            has_projection: boolean;
+            indexing: components["schemas"]["MaterialKnowledgeIndexingStatus"];
+            /** Page Number */
+            page_number: number;
+            review: components["schemas"]["KnowledgeUnitReview"] | null;
+            /** Sequence */
+            sequence: number;
+            /** Source Curriculum Unit Id */
+            source_curriculum_unit_id: string | null;
+            /** Source Lesson Id */
+            source_lesson_id: string | null;
+            /** Source Lesson Title */
+            source_lesson_title: string | null;
+            /** Source Unit Title */
+            source_unit_title: string | null;
+            /**
+             * Unit Id
+             * Format: uuid
+             */
+            unit_id: string;
+        };
+        /** MaterialKnowledgeUnitWorkspace */
+        MaterialKnowledgeUnitWorkspace: {
+            indexing: components["schemas"]["MaterialKnowledgeIndexingStatus"];
+            workspace: components["schemas"]["KnowledgeUnitWorkspace"];
+        };
+        /** MaterialKnowledgeUnitsResponse */
+        MaterialKnowledgeUnitsResponse: {
+            /** Curriculum Version Id */
+            curriculum_version_id: string | null;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Items */
+            items: components["schemas"]["MaterialKnowledgeUnitSummary"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Source Current */
+            source_current: boolean;
+            /** Total */
+            total: number;
         };
         /** MaterialListItemResponse */
         MaterialListItemResponse: {
@@ -13485,6 +13627,324 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    list_material_knowledge_units: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialKnowledgeUnitsResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_material_knowledge_unit_workspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialKnowledgeUnitWorkspace"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    review_material_knowledge_unit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialKnowledgeUnitWorkspace"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_material_knowledge_indexing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                unit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaterialKnowledgeIndexRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaterialKnowledgeUnitWorkspace"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

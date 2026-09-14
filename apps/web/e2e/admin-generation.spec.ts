@@ -6,6 +6,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 
 import { openAdvancedArea } from "./helpers/advanced-navigation";
 import {
@@ -13,7 +14,8 @@ import {
   confirmSyntheticPage,
   readSyntheticSource,
   seedAdmittedScope,
-  syntheticTextPdf,
+  syntheticGenerationSource,
+  syntheticHistoricalQuestion,
   SYNTHETIC_WORKFLOW_EVIDENCE,
 } from "./helpers/teacher-content-studio";
 
@@ -131,8 +133,8 @@ async function createReviewedHistoricalQuestion({
   skill: TaxonomyNode;
   year: number;
 }): Promise<ReviewedHistoricalEvidence> {
-  const questionText = `Historical choice ${year} ${marker}: A three; B four; answer B.`;
-  const fixture = syntheticTextPdf([questionText]);
+  const fixture = syntheticHistoricalQuestion(year, marker);
+  const questionText = fixture.text;
   const upload = await request.post("/api/v1/admin/source-documents", {
     multipart: {
       curriculum_version_id: curriculum.id,
@@ -155,6 +157,7 @@ async function createReviewedHistoricalQuestion({
   });
   expect(upload.status()).toBe(201);
   const uploadedSource = (await upload.json()) as SourceDocument;
+  expect(uploadedSource.deduplicated).toBe(false);
 
   expect(
     (
@@ -814,11 +817,23 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const code = unique.toUpperCase();
   const boundary = `Corrected even number knowledge ${unique}`;
   const forbiddenBoundary = `Forbidden unreviewed knowledge ${unique}`;
-  const forbiddenMarker = `uncorrected-odd-${unique}`;
-  const retrievalMarker = `human-even-correction-${unique}`;
-  const correctedText = `Human correction ${retrievalMarker}: Four is an even number.`;
-  const forbiddenText = `Incorrect example: Four is odd. ${forbiddenMarker}`;
-  const fixture = syntheticTextPdf([correctedText, forbiddenText]);
+  const sourceNonce = ["dcjfhccgf", "dchgdjdjf"][
+    test.info().repeatEachIndex % 2
+  ];
+  const sourceIdentity = `${sourceNonce}-${randomUUID()}`;
+  const {
+    correctedText,
+    forbiddenText,
+    forbiddenMarker,
+    retrievalMarker,
+    fixture,
+  } = syntheticGenerationSource(sourceIdentity);
+  test
+    .info()
+    .annotations.push({
+      type: "source-fixture-nonce",
+      description: sourceNonce,
+    });
   await login(page, "admin");
 
   const { curriculum, exam, medium, subject } = await seedAdmittedScope(
@@ -880,6 +895,7 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   });
   expect(upload.status()).toBe(201);
   const uploadedSource = (await upload.json()) as SourceDocument;
+  expect(uploadedSource.deduplicated).toBe(false);
   expect(
     (
       await page.request.post(
@@ -1185,7 +1201,7 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const historical2019 = await createReviewedHistoricalQuestion({
     competency,
     curriculum,
-    marker: unique,
+    marker: sourceIdentity,
     paperCode: `P19-${code}`,
     request: page.request,
     skill,
@@ -1194,7 +1210,7 @@ test("integrated deterministic P10 mechanics preserve one corrected lineage thro
   const historical2020 = await createReviewedHistoricalQuestion({
     competency,
     curriculum,
-    marker: unique,
+    marker: sourceIdentity,
     paperCode: `P20-${code}`,
     request: page.request,
     skill,

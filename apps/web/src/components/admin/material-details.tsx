@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
 import { MaterialKnowledgePreparation } from "./material-knowledge-preparation";
+import { supportsMaterialReviewNavigation } from "./material-review-navigation";
 import { sourceViewerCopy } from "./original-page-viewer";
 import { SourceDocumentViewer } from "./source-document-viewer";
 
@@ -47,6 +48,38 @@ const statusLabels: Record<MaterialStatus, string> = {
 
 const secondaryButton =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 outline-none hover:border-slate-500 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2";
+
+const subscribeNavigationSupport = () => () => {};
+
+export function MaterialCurriculumReviewLink({
+  documentId,
+  language,
+}: {
+  documentId: string;
+  language: ReviewLanguage;
+}) {
+  const protectedTraversal = useSyncExternalStore(
+    subscribeNavigationSupport,
+    supportsMaterialReviewNavigation,
+    () => false,
+  );
+  const props = {
+    className: secondaryButton,
+    href: `/admin/materials/${documentId}/review-curriculum`,
+    lang: language,
+  };
+  const label =
+    language === "si"
+      ? "විෂයමාලා ගැළපීම පරීක්ෂා කරන්න"
+      : "Review curriculum mapping";
+  return protectedTraversal ? (
+    <Link {...props} prefetch={false}>
+      {label}
+    </Link>
+  ) : (
+    <a {...props}>{label}</a>
+  );
+}
 
 function errorCode(error: unknown): string {
   if (error && typeof error === "object" && "detail" in error) {
@@ -365,6 +398,10 @@ export function MaterialDetails({
               ? "පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න"
               : "Review page content"}
           </Link>
+          <MaterialCurriculumReviewLink
+            documentId={documentId}
+            language={language}
+          />
           <Link
             className={secondaryButton}
             href={`/admin/materials/${documentId}/review-text`}

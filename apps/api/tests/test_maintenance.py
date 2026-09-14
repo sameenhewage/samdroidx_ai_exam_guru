@@ -15,6 +15,7 @@ from exam_guru_api.documents.understanding_jobs import (
 from exam_guru_api.documents.upload_jobs import recover_source_upload_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
+from exam_guru_api.knowledge.material_index_jobs import recover_material_knowledge_indexing
 from exam_guru_api.knowledge.preparation_jobs import recover_material_knowledge
 from exam_guru_api.maintenance import (
     MaintenanceTickResult,
@@ -106,6 +107,7 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         RecordingRecoveryActor("source_upload_finalization", calls),
         RecordingRecoveryActor("source_understanding", calls),
         RecordingRecoveryActor("material_knowledge_preparation", calls),
+        RecordingRecoveryActor("material_knowledge_indexing", calls),
     )
 
     result = enqueue_recovery_jobs(
@@ -118,9 +120,10 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         source_upload_actor=actors[6],
         understanding_actor=actors[7],
         preparation_actor=actors[8],
+        material_indexing_actor=actors[9],
     )
 
-    assert result == MaintenanceTickResult(enqueued=8, failures=1)
+    assert result == MaintenanceTickResult(enqueued=9, failures=1)
     assert calls == [
         "extraction",
         "generation",
@@ -131,6 +134,7 @@ def test_scheduler_tick_enqueues_all_maintenance_actors_with_error_isolation(
         "source_upload_finalization",
         "source_understanding",
         "material_knowledge_preparation",
+        "material_knowledge_indexing",
     ]
     assert logger.errors == ["maintenance recovery enqueue failed: generation"]
     assert "private" not in repr(logger.errors)
@@ -236,7 +240,9 @@ def test_maintenance_broker_registers_only_internal_recovery_actors() -> None:
             recover_source_upload_jobs.actor_name,
             recover_understanding_page_jobs.actor_name,
             recover_material_knowledge.actor_name,
+            recover_material_knowledge_indexing.actor_name,
         }
+        assert recover_material_knowledge_indexing.broker is broker
         assert recover_material_knowledge.broker is broker
         assert recover_understanding_page_jobs.broker is broker
         assert recover_source_upload_jobs.broker is broker
@@ -256,6 +262,10 @@ def test_worker_registers_restart_safe_source_page_actors() -> None:
     broker = create_broker(Settings(environment="test"))
     try:
         assert broker.get_actor(read_source.actor_name) is read_source
+        assert (
+            broker.get_actor(recover_material_knowledge_indexing.actor_name)
+            is recover_material_knowledge_indexing
+        )
         assert broker.get_actor(understand_source_page.actor_name) is understand_source_page
         assert (
             broker.get_actor(recover_understanding_page_jobs.actor_name)
@@ -304,7 +314,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         assert interval_seconds == 17
         assert stop_signal is stop
         result = tick()
-        assert result == MaintenanceTickResult(enqueued=9, failures=0)
+        assert result == MaintenanceTickResult(enqueued=10, failures=0)
         handler = cast(Callable[[int, FrameType | None], None], handlers[0])
         handler(signal.SIGTERM, None)
         assert stop.is_set()
@@ -320,6 +330,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         RecordingRecoveryActor("source_upload_finalization", calls),
         RecordingRecoveryActor("source_understanding", calls),
         RecordingRecoveryActor("material_knowledge_preparation", calls),
+        RecordingRecoveryActor("material_knowledge_indexing", calls),
     )
 
     monkeypatch.setattr(maintenance, "Settings", lambda: settings)
@@ -341,6 +352,7 @@ def test_maintenance_main_installs_sigterm_runs_loop_and_closes_broker(
         "source_upload_finalization",
         "source_understanding",
         "material_knowledge_preparation",
+        "material_knowledge_indexing",
     ]
     assert handlers == [handlers[0], previous_handler]
     assert broker.closed is True

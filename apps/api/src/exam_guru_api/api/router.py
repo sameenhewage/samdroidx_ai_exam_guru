@@ -13,6 +13,7 @@ from exam_guru_api.api.routes.health import router as health_router
 from exam_guru_api.api.routes.knowledge import router as knowledge_router
 from exam_guru_api.api.routes.knowledge_preparation import router as knowledge_preparation_router
 from exam_guru_api.api.routes.knowledge_units import router as knowledge_unit_router
+from exam_guru_api.api.routes.material_knowledge import router as material_knowledge_router
 from exam_guru_api.api.routes.operations import router as operations_router
 from exam_guru_api.api.routes.page_images import router as page_images_router
 from exam_guru_api.api.routes.papers import router as paper_router
@@ -43,6 +44,7 @@ api_router.include_router(understanding_router, prefix="/admin", tags=["source-u
 api_router.include_router(
     knowledge_preparation_router, prefix="/admin", tags=["material-knowledge-preparation"]
 )
+api_router.include_router(material_knowledge_router, prefix="/admin", tags=["material-knowledge"])
 api_router.include_router(studio_safety_router, prefix="/admin", tags=["studio-safety"])
 api_router.include_router(
     analytics_router,

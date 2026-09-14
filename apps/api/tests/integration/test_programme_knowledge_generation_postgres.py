@@ -554,7 +554,7 @@ def test_programme_context_migration_refuses_to_discard_bound_history(
             assert run is not None
             assert (
                 await session.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0052_knowledge_preparation"
+                == "0053_material_knowledge_review"
             )
             return deepcopy(run.context_snapshot)
 

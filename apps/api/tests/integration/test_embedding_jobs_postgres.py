@@ -666,7 +666,7 @@ def test_embedding_job_migration_has_exact_durable_columns_function_and_triggers
         return columns, constraints, triggers, cast(str | None, revision)
 
     columns, constraints, triggers, revision = asyncio.run(inspect())
-    assert revision == "0052_knowledge_preparation"
+    assert revision == "0053_material_knowledge_review"
     assert columns == {
         "id",
         "curriculum_version_id",

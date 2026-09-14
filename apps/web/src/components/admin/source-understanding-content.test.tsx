@@ -157,6 +157,32 @@ describe("teacher-facing structured source evidence", () => {
     ).toBeVisible();
   });
 
+  it("renders prepared unit evidence as previously checked content without changing literal source values", () => {
+    const content = understandingFixture();
+    render(
+      <SourceUnderstandingContent
+        unit={{
+          observation: content.observation,
+          education: content.education,
+          resolved_uncertainties: content.uncertainties,
+        }}
+        language="en"
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Accepted teaching points" }),
+    ).toBeVisible();
+    expect(screen.getByText("Practise counting by twos.")).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Details checked by the teacher" }),
+    ).toBeVisible();
+    expect(screen.getByText("6 × 2 = 8")).toBeVisible();
+    expect(
+      screen.getByText(content.observation.regions[0].exact_text).textContent,
+    ).toBe(content.observation.regions[0].exact_text);
+    expect(screen.queryByText(/Proposed reading/)).not.toBeInTheDocument();
+  });
+
   it("distinguishes blank and unreadable cells without solving source exercises", () => {
     render(
       <SourceUnderstandingContent

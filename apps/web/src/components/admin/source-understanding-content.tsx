@@ -6,9 +6,14 @@ import { cn } from "@/lib/utils";
 
 type Understanding = components["schemas"]["PageUnderstanding"];
 type Trusted = components["schemas"]["TrustedPageKnowledge"];
+type UnitContent = Pick<
+  components["schemas"]["KnowledgeUnit"],
+  "observation" | "education" | "resolved_uncertainties"
+>;
 type Props = { language?: ReviewLanguage } & (
-  | { understanding: Understanding; trusted?: never }
-  | { trusted: Trusted; understanding?: never }
+  | { understanding: Understanding; trusted?: never; unit?: never }
+  | { trusted: Trusted; understanding?: never; unit?: never }
+  | { unit: UnitContent; trusted?: never; understanding?: never }
 );
 type Table = components["schemas"]["ObservedTable"];
 type Relationship = components["schemas"]["ObservedRelationship"]["kind"];
@@ -141,7 +146,8 @@ function SourceTable({
 }
 
 export function SourceUnderstandingContent(props: Props) {
-  const { language, trusted } = props;
+  const { language } = props;
+  const trusted = props.trusted ?? props.unit;
   const understanding: Understanding = trusted
     ? {
         schema_version: "page-understanding.v1",

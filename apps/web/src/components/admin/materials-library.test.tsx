@@ -1693,6 +1693,25 @@ describe("MaterialsLibrary", () => {
     );
   });
 
+  it.each(["admin", "reviewer"] as const)(
+    "links normal Materials to curriculum review for %s without starting work",
+    async (role) => {
+      const fixture = fixtureApi({ initialMaterials: [materials[1]] });
+      vi.stubGlobal("fetch", fixture.fetchMock);
+      render(<MaterialDetails documentId={ids.guide} role={role} />);
+      await screen.findByRole("heading", { name: materials[1].title });
+      expect(
+        screen.getByRole("link", { name: "Review curriculum mapping" }),
+      ).toHaveAttribute(
+        "href",
+        `/admin/materials/${ids.guide}/review-curriculum`,
+      );
+      expect(
+        fixture.requests.every((request) => request.method === "GET"),
+      ).toBe(true);
+    },
+  );
+
   it("shows read-only preparation progress in normal Material Details", async () => {
     const fixture = fixtureApi({ initialMaterials: [materials[1]] });
     vi.stubGlobal("fetch", fixture.fetchMock);

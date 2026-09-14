@@ -6629,6 +6629,94 @@
         "title": "MaterialGradeSummaryResponse",
         "type": "object"
       },
+      "MaterialKnowledgeIndexRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed_retry": {
+            "title": "Confirmed Retry",
+            "type": "boolean"
+          },
+          "expected_version": {
+            "maximum": 2147483645.0,
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "reason",
+          "confirmed_retry"
+        ],
+        "title": "MaterialKnowledgeIndexRetryRequest",
+        "type": "object"
+      },
+      "MaterialKnowledgeIndexingStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "intent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Id"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "retry_allowed": {
+            "title": "Retry Allowed",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "not_requested",
+              "waiting_configuration",
+              "pending",
+              "queued",
+              "ready",
+              "needs_attention",
+              "superseded",
+              "not_searchable",
+              "configuration_changed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "intent_id",
+          "version",
+          "status",
+          "ready",
+          "retry_allowed"
+        ],
+        "title": "MaterialKnowledgeIndexingStatus",
+        "type": "object"
+      },
       "MaterialKnowledgePreparationResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6706,6 +6794,178 @@
           "failed_pages"
         ],
         "title": "MaterialKnowledgePreparationResponse",
+        "type": "object"
+      },
+      "MaterialKnowledgeUnitSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "has_projection": {
+            "title": "Has Projection",
+            "type": "boolean"
+          },
+          "indexing": {
+            "$ref": "#/components/schemas/MaterialKnowledgeIndexingStatus"
+          },
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeUnitReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "source_curriculum_unit_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Curriculum Unit Id"
+          },
+          "source_lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Lesson Id"
+          },
+          "source_lesson_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Lesson Title"
+          },
+          "source_unit_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Unit Title"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "title": "Unit Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit_id",
+          "page_number",
+          "sequence",
+          "source_curriculum_unit_id",
+          "source_lesson_id",
+          "source_unit_title",
+          "source_lesson_title",
+          "review",
+          "has_projection",
+          "indexing"
+        ],
+        "title": "MaterialKnowledgeUnitSummary",
+        "type": "object"
+      },
+      "MaterialKnowledgeUnitWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "indexing": {
+            "$ref": "#/components/schemas/MaterialKnowledgeIndexingStatus"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/KnowledgeUnitWorkspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "indexing"
+        ],
+        "title": "MaterialKnowledgeUnitWorkspace",
+        "type": "object"
+      },
+      "MaterialKnowledgeUnitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "curriculum_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curriculum Version Id"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MaterialKnowledgeUnitSummary"
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 25.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "source_current": {
+            "title": "Source Current",
+            "type": "boolean"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "curriculum_version_id",
+          "source_current",
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "title": "MaterialKnowledgeUnitsResponse",
         "type": "object"
       },
       "MaterialListItemResponse": {
@@ -25544,6 +25804,472 @@
         "summary": "Material Knowledge Preparation",
         "tags": [
           "material-knowledge-preparation"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/knowledge-units": {
+      "get": {
+        "operationId": "list_material_knowledge_units",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialKnowledgeUnitsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Material Knowledge Units",
+        "tags": [
+          "material-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}": {
+      "get": {
+        "operationId": "get_material_knowledge_unit_workspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialKnowledgeUnitWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Material Knowledge Unit Workspace",
+        "tags": [
+          "material-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}/curriculum-review": {
+      "post": {
+        "operationId": "review_material_knowledge_unit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialKnowledgeUnitWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Review Material Knowledge Unit",
+        "tags": [
+          "material-knowledge"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/{document_id}/knowledge-units/{unit_id}/indexing-retry": {
+      "post": {
+        "operationId": "retry_material_knowledge_indexing",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "unit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Unit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialKnowledgeIndexRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialKnowledgeUnitWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retry Material Knowledge Indexing",
+        "tags": [
+          "material-knowledge"
         ]
       }
     },
