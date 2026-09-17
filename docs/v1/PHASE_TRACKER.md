@@ -17,6 +17,17 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-17 — Third witness unblocked and measured; all three witnesses fail Sinhala
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** The third witness now runs, so for the first time all three locked providers were measured on the same preserved crops. The measurement is decisive and negative for Sinhala.
+- **The OpenAI blocker was misdiagnosed for three sessions and is not a credit problem.** `EXAM_GURU_DOCUMENT_UNDERSTANDING_OPENAI_API_KEY` holds an **OpenRouter** key (`sk-or-v1-…`) while the provider posts to `api.openai.com`, which answers **401 `invalid_api_key`**. Pointed at `https://openrouter.ai/api/v1` with model `openai/gpt-5.6-luna`, the identical key returns **HTTP 200**. The earlier `credit_balance_exhausted` came from the previous unrelated key.
+- **Runtime proof for the third witness:** one bounded real image request returned `model_used=openai/gpt-5.6-luna`, `finish_reason=stop`, valid strict `json_schema` structured output and `cost≈USD 0.0004`, confirming image input and structured output both work. Six anchors cost **USD 0.007966** in total.
+- **Luna is exact on every critical token and exact on nothing Sinhala.** `2 X 8 = 16` / `3 X 8 = 24` and `(1) 28 × 8 (2) 39 × 8 (3) 105 × 8 (4) 476 × 8` are both **byte-exact**, preserving the printed capital Latin `X` and the true `×` without normalising either. Sinhala CER is 1.0 on the title, 0.8667 on the subtitle, 0.75 on the grade line and 0.5455 on the contact line.
+- **Most serious finding — a confident source-infidelity hallucination.** On the contact region Luna returned `www.moe.gov.lk` and `info@moe.gov.lk` where the book prints `www.nie.lk` and `info @ nie.lk`. It substituted a **different real Sri Lankan institution's domain** and silently closed the printed spaces around `@`. This is exactly the failure class section 7 forbids, it is not detectable by agreement alone, and it would have been invisible to a majority vote.
+- **All three witnesses now fail Sinhala in three different ways:** Qwen returns nothing at all (unbounded reasoning, `done_reason=length`), Ornith invents fluent Sinhala words, and Luna invents plausible Sinhala plus a plausible wrong URL. They agree exactly only on numerals and operators.
+- **Capability flags deliberately left `false`.** Image input and structured output are proven, but the provider has no base-URL setting, so enabling the flags would boot the API into a runtime 401. Adding an explicit document-understanding base URL is the next required change; the key was never printed, logged or committed.
+- **Consequence for the locked architecture:** three-witness consensus is now genuinely reachable for numerals, operators, equations and table values, where all three already agree exactly. It cannot yet reach the section 12 target of ≥99.5% character accuracy on clean printed Sinhala, because no witness reads Sinhala correctly.
+
 ### 2026-09-17 — Character and token level disagreement map across the three locked witnesses
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** This delivers section 5 of the quality upgrade only. Sections 1–4 and 6–14 are not implemented, no provider was added or replaced, and no Chrome DevTools MCP loop was run in this step.
