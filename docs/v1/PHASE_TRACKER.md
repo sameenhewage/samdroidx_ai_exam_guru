@@ -17,6 +17,15 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-17 — Direct OpenAI third witness verified and the source-consensus runtime boots
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** Connectivity and configuration are now proven end to end, but no acceptance page has been read through the real pipeline and no Chrome DevTools MCP loop has been run.
+- **Direct OpenAI proven, OpenRouter rejected.** The corrected local key is an OpenAI project key. One bounded real image request resolved `base_url=https://api.openai.com/v1/`, returned **HTTP 200**, `model_used=gpt-5.6-luna`, `finish_reason=stop`, valid strict `json_schema` output and the source-faithful `2 X 8 = 16` / `3 X 8 = 24`, using 822 prompt and 32 completion tokens. **No `invalid_api_key`, no `credit_balance_exhausted`.** No OpenRouter base URL, dependency or code path exists in the repository; the key was never printed, logged or committed and container logs are redacted before display.
+- **Capability flags enabled only after that proof:** `IMAGE_INPUT_VERIFIED` and `STRUCTURED_OUTPUT_VERIFIED` are now `true` in the ignored local `.env`. `.env.example` was not given a secret.
+- **Configuration gaps found and closed by booting the real service, not by reading code.** `Settings` additionally required `MODEL_VERSION`, `PRICING_VERSION`, input/output micro-USD pricing and `TEMPERATURE`, then `SOURCE_QWEN_MODEL_DIGEST` with a reachable Qwen base URL. Pricing was derived from measured upstream inference cost at **USD 0.20 per million input and USD 1.20 per million output tokens** and is marked `2026-09-17`; **these must be confirmed against OpenAI's published list price**, because they feed the `MAX_COST_MICROUSD` cost gate. The Qwen digest was read from the live Ollama runtime rather than assumed.
+- **Runtime proof:** `ai-exam-guru-api-1` is **Up (healthy)** with `source_consensus_enabled` satisfied, alongside healthy PostgreSQL and Valkey. An earlier boot failure traced to PostgreSQL and Valkey still being stopped from the previous session's clean shutdown, not to the new configuration.
+- **Unchanged blocker:** all three witnesses still fail Sinhala, so connectivity does not move the gate.
+
 ### 2026-09-17 — Third witness unblocked and measured; all three witnesses fail Sinhala
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** The third witness now runs, so for the first time all three locked providers were measured on the same preserved crops. The measurement is decisive and negative for Sinhala.
