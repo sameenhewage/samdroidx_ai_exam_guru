@@ -95,6 +95,23 @@ def test_invalid_or_thinking_only_qwen_output_is_not_transcription(failure: str)
         ).read(region_input())
 
 
+def test_reasoning_that_exhausts_the_output_budget_is_an_explicit_missing_reading() -> None:
+    """Measured 2026-09-17: qwen3-vl:8b loops on Sinhala it cannot decode and returns
+    empty content with done_reason=length. Raising num_predict only scales the loop, so
+    this must surface as an explicit exhausted-budget failure, never as fallback text."""
+    value = response()
+    value["done_reason"] = "length"
+    value["message"]["content"] = ""
+    value["message"]["thinking"] = "private reasoning that never reached a final answer"
+    value["eval_count"] = 4096
+
+    with pytest.raises(QwenSourceReadError, match="qwen_output_budget_exhausted") as caught:
+        QwenSourceReadProvider(
+            config(), transport=lambda url, *_: runtime_response(url) or value
+        ).read(region_input())
+    assert "private reasoning" not in str(caught.value)
+
+
 @pytest.mark.parametrize("mismatch", ["version", "missing_model", "digest", "malformed"])
 def test_runtime_identity_is_checked_before_sending_source_pixels(mismatch: str) -> None:
     dispatched: list[str] = []

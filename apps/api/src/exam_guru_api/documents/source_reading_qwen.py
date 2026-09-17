@@ -282,6 +282,12 @@ class QwenSourceReadProvider:
             message = response.get("message")
             raw = message.get("content") if isinstance(message, dict) else None
             incoming, outgoing = response.get("prompt_eval_count"), response.get("eval_count")
+            # Measured 2026-09-17: this model can spend its whole budget reasoning about
+            # Sinhala it cannot decode and return no content at all. Doubling num_predict
+            # only doubled the reasoning, so report an honest missing reading and let
+            # consensus decide; never substitute invented text for the unread region.
+            if response.get("done_reason") == "length" and not raw:
+                raise QwenSourceReadError("qwen_output_budget_exhausted")
             if (
                 response.get("model") != self.config.model
                 or response.get("done") is not True
