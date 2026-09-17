@@ -17,6 +17,16 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-17 — Character and token level disagreement map across the three locked witnesses
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** This delivers section 5 of the quality upgrade only. Sections 1–4 and 6–14 are not implemented, no provider was added or replaced, and no Chrome DevTools MCP loop was run in this step.
+- **Problem solved:** the existing `align_source_tokens` compared exactly two readings at token level, so a single operator conflict made an entire region uncertain and a substituted digit was indistinguishable from a missing token.
+- **`build_disagreement_map`** aligns any number of witnesses, pairs substitutions through `SequenceMatcher` opcodes rather than splitting them into a delete plus an insert, and descends to character positions inside a conflicting token. It reports competing variants with the providers backing each, the `text`/`number`/`operator`/`url`/`email`/`structure` kind, an explicit `critical` flag, an `agreement_ratio` and `missing_providers`.
+- **Locked worked example verified:** `476 × 8`, `476 × 8` and `476 x 8` now yield exactly one cell at token index 1 with `×` backed by `{ornith, qwen}` and `x` by `{openai}`, `critical=True`, while the agreeing `476` and `8` are untouched. `476` against `470` reports `character_positions=(2,)` — the single wrong digit, not the whole number.
+- **Source fidelity preserved:** a witness that "improves" the printed capital Latin `X` into `×` is recorded as a genuine operator conflict rather than normalised into agreement, and an empty reading is recorded in `missing_providers` instead of being invented.
+- **Evidence:** new `tests/test_source_disagreement_map.py` covers the operator conflict, full agreement, the capital-`X` fidelity case, character-level digit substitution, a missing provider and a one-sided insertion. Two real defects were found and fixed during the loop: a missing `Mapping` import and substitutions being split into delete plus insert. Ruff check, ruff format and mypy are clean; the seven source suites are **73 passed**.
+- **Still owed for this upgrade:** source quality analysis, multi-scale rendering, layout/region extraction, three-provider independent reads, evidence-weighted consensus, critical-token reread policy, table geometry persistence, deterministic fidelity validators, verified-data reliability calibration, the quality-metric KPIs and the mandatory Chrome MCP loop.
+
 ### 2026-09-17 — Qwen output-budget defect resolved honestly; OpenAI third witness still blocked
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** The locked Qwen + Ornith + OpenAI engine is not delivered. This entry records one bounded OpenAI availability probe, a root-caused Qwen defect fix with a regression test, and the measured reason the three-witness runtime proof cannot be produced yet.

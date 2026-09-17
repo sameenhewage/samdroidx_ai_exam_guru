@@ -2,6 +2,7 @@ import hashlib
 import math
 import re
 import unicodedata
+from collections.abc import Mapping
 from difflib import SequenceMatcher
 from typing import Literal, Self
 
@@ -201,6 +202,131 @@ def _kind(
     if any(value and value[0].isdigit() for value in values):
         return "number"
     return "text"
+
+
+class SourceVariant(UnderstandingModel):
+    value: str = Field(max_length=4000)
+    providers: tuple[ShortText, ...] = Field(min_length=1, max_length=8)
+
+
+class SourceDisagreementCell(UnderstandingModel):
+    kind: Literal["text", "number", "operator", "url", "email", "structure"]
+    line: int = Field(ge=0)
+    token_index: int = Field(ge=0)
+    variants: tuple[SourceVariant, ...] = Field(min_length=2, max_length=8)
+    critical: bool
+    character_positions: tuple[int, ...] = Field(max_length=4000)
+
+
+class SourceDisagreementMap(UnderstandingModel):
+    providers: tuple[ShortText, ...] = Field(min_length=1, max_length=8)
+    missing_providers: tuple[ShortText, ...] = Field(max_length=8)
+    cells: tuple[SourceDisagreementCell, ...] = Field(max_length=2048)
+    critical_conflict: bool
+    agreement_ratio: float = Field(ge=0.0, le=1.0)
+
+
+def _columns(
+    anchor: list[tuple[str, int]], other: list[tuple[str, int]]
+) -> list[tuple[int | None, int | None]]:
+    """Aligned columns that keep a substitution paired.
+
+    A replaced token must line up with the token it replaced, otherwise `476` against
+    `470` looks like a whole missing token instead of one wrong digit.
+    """
+    left = [token for token, _ in anchor]
+    right = [token for token, _ in other]
+    pairs: list[tuple[int | None, int | None]] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(a=left, b=right, autojunk=False).get_opcodes():
+        if tag == "equal":
+            pairs.extend((i, j) for i, j in zip(range(i1, i2), range(j1, j2), strict=True))
+            continue
+        if tag == "replace":
+            shared = min(i2 - i1, j2 - j1)
+            pairs.extend((i1 + k, j1 + k) for k in range(shared))
+            pairs.extend((i, None) for i in range(i1 + shared, i2))
+            pairs.extend((None, j) for j in range(j1 + shared, j2))
+            continue
+        pairs.extend((i, None) for i in range(i1, i2))
+        pairs.extend((None, j) for j in range(j1, j2))
+    return pairs
+
+
+def build_disagreement_map(readings: Mapping[str, str]) -> SourceDisagreementMap:
+    """Align every witness at token level, then at character level inside a conflict.
+
+    One provider disagreeing about one operator must pin that operator, never make the
+    whole region uncertain. Empty readings are recorded as missing, never invented.
+    """
+    if not readings:
+        raise ValueError("a disagreement map needs at least one witness")
+    providers = tuple(sorted(readings))
+    missing = tuple(name for name in providers if not readings[name].strip())
+    present = [name for name in providers if name not in missing]
+    tokens = {name: _tokens(readings[name]) for name in present}
+    if len(present) < 2:
+        return SourceDisagreementMap(
+            providers=providers,
+            missing_providers=missing,
+            cells=(),
+            critical_conflict=False,
+            agreement_ratio=1.0,
+        )
+    # Anchor on the most common token length so a single runaway reading cannot
+    # redefine the region's shape.
+    anchor_name = max(present, key=lambda name: (len(tokens[name]), name))
+    anchor = tokens[anchor_name]
+    slots: list[dict[str, str]] = [{} for _ in range(len(anchor))]
+    trailing: dict[int, dict[str, str]] = {}
+    for name in present:
+        if name == anchor_name:
+            for index, (token, _) in enumerate(anchor):
+                slots[index][name] = token
+            continue
+        for left, right in _columns(anchor, tokens[name]):
+            if left is not None:
+                slots[left][name] = tokens[name][right][0] if right is not None else ""
+            elif right is not None:
+                trailing.setdefault(len(slots), {})[name] = tokens[name][right][0]
+    cells: list[SourceDisagreementCell] = []
+    for index, slot in enumerate([*slots, trailing.get(len(slots), {})]):
+        if not slot:
+            continue
+        filled = {name: slot.get(name, "") for name in present}
+        if len(set(filled.values())) < 2:
+            continue
+        grouped: dict[str, list[str]] = {}
+        for name, value in sorted(filled.items()):
+            grouped.setdefault(value, []).append(name)
+        competing = [value for value in grouped if value]
+        kind = _kind(competing[0], competing[-1] if len(competing) > 1 else competing[0])
+        longest = max(len(value) for value in grouped)
+        positions = tuple(
+            position
+            for position in range(longest)
+            if len({value[position : position + 1] for value in grouped}) > 1
+        )
+        cells.append(
+            SourceDisagreementCell(
+                kind=kind,
+                line=anchor[index][1] if index < len(anchor) else anchor[-1][1],
+                token_index=index,
+                variants=tuple(
+                    SourceVariant(value=value, providers=tuple(names))
+                    for value, names in sorted(grouped.items())
+                ),
+                critical=kind in {"number", "operator", "url", "email"},
+                character_positions=positions,
+            )
+        )
+    compared = max(len(slots), 1)
+    return SourceDisagreementMap(
+        providers=providers,
+        missing_providers=missing,
+        cells=tuple(cells),
+        critical_conflict=any(cell.critical for cell in cells),
+        agreement_ratio=round(max(0.0, compared - len(cells)) / compared, 4),
+    )
 
 
 def align_source_tokens(left: str, right: str) -> tuple[SourceTokenDifference, ...]:
