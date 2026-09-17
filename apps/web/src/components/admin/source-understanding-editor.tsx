@@ -133,11 +133,13 @@ export function SourceUnderstandingEditor({
   onChange,
   language,
   disabled = false,
+  sourceOnly = false,
 }: {
   value: Understanding;
   onChange: (value: Understanding) => void;
   language: ReviewLanguage;
   disabled?: boolean;
+  sourceOnly?: boolean;
 }) {
   const copy = language === "si" ? sinhala : english;
   const labelIndex = language === "si" ? 1 : 0;
@@ -408,108 +410,116 @@ export function SourceUnderstandingEditor({
           </section>
         );
       })}
-      <section className="space-y-3" aria-label={copy.meaning}>
-        <h3 className="font-semibold">{copy.meaning}</h3>
-        {value.education.claims.map((claim, index) => (
-          <fieldset
-            key={claim.key}
-            className="space-y-2 rounded-lg border border-slate-300 p-3"
-          >
-            <label className="block text-sm">
-              {copy.teaching} {index + 1}
-              <textarea
-                className={inputClass}
-                maxLength={2000}
-                value={claim.description}
-                onChange={(event) =>
-                  claimChange(index, { description: event.target.value })
-                }
-              />
-            </label>
-            <label className="block text-sm">
-              {copy.kind} {index + 1}
-              <select
-                className={inputClass}
-                value={claim.kind}
-                onChange={(event) =>
-                  claimChange(index, {
-                    kind: event.target.value as Claim["kind"],
+      {!sourceOnly && (
+        <section className="space-y-3" aria-label={copy.meaning}>
+          <h3 className="font-semibold">{copy.meaning}</h3>
+          {value.education.claims.map((claim, index) => (
+            <fieldset
+              key={claim.key}
+              className="space-y-2 rounded-lg border border-slate-300 p-3"
+            >
+              <label className="block text-sm">
+                {copy.teaching} {index + 1}
+                <textarea
+                  className={inputClass}
+                  maxLength={2000}
+                  value={claim.description}
+                  onChange={(event) =>
+                    claimChange(index, { description: event.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm">
+                {copy.kind} {index + 1}
+                <select
+                  className={inputClass}
+                  value={claim.kind}
+                  onChange={(event) =>
+                    claimChange(index, {
+                      kind: event.target.value as Claim["kind"],
+                    })
+                  }
+                >
+                  {Object.entries(kinds).map(([kind, labels]) => (
+                    <option key={kind} value={kind}>
+                      {labels[labelIndex]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {regions.map(({ region }, sourceIndex) => (
+                <label className="flex gap-2 text-sm" key={region.key}>
+                  <input
+                    type="checkbox"
+                    checked={claim.region_keys.includes(region.key)}
+                    onChange={(event) =>
+                      claimChange(index, {
+                        region_keys: event.target.checked
+                          ? [
+                              ...claim.region_keys.filter(
+                                (key) => key !== region.key,
+                              ),
+                              region.key,
+                            ]
+                          : claim.region_keys.filter(
+                              (key) => key !== region.key,
+                            ),
+                      })
+                    }
+                  />
+                  {copy.sourceDetail} {sourceIndex + 1} {copy.forTeaching}{" "}
+                  {index + 1}
+                </label>
+              ))}
+              <Button
+                className={viewerButtonClass}
+                isDisabled={disabled}
+                onPress={() =>
+                  onChange({
+                    ...value,
+                    education: {
+                      claims: value.education.claims.filter(
+                        (_, position) => position !== index,
+                      ),
+                    },
                   })
                 }
               >
-                {Object.entries(kinds).map(([kind, labels]) => (
-                  <option key={kind} value={kind}>
-                    {labels[labelIndex]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {regions.map(({ region }, sourceIndex) => (
-              <label className="flex gap-2 text-sm" key={region.key}>
-                <input
-                  type="checkbox"
-                  checked={claim.region_keys.includes(region.key)}
-                  onChange={(event) =>
-                    claimChange(index, {
-                      region_keys: event.target.checked
-                        ? [
-                            ...claim.region_keys.filter(
-                              (key) => key !== region.key,
-                            ),
-                            region.key,
-                          ]
-                        : claim.region_keys.filter((key) => key !== region.key),
-                    })
-                  }
-                />
-                {copy.sourceDetail} {sourceIndex + 1} {copy.forTeaching}{" "}
-                {index + 1}
-              </label>
-            ))}
-            <Button
-              className={viewerButtonClass}
-              isDisabled={disabled}
-              onPress={() =>
-                onChange({
-                  ...value,
-                  education: {
-                    claims: value.education.claims.filter(
-                      (_, position) => position !== index,
-                    ),
-                  },
-                })
-              }
-            >
-              {copy.remove} {index + 1}
-            </Button>
-          </fieldset>
-        ))}
-        <Button
-          className={viewerButtonClass}
-          isDisabled={disabled || value.education.claims.length >= 128}
-          onPress={() =>
-            onChange({
-              ...value,
-              education: {
-                claims: [
-                  ...value.education.claims,
-                  {
-                    key: `claim-${crypto.randomUUID()}`,
-                    kind: "concept",
-                    description: "",
-                    region_keys: [],
-                  },
-                ],
-              },
-            })
-          }
-        >
-          {copy.add}
-        </Button>
-      </section>
+                {copy.remove} {index + 1}
+              </Button>
+            </fieldset>
+          ))}
+          <Button
+            className={viewerButtonClass}
+            isDisabled={disabled || value.education.claims.length >= 128}
+            onPress={() =>
+              onChange({
+                ...value,
+                education: {
+                  claims: [
+                    ...value.education.claims,
+                    {
+                      key: `claim-${crypto.randomUUID()}`,
+                      kind: "concept",
+                      description: "",
+                      region_keys: [],
+                    },
+                  ],
+                },
+              })
+            }
+          >
+            {copy.add}
+          </Button>
+        </section>
+      )}
       {!correctionIsComplete(value) && (
         <p role="status" className="text-sm text-amber-950">
-          {copy.incomplete}
+          {sourceOnly
+            ? language === "si"
+              ? "සුරැකීමට පෙර පෙනෙන කොටුවල අගයන් සම්පූර්ණ කරන්න."
+              : "Complete the visible cell values before saving."
+            : copy.incomplete}
         </p>
       )}
     </fieldset>

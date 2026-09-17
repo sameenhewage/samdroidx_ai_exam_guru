@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import exam_guru_api.api.routes.understanding as routes
 from exam_guru_api.auth.domain import AdminRole, AuthorizationError, Permission, Principal
 from exam_guru_api.documents.page_images import PageImageError
+from exam_guru_api.documents.source_reading import SourceReadCandidate
 from exam_guru_api.documents.understanding_jobs import UnderstandingJobNotFoundError
 from exam_guru_api.documents.understanding_runtime import UnderstandingRuntime
 from exam_guru_api.documents.understanding_service import (
@@ -19,7 +20,6 @@ from exam_guru_api.documents.understanding_service import (
     UnderstandingPageSnapshot,
     UnderstandingSourceError,
 )
-from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 from tests.test_document_understanding_contracts import counting_candidate, parse
 from tests.test_document_understanding_provider import request as fixture_request
 
@@ -58,13 +58,20 @@ def test_api_domain_failures_are_rolled_back_and_sanitized(
 
 
 def test_correction_transport_revalidates_first_party_content_without_loosening_it() -> None:
-    content = parse(counting_candidate())
+    legacy = parse(counting_candidate())
+    content = SourceReadCandidate(
+        schema_version="source-read-candidate.v1",
+        observation=legacy.observation,
+        uncertainties=legacy.uncertainties,
+    )
     assert routes._page_content(content) == content
     assert routes._page_content(content.model_dump(mode="json")) == content
     invalid = content.model_dump(mode="json")
     invalid["observation"]["regions"][0]["reading_order"] = True
     with pytest.raises(ValueError, match="valid integer"):
         routes._page_content(invalid)
+    with pytest.raises(ValueError, match="Extra inputs"):
+        routes._page_content({**content.model_dump(mode="json"), "education": {"claims": []}})
 
 
 def test_lifecycle_routes_return_the_applied_version_without_claiming_trust(
@@ -112,9 +119,7 @@ def test_lifecycle_routes_return_the_applied_version_without_claiming_trust(
     )
     assert result.version == 2
     assert result.state == "unprocessed"
-    assert isinstance(recorders[0], MaterialKnowledgeRequestRecorder)
-    assert recorders[0].session is session
-    assert recorders[1] is None
+    assert recorders == [None, None]
 
 
 def test_missing_queue_configuration_is_explicit_and_read_only() -> None:
@@ -142,6 +147,11 @@ def test_page_and_job_response_mapping_keeps_current_identity(
         routes,
         "UnderstandingJobService",
         lambda _: SimpleNamespace(latest_for_page=AsyncMock(return_value=None)),
+    )
+    monkeypatch.setattr(
+        routes,
+        "SourceVerificationService",
+        lambda _: SimpleNamespace(current=AsyncMock(return_value=None)),
     )
     app = FastAPI()
     app.state.understanding_runtime = object()

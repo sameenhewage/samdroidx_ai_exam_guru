@@ -65,7 +65,7 @@ def test_settings_reject_partial_dormant_or_paid_test_semantic_configuration() -
     with pytest.raises(ValidationError, match="semantic verifier"):
         Settings(semantic_verifier_model="gpt-test-mini")
     with pytest.raises(ValidationError, match="explicit model"):
-        Settings(semantic_verifier_provider="openai")
+        Settings(environment="local", semantic_verifier_provider="openai")
     with pytest.raises(ValidationError, match="test configuration"):
         configured_settings(environment="test")
     with pytest.raises(ValidationError, match="API key"):

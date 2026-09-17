@@ -47,7 +47,6 @@ type VerifyDraft = {
   version: number;
   compared: boolean;
   allDetails: boolean;
-  accepted: string[];
   resolved: string[];
   reason: string;
 };
@@ -81,7 +80,7 @@ const english = {
   back: "Back to material",
   loading: "Loading page…",
   intro:
-    "Compare what is shown on the original with the proposed reading and teaching points.",
+    "Does the source text and structure on the right match the original page on the left? Verify the source before any educational analysis.",
   review: "Review this reading",
   confirm: "Confirm checked page",
   cancel: "Cancel review",
@@ -112,6 +111,10 @@ const english = {
   latest: "Review latest reading",
   checked: "Page checked against the original",
   unverified: "Needs comparison with the original",
+  machineReady: "Machine reading ready for review",
+  machineAttention: "This page needs attention. Re-read or correct the highlighted details.",
+  recoveredSource: "Re-read source — not ready for confirmation",
+  noReliableSource: "No reliable machine reading is available. Re-read or correct from the original.",
   unavailable:
     "Page analysis is not configured. Ask the administrator to enable it.",
   empty: "No page understanding has been proposed yet.",
@@ -150,7 +153,8 @@ const sinhala: Record<keyof typeof english, string> = {
   title: "පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න",
   back: "මූලාශ්‍රය වෙත ආපසු",
   loading: "පිටුව පූරණය වෙමින් පවතී…",
-  intro: "මුල් පිටුවේ පෙනෙන දේ, යෝජිත කියවීම සහ ඉගැන්වීමේ කරුණු සමඟ සසඳන්න.",
+  intro:
+    "දකුණු පස පෙළ සහ ව්‍යුහය වම් පස මුල් පිටුවට ගැළපේද? අධ්‍යාපනික විශ්ලේෂණයට පෙර මූලාශ්‍රය තහවුරු කරන්න.",
   review: "මෙම කියවීම පරීක්ෂා කරන්න",
   confirm: "පරීක්ෂා කළ පිටුව තහවුරු කරන්න",
   cancel: "පරීක්ෂාව අවලංගු කරන්න",
@@ -181,6 +185,10 @@ const sinhala: Record<keyof typeof english, string> = {
   latest: "නවතම කියවීම පරීක්ෂා කරන්න",
   checked: "මුල් පිටුව සමඟ සසඳා තහවුරු කර ඇත",
   unverified: "මුල් පිටුව සමඟ සැසඳිය යුතුය",
+  machineReady: "පද්ධතියේ කියවීම පරීක්ෂාවට සූදානම්",
+  machineAttention: "මෙම පිටුවේ ගැටලු ඇත. සලකුණු කළ කරුණු නැවත කියවන්න හෝ නිවැරදි කරන්න.",
+  recoveredSource: "නැවත කියවූ පෙළ — තහවුරු කිරීමට සූදානම් නැත",
+  noReliableSource: "විශ්වාසදායක පද්ධති කියවීමක් නැත. මුල් පිටුව සමඟ සසඳා නැවත කියවන්න හෝ නිවැරදි කරන්න.",
   unavailable:
     "පිටු කියවීම තවම සකසා නැත. එය සක්‍රිය කිරීමට පරිපාලකවරයාගෙන් විමසන්න.",
   empty: "මෙම පිටුව සඳහා අවබෝධයක් තවම යෝජනා කර නැත.",
@@ -196,7 +204,7 @@ const sinhala: Record<keyof typeof english, string> = {
   reason: "මෙම කියවීම පිළිගැනීමට හේතුව",
   technical: "කියවීමේ විස්තර",
   failedChecks:
-    "මූලාශ්‍ර පරීක්ෂා කිහිපයක් අසමත් විය. ගැටලු විසඳන තුරු මෙම කියවීම පිළි නොගන්න.",
+    "මෙම පිටුවේ පෙළ නිවැරදිව කියවී නොමැත. ගැටලු විසඳන තුරු මෙම කියවීම පිළි නොගන්න.",
   failedAnalysis:
     "නවතම කියවීම සම්පූර්ණ කළ නොහැකි විය. ඉතිහාසය රඳවා ඇත; කිසිදු පිටුවක් ස්වයංක්‍රීයව තහවුරු කර නැත.",
   loadError: "මෙම පිටුව පූරණය කළ නොහැකි විය. ඔබගේ පරීක්ෂා තේරීම් රඳවා ඇත.",
@@ -244,7 +252,6 @@ function blankDraft(
     reason,
     compared: false,
     allDetails: false,
-    accepted: [],
     resolved: [],
   };
 }
@@ -310,8 +317,14 @@ export function SourceUnderstandingReview({
     earlierLanguage && ["si", "en", "ta"].includes(earlierLanguage)
       ? earlierLanguage
       : snapshot?.candidate?.content.observation.language;
+  const mixedSinhala =
+    (!knownPageLanguage ||
+      ["mixed", "mul", "und"].includes(knownPageLanguage)) &&
+    snapshot?.candidate?.content.observation.regions.some((region) =>
+      /[\u0d80-\u0dff]/u.test(region.exact_text),
+    );
   const automaticLanguage =
-    knownPageLanguage === "si"
+    knownPageLanguage === "si" || mixedSinhala
       ? "si"
       : knownPageLanguage === "en" || knownPageLanguage === "ta"
         ? "en"
@@ -437,14 +450,24 @@ export function SourceUnderstandingReview({
   );
   const blocked =
     !snapshot?.report ||
+    snapshot.source_status === "source_fidelity_failed" ||
+    snapshot.machine?.state === "needs_attention" ||
     snapshot.report.findings.some((finding) => finding.severity === "block");
+  const recoveredReadable = fresh && snapshot?.machine?.text_readable === true;
+  const showSourceCandidate = !blocked || recoveredReadable;
   const writable = role === "admin" && workspace?.source_active === true;
   const working = !!snapshot?.active_job_id;
+  const failedFreshReading =
+    snapshot?.state === "needs_reprocessing" &&
+    !!snapshot.latest_job &&
+    ["failed", "unknown"].includes(snapshot.latest_job.status);
   const mayReview =
     writable &&
     !!snapshot?.candidate &&
     !blocked &&
     !working &&
+    !snapshot.verified_source &&
+    snapshot.source_status === "source_fidelity_needs_review" &&
     ["needs_human_review", "corrected"].includes(snapshot.state);
   const mayCorrect =
     writable &&
@@ -606,9 +629,6 @@ export function SourceUnderstandingReview({
       reviewed_region_keys: draft.candidate.content.observation.regions.map(
         (region) => region.key,
       ),
-      accepted_claim_keys: draft.candidate.content.education.claims
-        .filter((claim) => draft.accepted.includes(claim.key))
-        .map((claim) => claim.key),
       resolved_uncertainty_keys: draft.candidate.content.uncertainties
         .filter((item) => draft.resolved.includes(item.key))
         .map((item) => item.key),
@@ -632,7 +652,11 @@ export function SourceUnderstandingReview({
       parent_candidate_id: draft.candidate.id,
       request_id: draft.requestId,
       expected_version: draft.version,
-      content: draft.content,
+      content: {
+        schema_version: "source-read-candidate.v1",
+        observation: draft.content.observation,
+        uncertainties: draft.content.uncertainties,
+      },
       reason: draft.reason,
     };
     await submitReview("correct", () =>
@@ -688,7 +712,7 @@ export function SourceUnderstandingReview({
       mode: "correct",
       candidate: snapshot.candidate,
       version: snapshot.version,
-      content: snapshot.candidate.content,
+      content: { ...snapshot.candidate.content, education: { claims: [] } },
       reason: "",
       requestId: crypto.randomUUID(),
     });
@@ -726,7 +750,8 @@ export function SourceUnderstandingReview({
       );
     } else {
       setDraft(
-        snapshot.state === "verified" ||
+        snapshot.verified_source != null ||
+          snapshot.state === "verified" ||
           snapshot.state === "excluded" ||
           !snapshot.candidate
           ? null
@@ -908,9 +933,26 @@ export function SourceUnderstandingReview({
                 )}
               </div>
             )}
-            {!draft && snapshot.trusted && (
+            {!draft && snapshot.verified_source && (
               <p className="rounded-lg border border-emerald-400 bg-emerald-50 p-3 font-semibold">
-                {copy.checked}
+                {copy.checked} · {language === "si" ? "අනුවාදය" : "Revision"}{" "}
+                {snapshot.verified_source.revision}
+              </p>
+            )}
+            {!draft && !working && !snapshot.verified_source && snapshot.machine && (
+              <p role="status" className={cn("rounded-lg border p-3 font-semibold", snapshot.machine.state === "machine_ready" ? "border-emerald-400 bg-emerald-50 text-emerald-950" : "border-amber-400 bg-amber-50 text-amber-950")}>
+                {snapshot.machine.state === "machine_ready" ? copy.machineReady : copy.machineAttention}
+              </p>
+            )}
+            {blocked && recoveredReadable && !working && (
+              <p className="font-semibold text-amber-950">{copy.recoveredSource}</p>
+            )}
+            {blocked && candidate && (
+              <p
+                role="alert"
+                className="rounded-lg border border-red-300 bg-red-50 p-3 font-semibold text-red-950"
+              >
+                {copy.failedChecks}
               </p>
             )}
             {snapshot.latest_job &&
@@ -922,26 +964,29 @@ export function SourceUnderstandingReview({
                   {copy.failedAnalysis}
                 </p>
               )}
-            {draft?.mode === "correct" ? null : !draft && snapshot.trusted ? (
+            {draft?.mode === "correct" ||
+            working ||
+            (failedFreshReading && !draft) ? null : !draft &&
+              snapshot.verified_source ? (
               <SourceUnderstandingContent
-                trusted={snapshot.trusted}
+                understanding={{
+                  schema_version: "page-understanding.v1",
+                  observation: snapshot.verified_source.content.observation,
+                  education: { claims: [] },
+                  uncertainties: snapshot.verified_source.content.uncertainties,
+                }}
                 language={language}
+                sourceOnly
+                sourceVerified
               />
-            ) : candidate ? (
+            ) : candidate && showSourceCandidate ? (
               <SourceUnderstandingContent
                 understanding={candidate.content}
                 language={language}
+                sourceOnly
               />
             ) : (
-              <p>{copy.empty}</p>
-            )}
-            {blocked && candidate && (
-              <p
-                role="alert"
-                className="rounded-lg bg-amber-50 p-3 text-amber-950"
-              >
-                {copy.failedChecks}
-              </p>
+              <p>{candidate && blocked ? copy.noReliableSource : copy.empty}</p>
             )}
             {!snapshot.provider_available && (
               <p className="text-sm text-slate-600">{copy.unavailable}</p>
@@ -957,6 +1002,7 @@ export function SourceUnderstandingReview({
                 }}
               >
                 <SourceUnderstandingEditor
+                  sourceOnly
                   value={draft.content}
                   language={language}
                   disabled={!!busy}
@@ -1060,31 +1106,6 @@ export function SourceUnderstandingReview({
                   />
                   {copy.allDetails}
                 </label>
-                {!!draft.candidate.content.education.claims.length && (
-                  <fieldset className="space-y-2">
-                    <legend className="font-semibold">{copy.meaning}</legend>
-                    {draft.candidate.content.education.claims.map((claim) => (
-                      <label className="flex gap-2" key={claim.key}>
-                        <input
-                          type="checkbox"
-                          checked={draft.accepted.includes(claim.key)}
-                          disabled={!!busy}
-                          onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              accepted: toggle(
-                                draft.accepted,
-                                claim.key,
-                                event.target.checked,
-                              ),
-                            })
-                          }
-                        />
-                        {claim.description}
-                      </label>
-                    ))}
-                  </fieldset>
-                )}
                 {!!draft.candidate.content.uncertainties.length && (
                   <fieldset className="space-y-2">
                     <legend className="font-semibold">
@@ -1133,9 +1154,21 @@ export function SourceUnderstandingReview({
               <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words">
                 {JSON.stringify(
                   {
-                    candidate: snapshot.candidate,
+                    candidate: snapshot.candidate
+                      ? {
+                          ...snapshot.candidate,
+                          content: {
+                            ...snapshot.candidate.content,
+                            education: { claims: [] },
+                          },
+                        }
+                      : null,
                     report: snapshot.report,
                     job: snapshot.latest_job,
+                    provider_completed: snapshot.provider_completed,
+                    machine: snapshot.machine,
+                    source_status: snapshot.source_status,
+                    verified_source: snapshot.verified_source,
                   },
                   null,
                   2,
@@ -1185,7 +1218,7 @@ export function SourceUnderstandingReview({
           <>
             {snapshot?.candidate && (
               <Button
-                className={primary}
+                className={blocked ? viewerButtonClass : primary}
                 isDisabled={!mayReview || !imageReady || loading || !!busy}
                 onPress={() => {
                   if (snapshot.candidate)
@@ -1223,7 +1256,11 @@ export function SourceUnderstandingReview({
               snapshot?.state !== "verified" &&
               snapshot?.state !== "excluded" && (
                 <Button
-                  className={snapshot?.candidate ? viewerButtonClass : primary}
+                  className={
+                    snapshot?.candidate && !blocked
+                      ? viewerButtonClass
+                      : primary
+                  }
                   isDisabled={
                     !writable ||
                     !snapshot?.provider_available ||

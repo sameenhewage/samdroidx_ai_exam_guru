@@ -126,6 +126,26 @@ export function understandingFixture(): Understanding {
 }
 
 describe("teacher-facing structured source evidence", () => {
+  it("highlights only unresolved source regions without exposing provider details", () => {
+    render(<SourceUnderstandingContent understanding={understandingFixture()} language="en" sourceOnly />);
+    const unresolved = screen.getByRole("article", { name: "Source detail 3" });
+    expect(within(unresolved).getByText("Needs attention")).toBeVisible();
+    expect(within(screen.getByRole("article", { name: "Source detail 1" })).queryByText("Needs attention")).not.toBeInTheDocument();
+  });
+
+  it("keeps source-review blank cells empty and named without escaping positioned text", () => {
+    render(
+      <SourceUnderstandingContent
+        understanding={understandingFixture()}
+        language="en"
+        sourceOnly
+      />,
+    );
+    const blank = screen.getByRole("cell", { name: "Blank answer space" });
+    expect(blank).toBeEmptyDOMElement();
+    expect(blank).toHaveAttribute("aria-label", "Blank answer space");
+  });
+
   it("keeps literal source, teaching interpretation and uncertainty in distinct sections", () => {
     const content = understandingFixture();
     const { container } = render(

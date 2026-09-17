@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
@@ -23,7 +23,20 @@ from exam_guru_api.documents.page_images import (
     PageImageError,
     create_page_image_artifacts,
 )
-from exam_guru_api.documents.understanding_contracts import Key, PageUnderstanding
+from exam_guru_api.documents.source_consensus import IndependentReading
+from exam_guru_api.documents.source_machine import MachineSourceCandidate
+from exam_guru_api.documents.source_machine_service import (
+    list_source_witness_events,
+    load_machine_source,
+    source_witness_image,
+)
+from exam_guru_api.documents.source_reading import SourceReadCandidate
+from exam_guru_api.documents.source_verification import (
+    VerifiedSourceContent,
+    require_readable_source,
+)
+from exam_guru_api.documents.source_verification_service import SourceVerificationService
+from exam_guru_api.documents.understanding_contracts import Key
 from exam_guru_api.documents.understanding_jobs import (
     UnderstandingJobDispatcher,
     UnderstandingJobNotFoundError,
@@ -49,7 +62,6 @@ from exam_guru_api.documents.understanding_verification import (
 )
 from exam_guru_api.generation.domain import GenerationAccounting
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
-from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 
 _PRIVATE_HEADERS = {
     "Cache-Control": "private, no-store",
@@ -98,15 +110,14 @@ class UnderstandingVerifyRequest(BaseModel):
     expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
     compared_with_original: ExplicitConfirmation
     reviewed_region_keys: tuple[Key, ...] = Field(min_length=1, max_length=128)
-    accepted_claim_keys: tuple[Key, ...] = Field(max_length=128)
     resolved_uncertainty_keys: tuple[Key, ...] = Field(max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
 
 
-def _page_content(value: object) -> PageUnderstanding:
-    if isinstance(value, PageUnderstanding):
-        return PageUnderstanding.model_validate(value)
-    return PageUnderstanding.model_validate_json(
+def _page_content(value: object) -> SourceReadCandidate:
+    if isinstance(value, SourceReadCandidate):
+        return SourceReadCandidate.model_validate(value)
+    return SourceReadCandidate.model_validate_json(
         json.dumps(value, ensure_ascii=False, allow_nan=False)
     )
 
@@ -116,7 +127,7 @@ class UnderstandingCorrectionRequest(BaseModel):
     parent_candidate_id: UUID
     request_id: UUID
     expected_version: int = Field(strict=True, ge=0, le=2_147_483_646)
-    content: Annotated[PageUnderstanding, BeforeValidator(_page_content)]
+    content: Annotated[SourceReadCandidate, BeforeValidator(_page_content)]
     reason: str = Field(min_length=1, max_length=2000)
 
 
@@ -174,6 +185,61 @@ class UnderstandingPageResponse(BaseModel):
     exclusion: UnderstandingPageExclusion | None = None
     latest_job: UnderstandingJobResponse | None = None
     provider_available: bool = False
+    provider_completed: bool = False
+    verified_source: VerifiedSourceContent | None = None
+    machine: MachineSourceCandidate | None = None
+    source_status: Literal[
+        "not_read",
+        "reading",
+        "source_fidelity_needs_review",
+        "source_fidelity_failed",
+        "source_verified",
+        "excluded",
+    ] = "not_read"
+
+
+class SourceWitnessEventResponse(BaseModel):
+    id: UUID
+    reader: str
+    pass_number: int
+    event: str
+    input_fingerprint: str
+    source_input: dict[str, object]
+    reading: IndependentReading | None
+    failure_code: str | None
+
+
+class SourceWitnessPageResponse(BaseModel):
+    items: list[SourceWitnessEventResponse]
+    next_offset: int | None
+
+
+def _source_status(page: UnderstandingPageSnapshot, verified: VerifiedSourceContent | None) -> str:
+    if page.state == "excluded":
+        return "excluded"
+    if page.active_job_id is not None:
+        return "reading"
+    if verified is not None:
+        return "source_verified"
+    if page.candidate is None:
+        return "not_read"
+    if (
+        page.report is None
+        or page.report.state == "needs_reprocessing"
+        or page.candidate.content.education.claims
+    ):
+        return "source_fidelity_failed"
+    try:
+        require_readable_source(
+            SourceReadCandidate(
+                schema_version="source-read-candidate.v1",
+                observation=page.candidate.content.observation,
+                uncertainties=page.candidate.content.uncertainties,
+            )
+        )
+    except ValueError:
+        return "source_fidelity_failed"
+    return "source_fidelity_needs_review"
 
 
 router = APIRouter(
@@ -258,9 +324,40 @@ async def get_page_understanding(
             page_version=page.version,
         ),
     )
+    verified = await _run(
+        session,
+        lambda: SourceVerificationService(session).current(
+            principal=principal,
+            document_id=document_id,
+            page_number=page_number,
+        ),
+    )
+    if verified is not None and (
+        page.candidate is None or verified.candidate_id != page.candidate.id
+    ):
+        verified = None
+    machine = None
+    candidate = page.candidate
+    if candidate is not None and page.active_job_id is None:
+        machine = await _run(session, lambda: load_machine_source(session, candidate))
+    status = (
+        "source_fidelity_failed"
+        if page.state == "needs_reprocessing"
+        else _source_status(page, verified)
+    )
+    if (
+        status == "source_fidelity_needs_review"
+        and machine is not None
+        and machine.state == "needs_attention"
+    ):
+        status = "source_fidelity_failed"
     response = UnderstandingPageResponse.model_validate(page)
     return response.model_copy(
         update={
+            "verified_source": verified,
+            "machine": machine,
+            "source_status": status,
+            "provider_completed": latest is not None and latest.status == "succeeded",
             "provider_available": getattr(request.app.state, "understanding_runtime", None)
             is not None,
             "latest_job": None
@@ -307,7 +404,7 @@ async def get_candidate_image(
 @router.post(
     "/materials/{document_id}/pages/{page_number}/understanding/verify",
     operation_id="verify_source_understanding",
-    response_model=TrustedPageKnowledge,
+    response_model=VerifiedSourceContent,
 )
 async def verify_source_understanding(
     document_id: UUID,
@@ -317,12 +414,10 @@ async def verify_source_understanding(
     session: DatabaseSession,
     storage: Storage,
     settings: ApplicationSettings,
-) -> TrustedPageKnowledge:
+) -> VerifiedSourceContent:
     return await _run(
         session,
-        lambda: PageUnderstandingService(
-            session, preparation_recorder=MaterialKnowledgeRequestRecorder(session)
-        ).verify_against_original(
+        lambda: SourceVerificationService(session).verify(
             principal=principal,
             document_id=document_id,
             page_number=page_number,
@@ -330,7 +425,6 @@ async def verify_source_understanding(
             expected_version=body.expected_version,
             compared_with_original=body.compared_with_original,
             reviewed_region_keys=body.reviewed_region_keys,
-            accepted_claim_keys=body.accepted_claim_keys,
             resolved_uncertainty_keys=body.resolved_uncertainty_keys,
             reason=body.reason,
             storage=storage,
@@ -372,7 +466,7 @@ async def correct_source_understanding(
             parent_candidate_id=body.parent_candidate_id,
             request_id=body.request_id,
             expected_version=body.expected_version,
-            content=body.content,
+            content=body.content.as_legacy_envelope(),
             reason=body.reason,
             storage=storage,
             artifacts=create_page_image_artifacts(settings),
@@ -394,9 +488,7 @@ async def exclude_source_understanding_page(
 ) -> UnderstandingMutationResponse:
     page = await _run(
         session,
-        lambda: PageUnderstandingService(
-            session, preparation_recorder=MaterialKnowledgeRequestRecorder(session)
-        ).exclude(
+        lambda: PageUnderstandingService(session).exclude(
             principal=principal,
             document_id=document_id,
             page_number=page_number,
@@ -478,3 +570,80 @@ async def get_understanding_job(
         session, lambda: UnderstandingJobService(session).get(principal=principal, job_id=job_id)
     )
     return UnderstandingJobResponse.model_validate(job)
+
+
+@router.get(
+    "/materials/understanding/jobs/{job_id}/witnesses",
+    operation_id="list_source_witness_events",
+    response_model=SourceWitnessPageResponse,
+)
+async def get_source_witness_events(
+    job_id: UUID,
+    principal: ReadPrincipal,
+    session: DatabaseSession,
+    offset: Annotated[int, Query(ge=0, le=2560)] = 0,
+    limit: Annotated[int, Query(ge=1, le=40)] = 20,
+) -> SourceWitnessPageResponse:
+    rows, next_offset = await _run(
+        session,
+        lambda: list_source_witness_events(
+            session,
+            principal=principal,
+            job_id=job_id,
+            offset=offset,
+            limit=limit,
+        ),
+    )
+    items = []
+    for row in rows:
+        value = row.payload.get("reading")
+        reading = (
+            None
+            if value is None or row.reader == "layout"
+            else IndependentReading.model_validate_json(json.dumps(value, ensure_ascii=False))
+        )
+        items.append(
+            SourceWitnessEventResponse(
+                id=row.id,
+                reader=row.reader,
+                pass_number=row.pass_number,
+                event=row.event,
+                input_fingerprint=row.input_fingerprint,
+                source_input=cast(dict[str, object], row.payload["input"]),
+                reading=reading,
+                failure_code=cast(str | None, row.payload.get("failure_code")),
+            )
+        )
+    return SourceWitnessPageResponse(items=items, next_offset=next_offset)
+
+
+@router.get(
+    "/materials/understanding/jobs/{job_id}/witnesses/{event_id}/image",
+    operation_id="get_source_witness_image",
+    responses={
+        200: {
+            "description": "Exact recorded independent-reader image",
+            "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}},
+        }
+    },
+)
+async def get_source_witness_image(
+    job_id: UUID,
+    event_id: UUID,
+    principal: ReadPrincipal,
+    session: DatabaseSession,
+    storage: Storage,
+    settings: ApplicationSettings,
+) -> Response:
+    image = await _run(
+        session,
+        lambda: source_witness_image(
+            session,
+            principal=principal,
+            job_id=job_id,
+            event_id=event_id,
+            storage=storage,
+            artifacts=create_page_image_artifacts(settings),
+        ),
+    )
+    return Response(image, media_type="image/png", headers=_PRIVATE_HEADERS)

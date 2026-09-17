@@ -319,7 +319,7 @@ def test_failed_orphan_job_does_not_rewrite_an_unowned_page(
 def test_understanding_actor_envelopes_have_no_automatic_paid_retries() -> None:
     assert jobs.understand_source_page.options["max_retries"] == 0
     assert jobs.recover_understanding_page_jobs.options["max_retries"] == 0
-    assert jobs.understand_source_page.options["time_limit"] == 300000
+    assert jobs.understand_source_page.options["time_limit"] == 1200000
     sent: list[str] = []
 
     class Actor:

@@ -1092,6 +1092,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/materials/understanding/jobs/{job_id}/witnesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Source Witness Events */
+        get: operations["list_source_witness_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/materials/understanding/jobs/{job_id}/witnesses/{event_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Source Witness Image */
+        get: operations["get_source_witness_image"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/materials/{document_id}/knowledge-preparation": {
         parameters: {
             query?: never;
@@ -4654,6 +4688,21 @@ export interface components {
         IdentityProviderUnavailableResponse: {
             detail: components["schemas"]["IdentityProviderUnavailableDetail"];
         };
+        /** IndependentReading */
+        IndependentReading: {
+            content: components["schemas"]["SourceRegionReading"];
+            /** Cost Microusd */
+            cost_microusd: number;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Output Tokens */
+            output_tokens: number;
+            reader: components["schemas"]["ReaderIdentity"];
+        };
         JsonValue: unknown;
         /** KnowledgeChunkImportRequest */
         KnowledgeChunkImportRequest: {
@@ -5051,6 +5100,35 @@ export interface components {
             kind: "lesson_range";
             /** Start Lesson */
             start_lesson: number;
+        };
+        /** MachineSourceCandidate */
+        MachineSourceCandidate: {
+            /** Consensus */
+            consensus: components["schemas"]["RegionConsensus"][];
+            content: components["schemas"]["SourceReadCandidate"];
+            /** Failures */
+            failures: components["schemas"]["SourceRegionFailure"][];
+            geometry: components["schemas"]["SourcePageGeometry"];
+            /**
+             * Human Verified
+             * @default false
+             * @constant
+             */
+            human_verified: false;
+            /**
+             * Schema Version
+             * @default machine-source-candidate.v1
+             * @constant
+             */
+            schema_version: "machine-source-candidate.v1";
+            source: components["schemas"]["PageArtifactIdentity"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "machine_ready" | "needs_attention";
+            /** Text Readable */
+            text_readable: boolean;
         };
         /** MaterialCatalogueEntry */
         MaterialCatalogueEntry: {
@@ -6734,6 +6812,56 @@ export interface components {
             exact_slots: number;
             question_type: components["schemas"]["QuestionType"];
         };
+        /** QwenSourceReadConfig */
+        QwenSourceReadConfig: {
+            /**
+             * Allow Docker Host
+             * @default false
+             */
+            allow_docker_host: boolean;
+            /**
+             * Api Version
+             * @default 0.34.0
+             */
+            api_version: string;
+            /**
+             * Base Url
+             * @default http://127.0.0.1:11434
+             */
+            base_url: string;
+            /**
+             * Context Tokens
+             * @default 8192
+             */
+            context_tokens: number;
+            /**
+             * Model
+             * @default qwen3-vl:8b
+             */
+            model: string;
+            /** Model Digest */
+            model_digest: string;
+            /**
+             * Output Tokens
+             * @default 4096
+             */
+            output_tokens: number;
+            /**
+             * Seed
+             * @default 23
+             */
+            seed: number;
+            /**
+             * Temperature
+             * @default 0.3
+             */
+            temperature: number;
+            /**
+             * Timeout Ms
+             * @default 180000
+             */
+            timeout_ms: number;
+        };
         /** RateLimitExceededDetail */
         RateLimitExceededDetail: {
             /**
@@ -6764,6 +6892,27 @@ export interface components {
         RateLimiterUnavailableResponse: {
             detail: components["schemas"]["RateLimiterUnavailableDetail"];
         };
+        /** ReaderIdentity */
+        ReaderIdentity: {
+            /** Configuration Fingerprint */
+            configuration_fingerprint: string;
+            /** Model */
+            model: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "ollama" | "openai";
+            /**
+             * Reader
+             * @enum {string}
+             */
+            reader: "qwen" | "openai";
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             checks: components["schemas"]["DependencyChecks"];
@@ -6783,6 +6932,35 @@ export interface components {
             right: number;
             /** Top */
             top: number;
+        };
+        /** RegionConsensus */
+        RegionConsensus: {
+            /** Differences */
+            differences: components["schemas"]["SourceTokenDifference"][];
+            /** Findings */
+            findings: string[];
+            /**
+             * Human Verified
+             * @default false
+             * @constant
+             */
+            human_verified: false;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Previous Fingerprint */
+            previous_fingerprint?: string | null;
+            region: components["schemas"]["SourceLayoutRegion"];
+            /** Region Key */
+            region_key: string;
+            selected: components["schemas"]["SourceRegionReading"] | null;
+            source: components["schemas"]["PageArtifactIdentity"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "validated" | "disagreed" | "resolved_by_reread" | "unresolved";
+            /** Witness Fingerprints */
+            witness_fingerprints: string[];
         };
         /** RestoreSourceFixtureRequest */
         RestoreSourceFixtureRequest: {
@@ -7958,6 +8136,28 @@ export interface components {
             /** Pending Pages */
             pending_pages: number;
         };
+        /** SourceCell */
+        SourceCell: {
+            /** Exact Text */
+            exact_text: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "visible" | "blank" | "unreadable";
+        };
+        /** SourceCellGeometry */
+        SourceCellGeometry: {
+            /** Blank */
+            blank: boolean;
+            bounds: components["schemas"]["RegionBounds"];
+            /** Column */
+            column: number;
+            /** Ink Pixels */
+            ink_pixels: number;
+            /** Row */
+            row: number;
+        };
         /** SourceDocumentResponse */
         SourceDocumentResponse: {
             /** Active For Ai */
@@ -8078,6 +8278,26 @@ export interface components {
             /** Year */
             year?: number | null;
         };
+        /** SourceLayoutRegion */
+        SourceLayoutRegion: {
+            bounds: components["schemas"]["RegionBounds"];
+            /** Key */
+            key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "heading" | "paragraph" | "instruction" | "question" | "worked_example" | "equation" | "vertical_arithmetic" | "table" | "grid" | "chart" | "diagram" | "illustration" | "repeated_object_group" | "label" | "blank_answer_area" | "page_number" | "footer" | "decorative_image";
+            /** Parent Key */
+            parent_key: string | null;
+            /** Reading Order */
+            reading_order: number;
+        };
+        /** SourceMatrix */
+        SourceMatrix: {
+            /** Rows */
+            rows: components["schemas"]["SourceCell"][][];
+        };
         /** SourceMetadataCandidateResponse */
         SourceMetadataCandidateResponse: {
             /**
@@ -8105,6 +8325,30 @@ export interface components {
             scope_version: number;
             /** Version */
             version: number;
+        };
+        /** SourcePageGeometry */
+        SourcePageGeometry: {
+            /** Dpi */
+            dpi: number;
+            /** Findings */
+            findings: string[];
+            /** Height */
+            height: number;
+            /** Image Sha256 */
+            image_sha256: string;
+            /** Regions */
+            regions: components["schemas"]["SourceLayoutRegion"][];
+            /**
+             * Schema Version
+             * @default source-raster-geometry.v2
+             */
+            schema_version: string;
+            /** Tables */
+            tables: components["schemas"]["SourceTableGeometry"][];
+            /** Unassigned Ink Pixels */
+            unassigned_ink_pixels: number;
+            /** Width */
+            width: number;
         };
         /** SourcePageResponse */
         SourcePageResponse: {
@@ -8162,6 +8406,17 @@ export interface components {
             /** Source Version */
             source_version: string;
         };
+        /** SourceReadCandidate */
+        SourceReadCandidate: {
+            observation: components["schemas"]["PageObservation"];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "source-read-candidate.v1";
+            /** Uncertainties */
+            uncertainties: components["schemas"]["UnderstandingUncertainty"][];
+        };
         /** SourceReadJobResponse */
         SourceReadJobResponse: {
             /**
@@ -8184,6 +8439,90 @@ export interface components {
             status: string;
             /** Version */
             version: number;
+        };
+        /** SourceReadingBudget */
+        SourceReadingBudget: {
+            /**
+             * Max Region Rereads
+             * @default 4
+             */
+            max_region_rereads: number;
+            /**
+             * Max Requests
+             * @default 48
+             */
+            max_requests: number;
+            /**
+             * Max Total Output Tokens
+             * @default 131072
+             */
+            max_total_output_tokens: number;
+            /**
+             * Total Timeout Ms
+             * @default 900000
+             */
+            total_timeout_ms: number;
+        };
+        /** SourceRegionFailure */
+        SourceRegionFailure: {
+            /** Code */
+            code: string;
+            /**
+             * Reader
+             * @enum {string}
+             */
+            reader: "qwen" | "openai" | "pipeline";
+            /** Region Key */
+            region_key: string;
+        };
+        /** SourceRegionReading */
+        SourceRegionReading: {
+            /** Equations */
+            equations: string[];
+            /** Exact Text */
+            exact_text: string;
+            table: components["schemas"]["SourceMatrix"] | null;
+            /** Uncertainties */
+            uncertainties: components["schemas"]["SourceRegionUncertainty"][];
+            /** Visual Facts */
+            visual_facts: components["schemas"]["VisualFact"][];
+        };
+        /** SourceRegionUncertainty */
+        SourceRegionUncertainty: {
+            /** Alternatives */
+            alternatives: string[];
+            /** Field */
+            field: string;
+            /** Reason */
+            reason: string;
+        };
+        /** SourceTableGeometry */
+        SourceTableGeometry: {
+            bounds: components["schemas"]["RegionBounds"];
+            /** Cells */
+            cells: components["schemas"]["SourceCellGeometry"][];
+            /** Columns */
+            columns: number;
+            /** Geometry Valid */
+            geometry_valid: boolean;
+            /** Key */
+            key: string;
+            /** Rows */
+            rows: number;
+        };
+        /** SourceTokenDifference */
+        SourceTokenDifference: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "text" | "number" | "operator" | "url" | "email" | "structure";
+            /** Left */
+            left: string;
+            /** Line */
+            line: number;
+            /** Right */
+            right: string;
         };
         /** SourceUploadChunkPageResponse */
         SourceUploadChunkPageResponse: {
@@ -8291,6 +8630,33 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** SourceVerificationDecision */
+        SourceVerificationDecision: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /**
+             * Compared With Original
+             * @constant
+             */
+            compared_with_original: true;
+            /** Content Fingerprint */
+            content_fingerprint: string;
+            /**
+             * Policy Version
+             * @default source-fidelity-verification.v1
+             * @constant
+             */
+            policy_version: "source-fidelity-verification.v1";
+            /** Reason */
+            reason: string;
+            /** Resolved Uncertainty Keys */
+            resolved_uncertainty_keys: string[];
+            /** Reviewed Region Keys */
+            reviewed_region_keys: string[];
+        };
         /** SourceVersionResponse */
         SourceVersionResponse: {
             /**
@@ -8300,6 +8666,36 @@ export interface components {
             source_document_id: string;
             /** Source Version */
             source_version: string;
+        };
+        /** SourceWitnessEventResponse */
+        SourceWitnessEventResponse: {
+            /** Event */
+            event: string;
+            /** Failure Code */
+            failure_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /** Pass Number */
+            pass_number: number;
+            /** Reader */
+            reader: string;
+            reading: components["schemas"]["IndependentReading"] | null;
+            /** Source Input */
+            source_input: {
+                [key: string]: unknown;
+            };
+        };
+        /** SourceWitnessPageResponse */
+        SourceWitnessPageResponse: {
+            /** Items */
+            items: components["schemas"]["SourceWitnessEventResponse"][];
+            /** Next Offset */
+            next_offset: number | null;
         };
         /** StorageReconciliationOperationsResponse */
         StorageReconciliationOperationsResponse: {
@@ -9169,6 +9565,7 @@ export interface components {
              * @default 8192
              */
             max_output_tokens: number;
+            pipeline?: components["schemas"]["SourceReadingBudget"] | null;
             /**
              * Timeout Ms
              * @default 30000
@@ -9177,7 +9574,7 @@ export interface components {
         };
         /** UnderstandingCorrectionRequest */
         UnderstandingCorrectionRequest: {
-            content: components["schemas"]["PageUnderstanding"];
+            content: components["schemas"]["SourceReadCandidate"];
             /** Expected Version */
             expected_version: number;
             /**
@@ -9324,6 +9721,7 @@ export interface components {
             document_id: string;
             exclusion?: components["schemas"]["UnderstandingPageExclusion"] | null;
             latest_job?: components["schemas"]["UnderstandingJobResponse"] | null;
+            machine?: components["schemas"]["MachineSourceCandidate"] | null;
             /** Page Number */
             page_number: number;
             /** Parent Candidate Id */
@@ -9333,10 +9731,22 @@ export interface components {
              * @default false
              */
             provider_available: boolean;
+            /**
+             * Provider Completed
+             * @default false
+             */
+            provider_completed: boolean;
             report: components["schemas"]["PageVerificationReport"] | null;
+            /**
+             * Source Status
+             * @default not_read
+             * @enum {string}
+             */
+            source_status: "not_read" | "reading" | "source_fidelity_needs_review" | "source_fidelity_failed" | "source_verified" | "excluded";
             /** State */
             state: string;
             trusted: components["schemas"]["TrustedPageKnowledge"] | null;
+            verified_source?: components["schemas"]["VerifiedSourceContent"] | null;
             /** Version */
             version: number;
         };
@@ -9358,11 +9768,14 @@ export interface components {
             provider: string;
             /** Provider Version */
             provider_version: string;
+            qwen?: components["schemas"]["QwenSourceReadConfig"] | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("none" | "low" | "medium" | "high" | "xhigh" | "max") | null;
             /**
              * Schema Version
-             * @constant
+             * @enum {string}
              */
-            schema_version: "page-understanding.v1";
+            schema_version: "page-understanding.v1" | "source-read-candidate.v1" | "educational-analysis.v1";
             /** Temperature */
             temperature: number;
         };
@@ -9393,8 +9806,6 @@ export interface components {
         };
         /** UnderstandingVerifyRequest */
         UnderstandingVerifyRequest: {
-            /** Accepted Claim Keys */
-            accepted_claim_keys: string[];
             /**
              * Candidate Id
              * Format: uuid
@@ -9711,6 +10122,36 @@ export interface components {
             pass: number;
             /** Warn */
             warn: number;
+        };
+        /** VerifiedSourceContent */
+        VerifiedSourceContent: {
+            /** Candidate Fingerprint */
+            candidate_fingerprint: string;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            content: components["schemas"]["SourceReadCandidate"];
+            decision: components["schemas"]["SourceVerificationDecision"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Page Version */
+            page_version: number;
+            /** Report Fingerprint */
+            report_fingerprint: string;
+            /** Revision */
+            revision: number;
+            /**
+             * Schema Version
+             * @default verified-source-content.v1
+             * @constant
+             */
+            schema_version: "verified-source-content.v1";
+            source: components["schemas"]["PageArtifactIdentity"];
         };
         /** VisualFact */
         VisualFact: {
@@ -13587,6 +14028,181 @@ export interface operations {
             };
         };
     };
+    list_source_witness_events: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceWitnessPageResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_source_witness_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact recorded independent-reader image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "image/png": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     get_material_knowledge_preparation: {
         parameters: {
             query?: never;
@@ -15081,7 +15697,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TrustedPageKnowledge"];
+                    "application/json": components["schemas"]["VerifiedSourceContent"];
                 };
             };
             /** @description Unauthorized */

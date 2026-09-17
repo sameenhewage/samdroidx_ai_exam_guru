@@ -128,7 +128,9 @@ function isSourceImagePath(path: readonly string[]): boolean {
       path[2] === "pages" &&
       path[4] === "understanding" &&
       path[5] === "candidates" &&
-      path[7] === "image")
+      path[7] === "image") ||
+    (path.length === 7 && path[0] === "materials" && path[1] === "understanding" &&
+      path[2] === "jobs" && path[4] === "witnesses" && path[6] === "image")
   );
 }
 

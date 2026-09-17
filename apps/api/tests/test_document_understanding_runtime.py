@@ -4,7 +4,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from exam_guru_api.core.config import Settings
-from exam_guru_api.documents.understanding_openai import OpenAIUnderstandingProvider
+from exam_guru_api.documents.source_reading_openai import OpenAISourceReadingProvider
 from exam_guru_api.documents.understanding_provider import (
     UnderstandingProviderError,
     UnderstandingRequest,
@@ -31,6 +31,32 @@ def openai_settings() -> dict[str, Any]:
     }
 
 
+def test_configured_consensus_runtime_requires_both_independent_readers() -> None:
+    from exam_guru_api.documents.source_consensus_provider import ConsensusSourceReadingProvider
+
+    values = {
+        **openai_settings(),
+        "source_consensus_enabled": True,
+        "source_qwen_model_digest": "a" * 64,
+        "source_qwen_api_version": "0.34.1",
+    }
+    runtime = create_understanding_runtime(Settings.model_validate(values))
+    assert runtime is not None
+    assert isinstance(runtime.provider, ConsensusSourceReadingProvider)
+    assert runtime.profile.qwen is not None
+    assert runtime.profile.qwen.model == "qwen3-vl:8b"
+    assert runtime.profile.qwen.api_version == "0.34.1"
+    assert runtime.profile.prompt_version == "qwen-openai-source-consensus.v1"
+    assert runtime.budget.pipeline is not None
+    assert runtime.budget.pipeline.max_requests == 64
+    assert runtime.budget.pipeline.max_region_rereads == 8
+
+
+def test_consensus_runtime_never_falls_back_to_one_available_reader() -> None:
+    with pytest.raises(ValidationError, match="Qwen"):
+        Settings.model_validate({**openai_settings(), "source_consensus_enabled": True})
+
+
 def test_document_understanding_is_disabled_without_explicit_configuration() -> None:
     settings = Settings(environment="test")
     assert settings.document_understanding_provider is None
@@ -41,10 +67,13 @@ def test_configured_visual_runtime_uses_server_owned_profile_and_budgets() -> No
     settings = Settings.model_validate(openai_settings())
     runtime = create_understanding_runtime(settings)
     assert runtime is not None
-    assert isinstance(runtime.provider, OpenAIUnderstandingProvider)
+    assert isinstance(runtime.provider, OpenAISourceReadingProvider)
     assert runtime.profile.provider == "openai"
     assert runtime.profile.model_version == "fixture-vision-2026-08-01"
-    assert runtime.profile.prompt_version == "document-understanding.v1"
+    assert runtime.profile.prompt_version == "visual-source-reading.v3"
+    assert runtime.profile.schema_version == "source-read-candidate.v1"
+    assert runtime.budget.pipeline is not None
+    assert runtime.budget.pipeline.max_requests == 48
     assert runtime.budget.timeout_ms == 30000
     assert runtime.budget.max_output_tokens == 8192
     assert runtime.budget.max_cost_microusd == 1000000
@@ -200,7 +229,7 @@ def test_stray_provider_fields_and_unbounded_runtime_limits_are_rejected() -> No
     with pytest.raises(ValidationError, match="understanding"):
         Settings.model_validate(values)
     for field, value in (
-        ("document_understanding_timeout_ms", 60001),
+        ("document_understanding_timeout_ms", 180001),
         ("document_understanding_max_output_tokens", 16385),
         ("document_understanding_max_cost_microusd", 0),
         ("document_understanding_worker_lease_seconds", 300),

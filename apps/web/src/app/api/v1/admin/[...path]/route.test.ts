@@ -727,6 +727,7 @@ describe("admin API proxy browser request boundary", () => {
         "image",
       ],
     },
+    { path: ["materials", "understanding", "jobs", uploadId, "witnesses", uploadId, "image"] },
     {
       path: [
         "source-benchmarks",
@@ -770,6 +771,7 @@ describe("admin API proxy browser request boundary", () => {
         "image",
       ],
     },
+    { path: ["materials", "understanding", "jobs", uploadId, "witnesses", uploadId, "image"] },
     {
       path: [
         "source-benchmarks",

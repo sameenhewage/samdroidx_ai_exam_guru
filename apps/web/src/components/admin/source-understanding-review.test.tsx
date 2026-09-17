@@ -29,6 +29,9 @@ function snapshot(): Snapshot {
     page_number: 1,
     version: 1,
     state: "needs_human_review",
+    source_status: "source_fidelity_needs_review",
+    verified_source: null,
+    provider_completed: false,
     active_job_id: null,
     latest_job: null,
     provider_available: true,
@@ -59,16 +62,7 @@ function snapshot(): Snapshot {
           ],
           relationships: [],
         },
-        education: {
-          claims: [
-            {
-              key: "skill",
-              kind: "skill",
-              description: "Practise counting in pairs.",
-              region_keys: ["text"],
-            },
-          ],
-        },
+        education: { claims: [] },
         uncertainties: [
           {
             key: "uncertain",
@@ -96,6 +90,23 @@ function snapshot(): Snapshot {
         },
       ],
     },
+  };
+}
+
+function machine(state: "machine_ready" | "needs_attention"): NonNullable<Snapshot["machine"]> {
+  const content = current.candidate!.content;
+  const region = { key: "text", kind: "paragraph" as const, reading_order: 0, parent_key: null,
+    bounds: { left: 0, top: 0, right: 1, bottom: 1 } };
+  return {
+    schema_version: "machine-source-candidate.v1", source,
+    content: { schema_version: "source-read-candidate.v1", observation: content.observation, uncertainties: [] },
+    geometry: { schema_version: "source-raster-geometry.v1", image_sha256: source.image_sha256,
+      dpi: 300, width: 100, height: 100, tables: [], regions: [region], unassigned_ink_pixels: 0,
+      findings: state === "needs_attention" ? ["geometry_needs_review"] : [] },
+    consensus: [{ source, region, region_key: "text", input_fingerprint: "c".repeat(64), state: "validated",
+      selected: { exact_text: content.observation.regions[0].exact_text, equations: [], table: null, visual_facts: [], uncertainties: [] },
+      witness_fingerprints: ["d".repeat(64), "e".repeat(64)], differences: [], findings: [], human_verified: false }],
+    failures: [], state, human_verified: false, text_readable: true,
   };
 }
 
@@ -186,9 +197,6 @@ function attest() {
     }),
   );
   fireEvent.click(
-    screen.getByRole("checkbox", { name: "Practise counting in pairs." }),
-  );
-  fireEvent.click(
     screen.getByRole("checkbox", { name: "Check the small symbol." }),
   );
   fireEvent.change(
@@ -198,6 +206,148 @@ function attest() {
 }
 
 describe("teacher page understanding review", () => {
+  it("keeps a Sinhala source in Sinhala when the reading also contains English contact details", async () => {
+    context.language = "mul";
+    current.candidate!.content.observation.language = "mixed";
+    current.candidate!.content.observation.regions[0].exact_text =
+      "මව්බස www.nie.lk";
+    const { container } = render(
+      <SourceUnderstandingReview documentId={documentId} role="admin" />,
+    );
+    await screen.findByRole("img");
+    expect(container.querySelector("section[lang]")).toHaveAttribute(
+      "lang",
+      "si",
+    );
+    expect(current.candidate!.content.observation.language).toBe("mixed");
+    expect(window.localStorage.getItem(reviewLanguageKey)).toBeNull();
+  });
+
+  it("does not display an earlier candidate as the result of a failed fresh reading", async () => {
+    current.state = "needs_reprocessing";
+    current.source_status = "source_fidelity_failed";
+    current.latest_job = {
+      id: "00000000-0000-0000-0000-000000003510",
+      document_id: documentId,
+      page_number: 1,
+      status: "failed",
+      version: 3,
+      expected_page_version: 1,
+      attempts: 1,
+      retry_depth: 0,
+      candidate_id: null,
+      run_id: null,
+      failure_code: "timeout",
+      accounting: null,
+      profile: {
+        provider: "openai",
+        provider_version: "3.1.0",
+        model: "fixture",
+        model_version: "fixture",
+        prompt_version: "visual-source-reading.v2",
+        schema_version: "source-read-candidate.v1",
+        pricing_version: "fixture",
+        input_microusd_per_million_tokens: 1,
+        output_microusd_per_million_tokens: 1,
+        temperature: 0,
+      },
+      budget: {
+        max_image_bytes: 1000,
+        max_image_pixels: 1000,
+        max_output_tokens: 100,
+        timeout_ms: 1000,
+        max_cost_microusd: 100,
+      },
+    };
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByRole("img", { name: "Original page 1" });
+    expect(
+      screen.queryByRole("region", { name: "System-read source content" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/latest analysis could not be completed/),
+    ).toBeVisible();
+    expect(writes).toEqual([]);
+  });
+
+  it("distinguishes machine-ready source from human verification", async () => {
+    current.candidate!.content.uncertainties = [];
+    current.machine = machine("machine_ready");
+    current.provider_completed = true;
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => fireEvent.load(image));
+    expect(screen.getByText("Machine reading ready for review")).toBeVisible();
+    expect(screen.queryByText(/Page checked against the original/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review this reading" })).toBeEnabled();
+    expect(writes).toEqual([]);
+  });
+
+  it("keeps failed unqualified source text inside closed diagnostics", async () => {
+    current.source_status = "source_fidelity_failed";
+    current.candidate!.content.observation.regions[0].exact_text = "wmf.a mdvï";
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByRole("img");
+    expect(screen.queryByRole("region", { name: "System-read source content" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review this reading" })).toBeDisabled();
+    expect(writes).toEqual([]);
+  });
+
+  it("shows readable recovered source with a warning while geometry blocks confirmation", async () => {
+    current.source_status = "source_fidelity_failed";
+    current.machine = machine("needs_attention");
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByRole("img");
+    expect(screen.getByText("Re-read source — not ready for confirmation")).toBeVisible();
+    expect(screen.getByRole("region", { name: "System-read source content" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Review this reading" })).toBeDisabled();
+  });
+
+  it("shows only system-read source content before source verification", async () => {
+    current.candidate!.content.education.claims = [
+      {
+        key: "skill",
+        kind: "skill",
+        description: "Practise counting in pairs.",
+        region_keys: ["text"],
+      },
+    ];
+    current.source_status = "source_fidelity_failed";
+    current.machine = machine("needs_attention");
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByRole("img", { name: "Original page 1" });
+    expect(
+      screen.getByRole("region", { name: "System-read source content" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("region", { name: "What it may teach" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Practise counting in pairs."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Analyze verified source" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not offer educational interpretation inside a source correction", async () => {
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    const image = await screen.findByRole("img", { name: "Original page 1" });
+    await act(async () => fireEvent.load(image));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct this reading" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Add teaching point" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Teaching point 1" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Source text — detail 1" }),
+    ).toBeVisible();
+  });
+
   it("loads a bounded comparison without starting paid work or treating readiness as trust", async () => {
     render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
     const image = await screen.findByRole("img", { name: "Original page 1" });
@@ -207,11 +357,11 @@ describe("teacher page understanding review", () => {
       `/api/v1/admin/materials/${documentId}/pages/1/understanding/candidates/${candidateId}/image`,
     );
     expect(
-      screen.getByRole("region", { name: "What is visible" }),
+      screen.getByRole("region", { name: "System-read source content" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("region", { name: "What it may teach" }),
-    ).toBeVisible();
+      screen.queryByRole("region", { name: "What it may teach" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Review this reading" }),
     ).toBeDisabled();
@@ -643,52 +793,56 @@ describe("teacher page understanding review", () => {
     },
   );
 
-  it("shows only accepted teaching meaning after server verification", async () => {
+  it("reloads the exact verified source revision without inventing educational analysis", async () => {
     const content = current.candidate!.content;
-    const identifier = "00000000-0000-0000-0000-000000003504";
-    current = {
-      ...current,
-      version: 2,
-      state: "verified",
-      trusted: {
-        id: identifier,
-        source,
-        revision: 1,
+    current.source_status = "source_verified";
+    current.verified_source = {
+      schema_version: "verified-source-content.v1",
+      id: "00000000-0000-0000-0000-000000003504",
+      source,
+      candidate_id: candidateId,
+      candidate_fingerprint: "c".repeat(64),
+      report_fingerprint: "d".repeat(64),
+      revision: 1,
+      page_version: current.version,
+      content: {
+        schema_version: "source-read-candidate.v1",
         observation: content.observation,
-        education: { claims: [] },
-        resolved_uncertainties: content.uncertainties,
-        decision: {
-          id: identifier,
-          actor_id: "00000000-0000-0000-0000-000000003505",
-          source,
-          candidate_id: candidateId,
-          candidate_fingerprint: "c".repeat(64),
-          report_fingerprint: "d".repeat(64),
-          verified_content_fingerprint: "e".repeat(64),
-          policy_version: "page-understanding-verification.v1",
-          source_checker_version: "source-fidelity-v2/rules-2/ucd-15.0.0",
-          compared_with_original: true,
-          reviewed_region_keys: ["text"],
-          accepted_claim_keys: [],
-          resolved_uncertainty_keys: ["uncertain"],
-          reason: "Checked source, declined the proposed teaching claim.",
-        },
+        uncertainties: content.uncertainties,
+      },
+      decision: {
+        policy_version: "source-fidelity-verification.v1",
+        actor_id: "00000000-0000-0000-0000-000000003505",
+        compared_with_original: true,
+        reviewed_region_keys: ["text"],
+        resolved_uncertainty_keys: ["uncertain"],
+        content_fingerprint: "e".repeat(64),
+        reason: "Checked all source details against the original.",
       },
     };
-    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
-    await screen.findByText("Page checked against the original");
+    const first = render(
+      <SourceUnderstandingReview documentId={documentId} role="admin" />,
+    );
+    await screen.findByRole("region", { name: "Verified source content" });
     expect(
-      screen.getByRole("region", { name: "Accepted teaching points" }),
+      screen.getByText(/Page checked against the original.*Revision/),
     ).toBeVisible();
     expect(
-      screen.queryByText("Practise counting in pairs."),
+      screen.queryByRole("region", { name: "What it may teach" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("region", { name: "Details checked by the teacher" }),
+      screen.getByRole("button", { name: "Review this reading" }),
+    ).toBeDisabled();
+    first.unmount();
+    render(<SourceUnderstandingReview documentId={documentId} role="admin" />);
+    await screen.findByRole("region", { name: "Verified source content" });
+    expect(
+      screen.getByText("Six groups, two objects in each group."),
     ).toBeVisible();
+    expect(writes).toEqual([]);
   });
 
-  it("submits only explicit original, region, meaning and uncertainty decisions at the current version", async () => {
+  it("submits only explicit original, region and source uncertainty decisions at the current version", async () => {
     await openReview();
     const confirm = screen.getByRole("button", {
       name: "Confirm checked page",
@@ -705,7 +859,6 @@ describe("teacher page understanding review", () => {
         expected_version: 1,
         compared_with_original: true,
         reviewed_region_keys: ["text"],
-        accepted_claim_keys: ["skill"],
         resolved_uncertainty_keys: ["uncertain"],
         reason: "Compared all details with the original.",
       },
@@ -783,7 +936,10 @@ describe("teacher page understanding review", () => {
       }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("checkbox", { name: "Practise counting in pairs." }),
+      screen.queryByRole("checkbox", { name: "Practise counting in pairs." }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Check the small symbol." }),
     ).not.toBeChecked();
     expect(
       screen.getByRole("textbox", {

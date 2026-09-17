@@ -29,7 +29,7 @@ OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
 )
 TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
-DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
+DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS = 20 * 60
 TEACHER_PAPER_ACTOR_MAX_EXECUTION_SECONDS = 10 * 60
 EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 STORAGE_RECONCILIATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
@@ -261,6 +261,14 @@ class Settings(BaseSettings):
         le=86_400,
     )
     document_understanding_provider: Literal["deterministic", "openai"] | None = None
+    source_consensus_enabled: bool = False
+    source_qwen_base_url: str = Field(default="http://127.0.0.1:11434", max_length=256)
+    source_qwen_allow_docker_host: bool = False
+    source_qwen_api_version: str = Field(default="0.34.0", min_length=1, max_length=64)
+    source_qwen_model_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_qwen_context_tokens: int = Field(default=8192, ge=2048, le=8192)
+    source_qwen_output_tokens: int = Field(default=4096, ge=32, le=8192)
+    source_qwen_temperature: float = Field(default=0.3, ge=0.0, le=1.0, allow_inf_nan=False)
     document_understanding_fixture_runtime_id: str | None = Field(
         default=None, strict=True, pattern=r"^ai-exam-guru-e2e-[a-z0-9][a-z0-9-]{0,47}$"
     )
@@ -281,15 +289,18 @@ class Settings(BaseSettings):
         default=None, ge=1, le=100_000_000_000
     )
     document_understanding_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    document_understanding_reasoning_effort: (
+        Literal["none", "low", "medium", "high", "xhigh", "max"] | None
+    ) = None
     document_understanding_image_input_verified: bool = False
     document_understanding_structured_output_verified: bool = False
-    document_understanding_timeout_ms: int = Field(default=30_000, ge=1, le=60_000)
+    document_understanding_timeout_ms: int = Field(default=30_000, ge=1, le=180_000)
     document_understanding_max_output_tokens: int = Field(default=8_192, ge=1, le=16_384)
     document_understanding_max_cost_microusd: int = Field(default=1_000_000, ge=1, le=100_000_000)
     document_understanding_recovery_batch_size: int = Field(default=20, ge=1, le=100)
     document_understanding_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
     document_understanding_worker_lease_seconds: int = Field(
-        default=600, ge=DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS + 1, le=86_400
+        default=1500, ge=DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS + 1, le=86_400
     )
     generation_provider: Literal["deterministic", "openai"] | None = None
     generation_openai_api_key: SecretStr | None = None
@@ -508,6 +519,25 @@ class Settings(BaseSettings):
             or self.document_understanding_structured_output_verified
         ):
             raise ValueError("document understanding settings require an explicit OpenAI provider")
+        if self.source_consensus_enabled:
+            from exam_guru_api.documents.source_reading_qwen import QwenSourceReadConfig
+
+            if (
+                self.document_understanding_provider != "openai"
+                or self.source_qwen_model_digest is None
+            ):
+                raise ValueError(
+                    "source consensus requires OpenAI and the verified local Qwen model"
+                )
+            QwenSourceReadConfig(
+                base_url=self.source_qwen_base_url,
+                allow_docker_host=self.source_qwen_allow_docker_host,
+                api_version=self.source_qwen_api_version,
+                model_digest=self.source_qwen_model_digest,
+                context_tokens=self.source_qwen_context_tokens,
+                output_tokens=self.source_qwen_output_tokens,
+                temperature=self.source_qwen_temperature,
+            )
         return self
 
     @model_validator(mode="after")

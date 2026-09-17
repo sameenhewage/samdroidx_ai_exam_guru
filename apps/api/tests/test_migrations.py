@@ -43,11 +43,13 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_material_knowledge_review_is_the_single_bounded_revision_head() -> None:
+def test_source_consensus_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0053_material_knowledge_review"]
+    assert scripts.get_heads() == ["0055_source_consensus"]
     for identifier, parent in (
+        ("0055_source_consensus", "0054_source_reading_stages"),
+        ("0054_source_reading_stages", "0053_material_knowledge_review"),
         ("0053_material_knowledge_review", "0052_knowledge_preparation"),
         ("0052_knowledge_preparation", "0051_programme_eval_replay"),
         ("0051_programme_eval_replay", "0050_programme_knowledge_context"),

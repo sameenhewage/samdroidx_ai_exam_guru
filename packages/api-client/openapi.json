@@ -5397,6 +5397,57 @@
         "title": "IdentityProviderUnavailableResponse",
         "type": "object"
       },
+      "IndependentReading": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/SourceRegionReading"
+          },
+          "cost_microusd": {
+            "maximum": 100000000.0,
+            "minimum": 0.0,
+            "title": "Cost Microusd",
+            "type": "integer"
+          },
+          "input_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "input_tokens": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "maximum": 3600000.0,
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "reader": {
+            "$ref": "#/components/schemas/ReaderIdentity"
+          }
+        },
+        "required": [
+          "reader",
+          "input_fingerprint",
+          "content",
+          "input_tokens",
+          "output_tokens",
+          "latency_ms",
+          "cost_microusd"
+        ],
+        "title": "IndependentReading",
+        "type": "object"
+      },
       "JsonValue": {},
       "KnowledgeChunkImportRequest": {
         "additionalProperties": false,
@@ -6504,6 +6555,71 @@
           "end_lesson"
         ],
         "title": "LessonRangeScopeRequest",
+        "type": "object"
+      },
+      "MachineSourceCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "consensus": {
+            "items": {
+              "$ref": "#/components/schemas/RegionConsensus"
+            },
+            "maxItems": 512,
+            "title": "Consensus",
+            "type": "array"
+          },
+          "content": {
+            "$ref": "#/components/schemas/SourceReadCandidate"
+          },
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRegionFailure"
+            },
+            "maxItems": 1024,
+            "title": "Failures",
+            "type": "array"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/SourcePageGeometry"
+          },
+          "human_verified": {
+            "const": false,
+            "default": false,
+            "title": "Human Verified",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "machine-source-candidate.v1",
+            "default": "machine-source-candidate.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          },
+          "state": {
+            "enum": [
+              "machine_ready",
+              "needs_attention"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "text_readable": {
+            "title": "Text Readable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "content",
+          "geometry",
+          "consensus",
+          "failures",
+          "state",
+          "text_readable"
+        ],
+        "title": "MachineSourceCandidate",
         "type": "object"
       },
       "MaterialCatalogueEntry": {
@@ -10869,6 +10985,79 @@
         "title": "QuestionTypeAllocationResponse",
         "type": "object"
       },
+      "QwenSourceReadConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_docker_host": {
+            "default": false,
+            "title": "Allow Docker Host",
+            "type": "boolean"
+          },
+          "api_version": {
+            "default": "0.34.0",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "http://127.0.0.1:11434",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "context_tokens": {
+            "default": 8192,
+            "maximum": 8192.0,
+            "minimum": 2048.0,
+            "title": "Context Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "default": "qwen3-vl:8b",
+            "title": "Model",
+            "type": "string"
+          },
+          "model_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Model Digest",
+            "type": "string"
+          },
+          "output_tokens": {
+            "default": 4096,
+            "maximum": 8192.0,
+            "minimum": 32.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "seed": {
+            "default": 23,
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "temperature": {
+            "default": 0.3,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "type": "number"
+          },
+          "timeout_ms": {
+            "default": 180000,
+            "maximum": 300000.0,
+            "minimum": 1.0,
+            "title": "Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model_digest"
+        ],
+        "title": "QwenSourceReadConfig",
+        "type": "object"
+      },
       "RateLimitExceededDetail": {
         "additionalProperties": false,
         "properties": {
@@ -10943,6 +11132,60 @@
         "title": "RateLimiterUnavailableResponse",
         "type": "object"
       },
+      "ReaderIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Configuration Fingerprint",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "model_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "ollama",
+              "openai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "reader": {
+            "enum": [
+              "qwen",
+              "openai"
+            ],
+            "title": "Reader",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reader",
+          "provider",
+          "model",
+          "model_version",
+          "prompt_version",
+          "configuration_fingerprint"
+        ],
+        "title": "ReaderIdentity",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -10999,6 +11242,106 @@
           "bottom"
         ],
         "title": "RegionBounds",
+        "type": "object"
+      },
+      "RegionConsensus": {
+        "additionalProperties": false,
+        "properties": {
+          "differences": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTokenDifference"
+            },
+            "maxItems": 2048,
+            "title": "Differences",
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Findings",
+            "type": "array"
+          },
+          "human_verified": {
+            "const": false,
+            "default": false,
+            "title": "Human Verified",
+            "type": "boolean"
+          },
+          "input_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "previous_fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Fingerprint"
+          },
+          "region": {
+            "$ref": "#/components/schemas/SourceLayoutRegion"
+          },
+          "region_key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Region Key",
+            "type": "string"
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceRegionReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          },
+          "state": {
+            "enum": [
+              "validated",
+              "disagreed",
+              "resolved_by_reread",
+              "unresolved"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "witness_fingerprints": {
+            "items": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Witness Fingerprints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "region",
+          "region_key",
+          "input_fingerprint",
+          "state",
+          "selected",
+          "witness_fingerprints",
+          "differences",
+          "findings"
+        ],
+        "title": "RegionConsensus",
         "type": "object"
       },
       "RestoreSourceFixtureRequest": {
@@ -14022,6 +14365,69 @@
         "title": "SourceBenchmarkResponse",
         "type": "object"
       },
+      "SourceCell": {
+        "additionalProperties": false,
+        "properties": {
+          "exact_text": {
+            "maxLength": 100000,
+            "title": "Exact Text",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "visible",
+              "blank",
+              "unreadable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "exact_text"
+        ],
+        "title": "SourceCell",
+        "type": "object"
+      },
+      "SourceCellGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "blank": {
+            "title": "Blank",
+            "type": "boolean"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/RegionBounds"
+          },
+          "column": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Column",
+            "type": "integer"
+          },
+          "ink_pixels": {
+            "minimum": 0.0,
+            "title": "Ink Pixels",
+            "type": "integer"
+          },
+          "row": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "column",
+          "bounds",
+          "blank",
+          "ink_pixels"
+        ],
+        "title": "SourceCellGeometry",
+        "type": "object"
+      },
       "SourceDocumentResponse": {
         "properties": {
           "active_for_ai": {
@@ -14559,6 +14965,92 @@
         "title": "SourceIntakeMetadata",
         "type": "object"
       },
+      "SourceLayoutRegion": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/RegionBounds"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "heading",
+              "paragraph",
+              "instruction",
+              "question",
+              "worked_example",
+              "equation",
+              "vertical_arithmetic",
+              "table",
+              "grid",
+              "chart",
+              "diagram",
+              "illustration",
+              "repeated_object_group",
+              "label",
+              "blank_answer_area",
+              "page_number",
+              "footer",
+              "decorative_image"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "reading_order": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Reading Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "reading_order",
+          "parent_key",
+          "bounds"
+        ],
+        "title": "SourceLayoutRegion",
+        "type": "object"
+      },
+      "SourceMatrix": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/SourceCell"
+              },
+              "type": "array"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "SourceMatrix",
+        "type": "object"
+      },
       "SourceMetadataCandidateResponse": {
         "additionalProperties": false,
         "properties": {
@@ -14614,6 +15106,80 @@
           "is_current"
         ],
         "title": "SourceMetadataCandidateResponse",
+        "type": "object"
+      },
+      "SourcePageGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "dpi": {
+            "maximum": 600.0,
+            "minimum": 72.0,
+            "title": "Dpi",
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Findings",
+            "type": "array"
+          },
+          "height": {
+            "maximum": 16000.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "image_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Image Sha256",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/SourceLayoutRegion"
+            },
+            "maxItems": 128,
+            "title": "Regions",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": "source-raster-geometry.v2",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTableGeometry"
+            },
+            "maxItems": 16,
+            "title": "Tables",
+            "type": "array"
+          },
+          "unassigned_ink_pixels": {
+            "minimum": 0.0,
+            "title": "Unassigned Ink Pixels",
+            "type": "integer"
+          },
+          "width": {
+            "maximum": 16000.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image_sha256",
+          "dpi",
+          "width",
+          "height",
+          "tables",
+          "regions",
+          "unassigned_ink_pixels",
+          "findings"
+        ],
+        "title": "SourcePageGeometry",
         "type": "object"
       },
       "SourcePageResponse": {
@@ -14743,6 +15309,34 @@
         "title": "SourceProvenanceResponse",
         "type": "object"
       },
+      "SourceReadCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "$ref": "#/components/schemas/PageObservation"
+          },
+          "schema_version": {
+            "const": "source-read-candidate.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "uncertainties": {
+            "items": {
+              "$ref": "#/components/schemas/UnderstandingUncertainty"
+            },
+            "maxItems": 128,
+            "title": "Uncertainties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "observation",
+          "uncertainties"
+        ],
+        "title": "SourceReadCandidate",
+        "type": "object"
+      },
       "SourceReadJobResponse": {
         "properties": {
           "document_id": {
@@ -14802,6 +15396,249 @@
           "failure_code"
         ],
         "title": "SourceReadJobResponse",
+        "type": "object"
+      },
+      "SourceReadingBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "max_region_rereads": {
+            "default": 4,
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Max Region Rereads",
+            "type": "integer"
+          },
+          "max_requests": {
+            "default": 48,
+            "maximum": 64.0,
+            "minimum": 2.0,
+            "title": "Max Requests",
+            "type": "integer"
+          },
+          "max_total_output_tokens": {
+            "default": 131072,
+            "maximum": 262144.0,
+            "minimum": 1.0,
+            "title": "Max Total Output Tokens",
+            "type": "integer"
+          },
+          "total_timeout_ms": {
+            "default": 900000,
+            "maximum": 900000.0,
+            "minimum": 1.0,
+            "title": "Total Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "title": "SourceReadingBudget",
+        "type": "object"
+      },
+      "SourceRegionFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "reader": {
+            "enum": [
+              "qwen",
+              "openai",
+              "pipeline"
+            ],
+            "title": "Reader",
+            "type": "string"
+          },
+          "region_key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Region Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "region_key",
+          "reader",
+          "code"
+        ],
+        "title": "SourceRegionFailure",
+        "type": "object"
+      },
+      "SourceRegionReading": {
+        "additionalProperties": false,
+        "properties": {
+          "equations": {
+            "items": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Equations",
+            "type": "array"
+          },
+          "exact_text": {
+            "maxLength": 100000,
+            "title": "Exact Text",
+            "type": "string"
+          },
+          "table": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceMatrix"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uncertainties": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRegionUncertainty"
+            },
+            "maxItems": 8,
+            "title": "Uncertainties",
+            "type": "array"
+          },
+          "visual_facts": {
+            "items": {
+              "$ref": "#/components/schemas/VisualFact"
+            },
+            "maxItems": 64,
+            "title": "Visual Facts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "exact_text",
+          "equations",
+          "table",
+          "visual_facts",
+          "uncertainties"
+        ],
+        "title": "SourceRegionReading",
+        "type": "object"
+      },
+      "SourceRegionUncertainty": {
+        "additionalProperties": false,
+        "properties": {
+          "alternatives": {
+            "items": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Alternatives",
+            "type": "array"
+          },
+          "field": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Field",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "reason",
+          "alternatives"
+        ],
+        "title": "SourceRegionUncertainty",
+        "type": "object"
+      },
+      "SourceTableGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/RegionBounds"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCellGeometry"
+            },
+            "maxItems": 4096,
+            "title": "Cells",
+            "type": "array"
+          },
+          "columns": {
+            "maximum": 64.0,
+            "minimum": 2.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "geometry_valid": {
+            "title": "Geometry Valid",
+            "type": "boolean"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "rows": {
+            "maximum": 64.0,
+            "minimum": 2.0,
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "bounds",
+          "rows",
+          "columns",
+          "cells",
+          "geometry_valid"
+        ],
+        "title": "SourceTableGeometry",
+        "type": "object"
+      },
+      "SourceTokenDifference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "text",
+              "number",
+              "operator",
+              "url",
+              "email",
+              "structure"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "left": {
+            "maxLength": 4000,
+            "title": "Left",
+            "type": "string"
+          },
+          "line": {
+            "minimum": 0.0,
+            "title": "Line",
+            "type": "integer"
+          },
+          "right": {
+            "maxLength": 4000,
+            "title": "Right",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "line",
+          "left",
+          "right"
+        ],
+        "title": "SourceTokenDifference",
         "type": "object"
       },
       "SourceUploadChunkPageResponse": {
@@ -15165,6 +16002,67 @@
         "title": "SourceUploadResponse",
         "type": "object"
       },
+      "SourceVerificationDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "compared_with_original": {
+            "const": true,
+            "title": "Compared With Original",
+            "type": "boolean"
+          },
+          "content_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Fingerprint",
+            "type": "string"
+          },
+          "policy_version": {
+            "const": "source-fidelity-verification.v1",
+            "default": "source-fidelity-verification.v1",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolved_uncertainty_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Resolved Uncertainty Keys",
+            "type": "array"
+          },
+          "reviewed_region_keys": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Reviewed Region Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "compared_with_original",
+          "reviewed_region_keys",
+          "resolved_uncertainty_keys",
+          "content_fingerprint",
+          "reason"
+        ],
+        "title": "SourceVerificationDecision",
+        "type": "object"
+      },
       "SourceVersionResponse": {
         "properties": {
           "source_document_id": {
@@ -15182,6 +16080,97 @@
           "source_version"
         ],
         "title": "SourceVersionResponse",
+        "type": "object"
+      },
+      "SourceWitnessEventResponse": {
+        "properties": {
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_fingerprint": {
+            "title": "Input Fingerprint",
+            "type": "string"
+          },
+          "pass_number": {
+            "title": "Pass Number",
+            "type": "integer"
+          },
+          "reader": {
+            "title": "Reader",
+            "type": "string"
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndependentReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_input": {
+            "additionalProperties": true,
+            "title": "Source Input",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "reader",
+          "pass_number",
+          "event",
+          "input_fingerprint",
+          "source_input",
+          "reading",
+          "failure_code"
+        ],
+        "title": "SourceWitnessEventResponse",
+        "type": "object"
+      },
+      "SourceWitnessPageResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceWitnessEventResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "required": [
+          "items",
+          "next_offset"
+        ],
+        "title": "SourceWitnessPageResponse",
         "type": "object"
       },
       "StorageReconciliationOperationsResponse": {
@@ -17477,9 +18466,19 @@
             "title": "Max Output Tokens",
             "type": "integer"
           },
+          "pipeline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceReadingBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timeout_ms": {
             "default": 30000,
-            "maximum": 60000.0,
+            "maximum": 180000.0,
             "minimum": 1.0,
             "title": "Timeout Ms",
             "type": "integer"
@@ -17492,7 +18491,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "$ref": "#/components/schemas/PageUnderstanding"
+            "$ref": "#/components/schemas/SourceReadCandidate"
           },
           "expected_version": {
             "maximum": 2147483646.0,
@@ -17895,6 +18894,16 @@
               }
             ]
           },
+          "machine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MachineSourceCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "page_number": {
             "title": "Page Number",
             "type": "integer"
@@ -17916,6 +18925,11 @@
             "title": "Provider Available",
             "type": "boolean"
           },
+          "provider_completed": {
+            "default": false,
+            "title": "Provider Completed",
+            "type": "boolean"
+          },
           "report": {
             "anyOf": [
               {
@@ -17926,6 +18940,19 @@
               }
             ]
           },
+          "source_status": {
+            "default": "not_read",
+            "enum": [
+              "not_read",
+              "reading",
+              "source_fidelity_needs_review",
+              "source_fidelity_failed",
+              "source_verified",
+              "excluded"
+            ],
+            "title": "Source Status",
+            "type": "string"
+          },
           "state": {
             "title": "State",
             "type": "string"
@@ -17934,6 +18961,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/TrustedPageKnowledge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verified_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifiedSourceContent"
               },
               {
                 "type": "null"
@@ -18015,8 +19052,41 @@
             "title": "Provider Version",
             "type": "string"
           },
+          "qwen": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QwenSourceReadConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          },
           "schema_version": {
-            "const": "page-understanding.v1",
+            "enum": [
+              "page-understanding.v1",
+              "source-read-candidate.v1",
+              "educational-analysis.v1"
+            ],
             "title": "Schema Version",
             "type": "string"
           },
@@ -18125,15 +19195,6 @@
       "UnderstandingVerifyRequest": {
         "additionalProperties": false,
         "properties": {
-          "accepted_claim_keys": {
-            "items": {
-              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
-              "type": "string"
-            },
-            "maxItems": 128,
-            "title": "Accepted Claim Keys",
-            "type": "array"
-          },
           "candidate_id": {
             "format": "uuid",
             "title": "Candidate Id",
@@ -18181,7 +19242,6 @@
           "expected_version",
           "compared_with_original",
           "reviewed_region_keys",
-          "accepted_claim_keys",
           "resolved_uncertainty_keys",
           "reason"
         ],
@@ -18804,6 +19864,71 @@
           "fail"
         ],
         "title": "ValidationStatusCountsResponse",
+        "type": "object"
+      },
+      "VerifiedSourceContent": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Fingerprint",
+            "type": "string"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/SourceReadCandidate"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/SourceVerificationDecision"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "page_version": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Page Version",
+            "type": "integer"
+          },
+          "report_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Report Fingerprint",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2147483646.0,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "verified-source-content.v1",
+            "default": "verified-source-content.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PageArtifactIdentity"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "candidate_id",
+          "candidate_fingerprint",
+          "report_fingerprint",
+          "revision",
+          "page_version",
+          "content",
+          "decision"
+        ],
+        "title": "VerifiedSourceContent",
         "type": "object"
       },
       "VisualFact": {
@@ -25719,6 +26844,260 @@
         ]
       }
     },
+    "/api/v1/admin/materials/understanding/jobs/{job_id}/witnesses": {
+      "get": {
+        "operationId": "list_source_witness_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2560,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 40,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceWitnessPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Source Witness Events",
+        "tags": [
+          "source-understanding"
+        ]
+      }
+    },
+    "/api/v1/admin/materials/understanding/jobs/{job_id}/witnesses/{event_id}/image": {
+      "get": {
+        "operationId": "get_source_witness_image",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Exact recorded independent-reader image"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Source Witness Image",
+        "tags": [
+          "source-understanding"
+        ]
+      }
+    },
     "/api/v1/admin/materials/{document_id}/knowledge-preparation": {
       "get": {
         "operationId": "get_material_knowledge_preparation",
@@ -27897,7 +29276,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TrustedPageKnowledge"
+                  "$ref": "#/components/schemas/VerifiedSourceContent"
                 }
               }
             },

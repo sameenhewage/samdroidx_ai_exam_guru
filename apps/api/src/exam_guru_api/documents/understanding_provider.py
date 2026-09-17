@@ -1,9 +1,14 @@
 import hashlib
-from typing import Annotated, Literal, Protocol, Self
+from collections.abc import Callable
+from typing import Annotated, Literal, Protocol, Self, runtime_checkable
 
 from pydantic import Field, model_validator
 
 from exam_guru_api.documents.page_images import PageImageError, PageImageLimits, _png_dimensions
+from exam_guru_api.documents.source_machine import MachineSourceCandidate
+from exam_guru_api.documents.source_reading import SourceReadingBudget
+from exam_guru_api.documents.source_reading_qwen import QwenSourceReadConfig
+from exam_guru_api.documents.source_renders import SourcePageRenderer
 from exam_guru_api.documents.understanding_contracts import (
     PageUnderstanding,
     UnderstandingModel,
@@ -22,8 +27,19 @@ class UnderstandingBudget(UnderstandingModel):
     max_image_bytes: int = Field(default=8 * 1024 * 1024, ge=8, le=8 * 1024 * 1024)
     max_image_pixels: int = Field(default=16_000_000, ge=1, le=16_000_000)
     max_output_tokens: int = Field(default=8192, ge=1, le=16384)
-    timeout_ms: int = Field(default=30000, ge=1, le=60000)
+    timeout_ms: int = Field(default=30000, ge=1, le=180000)
     max_cost_microusd: int = Field(default=1_000_000, ge=1, le=100_000_000)
+    pipeline: SourceReadingBudget | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @property
+    def output_limit(self) -> int:
+        return (
+            self.max_output_tokens
+            if self.pipeline is None
+            else self.pipeline.max_total_output_tokens
+        )
 
 
 class UnderstandingProviderProfile(UnderstandingModel):
@@ -32,11 +48,17 @@ class UnderstandingProviderProfile(UnderstandingModel):
     model: Identifier
     model_version: Identifier
     prompt_version: Identifier
-    schema_version: Literal["page-understanding.v1"]
+    schema_version: Literal[
+        "page-understanding.v1", "source-read-candidate.v1", "educational-analysis.v1"
+    ]
     pricing_version: Identifier
     input_microusd_per_million_tokens: int = Field(ge=0, le=100_000_000_000)
     output_microusd_per_million_tokens: int = Field(ge=0, le=100_000_000_000)
     temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    qwen: QwenSourceReadConfig | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @property
     def fingerprint(self) -> str:
@@ -87,10 +109,37 @@ class UnderstandingProviderResult(UnderstandingModel):
     content: PageUnderstanding = Field(repr=False)
     accounting: GenerationAccounting
     disposition: Literal["requires_verification"] = "requires_verification"
+    machine: MachineSourceCandidate | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def consensus_boundary(self) -> Self:
+        if self.profile.qwen is not None and self.machine is None:
+            raise ValueError("multi-reader source results require machine evidence")
+        if self.machine is not None and (
+            self.profile.qwen is None
+            or self.machine.source != self.source
+            or self.machine.content.as_legacy_envelope() != self.content
+        ):
+            raise ValueError("machine source evidence does not match the provider result")
+        return self
 
 
 class DocumentUnderstandingProvider(Protocol):
     def understand(self, request: UnderstandingRequest) -> UnderstandingProviderResult: ...
+
+
+@runtime_checkable
+class RecordedSourceReadingProvider(DocumentUnderstandingProvider, Protocol):
+    def with_recorder(
+        self, recorder: Callable[[dict[str, object]], None]
+    ) -> DocumentUnderstandingProvider: ...
+
+
+@runtime_checkable
+class RenderedSourceReadingProvider(DocumentUnderstandingProvider, Protocol):
+    def with_renderer(self, renderer: SourcePageRenderer) -> DocumentUnderstandingProvider: ...
 
 
 class UnderstandingProviderError(ProviderError):

@@ -79,7 +79,15 @@ class OpenAIUnderstandingConfig(UnderstandingModel):
         if (
             self.profile.provider != "openai"
             or self.profile.provider_version != OPENAI_UNDERSTANDING_SDK_VERSION
-            or self.profile.prompt_version != UNDERSTANDING_PROMPT_VERSION
+            or (self.profile.prompt_version, self.profile.schema_version)
+            not in {
+                (UNDERSTANDING_PROMPT_VERSION, "page-understanding.v1"),
+                ("visual-source-reading.v1", "source-read-candidate.v1"),
+                ("visual-source-reading.v2", "source-read-candidate.v1"),
+                ("visual-source-reading.v3", "source-read-candidate.v1"),
+                ("qwen-openai-source-consensus.v1", "source-read-candidate.v1"),
+                ("verified-source-education.v1", "educational-analysis.v1"),
+            }
         ):
             raise ValueError("understanding profile does not match the installed adapter contract")
         if (

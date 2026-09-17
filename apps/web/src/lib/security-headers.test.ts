@@ -77,6 +77,10 @@ describe("web security response headers", () => {
         headers: expectedSourceContentHeaders,
         source: "/api/v1/admin/materials/:documentId/original",
       },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/:path*/image",
+      },
     ]);
   });
 
@@ -173,6 +177,10 @@ describe("web security response headers", () => {
           headers: expectedSourceContentHeaders,
           source: "/api/v1/admin/materials/:documentId/original",
         },
+        {
+          headers: expectedSourceContentHeaders,
+          source: "/api/v1/admin/:path*/image",
+        },
       ]);
       expect(CONTENT_SECURITY_POLICY).toBe(expectedContentSecurityPolicy);
       expect(securityHeaders(parseWebAppConfig())).not.toEqual(
@@ -215,6 +223,10 @@ describe("web security response headers", () => {
         headers: expectedSourceContentHeaders,
         source: "/api/v1/admin/materials/:documentId/original",
       },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/:path*/image",
+      },
     ]);
   });
 
@@ -232,6 +244,10 @@ describe("web security response headers", () => {
       {
         headers: expectedSourceContentHeaders,
         source: "/api/v1/admin/materials/:documentId/original",
+      },
+      {
+        headers: expectedSourceContentHeaders,
+        source: "/api/v1/admin/:path*/image",
       },
     ]);
   });

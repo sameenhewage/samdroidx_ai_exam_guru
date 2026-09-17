@@ -12,7 +12,14 @@ def get_metadata() -> MetaData:
     from exam_guru_api.blueprints import models as blueprint_models
     from exam_guru_api.curriculum import admission_models
     from exam_guru_api.curriculum import models as curriculum_models
-    from exam_guru_api.documents import fidelity_models, understanding_models, upload_models
+    from exam_guru_api.documents import (
+        educational_analysis_models,
+        fidelity_models,
+        source_machine_models,
+        source_verification_models,
+        understanding_models,
+        upload_models,
+    )
     from exam_guru_api.documents import models as document_models
     from exam_guru_api.generation import models as generation_models
     from exam_guru_api.knowledge import (
@@ -38,6 +45,11 @@ def get_metadata() -> MetaData:
         document_models.SourceDocumentModel,
         fidelity_models.PageTextCandidateModel,
         understanding_models.DocumentUnderstandingRunModel,
+        source_verification_models.VerifiedSourceContentModel,
+        source_verification_models.SourceReadingEventModel,
+        source_machine_models.MachineSourceCandidateModel,
+        source_machine_models.SourceWitnessEventModel,
+        educational_analysis_models.EducationalAnalysisModel,
         upload_models.SourceUploadSessionModel,
         generation_models.GenerationRunModel,
         generation_models.GenerationAttemptModel,

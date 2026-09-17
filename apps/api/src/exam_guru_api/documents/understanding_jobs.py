@@ -31,6 +31,8 @@ from exam_guru_api.documents.page_images import (
     create_page_image_artifacts,
     load_material_source,
 )
+from exam_guru_api.documents.source_consensus import SourceExecutionBlockedError
+from exam_guru_api.documents.source_reading_journal import record_source_reading_event
 from exam_guru_api.documents.understanding_contracts import _canonical_json
 from exam_guru_api.documents.understanding_models import (
     DocumentUnderstandingJobModel,
@@ -39,6 +41,8 @@ from exam_guru_api.documents.understanding_models import (
     PageUnderstandingStateModel,
 )
 from exam_guru_api.documents.understanding_provider import (
+    RecordedSourceReadingProvider,
+    RenderedSourceReadingProvider,
     UnderstandingBudget,
     UnderstandingProviderError,
     UnderstandingProviderProfile,
@@ -57,6 +61,7 @@ from exam_guru_api.documents.understanding_service import (
     UnderstandingConflictError,
 )
 from exam_guru_api.generation.domain import GenerationAccounting
+from exam_guru_api.generation.ports import ProviderFailureCode
 from exam_guru_api.infrastructure.object_storage import create_object_storage
 from exam_guru_api.infrastructure.resources import create_resources
 
@@ -510,9 +515,12 @@ async def run_understanding_job(
     *,
     runtime: UnderstandingRuntime,
     input_factory: Callable[[UnderstandingJobSnapshot], PreparedUnderstandingInput],
-    lease_seconds: int = 600,
+    lease_seconds: int = 1500,
 ) -> UnderstandingJobSnapshot:
-    if type(lease_seconds) is not int or not 301 <= lease_seconds <= 86_400:
+    if (
+        type(lease_seconds) is not int
+        or not DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS < lease_seconds <= 86_400
+    ):
         raise ValueError("understanding lease must exceed the actor deadline")
     job, page, source = await _locked(session, job_id)
     if job.status != "queued":
@@ -582,7 +590,7 @@ async def run_understanding_job(
             return await _failure(
                 session, job.id, claim.lease_token, code="source_understanding_image_mismatch"
             )
-        prepared = PreparedUnderstandingInput(request, metadata)
+        prepared = PreparedUnderstandingInput(request, metadata, prepared.source_renderer)
         audit = _audit(
             job, page, status="running", version=job.version + 1, page_version=page.version
         )
@@ -604,7 +612,27 @@ async def run_understanding_job(
             session, job_id, claim.lease_token, code="source_understanding_input_failed"
         )
     try:
-        response = await anyio.to_thread.run_sync(runtime.provider.understand, prepared.request)
+        provider = runtime.provider
+        if isinstance(provider, RecordedSourceReadingProvider):
+            lease_token = claim.lease_token
+            if lease_token is None:
+                raise UnderstandingConflictError("source_reading_lease_missing")
+
+            def record(event: dict[str, object]) -> None:
+                anyio.from_thread.run(
+                    record_source_reading_event, session, job_id, lease_token, event
+                )
+
+            provider = provider.with_recorder(record)
+        if isinstance(provider, RenderedSourceReadingProvider):
+            if prepared.source_renderer is None:
+                raise UnderstandingProviderError(ProviderFailureCode.INVALID_REQUEST)
+            provider = provider.with_renderer(prepared.source_renderer)
+        response = await anyio.to_thread.run_sync(provider.understand, prepared.request)
+    except SourceExecutionBlockedError as error:
+        return await _failure(
+            session, job_id, claim.lease_token, code=error.code, accounting=error.accounting
+        )
     except UnderstandingProviderError as error:
         return await _failure(
             session, job_id, claim.lease_token, code=error.code.value, accounting=error.accounting

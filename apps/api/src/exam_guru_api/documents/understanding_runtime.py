@@ -12,6 +12,18 @@ from exam_guru_api.documents.page_images import (
     SourceImageIdentity,
     SourceImageStorage,
 )
+from exam_guru_api.documents.source_consensus_provider import (
+    CONSENSUS_PROMPT_VERSION,
+    ConsensusSourceReadingProvider,
+)
+from exam_guru_api.documents.source_reading import (
+    SOURCE_READING_PROMPT_VERSION,
+    SOURCE_READING_SCHEMA_VERSION,
+    SourceReadingBudget,
+)
+from exam_guru_api.documents.source_reading_openai import OpenAISourceReadingProvider
+from exam_guru_api.documents.source_reading_qwen import QwenSourceReadConfig
+from exam_guru_api.documents.source_renders import SourcePageRenderer
 from exam_guru_api.documents.understanding_contracts import (
     EducationalUnderstanding,
     PageObservation,
@@ -23,7 +35,6 @@ from exam_guru_api.documents.understanding_openai import (
     OPENAI_UNDERSTANDING_SDK_VERSION,
     UNDERSTANDING_PROMPT_VERSION,
     OpenAIUnderstandingConfig,
-    OpenAIUnderstandingProvider,
 )
 from exam_guru_api.documents.understanding_provider import (
     DocumentUnderstandingProvider,
@@ -50,6 +61,7 @@ class UnderstandingRuntime:
 class PreparedUnderstandingInput:
     request: UnderstandingRequest
     image_metadata: SourceCandidateImageMetadata
+    source_renderer: SourcePageRenderer | None = field(default=None, repr=False)
 
 
 def prepare_understanding_input(
@@ -63,9 +75,20 @@ def prepare_understanding_input(
     source.check_page(page_number)
     if artifacts is None:
         raise PageImageError("source_page_image_artifact_unavailable")
-    metadata = _capture_image(source, page_number, provenance, storage, artifacts)
-    image = artifacts.read(metadata, source=source, page_number=page_number)
-    parsed = SourceCandidateImageMetadata.model_validate(metadata)
+    renderer = None
+    if runtime.profile.qwen is not None:
+        declared = None
+        if provenance is not None and "page_image" in provenance:
+            declared = SourceCandidateImageMetadata.model_validate(
+                _capture_image(source, page_number, provenance, storage, artifacts)
+            )
+        renderer = SourcePageRenderer(source, page_number, storage, artifacts, declared=declared)
+        rendered = renderer.render(300)
+        image, parsed = rendered.png, rendered.metadata
+    else:
+        metadata = _capture_image(source, page_number, provenance, storage, artifacts)
+        image = artifacts.read(metadata, source=source, page_number=page_number)
+        parsed = SourceCandidateImageMetadata.model_validate(metadata)
     request = UnderstandingRequest(
         source=PageArtifactIdentity(
             document_id=source.document_id,
@@ -77,7 +100,7 @@ def prepare_understanding_input(
         profile=runtime.profile,
         budget=runtime.budget,
     )
-    return PreparedUnderstandingInput(request, parsed)
+    return PreparedUnderstandingInput(request, parsed, renderer)
 
 
 class _FixtureUnderstandingProvider:
@@ -140,6 +163,12 @@ def create_understanding_runtime(settings: Settings) -> UnderstandingRuntime | N
         timeout_ms=settings.document_understanding_timeout_ms,
         max_output_tokens=settings.document_understanding_max_output_tokens,
         max_cost_microusd=settings.document_understanding_max_cost_microusd,
+        pipeline=SourceReadingBudget(
+            max_requests=64 if settings.source_consensus_enabled else 48,
+            max_region_rereads=8 if settings.source_consensus_enabled else 4,
+        )
+        if settings.document_understanding_provider == "openai"
+        else None,
     )
     if settings.document_understanding_provider == "deterministic":
         profile = UnderstandingProviderProfile(
@@ -165,8 +194,22 @@ def create_understanding_runtime(settings: Settings) -> UnderstandingRuntime | N
         provider_version=OPENAI_UNDERSTANDING_SDK_VERSION,
         model=cast(str, settings.document_understanding_model),
         model_version=cast(str, settings.document_understanding_model_version),
-        prompt_version=UNDERSTANDING_PROMPT_VERSION,
-        schema_version="page-understanding.v1",
+        prompt_version=CONSENSUS_PROMPT_VERSION
+        if settings.source_consensus_enabled
+        else SOURCE_READING_PROMPT_VERSION,
+        schema_version=SOURCE_READING_SCHEMA_VERSION,
+        qwen=QwenSourceReadConfig(
+            base_url=settings.source_qwen_base_url,
+            allow_docker_host=settings.source_qwen_allow_docker_host,
+            api_version=settings.source_qwen_api_version,
+            model_digest=cast(str, settings.source_qwen_model_digest),
+            context_tokens=settings.source_qwen_context_tokens,
+            output_tokens=settings.source_qwen_output_tokens,
+            temperature=settings.source_qwen_temperature,
+        )
+        if settings.source_consensus_enabled
+        else None,
+        reasoning_effort=settings.document_understanding_reasoning_effort,
         pricing_version=cast(str, settings.document_understanding_pricing_version),
         input_microusd_per_million_tokens=cast(
             int, settings.document_understanding_input_microusd_per_million_tokens
@@ -176,12 +219,15 @@ def create_understanding_runtime(settings: Settings) -> UnderstandingRuntime | N
         ),
         temperature=cast(float, settings.document_understanding_temperature),
     )
-    provider = OpenAIUnderstandingProvider(
-        OpenAIUnderstandingConfig(
-            api_key=cast(SecretStr, settings.document_understanding_openai_api_key),
-            profile=profile,
-            image_input_verified=settings.document_understanding_image_input_verified,
-            structured_output_verified=settings.document_understanding_structured_output_verified,
-        )
+    configuration = OpenAIUnderstandingConfig(
+        api_key=cast(SecretStr, settings.document_understanding_openai_api_key),
+        profile=profile,
+        image_input_verified=settings.document_understanding_image_input_verified,
+        structured_output_verified=settings.document_understanding_structured_output_verified,
+    )
+    provider: DocumentUnderstandingProvider = (
+        ConsensusSourceReadingProvider(configuration)
+        if settings.source_consensus_enabled
+        else OpenAISourceReadingProvider(configuration)
     )
     return UnderstandingRuntime(profile, budget, provider)

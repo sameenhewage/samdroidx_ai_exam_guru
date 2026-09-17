@@ -82,5 +82,9 @@ export function securityHeaderRules(
       headers: [...SOURCE_CONTENT_SECURITY_HEADERS],
       source: "/api/v1/admin/materials/:documentId/original",
     },
+    {
+      headers: [...SOURCE_CONTENT_SECURITY_HEADERS],
+      source: "/api/v1/admin/:path*/image",
+    },
   ];
 }

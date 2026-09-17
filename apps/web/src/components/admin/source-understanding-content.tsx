@@ -10,7 +10,11 @@ type UnitContent = Pick<
   components["schemas"]["KnowledgeUnit"],
   "observation" | "education" | "resolved_uncertainties"
 >;
-type Props = { language?: ReviewLanguage } & (
+type Props = {
+  language?: ReviewLanguage;
+  sourceOnly?: boolean;
+  sourceVerified?: boolean;
+} & (
   | { understanding: Understanding; trusted?: never; unit?: never }
   | { trusted: Trusted; understanding?: never; unit?: never }
   | { unit: UnitContent; trusted?: never; understanding?: never }
@@ -20,8 +24,13 @@ type Relationship = components["schemas"]["ObservedRelationship"]["kind"];
 
 const english = {
   visible: "What is visible",
+  sourceReading: "System-read source content",
+  verifiedSource: "Verified source content",
+  sourceChecked:
+    "Source content verified against the original. Educational analysis is a separate later step.",
   meaning: "What it may teach",
   uncertain: "Details to check",
+  needsAttention: "Needs attention",
   proposed: "Proposed reading — compare with the original before accepting it.",
   detail: "Source detail",
   unspecified: "Unspecified source detail",
@@ -49,8 +58,13 @@ const english = {
 
 const sinhala: Record<keyof typeof english, string> = {
   visible: "පිටුවේ පෙනෙන දේ",
+  sourceReading: "පද්ධතිය කියවූ මූලාශ්‍ර අන්තර්ගතය",
+  verifiedSource: "තහවුරු කළ මූලාශ්‍ර අන්තර්ගතය",
+  sourceChecked:
+    "මූලාශ්‍ර අන්තර්ගතය මුල් පිටුව සමඟ සසඳා තහවුරු කර ඇත. අධ්‍යාපනික විශ්ලේෂණය වෙනම ඊළඟ පියවරකි.",
   meaning: "පිටුවෙන් ඉගැන්විය හැකි දේ",
   uncertain: "පරීක්ෂා කළ යුතු කරුණු",
+  needsAttention: "පරීක්ෂා කරන්න",
   proposed: "යෝජිත කියවීම — පිළිගැනීමට පෙර මුල් පිටුව සමඟ සසඳන්න.",
   detail: "මූලාශ්‍ර කරුණ",
   unspecified: "නිශ්චිතව සඳහන් නොකළ මූලාශ්‍ර කරුණ",
@@ -103,11 +117,13 @@ function SourceTable({
   label,
   copy,
   sourceLanguage,
+  sourceOnly = false,
 }: {
   table: Table;
   label: string;
   copy: typeof english;
   sourceLanguage: string;
+  sourceOnly?: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -126,11 +142,16 @@ function SourceTable({
                     key={cell.column}
                     rowSpan={cell.row_span}
                     colSpan={cell.column_span}
+                    aria-label={
+                      sourceOnly && cell.state === "blank"
+                        ? copy.blank
+                        : undefined
+                    }
                     className="min-w-16 border border-slate-300 p-3 align-top whitespace-pre-wrap"
                   >
                     {cell.state === "visible" ? (
                       <span lang={sourceLanguage}>{cell.exact_text}</span>
-                    ) : (
+                    ) : sourceOnly && cell.state === "blank" ? null : (
                       <span className="text-sm italic text-slate-600">
                         {cell.state === "blank" ? copy.blank : copy.unreadable}
                       </span>
@@ -146,8 +167,9 @@ function SourceTable({
 }
 
 export function SourceUnderstandingContent(props: Props) {
-  const { language } = props;
+  const { language, sourceOnly = false, sourceVerified = false } = props;
   const trusted = props.trusted ?? props.unit;
+  const checked = sourceOnly ? sourceVerified : !!trusted;
   const understanding: Understanding = trusted
     ? {
         schema_version: "page-understanding.v1",
@@ -170,6 +192,7 @@ export function SourceUnderstandingContent(props: Props) {
     const position = positions.get(key);
     return position == null ? copy.unspecified : `${copy.detail} ${position}`;
   };
+  const unresolved = new Set(sourceOnly && !sourceVerified ? understanding.uncertainties.flatMap((item) => item.region_keys) : []);
   const sourceLanguage = ["si", "ta", "en"].includes(
     understanding.observation.language,
   )
@@ -181,24 +204,36 @@ export function SourceUnderstandingContent(props: Props) {
       <p
         className={cn(
           "rounded-lg border p-3 text-sm",
-          trusted
+          checked
             ? "border-emerald-400 bg-emerald-50 text-emerald-950"
             : "border-amber-300 bg-amber-50 text-amber-950",
         )}
       >
-        {trusted ? copy.verified : copy.proposed}
+        {sourceOnly
+          ? sourceVerified
+            ? copy.sourceChecked
+            : copy.proposed
+          : trusted
+            ? copy.verified
+            : copy.proposed}
       </p>
       <section aria-labelledby={`${id}-visible`} className="space-y-3">
         <h2 id={`${id}-visible`} className="text-lg font-semibold">
-          {copy.visible}
+          {sourceOnly
+            ? sourceVerified
+              ? copy.verifiedSource
+              : copy.sourceReading
+            : copy.visible}
         </h2>
         {regions.map((region) => (
           <article
             key={region.key}
             aria-label={reference(region.key)}
-            className="space-y-3 rounded-lg border border-slate-300 bg-white p-4"
+            data-source-region={region.key}
+            className={cn("space-y-3 rounded-lg border border-slate-300 bg-white p-4", unresolved.has(region.key) && "border-amber-500 bg-amber-50")}
           >
             <h3 className="font-semibold">{reference(region.key)}</h3>
+            {unresolved.has(region.key) && <p className="text-sm font-semibold text-amber-950">{copy.needsAttention}</p>}
             {region.parent_key && (
               <p className="text-sm text-slate-600">
                 {copy.partOf}: {reference(region.parent_key)}
@@ -207,7 +242,11 @@ export function SourceUnderstandingContent(props: Props) {
             {region.exact_text && (
               <p
                 lang={sourceLanguage}
-                className="whitespace-pre-wrap break-words"
+                className={cn(
+                  "whitespace-pre-wrap break-words",
+                  region.kind === "vertical_arithmetic" &&
+                    "font-mono tabular-nums",
+                )}
               >
                 {region.exact_text}
               </p>
@@ -227,6 +266,7 @@ export function SourceUnderstandingContent(props: Props) {
                 label={reference(region.key)}
                 copy={copy}
                 sourceLanguage={sourceLanguage}
+                sourceOnly={sourceOnly}
               />
             )}
             {region.visual_facts.map((fact) => (
@@ -272,29 +312,31 @@ export function SourceUnderstandingContent(props: Props) {
           </ul>
         )}
       </section>
-      <section aria-labelledby={`${id}-meaning`} className="space-y-3">
-        <h2 id={`${id}-meaning`} className="text-lg font-semibold">
-          {trusted ? copy.acceptedMeaning : copy.meaning}
-        </h2>
-        {!understanding.education.claims.length && (
-          <p className="text-sm text-slate-600">
-            {trusted ? copy.noAccepted : copy.noMeaning}
-          </p>
-        )}
-        {understanding.education.claims.map((claim) => (
-          <article
-            key={claim.key}
-            className="rounded-lg border border-slate-300 bg-white p-4"
-          >
-            <p className="whitespace-pre-wrap break-words">
-              {claim.description}
+      {!sourceOnly && (
+        <section aria-labelledby={`${id}-meaning`} className="space-y-3">
+          <h2 id={`${id}-meaning`} className="text-lg font-semibold">
+            {trusted ? copy.acceptedMeaning : copy.meaning}
+          </h2>
+          {!understanding.education.claims.length && (
+            <p className="text-sm text-slate-600">
+              {trusted ? copy.noAccepted : copy.noMeaning}
             </p>
-            <p className="mt-2 text-sm text-slate-600">
-              {claim.region_keys.map(reference).join(" · ")}
-            </p>
-          </article>
-        ))}
-      </section>
+          )}
+          {understanding.education.claims.map((claim) => (
+            <article
+              key={claim.key}
+              className="rounded-lg border border-slate-300 bg-white p-4"
+            >
+              <p className="whitespace-pre-wrap break-words">
+                {claim.description}
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                {claim.region_keys.map(reference).join(" · ")}
+              </p>
+            </article>
+          ))}
+        </section>
+      )}
       <section aria-labelledby={`${id}-uncertain`} className="space-y-3">
         <h2 id={`${id}-uncertain`} className="text-lg font-semibold">
           {trusted ? copy.checkedDetails : copy.uncertain}
@@ -326,7 +368,17 @@ export function SourceUnderstandingContent(props: Props) {
           {copy.technical}
         </summary>
         <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words">
-          {JSON.stringify(trusted ?? understanding, null, 2)}
+          {JSON.stringify(
+            sourceOnly
+              ? {
+                  schema_version: "source-read-candidate.v1",
+                  observation: understanding.observation,
+                  uncertainties: understanding.uncertainties,
+                }
+              : (trusted ?? understanding),
+            null,
+            2,
+          )}
         </pre>
       </details>
     </div>
