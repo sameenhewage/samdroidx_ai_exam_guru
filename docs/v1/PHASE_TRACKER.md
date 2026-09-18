@@ -17,7 +17,18 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
-### 2026-09-19 — Sinhala specialist bake-off started: `kaan84/sinhala-print-trocr` measured and rejected
+### 2026-09-19 — Fair body-text retest overturns the Candidate B rejection
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** Nothing integrated; Qwen, Ornith, Luna, the disagreement map and the consensus pipeline are untouched. This entry corrects the previous entry's conclusion.
+- **The earlier rejection of `kaan84/sinhala-print-trocr` was unfair and is withdrawn.** Retested on what it is designed for — eight black-on-white printed body-text lines segmented by deterministic horizontal projection from the real dense-prose page, no stylised gradient heading — it produces **substantially correct Sinhala**, not the garbage seen on display text.
+- **Measured agreement with the Tesseract `sin` reading of the identical band:** whole phrases match exactly, including `ඒ අනුව`, `පසු ව`, `අනතුරු ව`, `යෙදෙන`, `සාකච්ඡා කරන්න.`, `සිට පියවර 10 තෙක්`, `කර්මය සහ`, `හඳුන්වා දුන්`, `ගන්නා ආකාරය පිළිබඳ ව සිසුන්ට` and `කරන්න.`. On one line it **beat Tesseract**, reading `පියවර 01` where Tesseract produced the corrupt `පියවර 0]`, and it produced the correctly spelled `පැහැදිලි` where Tesseract gave `පැහැඳිලි`.
+- **Two clear defect classes remain.** It substitutes wrong words with confidence (`ලඋක්තයට`→`ලස්සනට`, `කර්මයත්`→`ක්‍රමයක්`, `ක්‍රියාවත්`→`ප්ුුුත`), and it **repeats the opening token** on four of eight lines (`අනතුරුව අනතුරුව`, `ආකාරයට ආකාරයට`, `සඳහා සඳහා`, `සිසුන්ත් සිසුන්`). The repetition strongly suggests an aspect-ratio artefact: full 2042-pixel-wide lines are squashed into the model's 384×384 input, so shorter word-level segments should be measured before drawing any conclusion.
+- **Runtime:** 8.2 s load, **0.72–1.75 s per line on CPU**, 315M parameters, **no GPU required**, so it can run alongside the resident local VLMs without competing for the 12 GB budget.
+- **No CER is reported for this band** because there is no certified human ground truth for the prose page; this is an explicitly qualitative coherence comparison against the Tesseract baseline, not a scored result.
+- **Candidate A `avishadilhara/sinhala-lightonocr-2-1b-Qlora` remains untested.** A CUDA Torch build is still required; the installed wheel is `2.14.0+cpu`. No claim is made about it.
+- **Revised standing:** on real Grade 5 body text the two strongest Sinhala readers measured so far are **Tesseract `sin` and Candidate B**, and they fail differently, which makes them useful as independent witnesses. Neither is near the ≥99.5% target and neither is integrated.
+
+### 2026-09-19 — Sinhala specialist bake-off started: `kaan84/sinhala-print-trocr` on stylised display regions
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** Candidate B was measured on the exact preserved crops. Candidate A was not run. **No specialist was integrated**, and the disagreement map, consensus, validators, Qwen, Ornith and Luna are all untouched.
 - **Candidate B — `kaan84/sinhala-print-trocr`**, a `VisionEncoderDecoderModel` of **315,223,552 parameters**, loaded in 76.4 s and ran on **CPU** at 0.61–1.03 s per region, so it never needed the GPU. Measured against the visually confirmed reference on the identical crops: `මව්බස` → `මම හිමිට්‍ය` (**CER 1.80**), `ගුරු මාර්ගෝපදේශය` → `ඉතුරු හැවිරිදි හැවිරිදිු‍ු‍‍‍` (**CER 1.4375**), `පස් වන ශ්‍රේණිය` → `/ මසේ මගො ලෙස මුල්්ය්්ය` (**CER 1.2667**).
