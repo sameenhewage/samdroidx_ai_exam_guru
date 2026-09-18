@@ -17,6 +17,15 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Sinhala specialist bake-off started: `kaan84/sinhala-print-trocr` measured and rejected
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** Candidate B was measured on the exact preserved crops. Candidate A was not run. **No specialist was integrated**, and the disagreement map, consensus, validators, Qwen, Ornith and Luna are all untouched.
+- **Candidate B — `kaan84/sinhala-print-trocr`**, a `VisionEncoderDecoderModel` of **315,223,552 parameters**, loaded in 76.4 s and ran on **CPU** at 0.61–1.03 s per region, so it never needed the GPU. Measured against the visually confirmed reference on the identical crops: `මව්බස` → `මම හිමිට්‍ය` (**CER 1.80**), `ගුරු මාර්ගෝපදේශය` → `ඉතුරු හැවිරිදි හැවිරිදිු‍ු‍‍‍` (**CER 1.4375**), `පස් වන ශ්‍රේණිය` → `/ මසේ මගො ලෙස මුල්්ය්්ය` (**CER 1.2667**).
+- **Worse than the generic witnesses, not better.** Every CER exceeds 1.0 because the model adds hallucinated characters on top of reading the wrong ones. It does emit well-formed Sinhala with correct combining marks and ZWJ, so the script itself is modelled, but the glyphs recovered are wrong.
+- **Fairness caveat that must be resolved before final rejection:** this checkpoint is a **printed line recogniser**, and three of the four regions tested are stylised display text on a gold gradient, which is outside its training distribution. A fair retest needs black-on-white single body-text lines segmented from the dense prose page. The current numbers justify "not a drop-in replacement", not "cannot read Sinhala".
+- **Candidate A — `avishadilhara/sinhala-lightonocr-2-1b-Qlora` is NOT YET TESTED.** The default Torch wheel here is CPU-only (`2.14.0+cpu`, `cuda False`), so a CUDA build plus `peft` is required first; the GPU also still held a resident 9,407 MiB from the previous experiment, leaving 2,707 MiB free. No claim is made about this candidate.
+- **Decision: no winner yet, no integration.** Per section 3 the benchmark has not proven a specialist, so nothing is routed to a specialist reader and the architecture is unchanged.
+
 ### 2026-09-18 — Section 8 Sinhala resolution experiment: higher resolution does not recover Sinhala
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** Confirmed pricing `2026-07-30` at USD 0.20/1M input and USD 1.20/1M output is now configured. This entry reports the required section 8 experiment before any provider-capability conclusion.
