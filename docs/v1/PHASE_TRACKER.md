@@ -17,6 +17,15 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-18 — Section 8 Sinhala resolution experiment: higher resolution does not recover Sinhala
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** Confirmed pricing `2026-07-30` at USD 0.20/1M input and USD 1.20/1M output is now configured. This entry reports the required section 8 experiment before any provider-capability conclusion.
+- **Method:** the same two known-failing regions, `මව්බස` and `ගුරු මාර්ගෝපදේශය`, were cropped from genuinely re-rendered 300 DPI and 400 DPI originals — a true higher-effective-resolution render, not an upscale — and read independently by all three witnesses under the section 3 exact-transcription contract. No provider saw another provider's output.
+- **Result: more resolution did not help, and mostly made things worse.** `cover_title` grew from 843×228 to 1124×305 and `cover_subtitle` from 1489×210 to 1984×281. Ornith returned `සිංහල` for the title at both scales; Luna went from empty to the invented digits `6563`; Qwen returned `0500` then `0000`. On the subtitle Ornith degraded from `ඉදිරි විවේචනාත්මක` (CER 0.9375) to **`ဗုဒ္ဓ ကက္ခရာ`, which is Burmese script entirely**, and Qwen returned empty with `done_reason=length` at both scales. **Sinhala CER was 1.0 in eleven of twelve readings and 0.9375 in the twelfth.**
+- **The exact-transcription prompt is a genuine win against hallucination.** Under the strict contract, Luna returned an empty `exact_text` instead of inventing text on three of four readings. The earlier `www.nie.lk → www.moe.gov.lk` substitution did not recur. Honest abstention is now the failure mode, which is exactly what the architecture requires.
+- **Conclusion, now evidence-backed rather than assumed:** the section 8 precondition has been satisfied and resolution is not the limiting factor. Two of the three witnesses cannot decode Sinhala script at any tested scale, and the third abstains. Isolated regions, higher-resolution rereads and stricter prompting improve honesty but not Sinhala accuracy, so the ≥99.5% clean-print target remains unreachable with this witness set.
+- **Not done:** rendering/region extraction as production code, deterministic validators, targeted mismatch reread wiring, table geometry persistence, teacher verification and the Chrome DevTools MCP loop. No provider was changed or added.
+
 ### 2026-09-17 — Direct OpenAI third witness verified and the source-consensus runtime boots
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** Connectivity and configuration are now proven end to end, but no acceptance page has been read through the real pipeline and no Chrome DevTools MCP loop has been run.
