@@ -22,3 +22,5 @@ dist/
 /.exam-guru-evidence/
 /RAG DATA
 /graphify-out/
+
+.venv-sourcev2/
