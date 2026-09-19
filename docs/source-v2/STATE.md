@@ -4,11 +4,29 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — D18 runtime proven on 156/186; sankhya-rata rebuild next
-status:         Pages 156 and 186 fully resolved under D17 + D18.
-last_validated: db1f1f3
+phase:          7 — 156/186 green; sankhya-rata BLOCKED on session independence
+status:         Full-stack restart verified. sankhya-rata needs a fresh agent session.
+last_validated: dabec0b
 updated:        2026-09-19
 ```
+
+## BLOCKED: sankhya-rata needs a genuinely fresh agent session
+
+Its 17 canonical crops are cut and waiting under `sankhya-rata/crops/`. Nothing
+else can be done for it here.
+
+D17's independence rule says: do not read previous text before transcribing.
+The agent session that ran the D17/D18 work **wrote sankhya-rata's earlier
+transcripts in the same conversation**, so any transcription it produces now is
+anchored no matter how carefully the crops are read. Continuing in the same
+conversation does not reset that — a *new* session is required, one that has
+never seen the old text.
+
+Prompts 02, 03 and 04 each asked for this rebuild in that same conversation, so
+it was correctly refused three times rather than producing a read that only
+looks independent. **The next session must be a new conversation** and may open
+only: the original PDF, the rendered page, the layout, and `crops/`.
+
 
 ---
 
