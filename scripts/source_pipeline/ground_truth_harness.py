@@ -9,8 +9,12 @@ projection, writes them next to a static `index.html`, and opens nothing. A huma
 then types what is visibly printed for each line.
 
 Known limitation: horizontal projection merges side-by-side columns into one
-strip, so on a two-column page a `--band` covering a single column must be
-passed. Verified on page 186, which is two-column.
+strip. Automatic gutter detection was attempted and failed on page 186, where
+figures cross the gutter, so it was reverted rather than shipped. Use a
+single-column page, or pass a `--band` covering one column only.
+
+Verified clean on page 156 with --band 0.08 0.10 0.95 0.92: twelve single-line
+crops, no column merging and no clipped glyphs.
 
 The text fields are deliberately EMPTY. No Tesseract, TrOCR, Qwen, Ornith, Luna
 or Candidate A output is ever loaded here, so the reference stays independent of
