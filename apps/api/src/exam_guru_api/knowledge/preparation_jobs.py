@@ -29,6 +29,11 @@ from exam_guru_api.knowledge.preparation_models import (
 )
 from exam_guru_api.knowledge.unit_service import KnowledgePreparationError, KnowledgeUnitService
 from exam_guru_api.knowledge.units import KnowledgeScope
+from exam_guru_api.source_v2.gate import (
+    DownstreamPurpose,
+    LegacyPolicy,
+    assert_document_usable,
+)
 
 PREPARATION_QUEUE_NAME = "material-knowledge-preparation"
 PREPARATION_TIME_LIMIT_MS = 120_000
@@ -165,6 +170,16 @@ async def _eligibility(session: AsyncSession, job: KnowledgePreparationJobModel)
         or job.scope_fingerprint != hashlib.sha256(_canonical_bytes(scope)).hexdigest()
     ):
         raise KnowledgePreparationError("knowledge_preparation_input_invalid")
+    # Source V2 hard invariant: source must be verified before it becomes
+    # knowledge. Documents that predate Source V2 are still owned by V1 until
+    # the Phase 7 cutover, which is why the policy is stated here rather than
+    # silently assumed.
+    await assert_document_usable(
+        session,
+        job.document_id,
+        purpose=DownstreamPurpose.KNOWLEDGE,
+        legacy=LegacyPolicy.PRE_CUTOVER,
+    )
     return cast(
         str,
         await session.scalar(
