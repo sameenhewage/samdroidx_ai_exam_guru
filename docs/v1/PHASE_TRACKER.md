@@ -17,6 +17,16 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Source V2 Phase 5 (part 1): the human gate and the hard invariant, enforced in code
+
+- **Status:** **SOURCE FIDELITY GATE: still FAIL.** The gate exists and is tested; no real page has been confirmed through it yet, so there is still no Verified Source Content and nothing downstream has been unlocked.
+- **Domain first, no database needed:** `apps/api/src/exam_guru_api/source_v2/domain.py` holds the rules as pure logic — Confirm / Correct / Exclude, append-only review events, and `require_verified_source`. A confirmation must cite the rendered page sha256 it was actually compared against; a stale candidate or revision is refused; an abstention cannot be rubber-stamped; a correction produces an **unverified child candidate** and withdraws any prior verification, so typing and verifying stay separate acts; an exclusion must state a reason.
+- **The hard invariant is a test, not a sentence.** `NO VERIFIED SOURCE CONTENT → NO EDUCATIONAL ANALYSIS → NO KNOWLEDGE → NO EMBEDDINGS → NO RAG → NO GENERATION` is enforced by `require_verified_source` and proved by tests that attempt the bypass: an unresolved sibling page blocks a verified one, a document where every region was excluded is refused because excluding everything is not verification, and an empty document is refused.
+- **A real defect the tests caught:** page-level resolution was conflated with document-level verification, so a page whose regions a reviewer had all legitimately excluded counted as unresolved and blocked its whole document. Split into `PageReview.resolved` (every region decided) and `PageReview.carries_source` (at least one verified), with the "at least one verified page" rule enforced once, over the document.
+- **Persistence puts the rules in the database, not in call-site discipline:** migration `0056_source_v2` (forward-only, historical migrations untouched, no legacy row promoted) adds pages, reader candidates, machine candidates, review events and verified regions, with a partial unique index giving exactly one current candidate per region, composite foreign keys tying verified content to a candidate that really exists for that region and revision, an append-only trigger on review events, and a trigger refusing verified content that does not cite the current page image or lacks a matching confirm event.
+- **Verification:** `uv run pytest tests/source_v2 -q` → **18 passed**; `uv run ruff check` on the new module, tests and migration → clean; models and migration import cleanly against the existing metadata.
+- **Not done in this phase:** service wiring from the on-disk candidates into these tables, the HTTP endpoints, and clean-database migration tests against a real PostgreSQL container.
+
 ### 2026-09-19 — Source V2 Phases 3 and 4: local Sinhala readers measured, Machine Candidate built on real pages
 
 - **Status:** **SOURCE FIDELITY GATE: still FAIL.** Readers produce evidence, not trust. No Verified Source Content exists yet, nothing reached knowledge/RAG, and no page has been human-confirmed.
