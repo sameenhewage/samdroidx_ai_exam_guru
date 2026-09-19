@@ -5,103 +5,116 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          6 — Studio review + Chrome MCP acceptance
-status:         review loop PASSES on real pages 156 and 186; document acceptance pending
-last_validated: 0805bf3
+phase:          7 — legacy cutover
+status:         MECHANISM ACCEPTED. Cutover blocked on corpus migration, not engineering.
+last_validated: 82389a1
 updated:        2026-09-19
 ```
 
-## completed
+## acceptance: the mechanism passes
 
-- **Phase 1 — layout segmentation: PASS.** 8 fixed real pages. `92950a4`.
-- **Phase 2 — contracts: DONE.** `page-layout.schema.json` enforced on write. `c1046a5`.
-- **Phase 3 — reader benchmark: DONE.** Both Sinhala readers, 30 real crops.
-  `docs/source-v2/BENCHMARK_READERS.md`. Tamil blocked, see `TAMIL_BLOCKER.md`.
-- **Phase 4 — Machine Candidate: DONE.** Neutral alignment, no blending, no voting.
-- **Phase 5 — persistence, human gate, HTTP: DONE.** `source_v2/{domain,models,service,repository,gate,schemas}.py`,
-  migration `0056_source_v2`, six endpoints under `/admin/source-v2`.
-  `require_verified_source` guards knowledge preparation.
-- **Phase 6 — Studio review UI + Chrome MCP: review loop verified on real page 156.**
-  `/admin/source-v2/{pageId}` shows the original render beside the Machine
-  Candidate with Confirm / Correct / Exclude.
+- **Phase 1 layout** — 8 fixed real pages. `92950a4`
+- **Phase 2 contracts** — schema enforced on every write. `c1046a5`
+- **Phase 3 readers** — both Sinhala readers measured on 30 real crops.
+  `docs/source-v2/BENCHMARK_READERS.md`
+- **Phase 4 Machine Candidate** — no blending, no voting, abstains when no
+  witness is trustworthy.
+- **Phase 5 persistence + human gate** — migration `0056`, seven endpoints,
+  `require_verified_source` at the knowledge boundary.
+- **Phase 6 Studio UI + browser acceptance** — `/admin/source-v2/{pageId}`.
+  - Playwright: 3 tests green in the isolated runtime
+    (`bash scripts/run_isolated_e2e.sh apps/web/e2e/source-v2-review.spec.ts`)
+  - Chrome DevTools MCP on real pages 156, 186 and all of `sankhya-rata`
+- **A whole real document is resolved.** `sankhya-rata` — a 3-page Grade 5
+  Sinhala maths activity sheet — went through render, layout, both readers,
+  Machine Candidate, API publish, and region-by-region human review against the
+  original pages. 17 regions: **16 verified, 1 figure excluded, 0 undecided.**
+  `GET /admin/source-v2/documents/{id}/gate` returns **`usable: true`**.
+  31 review events: 16 confirm, 14 correct, 1 exclude. Every verified row cites
+  the page render it was compared against.
 
-## verified in the real Studio (Chrome DevTools MCP, pages 156 and 186)
+## why the cutover has NOT started
 
-- original page renders in the browser: 2480x3509 PNG, checksum-verified server-side
-- Confirm -> `verified`, progress advances, button disables
-- Correct -> new revision, state stays `unverified` (correcting is not verifying)
-- Confirm on the corrected text -> `verified`
-- Exclude with a reason -> `excluded`
-- hard reload: all three states and the corrected text persist
-- console clean apart from one pre-existing form-field-id advisory
-- stale revision over HTTP returns 409; document gate returns `usable: false`
-  naming the unresolved pages
-- page 186 (two column) behaves identically, and the real DeepSeek misread
-  `Resource : JICA ORHRO ...` was corrected in the UI to the printed
-  `Resource :JICA OBIHIRO Presentation Manual - 2007` and confirmed. This is
-  exactly the case the human gate exists for.
-- pages imported into the Studio: 4, 156, 171, 186, 197. 3 verified regions,
-  7 review events.
+The mechanism is proven; the corpus is not migrated. Measured today:
 
-## defect found by looking at the real UI, fixed, same page re-run
+| | |
+|---|---|
+| documents fully resolved in V2 | **1** (3 pages, 17 regions) |
+| pages of the teacher guide in V2 | 5 of 293 |
+| modules in `apps/api/src/exam_guru_api/documents/` | 51 |
+| imports of the V1 source path across the API | ~43 |
+| test files touching the V1 source path | 50 |
 
-`p156-r001`/`r003` displayed **Myanmar script** (`အေသးစိတ်စံပြု 11`) for Sinhala
-headings. `foreign_script_ratio` only counted Sinhala/Tamil/Latin, so an
-unlisted script scored 0.0. Now every script block is counted and anything
-outside the expected set is foreign; a witness over 50% foreign script is
-rejected by the Machine Candidate. DeepSeek's real mean foreign-script on the
-benchmark was 0.30, not the 0.033 first reported. After the fix the headings
-read `ක්‍රියාකාරකම් 11` / `12`.
-
-Re-importing used a new `--refresh` path: a re-run of the pipeline is a
-**re-read**, so it supersedes with a new revision, keeps the old one linked as
-parent, and withdraws any verification of changed text. Evidence is never
-deleted. Revision history for `p156-r003` now reads: r1 Myanmar hallucination
-(superseded), r2 corrected machine reading, r3 human correction (verified).
-
-## blockers
-
-- **Tamil**: no Tamil material anywhere in `RAG DATA/`. `docs/source-v2/TAMIL_BLOCKER.md`.
-- **Document-level acceptance**: the gate needs *every* page of a document
-  verified or excluded. 3 of 293 pages are imported and 2 of 6 regions on page
-  156 are verified. Resolving a whole document is teacher work, not engineering.
+Deleting the V1 source path today would leave every other material — the
+293-page teacher guide and all Grade 3/4/5 content — with no working read path
+and no way back. Decision D13 says one architecture ships; it does not say
+delete the only working one before its replacement has read the corpus.
+**Acceptance of the mechanism is not migration of the corpus.**
 
 ## exact next step
 
-Phase 6 completion, then 7 and 8 in order:
+1. **Migrate the corpus, document by document**, newest/most-needed first:
+   ```
+   scripts/source_pipeline/render_pdf.py <folder>
+   uv run tools/source_factory/layout/cli.py --document <folder> detect
+   uv run tools/source_factory/readers/cli.py --document <folder> crops
+   .venv-sourcev2-ds/Scripts/python.exe tools/source_factory/readers/bench.py --document <folder> --reader sinhala-deepseek
+   .venv-sourcev2/Scripts/python.exe    tools/source_factory/readers/bench.py --document <folder> --reader sinhala-lightonocr
+   uv run tools/source_factory/candidate/cli.py --document <folder> build
+   uv run tools/source_factory/publish_to_studio.py --document <folder> [--document-id <uuid>] [--refresh]
+   ```
+   Then review each page in the Studio until its gate is `usable: true`.
+   Budget: reading is 12 s/region (LightOnOCR) to 44 s/region (DeepSeek), so a
+   293-page guide is roughly 20 GPU-hours plus the human review. This needs a
+   queue, not a session.
+2. **Then** flip `LegacyPolicy` to `CUTOVER` and delete `PRE_CUTOVER`
+   (`apps/api/src/exam_guru_api/source_v2/gate.py`). `tests/source_v2/test_gate.py`
+   asserts both members exist, so it will fail and tell you to finish the job.
+3. **Then** remove the V1 source path, in this order so nothing is orphaned:
+   - providers first: `source_reading_openai.py` (banned outright by D1),
+     `source_reading_qwen.py`, `tesseract_ocr.py`, `understanding_openai.py`
+   - then their config keys in `core/config.py` and `compose.yaml`
+   - then `source_reading.py`, `ocr.py`, `page_reading.py`,
+     `source_consensus_provider.py`, `understanding_*`, `fidelity_*`
+   - then the 50 test files, and the routes `source_fidelity.py`,
+     `source_evaluation.py`, `understanding.py`
+   Use forward migrations only; never delete a historical migration.
+4. **Then** the repo audit: no import of a V1 source module remains, the docs
+   describe one architecture, and `docs/SYSTEM_ARCHITECTURE.md` §4.8 points at
+   Source V2.
 
-1. Pages 152, 157 and 163 have no candidates yet: cut their crops, run both
-   readers, then `candidate/cli.py build` and import them.
-   `uv run tools/source_factory/readers/cli.py crops --pages 152,157,163`
-2. Add a Playwright E2E for the review loop (web AGENTS.md requires browser
-   evidence, not unit tests alone) covering confirm, correct-then-confirm,
-   exclude and reload persistence.
-3. Resolve one whole small document end to end so the gate flips to
-   `usable: true`, and prove knowledge preparation then proceeds.
-4. **Only then** Phase 7: delete the old source-reading architecture
-   (`tesseract_ocr.py`, `source_reading_qwen.py`, `source_reading_openai.py`,
-   `understanding_openai.py` and their env/config/tests), switch
-   `LegacyPolicy` to `CUTOVER` and delete `PRE_CUTOVER`, using forward
-   migrations only.
-5. Phase 8: repo-wide audit proving one active source architecture.
+## blockers
 
-Do not start step 4 before step 3 passes.
+- **Corpus migration** — see above. Engineering is ready; this is GPU time and
+  teacher review time.
+- **Tamil** — no Tamil material exists anywhere in `RAG DATA/`. The port,
+  metrics and selection are language-agnostic and waiting.
+  `docs/source-v2/TAMIL_BLOCKER.md`. This does **not** block the Sinhala
+  cutover.
+
+## defects found by running it, all fixed
+
+| found by | defect |
+|---|---|
+| looking at the Studio | DeepSeek rendered Sinhala headings in **Myanmar** script; `foreign_script_ratio` only knew Sinhala/Tamil/Latin so it scored 0.0 |
+| reviewing a real page | DeepSeek answered Sinhala blocks in fluent **English**; Latin is tolerated, so nothing flagged it. Now rejected when another reader found the page's own script |
+| resolving a document | figures/tables were never cropped, so they never reached the reviewer and a page could look resolved with a figure undecided |
+| re-running the pipeline | `--refresh` superseded existing regions but silently dropped newly detected ones |
+| bringing the stack up | `migrate` and `worker` build from **separate images** from `api` |
+| first UI load | crop-id to region-id mapping produced `p156-rr001`, so no reader evidence joined |
+| first UI load | the browser guard rejects `127.0.0.1` as cross-site; use `localhost` |
 
 ## running it
 
 ```
-docker compose up -d                       # api :8000, web :3000, postgres :55432
-uv run tools/source_factory/import_studio.py --pages 156,171,186 [--refresh]
+docker compose up -d                  # api :8000, web :3000, postgres :55432
 # Studio: http://localhost:3000/admin/source-v2/<page_id>
-#   use localhost, not 127.0.0.1 - the browser guard rejects the cross-site origin
+uv run tools/source_factory/publish_to_studio.py --document <folder>
+bash scripts/run_isolated_e2e.sh apps/web/e2e/source-v2-review.spec.ts
+cd apps/api; $env:EXAM_GURU_TEST_DSN="host=127.0.0.1 port=55432 dbname=exam_guru user=exam_guru password=exam-guru-local-db"
+uv run --with "psycopg[binary]==3.2.10" pytest tests/source_v2 -q
 ```
 
-Rebuild note: `migrate` and `worker` are **separate images** from `api`. After
-changing a migration, `docker compose build migrate` too, or the stack fails
-with "Can't locate revision".
-
-## environment
-
-- GPU: RTX 3060, 12 GiB. `.venv-sourcev2` (transformers 5.0.0, LightOnOCR) and
-  `.venv-sourcev2-ds` (transformers 4.57.1, DeepSeek-OCR) cannot be merged.
-- `apps/api` cannot run natively on Windows (`fcntl`, `resource`); use the container.
+`apps/api` cannot run natively on Windows (`fcntl`, `resource`); use the
+container. The two reader virtualenvs need incompatible transformers versions
+and cannot be merged.
