@@ -556,7 +556,8 @@ async def _supersede(
         current = (
             await session.execute(
                 text(
-                    "select id, revision, text from source_v2_machine_candidates"
+                    "select id, revision, text, chosen_reader"
+                    " from source_v2_machine_candidates"
                     " where page_id = :page_id and region_id = :region_id and is_current"
                 ),
                 {"page_id": page_id, "region_id": region["region_id"]},
@@ -569,7 +570,24 @@ async def _supersede(
             await _insert_candidate(session, page_id, region, revision=1, parent_id=None)
             added += 1
             continue
-        if current[2] == proposed:
+        # Identical text is normally nothing to do. But if the *source* of that
+        # text has been renamed - an earlier provenance label that no longer
+        # exists - the row would silently keep attributing the reading to
+        # something that is not in the pipeline any more. Supersede it so the
+        # attribution stays true, without touching any verification: the text
+        # did not change, so nothing a reviewer confirmed has changed either.
+        attribution_stale = current[3] != region.get("chosen_reader")
+        if current[2] == proposed and not attribution_stale:
+            continue
+        if current[2] == proposed and attribution_stale:
+            await session.execute(
+                text(
+                    "update source_v2_machine_candidates"
+                    " set chosen_reader = :reader where id = :id"
+                ),
+                {"reader": region.get("chosen_reader"), "id": current[0]},
+            )
+            superseded += 1
             continue
         await session.execute(
             text(

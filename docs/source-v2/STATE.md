@@ -28,12 +28,22 @@ reading. No majority voting. `candidate/cli.py` fails without a primary
 reading and refuses stale crops; `test_validators.py` locks the policy. There
 is no "Astra" provider and none is to be built.
 
-**The audit earns its keep.** On page 186 it caught a mistake in the *primary*
-reading: `p186-r006` had been transcribed with the wrong paragraph and
-confirmed. Both readers disagreed wholesale, that prompted re-reading the crop,
-the error was found, the verification was withdrawn automatically and the
-region re-read. The readers are not good enough to write source and are good
-enough to notice when the primary reading is wrong.
+**The audit earns its keep — it caught the primary reading being wrong, twice.**
+On page 186 the first-pass primary reading of the right column was badly
+wrong: `r001` was truncated to roughly its first third, and `r005`/`r006` had
+entirely the wrong paragraphs. All of it had been **confirmed**. Both audit
+readers disagreeing wholesale is what prompted re-reading the actual crops.
+The regions were re-transcribed, the verifications withdrawn automatically,
+and the page re-reviewed.
+
+The honest conclusion is narrower than "the agent reads better than OCR": the
+agent reads far better *per glyph*, and still makes region-attribution and
+truncation mistakes that only a second opinion catches. That is the argument
+for keeping the audit readers, not for promoting them.
+
+**Always read the crop the readers actually saw** (`readers/crops/crop-NNN-rNNN.png`),
+not a freshly cut one. Cutting a new crop invites exactly the mis-attribution
+above.
 ## acceptance: the mechanism passes
 
 - **Phase 1 layout** — 8 fixed real pages. `92950a4`
