@@ -17,6 +17,16 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Tesseract-first architecture adopted; section 1 runtime checkpoint verified
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** This records the section 1 runtime checkpoint for the new Tesseract-first architecture. No pipeline code was changed, no VLM verifier was rewired, no Chrome MCP loop was run and nothing was integrated.
+- **Section 1 requirement met, measured not assumed:** the API image reports **`tesseract 5.3.0`** with **`eng osd sin tam`** all present, satisfying the 5.x engine plus Sinhala, Tamil and English requirement. No runtime upgrade or pin change is needed and no Studio data was touched.
+- **Provenance note:** `apps/api/Dockerfile` installs `tesseract-ocr`, `tesseract-ocr-eng`, `tesseract-ocr-sin` and a pinned `tesseract-ocr-tam=1:4.1.0-2`. The Tamil pin is legacy `tessdata` served by the 5.3.0 engine, which is supported, but the Sinhala and English packages are unpinned and should be pinned for reproducibility before production rollout.
+- **Why this architecture is the right correction, from our own evidence:** across five sessions Tesseract `sin` was the only reader that produced coherent Grade 5 Sinhala body prose (~0.06 CER on the subtitle anchor and a readable 435-character prose band), while Qwen, Ornith and Luna returned empty output, invented Sinhala, or in Luna's case substituted `www.moe.gov.lk` for the printed `www.nie.lk`. Conversely all three VLMs were byte-exact on numerals and operators where Tesseract corrupted `476`→`470` and degraded `×`→`x`. Tesseract as primary extractor with VLMs as visual adjudicators matches the measured strengths of each.
+- **Already-measured baseline available for the section 14 checkpoint:** raw Tesseract `sin+eng` psm6 results exist for acceptance categories A, B, D and E with CER, missing/added characters and critical-token flags. Category C, the grid/table page, has geometry but no scored Tesseract baseline yet.
+- **Known blocker for scoring body text:** the dense prose page has **no certified human ground truth**, so no defensible CER can be reported for the highest-value region type until a reference transcription is established. This currently blocks the section 15 ≥99.5% judgement for prose.
+- **Not started:** Tesseract-primary extraction wiring, region mapping of OCR output, the verification-not-OCR verifier contract, deterministic validators, targeted high-resolution reread, table-cell persistence, teacher verification and the mandatory Chrome DevTools MCP loop.
+
 ### 2026-09-19 — Fair body-text retest overturns the Candidate B rejection
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** Nothing integrated; Qwen, Ornith, Luna, the disagreement map and the consensus pipeline are untouched. This entry corrects the previous entry's conclusion.
