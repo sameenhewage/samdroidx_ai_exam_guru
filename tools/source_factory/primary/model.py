@@ -104,7 +104,7 @@ class PrimaryRegion:
     source_image_sha256: str
     language: str = "sinhala"
     uncertainty: tuple[Uncertainty, ...] = ()
-    crop_sha256: str | None = None
+    crop_sha256: str = ""
     table: Table | None = None
 
     @property
@@ -207,6 +207,13 @@ def validate(page: dict) -> None:
             raise PrimaryReadingError(f"{region_id}: provenance must be {PROVENANCE!r}")
         if not SHA256.fullmatch(region.get("source_image_sha256", "")):
             raise PrimaryReadingError(f"{region_id}: source_image_sha256 must be a digest")
+        # A primary reading must name the exact canonical crop it was read
+        # from, so a later audit can re-open the same pixels (D17).
+        if not SHA256.fullmatch(region.get("crop_sha256", "") or ""):
+            raise PrimaryReadingError(
+                f"{region_id}: crop_sha256 is required; a reading with no canonical "
+                "crop cannot be traced back to what was looked at"
+            )
         bbox = region.get("bbox")
         if not (isinstance(bbox, list) and len(bbox) == 4):
             raise PrimaryReadingError(f"{region_id}: bbox must be [x0, y0, x1, y1]")

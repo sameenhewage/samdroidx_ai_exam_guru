@@ -56,6 +56,7 @@
         "uncertain",
         "status",
         "source_image_sha256",
+        "crop_sha256",
         "provenance"
       ],
       "properties": {
@@ -72,7 +73,7 @@
         },
         "reading_order": { "type": "integer", "minimum": 0 },
         "language": { "type": "string", "maxLength": 32 },
-        "crop_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "crop_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$", "description": "The canonical crop this region was read from. Required: a reading that cannot name its image cannot be audited." },
         "source_image_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "provenance": { "const": "primary-agent-reading" },
         "exact_text": {

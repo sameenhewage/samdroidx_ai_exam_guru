@@ -38,7 +38,10 @@ def load_results(document) -> dict[str, dict[str, dict]]:
 
     folder = document.folder / "readers" / "results"
     if not folder.exists():
-        raise SystemExit(f"no reader results: {folder}")
+        # D17: the executing agent is the only text-extraction step. Local OCR
+        # is not part of the active pipeline, so having no reader results is
+        # the normal case, not an error.
+        return {}
     table: dict[str, dict[str, dict]] = defaultdict(dict)
     for path in sorted(folder.glob("*.json")):
         report = json.loads(path.read_text(encoding="utf-8"))
@@ -229,9 +232,7 @@ def command_build(arguments: argparse.Namespace) -> int:
 
     for crop_id, by_reader in sorted(table.items()):
         crop = crops.get(crop_id)
-        if crop is None:
-            continue
-        if crop.region_id not in primary_regions:
+        if crop is None or crop.region_id not in primary_regions:
             continue
         allowed = active.readers_for(arguments.language, crop.region_type)
         witnesses = [
@@ -256,7 +257,8 @@ def command_build(arguments: argparse.Namespace) -> int:
                 region_type=region["region_type"],
                 text=region["exact_text"],
                 uncertainty=tuple(region.get("uncertainty_reason", [])),
-                    language=region.get("language", "sinhala"),
+                language=region.get("language", arguments.language),
+                layout_lines=layout_lines.get(region["region_id"]),
             ),
             witnesses=witnesses,
         )

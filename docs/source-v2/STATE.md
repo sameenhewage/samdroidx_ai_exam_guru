@@ -5,11 +5,26 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — clean rebuild from immutable source (D16)
-status:         Data reset done. 156/186 rebuilt on canonical crops, in Studio for review.
+phase:          7 — direct-agent-only rebuild (D17)
+status:         156/186 rebuilt agent-only on checksum-bound canonical crops.
 last_validated: (set at commit)
 updated:        2026-09-19
 ```
+
+## D17 — the executing agent is the only text-extraction step
+
+No OCR runs in the active pipeline. `crops/crop-NNN-rNNN.png` is the only
+image a region may be read from; sealing hard fails on a missing crop, a
+checksum mismatch or a bbox that no longer matches the layout, and
+`crop_sha256` is required on every region.
+
+**Honest caveat on independence:** the rule is "do not read previous text
+before transcribing". For pages 156 and 186 that could not be satisfied in the
+rebuild session, because the same session had already read the earlier
+transcripts. The text was re-verified against the canonical crops, but a truly
+unanchored re-read of those two pages needs a fresh session. Every document
+after this starts clean.
+
 
 ## CLEAN REBUILD, 2026-09-19 — the previous generated dataset is superseded
 

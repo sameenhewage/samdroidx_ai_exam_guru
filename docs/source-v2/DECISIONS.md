@@ -265,3 +265,55 @@ primary reading is wrong.
 `candidate/cli.py` refuses to build when a crop is not its region's bounding
 box grown by an even padding. Stale crops silently attach OCR text to the
 wrong pixels, which looks identical to a disagreement.
+
+## D17 - The executing agent is the ONLY text-extraction step.
+**Locked 2026-09-19. Supersedes D15's audit-witness role for the active pipeline.**
+
+Direct agent reading of the canonical crop was measured against every
+alternative and is the only one fit to produce source text. So:
+
+```
+immutable source -> render -> layout -> canonical crop
+  -> THE EXECUTING AGENT OPENS THE CROP AND WRITES THE TEXT
+  -> seal (schema + checksum) -> deterministic validators
+  -> Machine Candidate (= the primary text)
+  -> human Confirm / Correct / Exclude -> Verified Source Content
+```
+
+**Code prepares, identifies, validates and stores evidence. Code never
+generates source text.** There is no OCR in the active pipeline: not DeepSeek,
+not LightOnOCR, not Tesseract, no prefill, no consensus, no voting.
+
+### Canonical crop binding
+
+`<document>/crops/crop-NNN-rNNN.png` is the only image a region may be read
+from - by the agent transcribing, and by the reviewer confirming. `readers/crops`
+is gone. Sealing **hard fails** when the crop is missing, when its checksum
+does not match `crops.json`, or when its bbox is not the current layout box
+grown by 0-32px. `crop_sha256` is required and non-null on every region.
+
+Re-cutting a crop by hand is what produced five wrong regions on page 186.
+
+### Independence
+
+Before transcribing, do not open `readers/`, an older `primary/`,
+`candidates/`, `comparison/`, `verified/` or any archive. Open the canonical
+crop, and optionally the full rendered page for surrounding context. Reading
+previous text first is anchoring, not independence.
+
+### Validators flag, never rewrite
+
+Coverage (layout line count vs transcribed lines), empty-text against visible
+ink, duplicate and missing regions, crop checksums, Unicode and control
+characters, bracket sanity, critical tokens. Line-count mismatch is judged by
+region type: a figure's labels are scattered around the drawing, so the
+geometric count says nothing and the check is skipped for figures, tables and
+decorative bars.
+
+### The OCR models
+
+`sinhala-deepseek` and `sinhala-lightonocr` are removed from the active
+architecture. Their measured results stay in `docs/source-v2/BENCHMARK_READERS.md`
+and under `_archive/` as historical evidence for why. Do not run them in the
+rebuild. Re-introducing them requires a new measured decision that explicitly
+supersedes this one.

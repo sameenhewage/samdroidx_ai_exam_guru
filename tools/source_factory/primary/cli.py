@@ -100,7 +100,17 @@ def command_seal(arguments: argparse.Namespace) -> int:
         )
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
 
-    crops = document / "readers" / "crops"
+    crops = document / "crops"
+    manifest_path = crops / "crops.json"
+    if not manifest_path.exists():
+        raise SystemExit(
+            f"no canonical crops at {crops}. Cut them first:\n"
+            f"  uv run tools/source_factory/readers/cli.py --document {document} crops"
+        )
+    manifest = {
+        entry["region_id"]: entry
+        for entry in json.loads(manifest_path.read_text(encoding="utf-8"))
+    }
     regions: list[PrimaryRegion] = []
     missing: list[str] = []
     for region in layout["regions"]:
@@ -109,6 +119,32 @@ def command_seal(arguments: argparse.Namespace) -> int:
             missing.append(region["id"])
             continue
         crop = crops / f"crop-{page_number:03d}-{region['id'].split('-')[-1]}.png"
+        # The canonical crop is the only image anyone may read this region
+        # from. Sealing against a missing, changed or stale crop is how a
+        # transcription silently ends up describing different pixels (D17).
+        if not crop.exists():
+            raise SystemExit(
+                f"{region['id']}: no canonical crop at {crop}. Re-cut the crops; "
+                "never transcribe from an image you made yourself."
+            )
+        digest = sha256_of(crop)
+        recorded = manifest.get(region["id"])
+        if recorded is None:
+            raise SystemExit(f"{region['id']}: not present in {manifest_path}")
+        if recorded.get("sha256") and recorded["sha256"] != digest:
+            raise SystemExit(
+                f"{region['id']}: {crop.name} does not match crops.json "
+                f"({digest[:12]}… vs {recorded['sha256'][:12]}…); the crop changed "
+                "after it was catalogued"
+            )
+        expected = list(region["bbox"])
+        got = list(recorded.get("bbox", []))
+        grown = [expected[i] - got[i] if i < 2 else got[i] - expected[i] for i in range(4)]
+        if any(side < 0 or side > 32 for side in grown):
+            raise SystemExit(
+                f"{region['id']}: crop bbox {got} is not layout {expected} grown by "
+                "0..32px; the layout moved after the crop was cut"
+            )
         regions.append(
             PrimaryRegion(
                 region_id=region["id"],
@@ -126,7 +162,7 @@ def command_seal(arguments: argparse.Namespace) -> int:
                     )
                     for item in entry.get("uncertainty", [])
                 ),
-                crop_sha256=sha256_of(crop) if crop.exists() else None,
+                crop_sha256=digest,
                 table=_table(entry.get("table")),
             )
         )

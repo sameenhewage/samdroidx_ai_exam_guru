@@ -113,6 +113,9 @@ def validate_primary(
     return findings
 
 
+DIAGRAM_TYPES = frozenset({"figure", "table", "decorative"})
+
+
 def _coverage(text: str, *, layout_lines: int | None, region_type: str) -> list[Finding]:
     """Did the reading actually cover the region, or stop part-way?
 
@@ -127,6 +130,11 @@ def _coverage(text: str, *, layout_lines: int | None, region_type: str) -> list[
     """
 
     if layout_lines is None or layout_lines <= 0:
+        return []
+    # A diagram's labels are scattered around the drawing, so the geometric
+    # line count says nothing about how many label lines there should be.
+    # Treating that as a transcription failure would cry wolf on every figure.
+    if region_type in DIAGRAM_TYPES:
         return []
     written = len([line for line in text.split("\n") if line.strip()])
     if written == 0:
