@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RegionTypeName = Literal["text", "heading", "figure", "table", "decorative", "unknown"]
 RegionStateName = Literal["unverified", "verified", "excluded"]
+SourceKindName = Literal[
+    "text_only", "visual_only", "visual_with_text", "decorative", "undecided"
+]
 
 
 class SourceV2Model(BaseModel):
@@ -45,6 +48,10 @@ class RegionView(SourceV2Model):
     bbox: list[int] | None = None
     verified_text: str | None = None
     readers: list[ReaderEvidence] = Field(default_factory=list)
+    #: D18. What kind of source this is. The machine proposes, a human decides.
+    source_kind: SourceKindName = "undecided"
+    proposed_source_kind: SourceKindName | None = None
+    crop_sha256: str | None = None
 
 
 class PageProgress(SourceV2Model):
@@ -89,6 +96,10 @@ class CandidateInput(SourceV2Model):
     critical_conflict: bool = False
     agreement_ratio: float = 1.0
     disagreement: dict = Field(default_factory=dict)
+    #: The Source Factory does not classify. When omitted the service proposes
+    #: a kind from region type and whether any text was transcribed.
+    source_kind: SourceKindName | None = None
+    crop_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class ImportPageRequest(SourceV2Model):
@@ -133,6 +144,37 @@ class CorrectRequest(SourceV2Model):
     revision: int = Field(ge=1)
     corrected_text: str = Field(min_length=1, max_length=20000)
     note: str | None = Field(default=None, max_length=2000)
+
+
+class ConfirmVisualRequest(SourceV2Model):
+    """Confirm an educational figure *as a figure* (D18).
+
+    Separate from Confirm because the reviewer asserts something different:
+    not "this text is right" but "this region is source visual". The kind is
+    explicit, so the reviewer settles visual-only versus visual-with-text
+    rather than the machine.
+    """
+
+    candidate_id: UUID
+    revision: int = Field(ge=1)
+    compared_with_image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_kind: Literal["visual_only", "visual_with_text"] = "visual_only"
+    #: Required for visual_with_text: the printed labels, verified as text.
+    text: str | None = Field(default=None, max_length=20000)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ReclassifyRequest(SourceV2Model):
+    """The reviewer disagrees with the proposed kind.
+
+    Changing what a region *is* is a human decision and lands as its own
+    review event; the machine never applies it silently.
+    """
+
+    candidate_id: UUID
+    revision: int = Field(ge=1)
+    source_kind: SourceKindName
+    note: str = Field(min_length=1, max_length=2000)
 
 
 class ExcludeRequest(SourceV2Model):

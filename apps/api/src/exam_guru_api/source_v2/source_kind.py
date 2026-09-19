@@ -84,7 +84,7 @@ def propose(region_type: str, *, has_text: bool) -> SourceKind:
     return SourceKind.UNDECIDED
 
 
-class EmbeddingRefused(Exception):
+class EmbeddingRefusedError(Exception):
     """A modality was requested that this region may not produce."""
 
 
@@ -105,30 +105,30 @@ def assert_embeddable(
     """
 
     if not verified:
-        raise EmbeddingRefused(
+        raise EmbeddingRefusedError(
             f"{modality} embedding refused: the region is not verified source content"
         )
     if not kind.educational:
-        raise EmbeddingRefused(
+        raise EmbeddingRefusedError(
             f"{modality} embedding refused: {kind} is not educational source content"
         )
 
     if modality is Modality.TEXT:
         if not kind.carries_text:
-            raise EmbeddingRefused(
+            raise EmbeddingRefusedError(
                 f"text embedding refused: {kind} has no verified source text. "
                 "Describing the visual would be derived knowledge, not source."
             )
         if not has_verified_text:
-            raise EmbeddingRefused(
+            raise EmbeddingRefusedError(
                 "text embedding refused: no verified text is stored for this region"
             )
         return
 
     if not kind.carries_visual:
-        raise EmbeddingRefused(f"image embedding refused: {kind} has no source visual")
+        raise EmbeddingRefusedError(f"image embedding refused: {kind} has no source visual")
     if not has_canonical_visual:
-        raise EmbeddingRefused(
+        raise EmbeddingRefusedError(
             "image embedding refused: the canonical crop for this region is missing"
         )
 
@@ -152,7 +152,7 @@ def eligible_modalities(
                 has_verified_text=has_verified_text,
                 has_canonical_visual=has_canonical_visual,
             )
-        except EmbeddingRefused:
+        except EmbeddingRefusedError:
             continue
         allowed.add(modality)
     return frozenset(allowed)

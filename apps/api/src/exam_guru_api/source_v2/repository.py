@@ -25,6 +25,7 @@ from exam_guru_api.source_v2.domain import (
     SourceV2Error,
     StaleReviewError,
 )
+from exam_guru_api.source_v2.source_kind import SourceKind, propose
 
 HUMAN_CORRECTION = "human-correction"
 
@@ -67,6 +68,9 @@ class RegionRow:
     state: str
     bbox: list[int] | None
     verified_text: str | None
+    source_kind: str = "undecided"
+    proposed_source_kind: str | None = None
+    crop_sha256: str | None = None
 
 
 async def get_page(session: AsyncSession, page_id: UUID) -> PageHeader:
@@ -108,7 +112,8 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             text("""
                 select c.region_id, c.region_type, c.id, c.revision, c.origin, c.text,
                        c.abstained, c.chosen_reader, c.reason, c.critical_conflict,
-                       c.agreement_ratio, c.disagreement, c.state, v.text
+                       c.agreement_ratio, c.disagreement, c.state, v.text,
+                       c.source_kind, c.proposed_source_kind, c.crop_sha256
                 from source_v2_machine_candidates c
                 left join source_v2_verified_regions v
                        on v.page_id = c.page_id and v.region_id = c.region_id
@@ -144,6 +149,9 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             state=row[12],
             bbox=boxes.get(row[0]),
             verified_text=row[13],
+            source_kind=row[14],
+            proposed_source_kind=row[15],
+            crop_sha256=row[16],
         )
         for row in rows
     ]
@@ -272,6 +280,15 @@ async def confirm(
         )
     row = await _require_current(session, page.page_id, region_id, candidate_id, revision)
     body, abstained = row[2], row[3]
+    facts = await _region_facts(session, page.page_id, region_id)
+    if facts["source_kind"] in {"visual_only", "decorative"}:
+        # Confirming *text* on a region that carries none would either store an
+        # empty verified row or invite someone to invent a description. Both
+        # are wrong; the reviewer needs the visual action or a reclassification.
+        raise SourceV2Error(
+            f"region {region_id} is {facts['source_kind']}; use confirm-visual "
+            "or reclassify it first"
+        )
     if abstained or not body.strip():
         raise SourceV2Error(
             f"region {region_id} abstained or is empty; correct or exclude it instead"
@@ -292,12 +309,15 @@ async def confirm(
         text("""
             insert into source_v2_verified_regions
               (id, page_id, region_id, candidate_id, candidate_revision, text, text_nfc,
-               reviewer_id, image_sha256, verified_at)
+               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox)
             values (:id, :page_id, :region_id, :candidate_id, :revision, :text, :text_nfc,
-                    :reviewer_id, :sha, :verified_at)
+                    :reviewer_id, :sha, :verified_at, :source_kind, :crop_sha256, :bbox)
         """),
         {
             "id": verified_id,
+            "source_kind": facts["source_kind"],
+            "crop_sha256": facts["crop_sha256"],
+            "bbox": facts["bbox"],
             "page_id": page.page_id,
             "region_id": region_id,
             "candidate_id": candidate_id,
@@ -314,6 +334,161 @@ async def confirm(
         {"id": candidate_id},
     )
     return verified_id
+
+
+async def _region_facts(session: AsyncSession, page_id: UUID, region_id: str) -> dict:
+    """Kind, canonical crop and geometry for the current candidate."""
+
+    row = (
+        await session.execute(
+            text(
+                "select source_kind, crop_sha256, bbox from source_v2_machine_candidates"
+                " where page_id = :page_id and region_id = :region_id and is_current"
+            ),
+            {"page_id": page_id, "region_id": region_id},
+        )
+    ).first()
+    if row is None:
+        raise SourceV2Error(f"no current candidate for region {region_id}")
+    bbox = row[2]
+    return {
+        "source_kind": row[0],
+        "crop_sha256": row[1],
+        "bbox": json.dumps(bbox) if bbox is not None and not isinstance(bbox, str) else bbox,
+    }
+
+
+async def confirm_visual(
+    session: AsyncSession,
+    *,
+    page: PageHeader,
+    region_id: str,
+    candidate_id: UUID,
+    revision: int,
+    reviewer_id: UUID,
+    compared_with_image_sha256: str,
+    source_kind: str,
+    text_value: str | None = None,
+    note: str | None = None,
+) -> UUID:
+    """Verify an educational figure *as a figure* (D18).
+
+    A drawing with no printed text is real source content. Before D18 the only
+    available action was Exclude, which quietly discarded it.
+    """
+
+    if compared_with_image_sha256 != page.image_sha256:
+        raise StaleReviewError(
+            "confirmation must cite the rendered page that was actually compared"
+        )
+    if source_kind not in {"visual_only", "visual_with_text"}:
+        raise SourceV2Error(f"{source_kind} is not a visual source kind")
+    await _require_current(session, page.page_id, region_id, candidate_id, revision)
+    facts = await _region_facts(session, page.page_id, region_id)
+    if not facts["crop_sha256"]:
+        raise SourceV2Error(
+            f"region {region_id} has no canonical crop; a verified visual must name "
+            "the image it was confirmed against"
+        )
+
+    body = "" if source_kind == "visual_only" else unicodedata.normalize(
+        "NFC", (text_value or "").strip()
+    )
+    if source_kind == "visual_with_text" and not body:
+        raise SourceV2Error(
+            "visual_with_text must carry the printed labels; confirm it as "
+            "visual_only if the figure has no text"
+        )
+    if source_kind == "visual_only" and (text_value or "").strip():
+        # Text supplied for a visual-only region means the reviewer saw labels.
+        # Silently dropping them would lose source; silently keeping them would
+        # contradict the declared kind.
+        raise SourceV2Error(
+            "text was supplied for a visual_only region; confirm it as "
+            "visual_with_text instead"
+        )
+
+    await _append_event(
+        session,
+        page_id=page.page_id,
+        region_id=region_id,
+        candidate_id=candidate_id,
+        revision=revision,
+        action=ReviewAction.CONFIRM,
+        reviewer_id=reviewer_id,
+        sha=page.image_sha256,
+        note=note or f"confirmed as {source_kind}",
+    )
+    await session.execute(
+        text(
+            "update source_v2_machine_candidates set state = 'verified',"
+            " source_kind = :kind, text = :text"
+            " where page_id = :page_id and region_id = :region_id and is_current"
+        ),
+        {"kind": source_kind, "text": body, "page_id": page.page_id, "region_id": region_id},
+    )
+    verified_id = uuid4()
+    await session.execute(
+        text("""
+            insert into source_v2_verified_regions
+              (id, page_id, region_id, candidate_id, candidate_revision, text, text_nfc,
+               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox)
+            values (:id, :page_id, :region_id, :candidate_id, :revision, :text, :text,
+                    :reviewer_id, :sha, now(), :kind, :crop, :bbox)
+        """),
+        {
+            "id": verified_id,
+            "page_id": page.page_id,
+            "region_id": region_id,
+            "candidate_id": candidate_id,
+            "revision": revision,
+            "text": body,
+            "reviewer_id": reviewer_id,
+            "sha": page.image_sha256,
+            "kind": source_kind,
+            "crop": facts["crop_sha256"],
+            "bbox": facts["bbox"],
+        },
+    )
+    return verified_id
+
+
+async def reclassify(
+    session: AsyncSession,
+    *,
+    page: PageHeader,
+    region_id: str,
+    candidate_id: UUID,
+    revision: int,
+    reviewer_id: UUID,
+    source_kind: str,
+    note: str,
+) -> None:
+    """The reviewer disagrees with the proposed kind.
+
+    Recorded as its own review event and never applied by the machine. The
+    proposal is left untouched so the disagreement stays visible.
+    """
+
+    await _require_current(session, page.page_id, region_id, candidate_id, revision)
+    await _append_event(
+        session,
+        page_id=page.page_id,
+        region_id=region_id,
+        candidate_id=candidate_id,
+        revision=revision,
+        action=ReviewAction.CORRECT,
+        reviewer_id=reviewer_id,
+        sha=page.image_sha256,
+        note=f"reclassified as {source_kind}: {note}",
+    )
+    await session.execute(
+        text(
+            "update source_v2_machine_candidates set source_kind = :kind"
+            " where page_id = :page_id and region_id = :region_id and is_current"
+        ),
+        {"kind": source_kind, "page_id": page.page_id, "region_id": region_id},
+    )
 
 
 async def correct(
@@ -556,7 +731,7 @@ async def _supersede(
         current = (
             await session.execute(
                 text(
-                    "select id, revision, text, chosen_reader"
+                    "select id, revision, text, chosen_reader, source_kind, crop_sha256"
                     " from source_v2_machine_candidates"
                     " where page_id = :page_id and region_id = :region_id and is_current"
                 ),
@@ -576,16 +751,40 @@ async def _supersede(
         # something that is not in the pipeline any more. Supersede it so the
         # attribution stays true, without touching any verification: the text
         # did not change, so nothing a reviewer confirmed has changed either.
-        attribution_stale = current[3] != region.get("chosen_reader")
+        # D18: a row created before source kinds existed carries 'undecided'
+        # and no crop. Refreshing that is not a text change, so it must not
+        # supersede a revision or withdraw anybody's verification.
+        kind = str(
+            SourceKind(region["source_kind"])
+            if region.get("source_kind")
+            else propose(
+                region["region_type"], has_text=bool((region.get("text") or "").strip())
+            )
+        )
+        attribution_stale = (
+            current[3] != region.get("chosen_reader")
+            or current[4] != kind
+            or current[5] != region.get("crop_sha256")
+        )
         if current[2] == proposed and not attribution_stale:
             continue
         if current[2] == proposed and attribution_stale:
             await session.execute(
                 text(
                     "update source_v2_machine_candidates"
-                    " set chosen_reader = :reader where id = :id"
+                    " set chosen_reader = :reader, crop_sha256 = :crop,"
+                    "     proposed_source_kind = :kind,"
+                    # Never overwrite a kind a human already settled.
+                    "     source_kind = case when source_kind = 'undecided'"
+                    "                        then :kind else source_kind end"
+                    " where id = :id"
                 ),
-                {"reader": region.get("chosen_reader"), "id": current[0]},
+                {
+                    "reader": region.get("chosen_reader"),
+                    "crop": region.get("crop_sha256"),
+                    "kind": kind,
+                    "id": current[0],
+                },
             )
             superseded += 1
             continue
@@ -629,16 +828,27 @@ async def _insert_candidate(
     revision: int,
     parent_id: UUID | None,
 ) -> None:
+    supplied = region.get("source_kind")
+    proposed = (
+        SourceKind(supplied)
+        if supplied
+        else propose(
+            region["region_type"],
+            has_text=bool((region.get("text") or "").strip()),
+        )
+    )
     await session.execute(
         text("""
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
                abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
-               disagreement, state, is_current)
+               disagreement, state, is_current, source_kind, proposed_source_kind,
+               crop_sha256)
             values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
                     'machine', :text, :abstained, :chosen_reader, :reason,
                     :critical_conflict, :agreement_ratio, cast(:disagreement as jsonb),
-                    'unverified', true)
+                    'unverified', true, :source_kind, :proposed_source_kind,
+                    :crop_sha256)
         """),
         {
             "id": uuid4(),
@@ -654,6 +864,12 @@ async def _insert_candidate(
             "critical_conflict": bool(region.get("critical_conflict")),
             "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
             "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+            # D18: the machine proposes from deterministic evidence only. The
+            # proposal is kept beside the working value so a later human
+            # reclassification is visible rather than silent.
+            "source_kind": str(proposed),
+            "proposed_source_kind": str(proposed),
+            "crop_sha256": region.get("crop_sha256"),
         },
     )
 

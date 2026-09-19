@@ -5,14 +5,13 @@ from __future__ import annotations
 import pytest
 
 from exam_guru_api.source_v2.source_kind import (
-    EmbeddingRefused,
+    EmbeddingRefusedError,
     Modality,
     SourceKind,
     assert_embeddable,
     eligible_modalities,
     propose,
 )
-
 
 # --- A. what the machine may propose ------------------------------------------
 
@@ -83,12 +82,12 @@ def gate(kind: SourceKind, modality: Modality, **kwargs) -> None:
 
 
 def test_unverified_text_cannot_be_embedded() -> None:
-    with pytest.raises(EmbeddingRefused):
+    with pytest.raises(EmbeddingRefusedError):
         gate(SourceKind.TEXT_ONLY, Modality.TEXT, verified=False)
 
 
 def test_unverified_visual_cannot_be_embedded() -> None:
-    with pytest.raises(EmbeddingRefused):
+    with pytest.raises(EmbeddingRefusedError):
         gate(SourceKind.VISUAL_ONLY, Modality.IMAGE, verified=False)
 
 
@@ -99,7 +98,7 @@ def test_verified_visual_only_may_be_embedded_as_an_image() -> None:
 def test_verified_visual_only_may_never_be_embedded_as_text() -> None:
     """Describing a picture is derived knowledge, never source truth."""
 
-    with pytest.raises(EmbeddingRefused) as error:
+    with pytest.raises(EmbeddingRefusedError) as error:
         gate(SourceKind.VISUAL_ONLY, Modality.TEXT, has_verified_text=False)
     assert "derived knowledge" in str(error.value)
 
@@ -124,18 +123,18 @@ def test_text_only_is_never_eligible_for_an_image_embedding() -> None:
 
 @pytest.mark.parametrize("modality", list(Modality))
 def test_decorative_is_never_eligible_for_an_educational_embedding(modality) -> None:
-    with pytest.raises(EmbeddingRefused):
+    with pytest.raises(EmbeddingRefusedError):
         gate(SourceKind.DECORATIVE, modality)
 
 
 @pytest.mark.parametrize("modality", list(Modality))
 def test_an_undecided_region_is_never_embeddable(modality) -> None:
-    with pytest.raises(EmbeddingRefused):
+    with pytest.raises(EmbeddingRefusedError):
         gate(SourceKind.UNDECIDED, modality)
 
 
 def test_a_visual_without_its_canonical_crop_cannot_be_embedded() -> None:
-    with pytest.raises(EmbeddingRefused) as error:
+    with pytest.raises(EmbeddingRefusedError) as error:
         gate(SourceKind.VISUAL_ONLY, Modality.IMAGE, has_canonical_visual=False)
     assert "canonical crop" in str(error.value)
 

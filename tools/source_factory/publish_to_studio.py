@@ -135,6 +135,9 @@ def main() -> int:
                         "critical_conflict": bool(region.get("critical_conflict")),
                         "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
                         "disagreement": region.get("disagreement", {}),
+                        # D18: the canonical crop this region was read from,
+                        # so a verified visual can name its evidence.
+                        "crop_sha256": region.get("crop_sha256"),
                     }
                     for region in load(path)["regions"]
                 ],

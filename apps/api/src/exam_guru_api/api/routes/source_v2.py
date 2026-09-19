@@ -32,6 +32,8 @@ from exam_guru_api.source_v2.schemas import (
     PageView,
     ReaderEvidence,
     RegionMutationResponse,
+    ConfirmVisualRequest,
+    ReclassifyRequest,
     RegionView,
 )
 
@@ -97,6 +99,9 @@ async def _page_view(session: AsyncSession, page_id: UUID) -> PageView:
                 state=row.state,
                 bbox=row.bbox,
                 verified_text=row.verified_text,
+                source_kind=row.source_kind,
+                proposed_source_kind=row.proposed_source_kind,
+                crop_sha256=row.crop_sha256,
                 readers=[ReaderEvidence(**item) for item in evidence.get(row.region_id, [])],
             )
             for row in regions
@@ -248,6 +253,82 @@ async def confirm_region(
             revision=payload.revision,
             reviewer_id=principal.subject_id,
             compared_with_image_sha256=payload.compared_with_image_sha256,
+            note=payload.note,
+        )
+        await session.commit()
+    except SourceV2Error as error:
+        await session.rollback()
+        raise _fail(error) from error
+    return await _region_response(session, page_id, region_id)
+
+
+@router.post(
+    "/source-v2/pages/{page_id}/regions/{region_id}/confirm-visual",
+    response_model=RegionMutationResponse,
+    responses={409: {"model": ApiErrorResponse}},
+)
+async def confirm_region_visual(
+    response: Response,
+    page_id: Annotated[UUID, Path()],
+    region_id: Annotated[str, Path(max_length=64)],
+    payload: ConfirmVisualRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_TRUST))],
+) -> RegionMutationResponse:
+    """Verify an educational figure as a figure, after comparing it with the page.
+
+    D18. A drawing with no printed text is source content; before this the only
+    available action was Exclude, which discarded it.
+    """
+
+    _private(response)
+    try:
+        page = await repository.get_page(session, page_id)
+        await repository.confirm_visual(
+            session,
+            page=page,
+            region_id=region_id,
+            candidate_id=payload.candidate_id,
+            revision=payload.revision,
+            reviewer_id=principal.subject_id,
+            compared_with_image_sha256=payload.compared_with_image_sha256,
+            source_kind=payload.source_kind,
+            text_value=payload.text,
+            note=payload.note,
+        )
+        await session.commit()
+    except SourceV2Error as error:
+        await session.rollback()
+        raise _fail(error) from error
+    return await _region_response(session, page_id, region_id)
+
+
+@router.post(
+    "/source-v2/pages/{page_id}/regions/{region_id}/reclassify",
+    response_model=RegionMutationResponse,
+    responses={409: {"model": ApiErrorResponse}},
+)
+async def reclassify_region(
+    response: Response,
+    page_id: Annotated[UUID, Path()],
+    region_id: Annotated[str, Path(max_length=64)],
+    payload: ReclassifyRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_TRUST))],
+) -> RegionMutationResponse:
+    """Record that the reviewer disagrees with the proposed source kind."""
+
+    _private(response)
+    try:
+        page = await repository.get_page(session, page_id)
+        await repository.reclassify(
+            session,
+            page=page,
+            region_id=region_id,
+            candidate_id=payload.candidate_id,
+            revision=payload.revision,
+            reviewer_id=principal.subject_id,
+            source_kind=payload.source_kind,
             note=payload.note,
         )
         await session.commit()

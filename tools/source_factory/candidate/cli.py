@@ -81,7 +81,15 @@ def _add_uncropped_regions(
                 ),
                 witnesses=[],
             )
-            pages[page_number].append(result.to_json() | {"bbox": region["bbox"]})
+            pages[page_number].append(
+                result.to_json()
+                | {
+                    "bbox": region["bbox"],
+                    # D18: the canonical crop this region was read from. A
+                    # verified visual has to be able to name its evidence.
+                    "crop_sha256": region.get("crop_sha256"),
+                }
+            )
             counters["regions"] += 1
             counters["abstained"] += 1 if result.abstained else 0
             counters["critical_conflict"] += 1 if result.critical_conflict else 0
@@ -262,7 +270,7 @@ def command_build(arguments: argparse.Namespace) -> int:
             ),
             witnesses=witnesses,
         )
-        payload = result.to_json() | {"crop_id": crop_id, "bbox": crop.bbox}
+        payload = result.to_json() | {"crop_id": crop_id, "bbox": crop.bbox} | {"crop_sha256": primary_regions[crop.region_id][1].get("crop_sha256")}
         pages[crop.page_number].append(payload)
         counters["regions"] += 1
         counters["abstained"] += 1 if result.abstained else 0
