@@ -17,6 +17,16 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Segment-width hypothesis for Candidate B tested and rejected
+
+- **Status:** **SOURCE FIDELITY GATE: FAIL.** Nothing integrated. The accepted `62e4527` foundation was not modified; the user's `fitz`→`pymupdf` import cleanup in the renderer is kept.
+- **Hypothesis under test:** the duplicated opening tokens and wrong-word substitutions from `kaan84/sinhala-print-trocr` were caused by squashing 2042-pixel-wide lines into the model's 384×384 input.
+- **Result: rejected.** Splitting the same lines into four-word groups by deterministic vertical projection mostly **degraded** the reading. `අනතුරුව අනතුරුව රවී උපකාර …` became `පටි /ු66ට6663. ටී66 ]6 …`, and `ඒ අනුව ලස්සනට පසු ව` became `ශ්රී ’ අනුවට උපන්දිනයට පහු ට`. Latin and digit noise appeared where whole-line reading had produced Sinhala.
+- **One genuine partial signal:** on line 2 the duplicated `සිසුන්ත් සිසුන්` collapsed to a single correct `සිසුන්`, and `සමග` became `සමඟ`, which matches the Tesseract baseline. So segmentation does remove the repetition artefact, but at the cost of far worse word recognition overall.
+- **Caveat on the test itself:** the vertical-projection splitter detected only 1–7 words per line and produced 1–2 groups, so the segments stayed wide. This is a weak segmenter, and the hypothesis is rejected only for four-word groups at this quality. A true single-word splitter has not been tried.
+- **Candidate A `avishadilhara/sinhala-lightonocr-2-1b-Qlora` is still untested.** A CUDA Torch build plus `peft` is required and was not attempted; the installed wheel remains `2.14.0+cpu`. No claim is made about it.
+- **Certified ground truth is still absent**, so no CER is reported for any prose result above; all prose comparisons remain qualitative against the Tesseract baseline.
+
 ### 2026-09-19 — Tesseract-first architecture adopted; section 1 runtime checkpoint verified
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** This records the section 1 runtime checkpoint for the new Tesseract-first architecture. No pipeline code was changed, no VLM verifier was rewired, no Chrome MCP loop was run and nothing was integrated.
