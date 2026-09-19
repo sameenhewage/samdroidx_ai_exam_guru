@@ -394,3 +394,19 @@ Example from the real acceptance page: `p186-r002` is an educational
 `VISUAL_ONLY` figure (drawing, no printed text); `p186-r003` is
 `VISUAL_WITH_TEXT` because its six printed diagram labels are source text.
 
+
+### D18 implementation notes
+
+Landed in migration `0057_source_v2_source_kind` (forward-only) and
+`source_v2/source_kind.py`. The decision above is the contract; this records
+how it is enforced.
+
+### Enforced in the database (migration 0057, forward-only)
+
+- `text_only` and `visual_with_text` must carry non-empty verified text
+- `visual_only` may be verified with **no text**, and must keep `crop_sha256`
+- `decorative` can never become verified source content
+- an unknown kind is rejected
+- pre-D18 rows default to `undecided`, preserving their trust level rather
+  than asserting an educational judgement nobody made
+
