@@ -1,4 +1,17 @@
-"""Cut real region crops out of the fixed benchmark pages.
+"""Cut the canonical region crops.
+
+These are the *only* images anyone is allowed to read a region from: the
+executing agent transcribing it, the audit readers auditing it, and the
+reviewer confirming it all look at the same pixels. Re-cutting a crop by hand
+is how a region gets attributed to the wrong paragraph, which happened for
+real on page 186 (D16).
+
+A crop is produced for **every** region the layout found, including figures
+and decorative bars. A region with no crop would have to be read from
+somewhere else, and there is nowhere else.
+
+Historically these lived under `readers/crops`; they are canonical pipeline
+output, not reader output, so they live at `<document>/crops`.
 
 Readers are benchmarked on the *same* crops, produced deterministically from the
 committed layout, so a difference between two readers is a difference in reading
@@ -69,10 +82,10 @@ def extract(
     document: Document,
     page_numbers: list[int],
     *,
-    types: tuple[str, ...] = READABLE_TYPES,
-    min_lines: int = 1,
+    types: tuple[str, ...] | None = None,
+    min_lines: int = 0,
 ) -> list[Crop]:
-    root = document.folder / "readers" / "crops"
+    root = document.folder / "crops"
     crops: list[Crop] = []
     for page_number in page_numbers:
         page = document.page(page_number)
@@ -86,7 +99,9 @@ def extract(
         )
         bounds = Box(0, 0, image.shape[1], image.shape[0])
         for region in layout.regions:
-            if region.type not in types or region.line_count < min_lines:
+            if types is not None and region.type not in types:
+                continue
+            if region.line_count < min_lines:
                 continue
             box = region.bbox.pad(CROP_PAD, bounds)
             patch = image[box.y0 : box.y1, box.x0 : box.x1]
@@ -116,7 +131,7 @@ def extract(
 
 
 def load(document: Document) -> list[Crop]:
-    root = document.folder / "readers" / "crops"
+    root = document.folder / "crops"
     manifest = root / "crops.json"
     if not manifest.exists():
         raise SystemExit(f"no crops yet; run the crops command first ({manifest})")

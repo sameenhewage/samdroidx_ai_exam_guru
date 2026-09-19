@@ -49,7 +49,10 @@ def load_results(document) -> dict[str, dict[str, dict]]:
 
 
 def _add_uncropped_regions(
-    primary_pages: dict[int, dict], pages: dict[int, list[dict]], counters: dict
+    primary_pages: dict[int, dict],
+    pages: dict[int, list[dict]],
+    counters: dict,
+    layout_lines: dict[str, int] | None = None,
 ) -> None:
     """Carry the primary reading of regions no local reader was given.
 
@@ -170,6 +173,19 @@ def assert_crops_are_current(document, crops) -> None:
         )
 
 
+def _layout_line_counts(document) -> dict[str, int]:
+    """Geometric line counts per region, straight from the layout.
+
+    Used to notice a primary reading that stopped part-way through a region.
+    """
+
+    counts: dict[str, int] = {}
+    for path in sorted((document.folder / "layout" / "regions").glob("page-*.json")):
+        for region in json.loads(path.read_text(encoding="utf-8"))["regions"]:
+            counts[region["id"]] = int(region.get("line_count") or 0)
+    return counts
+
+
 def load_primary(document) -> dict[int, dict]:
     """The agent's own reading, keyed by page. Required: it is the base text.
 
@@ -201,6 +217,7 @@ def command_build(arguments: argparse.Namespace) -> int:
     crops = {crop.crop_id: crop for crop in crop_tools.load(document)}
     assert_crops_are_current(document, crops)
     primary_pages = load_primary(document)
+    layout_lines = _layout_line_counts(document)
     primary_regions = {
         region["region_id"]: (page["page_number"], region)
         for page in primary_pages.values()
@@ -249,7 +266,7 @@ def command_build(arguments: argparse.Namespace) -> int:
         counters["abstained"] += 1 if result.abstained else 0
         counters["critical_conflict"] += 1 if result.critical_conflict else 0
 
-    _add_uncropped_regions(primary_pages, pages, counters)
+    _add_uncropped_regions(primary_pages, pages, counters, layout_lines)
 
     _write_comparison(document, pages)
 

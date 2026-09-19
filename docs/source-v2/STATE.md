@@ -5,11 +5,31 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — corpus migration (primary-first, OCR audit-only)
-status:         D15 locked. Pages 156/186 verified; sankhya-rata usable:true.
+phase:          7 — clean rebuild from immutable source (D16)
+status:         Data reset done. 156/186 rebuilt on canonical crops, in Studio for review.
 last_validated: (set at commit)
 updated:        2026-09-19
 ```
+
+## CLEAN REBUILD, 2026-09-19 — the previous generated dataset is superseded
+
+Every generated Source V2 artefact for `mawbasa-teacher-guide` and
+`sankhya-rata` was produced under superseded reader strategies and, worse,
+partly from crops that were re-cut by hand. All of it was archived to
+`.exam-guru-data/_archive/source-v2-superseded-*` (121 files) and removed from
+the active tree, and the local `source_v2_*` tables were cleared for those two
+documents only — 31 verified regions, 64 review events, 94 candidates, 92
+reader rows, 8 pages. Raw PDFs, historical migrations and unrelated data were
+untouched.
+
+Everything since is rebuilt from the original PDFs.
+
+**Canonical crops are now the only readable artefact.** `<document>/crops/`
+carries one crop per region — including figures and decorative bars, which
+were previously skipped and therefore had to be re-cut by hand. The agent, the
+audit readers and the reviewer all read the same file. Re-cutting a crop is
+what produced the page 186 mis-attributions.
+
 
 ## READER ORDER IS LOCKED (D14 + D15) — read this before touching the pipeline
 

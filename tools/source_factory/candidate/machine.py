@@ -197,6 +197,7 @@ class PrimaryReading:
     text: str
     uncertainty: tuple[dict, ...] = ()
     language: str = "sinhala"
+    layout_lines: int | None = None
 
     @property
     def blank(self) -> bool:
@@ -234,7 +235,10 @@ def build(
     findings += [
         str(item)
         for item in validate_primary(
-            primary.text, region_type=primary.region_type, language=primary.language
+            primary.text,
+            region_type=primary.region_type,
+            language=primary.language,
+            layout_lines=primary.layout_lines,
         )
     ]
     # Then the audit-only readers contribute warnings. Never text.
