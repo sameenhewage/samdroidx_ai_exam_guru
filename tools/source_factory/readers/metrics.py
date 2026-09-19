@@ -148,6 +148,22 @@ def foreign_script_ratio(text: str, expected: str) -> float:
     return foreign / letters
 
 
+def expected_script_ratio(text: str, expected: str) -> float:
+    """Share of letters actually written in the page's own script.
+
+    `foreign_script_ratio` tolerates Latin inside a Sinhala page, because real
+    teacher guides carry URLs and units. That tolerance hides the opposite
+    failure: a reading of a Sinhala region that is *entirely* English, which is
+    fluent, contains no foreign script by that definition, and is invented.
+    """
+
+    profile = {name: count for name, count in script_profile(text).items() if name != "digits"}
+    letters = sum(profile.values())
+    if letters == 0:
+        return 0.0
+    return profile.get(expected, 0) / letters
+
+
 def repetition_ratio(text: str, window: int = 12) -> float:
     """Share of the output taken up by an immediately repeated block.
 
@@ -239,6 +255,7 @@ class CropMeasurement:
     abstained: bool
     failure: str | None
     foreign_script: float
+    expected_script: float
     repetition: float
     structural_repetition: float
     density: float
@@ -261,6 +278,7 @@ class CropMeasurement:
             "seconds": round(self.seconds, 3),
             "abstained": self.abstained,
             "foreign_script": round(self.foreign_script, 4),
+            "expected_script": round(self.expected_script, 4),
             "repetition": round(self.repetition, 4),
             "structural_repetition": round(self.structural_repetition, 4),
             "density_per_sq_in": round(self.density, 1),
@@ -370,6 +388,7 @@ def measure(
         abstained=abstained,
         failure=failure,
         foreign_script=foreign_script_ratio(text, language),
+        expected_script=expected_script_ratio(text, language),
         repetition=repetition_ratio(text),
         structural_repetition=structural_repetition(text),
         density=density(text, pixels, dpi),

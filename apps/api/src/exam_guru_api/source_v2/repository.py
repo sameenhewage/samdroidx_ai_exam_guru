@@ -551,6 +551,7 @@ async def _supersede(
 ) -> dict:
     superseded = 0
     withdrawn = 0
+    added = 0
     for region in candidates:
         current = (
             await session.execute(
@@ -562,7 +563,13 @@ async def _supersede(
             )
         ).first()
         proposed = unicodedata.normalize("NFC", region.get("text", ""))
-        if current is None or current[2] == proposed:
+        if current is None:
+            # A re-run found a region the previous one missed. It has no
+            # history to supersede, so it starts at revision 1 like any other.
+            await _insert_candidate(session, page_id, region, revision=1, parent_id=None)
+            added += 1
+            continue
+        if current[2] == proposed:
             continue
         await session.execute(
             text(
@@ -581,43 +588,56 @@ async def _supersede(
             )
         ).all()
         withdrawn += len(removed)
-        await session.execute(
-            text("""
-                insert into source_v2_machine_candidates
-                  (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-                   abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
-                   disagreement, state, is_current)
-                values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
-                        'machine', :text, :abstained, :chosen_reader, :reason,
-                        :critical_conflict, :agreement_ratio, cast(:disagreement as jsonb),
-                        'unverified', true)
-            """),
-            {
-                "id": uuid4(),
-                "page_id": page_id,
-                "region_id": region["region_id"],
-                "region_type": region["region_type"],
-                "revision": current[1] + 1,
-                "parent_id": current[0],
-                "text": proposed,
-                "abstained": bool(region.get("abstained")),
-                "chosen_reader": region.get("chosen_reader"),
-                "reason": (region.get("reason") or "")[:400],
-                "critical_conflict": bool(region.get("critical_conflict")),
-                "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
-                "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
-            },
+        await _insert_candidate(
+            session, page_id, region, revision=current[1] + 1, parent_id=current[0]
         )
         superseded += 1
     return {
         "page_id": page_id,
         "page_number": page_number,
-        "regions": 0,
+        "regions": added,
         "reader_rows": 0,
         "reused": True,
         "superseded": superseded,
         "verifications_withdrawn": withdrawn,
     }
+
+
+async def _insert_candidate(
+    session: AsyncSession,
+    page_id: UUID,
+    region: dict,
+    *,
+    revision: int,
+    parent_id: UUID | None,
+) -> None:
+    await session.execute(
+        text("""
+            insert into source_v2_machine_candidates
+              (id, page_id, region_id, region_type, revision, parent_id, origin, text,
+               abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
+               disagreement, state, is_current)
+            values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
+                    'machine', :text, :abstained, :chosen_reader, :reason,
+                    :critical_conflict, :agreement_ratio, cast(:disagreement as jsonb),
+                    'unverified', true)
+        """),
+        {
+            "id": uuid4(),
+            "page_id": page_id,
+            "region_id": region["region_id"],
+            "region_type": region["region_type"],
+            "revision": revision,
+            "parent_id": parent_id,
+            "text": unicodedata.normalize("NFC", region.get("text", "")),
+            "abstained": bool(region.get("abstained")),
+            "chosen_reader": region.get("chosen_reader"),
+            "reason": (region.get("reason") or "")[:400],
+            "critical_conflict": bool(region.get("critical_conflict")),
+            "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
+            "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+        },
+    )
 
 
 def rendered_page_bytes(page: PageHeader, *, root: Path | None = None) -> bytes:

@@ -47,6 +47,47 @@ def load_results(document) -> dict[str, dict[str, dict]]:
     return table
 
 
+def _add_unread_regions(document, pages: dict[int, list[dict]], counters: dict) -> None:
+    """Emit an abstaining candidate for every region no reader was given.
+
+    Figures, tables and decorative bars carry no text, so nothing is cropped
+    for them and they never reach the reviewer. A page would then count as
+    resolved while a figure had never been decided at all. Every region the
+    detector found must reach a terminal review state, so the ones with no
+    reading abstain and the reviewer has to exclude them or say what they are.
+    """
+
+    folder = document.folder / "layout" / "regions"
+    if not folder.exists():
+        return
+    for path in sorted(folder.glob("page-*.json")):
+        layout = json.loads(path.read_text(encoding="utf-8"))
+        page_number = int(layout["page_number"])
+        seen = {region["region_id"] for region in pages.get(page_number, [])}
+        for region in layout.get("regions", []):
+            if region["id"] in seen:
+                continue
+            pages[page_number].append(
+                {
+                    "region_id": region["id"],
+                    "region_type": region["type"],
+                    "text": "",
+                    "abstained": True,
+                    "chosen_reader": None,
+                    "reason": f"no text was read for this {region['type']} region",
+                    "critical_conflict": False,
+                    "agreement_ratio": 0.0,
+                    "disagreement": {},
+                    "rejected": {},
+                    "witnesses": [],
+                    "bbox": region["bbox"],
+                }
+            )
+            counters["regions"] += 1
+            counters["abstained"] += 1
+        pages[page_number].sort(key=lambda item: item["region_id"])
+
+
 def command_build(arguments: argparse.Namespace) -> int:
     document = load_document(arguments.document)
     table = load_results(document)
@@ -69,6 +110,7 @@ def command_build(arguments: argparse.Namespace) -> int:
                 repetition=float(row.get("repetition", 0.0)),
                 structural_repetition=float(row.get("structural_repetition", 0.0)),
                 foreign_script=float(row.get("foreign_script", 0.0)),
+                expected_script=float(row.get("expected_script", 1.0)),
                 rank=active.rank(arguments.language, crop.region_type, reader),
             )
             for reader, row in sorted(by_reader.items())
@@ -84,6 +126,8 @@ def command_build(arguments: argparse.Namespace) -> int:
         counters["regions"] += 1
         counters["abstained"] += 1 if result.abstained else 0
         counters["critical_conflict"] += 1 if result.critical_conflict else 0
+
+    _add_unread_regions(document, pages, counters)
 
     root = document.folder / "candidates"
     root.mkdir(parents=True, exist_ok=True)

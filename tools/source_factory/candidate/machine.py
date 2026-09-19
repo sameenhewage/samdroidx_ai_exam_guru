@@ -26,6 +26,13 @@ DEGENERATE_STRUCTURE = 0.6
 # reading of that page. Seen for real: DeepSeek answered a Sinhala heading
 # crop with Myanmar glyphs, fluently and without repeating itself.
 FOREIGN_SCRIPT_LIMIT = 0.5
+# Latin is tolerated inside a Sinhala page, so a reading that is *entirely*
+# English carries no foreign script by that measure and slips through. Seen for
+# real: DeepSeek answered a Sinhala instruction block with "3. Write a function
+# called check that checks whether a number is even". The tell is cross-witness:
+# another reader saw the page's own script in the same region.
+OUTLIER_EXPECTED_SCRIPT = 0.15
+CORROBORATED_EXPECTED_SCRIPT = 0.50
 
 
 @dataclass
@@ -39,7 +46,9 @@ class Witness:
     repetition: float = 0.0
     structural_repetition: float = 0.0
     foreign_script: float = 0.0
+    expected_script: float = 1.0  # share of letters in the page's own script
     rank: int = 0  # lower wins; set by the measured per-language selection
+    script_outlier: bool = False  # set by build(), needs the other witnesses
 
     @property
     def degenerate(self) -> bool:
@@ -59,6 +68,7 @@ class Witness:
             and not self.failed
             and not self.degenerate
             and not self.wrong_script
+            and not self.script_outlier
         )
 
 
@@ -105,9 +115,33 @@ def _rejection_reason(witness: Witness) -> str:
         return "decoder repeated the same character run"
     if witness.structural_repetition >= DEGENERATE_STRUCTURE:
         return "decoder enumerated a repeated line template"
+    if witness.script_outlier:
+        return (
+            "reading contains none of the page's own script while another reader read it"
+        )
     return (
         f"reading is {witness.foreign_script:.0%} in a script the page is not printed in"
     )
+
+
+def _flag_script_outliers(witnesses: list[Witness]) -> None:
+    """Reject a reading that shows none of the page's script when another does.
+
+    One reader seeing the page's own script is positive evidence that the
+    region contains it. A second reader answering the same pixels with none of
+    it is not a competing transcription, it is an invention. Where *no* reader
+    finds the expected script the region may genuinely be Latin, so nothing is
+    flagged and the disagreement machinery handles it.
+    """
+
+    readable = [w for w in witnesses if w.text.strip() and not w.failed]
+    if len(readable) < 2:
+        return
+    if not any(w.expected_script >= CORROBORATED_EXPECTED_SCRIPT for w in readable):
+        return
+    for witness in readable:
+        if witness.expected_script < OUTLIER_EXPECTED_SCRIPT:
+            witness.script_outlier = True
 
 
 def build(
@@ -116,6 +150,7 @@ def build(
     region_type: str,
     witnesses: list[Witness],
 ) -> MachineCandidate:
+    _flag_script_outliers(witnesses)
     names = [witness.reader for witness in witnesses]
     rejected = {
         witness.reader: _rejection_reason(witness)
