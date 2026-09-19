@@ -5,44 +5,80 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          3 — local reader benchmark
+phase:          5 — persistence + human verification
 status:         IN_PROGRESS
-last_validated: c1046a5
+last_validated: (set at commit)
 updated:        2026-09-19
 ```
 
 ## completed
 
 - **Phase 1 — layout segmentation: PASS.** `tools/source_factory/layout/`.
-  8 fixed real pages (4, 152, 156, 157, 163, 171, 186, 197) segment correctly;
-  all five acceptance criteria met and verified on annotated previews.
-  Commit `92950a4`.
-- **Phase 2 part 1 — layout contract: DONE.**
-  `schemas/source-content/page-layout.schema.json` + `layout/contract.py`,
+  8 fixed real pages segment correctly; all five acceptance criteria verified
+  on annotated previews. `92950a4`.
+- **Phase 2 — contracts: DONE.** `schemas/source-content/page-layout.schema.json`
   enforced on every write (schema, dense reading order, parent containment).
-  Commit `c1046a5`.
+  `c1046a5`.
+- **Phase 3 — reader benchmark: DONE.** Both Sinhala readers run on real crops.
+  30 region crops, 0 failures each. Report: `docs/source-v2/BENCHMARK_READERS.md`.
+  Selection recorded with its evidence in `candidate/selection.py`.
+  Tamil: explicit real-data blocker, `docs/source-v2/TAMIL_BLOCKER.md`.
+- **Phase 4 — Machine Candidate: DONE.** Neutral alignment ported; candidates
+  built for real pages 4, 156, 171, 186, 197. 30 regions, 0 abstentions,
+  9 regions with a critical-token conflict. 10 tests.
 
 ## blockers
 
-- none
+- **Tamil**: no Tamil material exists in `RAG DATA/` at all. Engineering is
+  language-agnostic and ready; see `docs/source-v2/TAMIL_BLOCKER.md`.
 
 ## exact next step
 
-Phase 3. Build `tools/source_factory/readers/` with a reader port, then a
-benchmark harness over region crops from the fixed benchmark pages.
+Phase 5, first slice: persistence and the human gate.
+
+1. Alembic forward migration adding Source V2 tables: `source_v2_layout_region`,
+   `source_v2_reader_candidate`, `source_v2_machine_candidate`,
+   `source_v2_review_event` (append-only), `source_v2_verified_content`.
+   Do not touch historical migrations; do not promote legacy rows.
+2. An importer that loads `.exam-guru-data/.../candidates/page-NNN.json` into
+   those tables, bound to document + page + image sha256.
+3. Confirm / Correct / Exclude endpoints. A correction creates an unverified
+   child candidate; confirmation binds the original-page comparison to the
+   current candidate and review version.
+4. The hard-invariant test: knowledge/embedding/RAG use must fail for any page
+   without current Verified Source Content.
+
+## environment
+
+- GPU: RTX 3060, 12 GiB, driver 616.92.
+- `.venv-sourcev2` — torch 2.6.0+cu124, **transformers 5.0.0** (LightOnOCR-2
+  needs the explicit `LightOnOcr*` classes, absent before 5.x).
+- `.venv-sourcev2-ds` — torch 2.6.0+cu124, **transformers 4.57.1** (DeepSeek-OCR
+  remote code needs `DeepseekV2Model`, gone in 5.x; 4.46 lacks `DeepseekV2MoE`).
+  The two readers cannot share one environment.
+
+## commands
 
 ```
-uv run tools/source_factory/readers/cli.py crops --pages 156,186
-uv run tools/source_factory/readers/cli.py benchmark --reader sinhala-lightonocr
+uv run tools/source_factory/layout/cli.py benchmark
+uv run tools/source_factory/layout/tests/test_detect.py
+uv run tools/source_factory/readers/cli.py crops --pages 156,186,171,4,197
+.venv-sourcev2/Scripts/python.exe    tools/source_factory/readers/bench.py --reader sinhala-lightonocr
+.venv-sourcev2-ds/Scripts/python.exe tools/source_factory/readers/bench.py --reader sinhala-deepseek
+uv run tools/source_factory/readers/cli.py rescore     # re-measure without re-running models
+uv run tools/source_factory/readers/report.py          # regenerate BENCHMARK_READERS.md
+uv run tools/source_factory/candidate/cli.py build
+uv run tools/source_factory/candidate/cli.py show --page 156
+uv run tools/source_factory/candidate/tests/test_machine.py
 ```
-
-Environment: RTX 3060, 12 GiB VRAM, driver 616.92. Torch is **not** installed in
-the system interpreter; reader scripts must declare a CUDA torch build via PEP 723.
 
 ## notes
 
-- `build_disagreement_map` / `align_source_tokens` to port from
-  `apps/api/src/exam_guru_api/documents/source_consensus.py` (Phase 4, decision D10).
-- Old source-reading surface to delete in Phase 7 is large: ~50 modules under
+- Reading a region crop is 28 s (LightOnOCR) to 54 s (DeepSeek); a full page of
+  regions is minutes. Phase 5 must run reads as background jobs, never in a
+  request.
+- DeepSeek ignores `max_new_tokens` passed to `bench.py`; it has run for 700 s
+  on one region. A generation cap belongs in the reader before production use.
+- Old source-reading surface to delete in Phase 7: ~50 modules under
   `apps/api/src/exam_guru_api/documents/`, including `tesseract_ocr.py`,
   `source_reading_qwen.py`, `source_reading_openai.py`, `understanding_openai.py`.

@@ -107,6 +107,66 @@ def command_groundtruth(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def command_rescore(arguments: argparse.Namespace) -> int:
+    """Recompute every measurement from the stored readings.
+
+    Adding a reference must not require re-running the models: the readings are
+    the evidence and they do not change.
+    """
+
+    from tools.source_factory.readers import metrics
+
+    document = load_document(arguments.document)
+    references = groundtruth.load(document)
+    sizes = {
+        crop.crop_id: crop_tools.read_page_image(crop.path).shape
+        for crop in crop_tools.load(document)
+    }
+    folder = document.folder / "readers" / "results"
+    changed = []
+    for path in sorted(folder.glob("*.json")):
+        report = json.loads(path.read_text(encoding="utf-8"))
+        summary = metrics.ReaderSummary(reader=report["reader"])
+        rows = []
+        for row in report.get("crops", []):
+            shape = sizes.get(row["crop_id"], (1, 1, 3))
+            entry = references.get(row["crop_id"], {})
+            measurement = metrics.measure(
+                crop_id=row["crop_id"],
+                reader=report["reader"],
+                region_type=row["region_type"],
+                text=row.get("text", ""),
+                seconds=float(row.get("seconds", 0.0)),
+                abstained=bool(row.get("abstained")),
+                failure=row.get("failure"),
+                pixels=shape[0] * shape[1],
+                dpi=document.dpi,
+                language=report.get("language", "sinhala"),
+                reference=entry.get("text"),
+                peak_vram_bytes=row.get("peak_vram_bytes"),
+            )
+            must, must_not = groundtruth.token_checks(entry)
+            extra: dict = {}
+            if must or must_not:
+                hits = [token for token in must if token in row.get("text", "")]
+                strays = [token for token in must_not if token in row.get("text", "")]
+                measurement.critical_exact = len(hits) == len(must) and not strays
+                extra = {
+                    "expected_tokens": must,
+                    "found_tokens": hits,
+                    "stray_tokens": strays,
+                }
+            summary.add(measurement)
+            rows.append(measurement.to_json() | extra | {"text": row.get("text", "")})
+        report["crops"] = rows
+        report["summary"] = summary.to_json()
+        report["rescored"] = True
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        changed.append(report["summary"])
+    print(json.dumps(changed, indent=2))
+    return 0
+
+
 def command_report(arguments: argparse.Namespace) -> int:
     document = load_document(arguments.document)
     results = document.folder / "readers" / "results"
@@ -137,6 +197,11 @@ def main() -> int:
 
     truth = subparsers.add_parser("groundtruth", help="show reference coverage")
     truth.set_defaults(handler=command_groundtruth)
+
+    rescore = subparsers.add_parser(
+        "rescore", help="recompute measurements from stored readings, no model needed"
+    )
+    rescore.set_defaults(handler=command_rescore)
 
     report = subparsers.add_parser("report", help="print every stored reader summary")
     report.set_defaults(handler=command_report)
