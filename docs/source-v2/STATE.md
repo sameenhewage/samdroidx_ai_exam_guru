@@ -6,8 +6,8 @@ Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
 phase:          5 — persistence + human verification
-status:         IN_PROGRESS
-last_validated: (set at commit)
+status:         IN_PROGRESS (domain + schema done; service/API wiring next)
+last_validated: 6fd326e
 updated:        2026-09-19
 ```
 
@@ -27,6 +27,12 @@ updated:        2026-09-19
   built for real pages 4, 156, 171, 186, 197. 30 regions, 0 abstentions,
   9 regions with a critical-token conflict. 10 tests.
 
+- **Phase 5 part 1 — human gate + schema: DONE.**
+  `apps/api/src/exam_guru_api/source_v2/{domain,models}.py` and forward
+  migration `0056_source_v2`. Applied to the real Studio database and proved
+  by round-trip (`upgrade` → `downgrade -1` → `upgrade`).
+  27 tests pass: 18 pure domain + 9 against real PostgreSQL.
+
 ## blockers
 
 - **Tamil**: no Tamil material exists in `RAG DATA/` at all. Engineering is
@@ -34,19 +40,34 @@ updated:        2026-09-19
 
 ## exact next step
 
-Phase 5, first slice: persistence and the human gate.
+Phase 5 part 2 — wire the on-disk candidates into the database and expose the
+gate over HTTP.
 
-1. Alembic forward migration adding Source V2 tables: `source_v2_layout_region`,
-   `source_v2_reader_candidate`, `source_v2_machine_candidate`,
-   `source_v2_review_event` (append-only), `source_v2_verified_content`.
-   Do not touch historical migrations; do not promote legacy rows.
-2. An importer that loads `.exam-guru-data/.../candidates/page-NNN.json` into
-   those tables, bound to document + page + image sha256.
-3. Confirm / Correct / Exclude endpoints. A correction creates an unverified
-   child candidate; confirmation binds the original-page comparison to the
-   current candidate and review version.
-4. The hard-invariant test: knowledge/embedding/RAG use must fail for any page
-   without current Verified Source Content.
+1. `source_v2/service.py`: import `.exam-guru-data/.../candidates/page-NNN.json`
+   plus the layout JSON into `source_v2_pages`, `source_v2_reader_candidates`
+   and `source_v2_machine_candidates`, bound to document id, page number and
+   the rendered image sha256. Idempotent on (document, page, image sha).
+2. `api/routes/source_v2.py`: list a page's regions with the Machine Candidate
+   and its disagreement, and expose Confirm / Correct / Exclude. Long reads are
+   background jobs — a region read is 28–54 s, so nothing runs in a request.
+3. Call `require_verified_source` at the knowledge/embedding/RAG/generation
+   boundary and add the integration test that proves the bypass fails there too.
+
+Then Phase 6 (Studio UI + continuous Chrome DevTools MCP on real pages),
+Phase 7 (remove the old source architecture), Phase 8 (final audit).
+
+## running the database tests
+
+```
+docker start ai-exam-guru-postgres-1
+$env:EXAM_GURU_DATABASE_URL="postgresql+asyncpg://exam_guru:exam-guru-local-db@127.0.0.1:55432/exam_guru"
+uv run alembic upgrade head                       # from apps/api
+$env:EXAM_GURU_TEST_DSN="host=127.0.0.1 port=55432 dbname=exam_guru user=exam_guru password=exam-guru-local-db"
+uv run --with "psycopg[binary]==3.2.10" pytest tests/source_v2 -q
+```
+
+The PostgreSQL tests skip themselves when `EXAM_GURU_TEST_DSN` is unset. They
+are never replaced by fakes: a fake cannot prove a trigger fires.
 
 ## environment
 
