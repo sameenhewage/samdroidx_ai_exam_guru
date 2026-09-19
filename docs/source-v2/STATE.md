@@ -5,11 +5,27 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — legacy cutover
-status:         MECHANISM ACCEPTED. Cutover blocked on corpus migration, not engineering.
-last_validated: 82389a1
+phase:          6b — primary-agent-first reader order (D14)
+status:         Astra/DeepSeek-first REVERSED. Primary-first proven on pages 156 and 186.
+last_validated: b38c7c5
 updated:        2026-09-19
 ```
+
+## READER ORDER IS LOCKED (D14) — read this before touching the pipeline
+
+```
+1 render/layout  ->  2 PRIMARY VISUAL READING BY THE EXECUTING AGENT
+                 ->  3 local specialist readers on the SAME crops
+                 ->  4 comparison  ->  5 Machine Candidate
+                 ->  6 human Confirm/Correct  ->  7 Verified Source Content
+```
+
+The executing agent reads the original pixels and writes
+`<document>/primary/pages/page-NNN.json`. DeepSeek and LightOnOCR are
+**secondary witnesses**. They may not create the initial candidate and may not
+replace the primary reading. `candidate/cli.py` now **fails** if the primary
+JSON is missing, and `test_machine.py` locks the behaviour. There is no "Astra"
+provider and none is to be built.
 
 ## acceptance: the mechanism passes
 
@@ -53,36 +69,47 @@ delete the only working one before its replacement has read the corpus.
 
 ## exact next step
 
-1. **Migrate the corpus, document by document**, newest/most-needed first:
-   ```
-   scripts/source_pipeline/render_pdf.py <folder>
-   uv run tools/source_factory/layout/cli.py --document <folder> detect
-   uv run tools/source_factory/readers/cli.py --document <folder> crops
-   .venv-sourcev2-ds/Scripts/python.exe tools/source_factory/readers/bench.py --document <folder> --reader sinhala-deepseek
-   .venv-sourcev2/Scripts/python.exe    tools/source_factory/readers/bench.py --document <folder> --reader sinhala-lightonocr
-   uv run tools/source_factory/candidate/cli.py --document <folder> build
-   uv run tools/source_factory/publish_to_studio.py --document <folder> [--document-id <uuid>] [--refresh]
-   ```
-   Then review each page in the Studio until its gate is `usable: true`.
-   Budget: reading is 12 s/region (LightOnOCR) to 44 s/region (DeepSeek), so a
-   293-page guide is roughly 20 GPU-hours plus the human review. This needs a
-   queue, not a session.
-2. **Then** flip `LegacyPolicy` to `CUTOVER` and delete `PRE_CUTOVER`
-   (`apps/api/src/exam_guru_api/source_v2/gate.py`). `tests/source_v2/test_gate.py`
-   asserts both members exist, so it will fail and tell you to finish the job.
-3. **Then** remove the V1 source path, in this order so nothing is orphaned:
-   - providers first: `source_reading_openai.py` (banned outright by D1),
-     `source_reading_qwen.py`, `tesseract_ocr.py`, `understanding_openai.py`
-   - then their config keys in `core/config.py` and `compose.yaml`
-   - then `source_reading.py`, `ocr.py`, `page_reading.py`,
-     `source_consensus_provider.py`, `understanding_*`, `fidelity_*`
-   - then the 50 test files, and the routes `source_fidelity.py`,
-     `source_evaluation.py`, `understanding.py`
-   Use forward migrations only; never delete a historical migration.
-4. **Then** the repo audit: no import of a V1 source module remains, the docs
-   describe one architecture, and `docs/SYSTEM_ARCHITECTURE.md` §4.8 points at
-   Source V2.
+1. **Re-read the sankhya-rata document primary-first.** Its 17 regions were
+   verified against DeepSeek-first candidates, so its gate reads `usable: true`
+   on the wrong basis. Seal primary readings for its 3 pages, rebuild, publish
+   with `--refresh`, and re-review whatever text changes.
+   That document''s `usable: true` does not count until this is done.
+2. Finish reviewing pages 156 and 186 (2 of 16 regions verified so far).
+3. Then the corpus migration, then the cutover, then the audit — unchanged and
+   still blocked on GPU + review time, not on engineering.
 
+## what changed in the reader order
+
+- `tools/source_factory/primary/` — schema, fidelity validation and the `seal`
+  CLI. `schemas/source-content/primary-reading.schema.json`.
+- `candidate/machine.py` — `build(primary=..., witnesses=[...])`. Candidate
+  text is always the primary reading. Rank no longer selects text.
+- `candidate/cli.py` — hard failure without a primary reading; uncropped
+  regions (figures, headers, folios) now carry the agent''s own reading.
+- Broad disagreement (< 50% agreement) forces review even with no critical
+  token, because a flat contradiction is exactly what a human should see.
+
+## proven on real pages 156 and 186
+
+| | |
+|---|---|
+| regions read by the agent | 16 (8 per page, including the header/footer bars the old flow never saw) |
+| primary characters | 2278 (p156) + 1207 (p186) |
+| regions with recorded uncertainty | 14 |
+| candidates superseded to a new revision | 6 |
+| verifications withdrawn | 1 |
+
+The withdrawal is the point: `p156-r001` had been verified as
+`ක්‍රියාකාරකම් 11`. The page prints `ක්‍රියාකාරකම 11` with **no hal kirima** —
+a DeepSeek artefact I had confirmed. Reading the pixels first caught it and the
+supersession withdrew the bad verification automatically.
+
+Fidelity held through the Studio and a reload: `(Bar magnet )` keeps its space
+before the bracket, `Horse shoe mag-` keeps its line-break hyphen,
+`(20 cm x 6 cm)` keeps the lowercase Latin x, `කෝටු කැබලි  දෙකක්` keeps its
+double space, and `3/4 කින්` versus `3 /4 ක්` keep their different spacing.
+The printed folios (141, 171) are recorded beside the PDF page numbers
+(156, 186) rather than reconciled.
 ## blockers
 
 - **Corpus migration** — see above. Engineering is ready; this is GPU time and
