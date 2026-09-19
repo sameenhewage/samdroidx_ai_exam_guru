@@ -5,8 +5,8 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          6c — primary-first architecture reset complete on 156/186
-status:         Pages 156 and 186 fully verified primary-first. Cleanup still blocked.
+phase:          7 — corpus migration (primary-first)
+status:         sankhya-rata is usable:true PRIMARY-FIRST. Pages 156/186 fully verified.
 last_validated: (set at commit)
 updated:        2026-09-19
 ```
@@ -69,32 +69,62 @@ delete the only working one before its replacement has read the corpus.
 
 ## exact next step
 
-1. **Re-read `sankhya-rata` primary-first.** Its 17 regions were verified
-   against OCR-first candidates, so its `usable: true` does **not** count.
-   Seal primary readings for its 3 pages, rebuild, publish `--refresh`.
-2. Get an **independent** reviewer to confirm pages 156/186. The current
-   benchmark is circular: I wrote the primary reading and confirmed it, so its
-   0.0 CER proves only that the candidate carried it through unmutated.
-3. Then corpus migration, then cutover, then audit — still blocked on GPU and
-   review time, not on engineering.
+1. **Independent ground truth.** The benchmark now reads
+   `<document>/benchmark/independent-groundtruth.json` when present and refuses
+   it if `reviewer` is the agent. Until a reviewer who did not write the
+   primary reading supplies one, the primary and machine-candidate scores stay
+   marked CIRCULAR and must not be quoted as accuracy.
+2. **Migrate the rest of the corpus** with the primary-first flow, one
+   document at a time (commands below). This is agent reading time plus GPU
+   time, not engineering.
+3. Then legacy cutover, then the repo audit. Both unchanged and still gated on
+   step 2.
 
+## sankhya-rata: re-done primary-first, gate reopened and re-earned
+
+The OCR-first `usable: true` was discarded, not carried over. Re-reading the
+pixels changed the proposed text in **9 of 16** previously verified regions,
+and each of those verifications was withdrawn automatically. All 17 regions
+were then re-decided against the original pages:
+
+```
+page 1   1 verified   1 excluded (clip-art numerals)
+page 2  11 verified
+page 3   4 verified
+GATE     usable: true
+```
+
+Nine wrong verifications is the honest measure of what OCR-first cost: those
+were regions where I had "corrected" DeepSeek output and still been wrong,
+because I was checking OCR rather than reading the page.
 ## measured: why local OCR cannot lead
 
-Against human-confirmed Verified Source Content, pages 156 + 186
-(`benchmark/primary-vs-readers.json`, regenerate with
-`uv run tools/source_factory/benchmark_primary.py --document <folder> --document-id <uuid>`):
+CER is reported as a ratio and a percentage. A ratio above 1.0 means the
+reading contains more errors than the reference has characters - the model is
+inventing, not misreading.
 
-| reading | regions | mean CER | exact | insertions |
+`sankhya-rata` (16 regions with a reference):
+
+| reading | mean CER | as % | exact | insertions |
 |---|---|---|---|---|
-| `sinhala-deepseek` | 10 | **3.06** | 0 | **10 591** |
-| `sinhala-lightonocr` | 10 | **0.48** | 1 | 951 |
-| `primary-agent-reading` | 15 | 0.0 (circular) | 15 | 0 |
-| `machine-candidate` | 15 | 0.0 (circular) | 15 | 0 |
+| `sinhala-deepseek` | 3.27 | **327%** | 2/16 | 6 870 |
+| `sinhala-lightonocr` | 75.06 | **7 506%** | 0/16 | 2 617 |
+| `primary-agent-reading` | 0.0 | 0% *(circular)* | 16/16 | 0 |
+| `machine-candidate` | 0.0 | 0% *(circular)* | 16/16 | 0 |
 
-DeepSeek inserted ten thousand characters across ten regions. LightOnOCR
-substitutes glyphs heavily. Tiers are now PRIMARY / STRONG_SECONDARY /
-WEAK_CORROBORATING in `candidate/selection.py`.
+`mawbasa-teacher-guide` pages 156 + 186 (15 regions):
 
+| reading | mean CER | as % | insertions |
+|---|---|---|---|
+| `sinhala-deepseek` | 3.06 | **306%** | 10 591 |
+| `sinhala-lightonocr` | 0.48 | **48%** | 951 |
+
+Regenerate: `uv run tools/source_factory/benchmark_primary.py --document <folder> --document-id <uuid>`
+
+The primary and candidate rows are **circular** on both documents: the same
+party wrote the reading and confirmed it. They show only that the candidate
+carried the primary reading through unmutated. Tiers stay PRIMARY /
+STRONG_SECONDARY / WEAK_CORROBORATING in `candidate/selection.py`.
 ## acceptance on real pages 156 and 186 — primary-first
 
 - 8 regions each, **all decided**: 156 is 8 verified; 186 is 7 verified +

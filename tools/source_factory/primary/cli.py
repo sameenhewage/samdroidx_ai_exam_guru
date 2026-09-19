@@ -181,7 +181,8 @@ def command_show(arguments: argparse.Namespace) -> int:
     for region in payload["regions"]:
         head = f"=== {region['region_id']} [{region['region_type']}]"
         if region["uncertain"]:
-            head += f"  uncertain: {[u[chr(39) + chr(39)] for u in []]}"
+            kinds = [item["kind"] for item in region.get("uncertainty_reason", [])]
+            head += f"  uncertain: {kinds}"
         print(head)
         print(region["exact_text"][: arguments.chars] or "(blank)")
     return 0

@@ -97,8 +97,24 @@ def main() -> int:
         for region in json.loads(path.read_text(encoding="utf-8"))["regions"]:
             candidate[region["region_id"]] = nfc(region.get("selected_text", ""))
 
+    # An independent reference, if a reviewer who did not write the primary
+    # reading has supplied one. This is the only reference that can support an
+    # accuracy claim about the primary reading; everything else is circular.
+    independent_path = folder / "benchmark" / "independent-groundtruth.json"
+    independent = {}
+    if independent_path.exists():
+        payload = json.loads(independent_path.read_text(encoding="utf-8"))
+        if payload.get("reviewer") in (None, "", "primary-agent-reading"):
+            raise SystemExit(
+                f"{independent_path}: 'reviewer' must name a party other than the "
+                "agent that produced the primary reading, or the reference is circular"
+            )
+        independent = {
+            region_id: nfc(text) for region_id, text in payload["regions"].items()
+        }
+
     with psycopg.connect(arguments.dsn, connect_timeout=10) as connection:
-        verified = verified_by_region(connection, arguments.document_id)
+        verified = independent or verified_by_region(connection, arguments.document_id)
     if not verified:
         raise SystemExit(
             "no human-confirmed regions for this document; "
@@ -119,7 +135,10 @@ def main() -> int:
             continue
         summary[name] = {
             "regions_compared": len(scored),
-            "mean_cer": round(sum(item["cer"] for item in scored) / len(scored), 4),
+            "mean_cer_ratio": round(sum(item["cer"] for item in scored) / len(scored), 4),
+            "mean_cer_percent": round(
+                100 * sum(item["cer"] for item in scored) / len(scored), 2
+            ),
             "exact_regions": sum(1 for item in scored if item["exact"]),
             "substitutions": sum(item["substitutions"] for item in scored),
             "deletions": sum(item["deletions"] for item in scored),
@@ -141,18 +160,29 @@ def main() -> int:
         for region_id, reference in verified.items()
         if primary.get(region_id) == reference
     )
+    circular = not independent
     report = {
         "document_id": arguments.document_id,
-        "reference": "human-confirmed Verified Source Content",
+        "reference": (
+            f"independent reviewer: {json.loads(independent_path.read_text(encoding='utf-8'))['reviewer']}"
+            if independent
+            else "human-confirmed Verified Source Content (same party as the primary reading)"
+        ),
+        "reference_is_independent": not circular,
         "regions_with_reference": len(verified),
         "caveat": (
-            "Where the same party produced the primary reading and confirmed it, "
-            "the primary and machine-candidate scores are CIRCULAR and say nothing "
-            "about accuracy. They show only that the candidate carried the primary "
-            "reading into the Studio unmutated. The local-reader scores are the "
-            "meaningful comparison, because those readings were produced "
-            "independently of the reference. An independent reviewer is required "
-            "before any accuracy claim is made for the primary reading."
+            (
+                "Where the same party produced the primary reading and confirmed it, "
+                "the primary and machine-candidate scores are CIRCULAR and say nothing "
+                "about accuracy. They show only that the candidate carried the primary "
+                "reading into the Studio unmutated. The local-reader scores are the "
+                "meaningful comparison, because those readings were produced "
+                "independently of the reference. Supply "
+                "benchmark/independent-groundtruth.json, transcribed by someone other "
+                "than the agent, to make the primary score meaningful."
+            )
+            if circular
+            else "Reference transcribed independently of the primary reading."
         ),
         "regions_where_reference_equals_primary": len(same_hand),
         "headline": {
