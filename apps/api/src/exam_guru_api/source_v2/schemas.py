@@ -69,6 +69,58 @@ class PageView(SourceV2Model):
     regions: list[RegionView]
 
 
+class ReaderResultInput(SourceV2Model):
+    region_id: str = Field(max_length=64)
+    reader: str = Field(max_length=64)
+    text: str = Field(max_length=200000)
+    abstained: bool = False
+    failure: str | None = Field(default=None, max_length=400)
+    seconds: float = 0.0
+    signals: dict = Field(default_factory=dict)
+
+
+class CandidateInput(SourceV2Model):
+    region_id: str = Field(max_length=64)
+    region_type: RegionTypeName
+    text: str = Field(max_length=200000)
+    abstained: bool = False
+    chosen_reader: str | None = Field(default=None, max_length=64)
+    reason: str = Field(default="", max_length=400)
+    critical_conflict: bool = False
+    agreement_ratio: float = 1.0
+    disagreement: dict = Field(default_factory=dict)
+
+
+class ImportPageRequest(SourceV2Model):
+    """One page of Source Factory output, handed to the Studio.
+
+    Carries geometry and proposed readings only. Nothing here can mark anything
+    verified: that remains a human act performed against the original page.
+    """
+
+    document_id: UUID
+    page_number: int = Field(ge=1)
+    language: str = Field(max_length=32)
+    image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    dpi: float = Field(ge=72, le=1200)
+    detector_version: str = Field(max_length=128)
+    layout: dict
+    candidates: list[CandidateInput] = Field(max_length=2048)
+    reader_results: list[ReaderResultInput] = Field(default_factory=list, max_length=8192)
+
+
+class ImportPageResponse(SourceV2Model):
+    page_id: UUID
+    page_number: int
+    regions: int
+    reader_rows: int
+    reused: bool
+    superseded: int = 0
+    verifications_withdrawn: int = 0
+
+
 class ConfirmRequest(SourceV2Model):
     candidate_id: UUID
     revision: int = Field(ge=1)

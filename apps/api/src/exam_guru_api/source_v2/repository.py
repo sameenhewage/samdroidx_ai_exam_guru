@@ -9,6 +9,7 @@ for the async path.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -416,6 +417,207 @@ async def exclude(
         text("update source_v2_machine_candidates set state = 'excluded' where id = :id"),
         {"id": candidate_id},
     )
+
+
+async def import_page(
+    session: AsyncSession,
+    *,
+    document_id: UUID,
+    page_number: int,
+    language: str,
+    image_sha256: str,
+    width: int,
+    height: int,
+    dpi: float,
+    detector_version: str,
+    layout: dict,
+    candidates: list[dict],
+    reader_results: list[dict],
+    refresh: bool = False,
+) -> dict:
+    """Ingest one page of Source Factory output.
+
+    Idempotent on (document, page, rendered image sha256). A *different*
+    render of the same page number is refused rather than silently replacing
+    evidence: a re-render is a new page and verification does not follow it.
+    With `refresh`, a re-run of the readers supersedes the current reading with
+    a new revision instead of being skipped; nothing is ever deleted.
+    """
+
+    existing = (
+        await session.execute(
+            text(
+                "select id, image_sha256 from source_v2_pages"
+                " where document_id = :document_id and page_number = :page_number"
+            ),
+            {"document_id": document_id, "page_number": page_number},
+        )
+    ).first()
+    if existing is not None:
+        if existing[1] != image_sha256:
+            raise SourceV2Error(
+                f"page {page_number} is already stored against a different render "
+                f"({existing[1][:12]}…); a re-render is a new page"
+            )
+        if not refresh:
+            return {
+                "page_id": existing[0],
+                "page_number": page_number,
+                "regions": 0,
+                "reader_rows": 0,
+                "reused": True,
+            }
+        return await _supersede(session, existing[0], page_number, candidates)
+
+    page_id = uuid4()
+    await session.execute(
+        text("""
+            insert into source_v2_pages
+              (id, document_id, page_number, image_sha256, dpi, width, height,
+               language, detector_version, layout)
+            values (:id, :document_id, :page_number, :sha, :dpi, :width, :height,
+                    :language, :detector_version, cast(:layout as jsonb))
+        """),
+        {
+            "id": page_id,
+            "document_id": document_id,
+            "page_number": page_number,
+            "sha": image_sha256,
+            "dpi": dpi,
+            "width": width,
+            "height": height,
+            "language": language,
+            "detector_version": detector_version,
+            "layout": json.dumps(layout, ensure_ascii=False),
+        },
+    )
+    for result in reader_results:
+        await session.execute(
+            text("""
+                insert into source_v2_reader_candidates
+                  (id, page_id, region_id, reader, text, abstained, failure, seconds, signals)
+                values (:id, :page_id, :region_id, :reader, :text, :abstained, :failure,
+                        :seconds, cast(:signals as jsonb))
+                on conflict (page_id, region_id, reader) do nothing
+            """),
+            {
+                "id": uuid4(),
+                "page_id": page_id,
+                "region_id": result["region_id"],
+                "reader": result["reader"],
+                "text": result.get("text", ""),
+                "abstained": bool(result.get("abstained")),
+                "failure": result.get("failure"),
+                "seconds": float(result.get("seconds", 0.0)),
+                "signals": json.dumps(result.get("signals", {}), ensure_ascii=False),
+            },
+        )
+    for region in candidates:
+        await session.execute(
+            text("""
+                insert into source_v2_machine_candidates
+                  (id, page_id, region_id, region_type, revision, origin, text, abstained,
+                   chosen_reader, reason, critical_conflict, agreement_ratio, disagreement,
+                   state, is_current)
+                values (:id, :page_id, :region_id, :region_type, 1, 'machine', :text,
+                        :abstained, :chosen_reader, :reason, :critical_conflict,
+                        :agreement_ratio, cast(:disagreement as jsonb), 'unverified', true)
+            """),
+            {
+                "id": uuid4(),
+                "page_id": page_id,
+                "region_id": region["region_id"],
+                "region_type": region["region_type"],
+                "text": unicodedata.normalize("NFC", region.get("text", "")),
+                "abstained": bool(region.get("abstained")),
+                "chosen_reader": region.get("chosen_reader"),
+                "reason": (region.get("reason") or "")[:400],
+                "critical_conflict": bool(region.get("critical_conflict")),
+                "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
+                "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+            },
+        )
+    return {
+        "page_id": page_id,
+        "page_number": page_number,
+        "regions": len(candidates),
+        "reader_rows": len(reader_results),
+        "reused": False,
+    }
+
+
+async def _supersede(
+    session: AsyncSession, page_id: UUID, page_number: int, candidates: list[dict]
+) -> dict:
+    superseded = 0
+    withdrawn = 0
+    for region in candidates:
+        current = (
+            await session.execute(
+                text(
+                    "select id, revision, text from source_v2_machine_candidates"
+                    " where page_id = :page_id and region_id = :region_id and is_current"
+                ),
+                {"page_id": page_id, "region_id": region["region_id"]},
+            )
+        ).first()
+        proposed = unicodedata.normalize("NFC", region.get("text", ""))
+        if current is None or current[2] == proposed:
+            continue
+        await session.execute(
+            text(
+                "update source_v2_machine_candidates"
+                " set is_current = false, state = 'unverified' where id = :id"
+            ),
+            {"id": current[0]},
+        )
+        removed = (
+            await session.execute(
+                text(
+                    "delete from source_v2_verified_regions"
+                    " where page_id = :page_id and region_id = :region_id returning id"
+                ),
+                {"page_id": page_id, "region_id": region["region_id"]},
+            )
+        ).all()
+        withdrawn += len(removed)
+        await session.execute(
+            text("""
+                insert into source_v2_machine_candidates
+                  (id, page_id, region_id, region_type, revision, parent_id, origin, text,
+                   abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
+                   disagreement, state, is_current)
+                values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
+                        'machine', :text, :abstained, :chosen_reader, :reason,
+                        :critical_conflict, :agreement_ratio, cast(:disagreement as jsonb),
+                        'unverified', true)
+            """),
+            {
+                "id": uuid4(),
+                "page_id": page_id,
+                "region_id": region["region_id"],
+                "region_type": region["region_type"],
+                "revision": current[1] + 1,
+                "parent_id": current[0],
+                "text": proposed,
+                "abstained": bool(region.get("abstained")),
+                "chosen_reader": region.get("chosen_reader"),
+                "reason": (region.get("reason") or "")[:400],
+                "critical_conflict": bool(region.get("critical_conflict")),
+                "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
+                "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+            },
+        )
+        superseded += 1
+    return {
+        "page_id": page_id,
+        "page_number": page_number,
+        "regions": 0,
+        "reader_rows": 0,
+        "reused": True,
+        "superseded": superseded,
+        "verifications_withdrawn": withdrawn,
+    }
 
 
 def rendered_page_bytes(page: PageHeader, *, root: Path | None = None) -> bytes:

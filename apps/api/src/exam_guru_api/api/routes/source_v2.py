@@ -26,6 +26,8 @@ from exam_guru_api.source_v2.schemas import (
     CorrectRequest,
     DocumentGateView,
     ExcludeRequest,
+    ImportPageRequest,
+    ImportPageResponse,
     PageProgress,
     PageView,
     ReaderEvidence,
@@ -110,6 +112,50 @@ async def _region_response(
     if region is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"unknown region {region_id}")
     return RegionMutationResponse(region=region, progress=view.progress)
+
+
+@router.post(
+    "/source-v2/pages",
+    response_model=ImportPageResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={409: {"model": ApiErrorResponse}},
+)
+async def import_page(
+    response: Response,
+    payload: ImportPageRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_WRITE))],
+    refresh: bool = False,
+) -> ImportPageResponse:
+    """Hand one page of Source Factory output to the Studio.
+
+    Geometry and proposed readings only. Nothing ingested here is verified;
+    a reviewer still has to decide every region against the original page.
+    """
+
+    _private(response)
+    _ = principal
+    try:
+        result = await repository.import_page(
+            session,
+            document_id=payload.document_id,
+            page_number=payload.page_number,
+            language=payload.language,
+            image_sha256=payload.image_sha256,
+            width=payload.width,
+            height=payload.height,
+            dpi=payload.dpi,
+            detector_version=payload.detector_version,
+            layout=payload.layout,
+            candidates=[item.model_dump() for item in payload.candidates],
+            reader_results=[item.model_dump() for item in payload.reader_results],
+            refresh=refresh,
+        )
+        await session.commit()
+    except SourceV2Error as error:
+        await session.rollback()
+        raise _fail(error) from error
+    return ImportPageResponse(**result)
 
 
 @router.get("/source-v2/pages/{page_id}", response_model=PageView)
