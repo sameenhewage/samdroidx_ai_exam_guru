@@ -13,6 +13,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 type RegionState = "unverified" | "verified" | "excluded";
+type SourceKind =
+  | "text_only"
+  | "visual_only"
+  | "visual_with_text"
+  | "decorative"
+  | "undecided";
 
 type ReaderEvidence = {
   reader: string;
@@ -38,6 +44,9 @@ type Region = {
   state: RegionState;
   bbox: number[] | null;
   verified_text: string | null;
+  source_kind: SourceKind;
+  proposed_source_kind: SourceKind | null;
+  crop_sha256: string | null;
   readers: ReaderEvidence[];
 };
 
@@ -80,6 +89,15 @@ const TEXT = {
     unverified: "තහවුරු කර නොමැත",
     conflict: "කියවීම් අතර නොගැලපීමක්",
     notRead: "මෙම කොටසේ පෙළ නිවැරදිව කියවී නොමැත.",
+    kindText: "පෙළ",
+    kindVisual: "රූපය පමණි",
+    kindVisualText: "රූපය + පෙළ",
+    kindDecorative: "අලංකරණ",
+    kindUndecided: "තීරණය අවස්ථා",
+    visualOnlyBody: "මෙය අධ්‍යාපනික රූපයකි. මුද්‍රිත පෙළක් නොමැත.",
+    confirmVisual: "රූපය තහවුරු කරන්න",
+    textPresent: "මෙහි පෙළ ඇත",
+    needsDecision: "මෙම කොටස කුමක්දි යන්න තීරණය කරන්න.",
     reason: "හේතුව",
   },
   english: {
@@ -98,15 +116,52 @@ const TEXT = {
     unverified: "Not verified",
     conflict: "Readers disagree",
     notRead: "This region was not read correctly.",
+    kindText: "Text",
+    kindVisual: "Visual only",
+    kindVisualText: "Visual + text",
+    kindDecorative: "Decorative",
+    kindUndecided: "Needs decision",
+    visualOnlyBody: "This is an educational figure. It contains no printed text.",
+    confirmVisual: "Confirm visual",
+    textPresent: "Text is present",
+    needsDecision: "Decide what this region is.",
     reason: "Reason",
   },
 } as const;
+
+/** Each kind gets its own wording *and* its own shape of border, so the
+ *  distinction never depends on colour alone. */
+const KIND_STYLES: Record<SourceKind, string> = {
+  text_only: "border-slate-400 bg-slate-50 text-slate-800",
+  visual_only: "border-violet-500 border-dashed bg-violet-50 text-violet-900",
+  visual_with_text: "border-violet-500 bg-violet-50 text-violet-900",
+  decorative: "border-slate-300 bg-white text-slate-500 italic",
+  undecided: "border-amber-500 border-dotted bg-amber-50 text-amber-900",
+};
 
 const STATE_STYLES: Record<RegionState, string> = {
   verified: "bg-emerald-100 text-emerald-900 border-emerald-300",
   excluded: "bg-slate-200 text-slate-700 border-slate-300",
   unverified: "bg-amber-100 text-amber-900 border-amber-300",
 };
+
+function kindLabel(
+  labels: (typeof TEXT)["english"] | (typeof TEXT)["sinhala"],
+  kind: SourceKind,
+): string {
+  switch (kind) {
+    case "visual_only":
+      return labels.kindVisual;
+    case "visual_with_text":
+      return labels.kindVisualText;
+    case "decorative":
+      return labels.kindDecorative;
+    case "undecided":
+      return labels.kindUndecided;
+    default:
+      return labels.kindText;
+  }
+}
 
 function api(path: string): string {
   return `/api/v1/admin${path}`;
@@ -189,7 +244,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
   }, [load]);
 
   const act = useCallback(
-    async (region: Region, action: "confirm" | "correct" | "exclude", body: object) => {
+    async (region: Region, action: "confirm" | "correct" | "exclude" | "confirm-visual" | "reclassify", body: object) => {
       setBusy(`${region.region_id}:${action}`);
       setError(null);
       try {
@@ -308,7 +363,12 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
           data-testid="source-v2-regions"
         >
           {page.regions.map((region) => {
-            const unreadable = region.abstained || region.text.trim().length === 0;
+            const isVisualOnly = region.source_kind === "visual_only";
+            const isVisualWithText = region.source_kind === "visual_with_text";
+            const needsDecision = region.source_kind === "undecided";
+            // A figure with no printed text is not unreadable; it is a figure.
+            const unreadable =
+              !isVisualOnly && (region.abstained || region.text.trim().length === 0);
             const isEditing = editing === region.region_id;
             return (
               <li
@@ -364,6 +424,16 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   >
                     {labels[region.state]}
                   </span>
+                  <span
+                    data-testid={`kind-${region.region_id}`}
+                    data-source-kind={region.source_kind}
+                    className={cn(
+                      "rounded border px-2 py-0.5 text-xs font-medium",
+                      KIND_STYLES[region.source_kind],
+                    )}
+                  >
+                    {kindLabel(labels, region.source_kind)}
+                  </span>
                   {region.critical_conflict ? (
                     <span className="rounded border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs text-orange-900">
                       {labels.conflict}
@@ -376,7 +446,23 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   ) : null}
                 </div>
 
-                {unreadable ? (
+                {isVisualOnly ? (
+                  /* Emptiness is the right answer here, so this is
+                     informational rather than an error. */
+                  <p
+                    data-testid={`visual-note-${region.region_id}`}
+                    className="rounded border border-violet-300 bg-violet-50 p-2 text-sm text-violet-900"
+                  >
+                    {labels.visualOnlyBody}
+                  </p>
+                ) : needsDecision ? (
+                  <p
+                    data-testid={`undecided-note-${region.region_id}`}
+                    className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
+                  >
+                    {labels.needsDecision}
+                  </p>
+                ) : unreadable ? (
                   <p className="rounded border border-red-300 bg-red-50 p-2 text-sm text-red-800">
                     {labels.notRead}
                   </p>
@@ -438,19 +524,64 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                     <>
                       <button
                         type="button"
-                        disabled={unreadable || busy !== null || region.state === "verified"}
+                        disabled={
+                          unreadable ||
+                          needsDecision ||
+                          busy !== null ||
+                          region.state === "verified"
+                        }
                         onClick={() =>
-                          act(region, "confirm", {
-                            candidate_id: region.candidate_id,
-                            revision: region.revision,
-                            compared_with_image_sha256: page.image_sha256,
-                          })
+                          act(
+                            region,
+                            isVisualOnly || isVisualWithText ? "confirm-visual" : "confirm",
+                            isVisualOnly
+                              ? {
+                                  candidate_id: region.candidate_id,
+                                  revision: region.revision,
+                                  compared_with_image_sha256: page.image_sha256,
+                                  source_kind: "visual_only",
+                                }
+                              : isVisualWithText
+                                ? {
+                                    candidate_id: region.candidate_id,
+                                    revision: region.revision,
+                                    compared_with_image_sha256: page.image_sha256,
+                                    source_kind: "visual_with_text",
+                                    text: region.verified_text ?? region.text,
+                                  }
+                                : {
+                                    candidate_id: region.candidate_id,
+                                    revision: region.revision,
+                                    compared_with_image_sha256: page.image_sha256,
+                                  },
+                          )
                         }
                         className="rounded bg-emerald-700 px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
                         data-testid={`confirm-${region.region_id}`}
                       >
-                        {labels.confirm}
+                        {isVisualOnly ? labels.confirmVisual : labels.confirm}
                       </button>
+                      {isVisualOnly ? (
+                        /* The machine saw no text. If the reviewer can see
+                           labels, reclassifying is the honest route - never
+                           silently changing the kind behind them. */
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            act(region, "reclassify", {
+                              candidate_id: region.candidate_id,
+                              revision: region.revision,
+                              source_kind: "visual_with_text",
+                              note: note.trim() || "reviewer sees printed text in this figure",
+                            })
+                          }
+                          className="rounded border border-violet-600 px-3 py-1 text-sm text-violet-800"
+                          data-testid={`text-present-${region.region_id}`}
+                        >
+                          {labels.textPresent}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         disabled={busy !== null}

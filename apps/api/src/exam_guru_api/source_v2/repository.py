@@ -342,7 +342,7 @@ async def _region_facts(session: AsyncSession, page_id: UUID, region_id: str) ->
     row = (
         await session.execute(
             text(
-                "select source_kind, crop_sha256, bbox from source_v2_machine_candidates"
+                "select source_kind, crop_sha256 from source_v2_machine_candidates"
                 " where page_id = :page_id and region_id = :region_id and is_current"
             ),
             {"page_id": page_id, "region_id": region_id},
@@ -350,11 +350,27 @@ async def _region_facts(session: AsyncSession, page_id: UUID, region_id: str) ->
     ).first()
     if row is None:
         raise SourceV2Error(f"no current candidate for region {region_id}")
-    bbox = row[2]
+    # Geometry belongs to the deterministic layout, not to the candidate. It is
+    # copied onto the verified row so a verified visual keeps its own record of
+    # where on the page it came from.
+    layout = (
+        await session.execute(
+            text("select layout from source_v2_pages where id = :page_id"),
+            {"page_id": page_id},
+        )
+    ).scalar_one_or_none() or {}
+    bbox = next(
+        (
+            region.get("bbox")
+            for region in (layout.get("regions") or [])
+            if region.get("id") == region_id
+        ),
+        None,
+    )
     return {
         "source_kind": row[0],
         "crop_sha256": row[1],
-        "bbox": json.dumps(bbox) if bbox is not None and not isinstance(bbox, str) else bbox,
+        "bbox": json.dumps(bbox) if bbox is not None else None,
     }
 
 

@@ -118,7 +118,10 @@ class SourceV2MachineCandidate(Base):
         ),
         CheckConstraint(f"state IN {REGION_STATES}", name="ck_source_v2_machine_state"),
         CheckConstraint(
-            "NOT abstained OR state <> 'verified'", name="ck_source_v2_no_verified_abstention"
+            # D18: abstaining on *text* is the correct reading of a figure, so a
+            # visual-only region may still be verified as a visual.
+            "NOT abstained OR state <> 'verified' OR source_kind = 'visual_only'",
+            name="ck_source_v2_no_verified_abstention",
         ),
     )
 
