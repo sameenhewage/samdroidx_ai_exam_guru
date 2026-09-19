@@ -74,9 +74,8 @@ delete the only working one before its replacement has read the corpus.
    it if `reviewer` is the agent. Until a reviewer who did not write the
    primary reading supplies one, the primary and machine-candidate scores stay
    marked CIRCULAR and must not be quoted as accuracy.
-2. **Migrate the rest of the corpus** with the primary-first flow, one
-   document at a time (commands below). This is agent reading time plus GPU
-   time, not engineering.
+2. **Migrate the rest of the corpus** — see the scaling note below. This is
+   agent reading time plus GPU time, not engineering.
 3. Then legacy cutover, then the repo audit. Both unchanged and still gated on
    step 2.
 
@@ -166,6 +165,47 @@ before the bracket, `Horse shoe mag-` keeps its line-break hyphen,
 double space, and `3/4 කින්` versus `3 /4 ක්` keep their different spacing.
 The printed folios (141, 171) are recorded beside the PDF page numbers
 (156, 186) rather than reconciled.
+## scaling: primary-first is better, and it does not scale like OCR-first
+
+Measured today, per page, on real pages:
+
+| step | cost |
+|---|---|
+| render + layout | seconds, deterministic |
+| **agent reads the page** | **~8 region images per page, read one at a time** |
+| DeepSeek | 12-54 s per region |
+| LightOnOCR | 1-46 s per region |
+| candidate + publish | seconds |
+| human review in the Studio | minutes per page |
+
+Corpus today:
+
+```
+mawbasa-teacher-guide   293 rendered   8 pages with layout    2 pages read
+sankhya-rata              3 rendered   3 pages with layout    3 pages read
+```
+
+**The agent read is the bottleneck, not the GPU.** Reading a page costs image
+context that does not compress, so a single session can read roughly 2-3 pages
+of this density. The 293-page guide is therefore on the order of a hundred
+sessions, not one - and pretending otherwise would be how a corpus quietly
+gets OCR-first content again.
+
+Three honest options, to decide before starting:
+
+1. **Read only what is needed.** Migrate the pages the product actually uses
+   first, and leave the rest unmigrated but *unusable* - the gate already
+   enforces that, so nothing leaks.
+2. **Scope the document.** Split the 293-page guide into per-lesson documents
+   so a lesson can reach `usable: true` on its own instead of waiting for the
+   whole book.
+3. **Accept OCR-first for bulk, primary-first for what matters.** Explicitly
+   two tiers of source trust, recorded per document. This contradicts D14 as
+   written and would need D14 amended rather than ignored.
+
+Option 2 is the cheapest and does not weaken any rule. It needs a product
+decision, not more code.
+
 ## blockers
 
 - **Corpus migration** — see above. Engineering is ready; this is GPU time and
