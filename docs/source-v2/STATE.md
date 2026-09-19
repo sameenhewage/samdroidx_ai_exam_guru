@@ -6,8 +6,8 @@ Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
 phase:          6 — Studio review + Chrome MCP acceptance
-status:         review loop PASSES on real page 156; document-level acceptance pending
-last_validated: be8e749
+status:         review loop PASSES on real pages 156 and 186; document acceptance pending
+last_validated: 0805bf3
 updated:        2026-09-19
 ```
 
@@ -25,7 +25,7 @@ updated:        2026-09-19
   `/admin/source-v2/{pageId}` shows the original render beside the Machine
   Candidate with Confirm / Correct / Exclude.
 
-## verified in the real Studio (Chrome DevTools MCP, page 156)
+## verified in the real Studio (Chrome DevTools MCP, pages 156 and 186)
 
 - original page renders in the browser: 2480x3509 PNG, checksum-verified server-side
 - Confirm -> `verified`, progress advances, button disables
@@ -36,6 +36,12 @@ updated:        2026-09-19
 - console clean apart from one pre-existing form-field-id advisory
 - stale revision over HTTP returns 409; document gate returns `usable: false`
   naming the unresolved pages
+- page 186 (two column) behaves identically, and the real DeepSeek misread
+  `Resource : JICA ORHRO ...` was corrected in the UI to the printed
+  `Resource :JICA OBIHIRO Presentation Manual - 2007` and confirmed. This is
+  exactly the case the human gate exists for.
+- pages imported into the Studio: 4, 156, 171, 186, 197. 3 verified regions,
+  7 review events.
 
 ## defect found by looking at the real UI, fixed, same page re-run
 
@@ -64,9 +70,9 @@ deleted. Revision history for `p156-r003` now reads: r1 Myanmar hallucination
 
 Phase 6 completion, then 7 and 8 in order:
 
-1. Import the rest of the benchmark pages (`uv run tools/source_factory/import_studio.py --pages 4,152,157,163,197`)
-   and run the same Chrome MCP loop on page 186 to confirm the two-column page
-   behaves identically.
+1. Pages 152, 157 and 163 have no candidates yet: cut their crops, run both
+   readers, then `candidate/cli.py build` and import them.
+   `uv run tools/source_factory/readers/cli.py crops --pages 152,157,163`
 2. Add a Playwright E2E for the review loop (web AGENTS.md requires browser
    evidence, not unit tests alone) covering confirm, correct-then-confirm,
    exclude and reload persistence.
