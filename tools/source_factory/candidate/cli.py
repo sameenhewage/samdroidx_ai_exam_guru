@@ -27,7 +27,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from tools.source_factory.candidate import selection  # noqa: E402
-from tools.source_factory.candidate.machine import Witness, build  # noqa: E402
+from tools.source_factory.candidate.machine import PrimaryReading, Witness, build  # noqa: E402
 from tools.source_factory.layout.corpus import load_document  # noqa: E402
 from tools.source_factory.readers import crops as crop_tools  # noqa: E402
 
@@ -47,51 +47,74 @@ def load_results(document) -> dict[str, dict[str, dict]]:
     return table
 
 
-def _add_unread_regions(document, pages: dict[int, list[dict]], counters: dict) -> None:
-    """Emit an abstaining candidate for every region no reader was given.
+def _add_uncropped_regions(
+    primary_pages: dict[int, dict], pages: dict[int, list[dict]], counters: dict
+) -> None:
+    """Carry the primary reading of regions no local reader was given.
 
-    Figures, tables and decorative bars carry no text, so nothing is cropped
-    for them and they never reach the reviewer. A page would then count as
-    resolved while a figure had never been decided at all. Every region the
-    detector found must reach a terminal review state, so the ones with no
-    reading abstain and the reviewer has to exclude them or say what they are.
+    Figures, decorative bars and headers are not cropped for OCR, so the local
+    readers never see them. The agent did: it read the whole page. Those
+    regions therefore still arrive with the agent's own text — a header, a
+    folio, a figure caption — or abstain when the agent recorded that the
+    region carries no text. Either way the reviewer has to decide them.
     """
 
-    folder = document.folder / "layout" / "regions"
-    if not folder.exists():
-        return
-    for path in sorted(folder.glob("page-*.json")):
-        layout = json.loads(path.read_text(encoding="utf-8"))
-        page_number = int(layout["page_number"])
+    for page_number, payload in primary_pages.items():
         seen = {region["region_id"] for region in pages.get(page_number, [])}
-        for region in layout.get("regions", []):
-            if region["id"] in seen:
+        for region in payload["regions"]:
+            if region["region_id"] in seen:
                 continue
-            pages[page_number].append(
-                {
-                    "region_id": region["id"],
-                    "region_type": region["type"],
-                    "text": "",
-                    "abstained": True,
-                    "chosen_reader": None,
-                    "reason": f"no text was read for this {region['type']} region",
-                    "critical_conflict": False,
-                    "agreement_ratio": 0.0,
-                    "disagreement": {},
-                    "rejected": {},
-                    "witnesses": [],
-                    "bbox": region["bbox"],
-                }
+            result = build(
+                primary=PrimaryReading(
+                    region_id=region["region_id"],
+                    region_type=region["region_type"],
+                    text=region["text"],
+                    uncertainty=tuple(region.get("uncertainty", [])),
+                ),
+                witnesses=[],
             )
+            pages[page_number].append(result.to_json() | {"bbox": region["bbox"]})
             counters["regions"] += 1
-            counters["abstained"] += 1
+            counters["abstained"] += 1 if result.abstained else 0
+            counters["critical_conflict"] += 1 if result.critical_conflict else 0
         pages[page_number].sort(key=lambda item: item["region_id"])
+
+
+def load_primary(document) -> dict[int, dict]:
+    """The agent's own reading, keyed by page. Required: it is the base text.
+
+    Building a candidate without it would put local OCR back in front of the
+    source, which is the exact regression D14 exists to prevent.
+    """
+
+    folder = document.folder / "primary" / "pages"
+    if not folder.exists():
+        raise SystemExit(
+            f"no primary readings under {folder}\n"
+            "Look at the rendered pages first and seal them with "
+            "tools/source_factory/primary/cli.py before building candidates."
+        )
+    pages: dict[int, dict] = {}
+    for path in sorted(folder.glob("page-*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("provenance") != "primary-agent-visual":
+            raise SystemExit(f"{path}: not a primary agent reading")
+        pages[int(payload["page_number"])] = payload
+    if not pages:
+        raise SystemExit(f"no primary readings under {folder}")
+    return pages
 
 
 def command_build(arguments: argparse.Namespace) -> int:
     document = load_document(arguments.document)
     table = load_results(document)
     crops = {crop.crop_id: crop for crop in crop_tools.load(document)}
+    primary_pages = load_primary(document)
+    primary_regions = {
+        region["region_id"]: (page["page_number"], region)
+        for page in primary_pages.values()
+        for region in page["regions"]
+    }
     active = selection.ACTIVE
     pages: dict[int, list[dict]] = defaultdict(list)
     counters = {"regions": 0, "abstained": 0, "critical_conflict": 0}
@@ -99,6 +122,8 @@ def command_build(arguments: argparse.Namespace) -> int:
     for crop_id, by_reader in sorted(table.items()):
         crop = crops.get(crop_id)
         if crop is None:
+            continue
+        if crop.region_id not in primary_regions:
             continue
         allowed = active.readers_for(arguments.language, crop.region_type)
         witnesses = [
@@ -116,10 +141,15 @@ def command_build(arguments: argparse.Namespace) -> int:
             for reader, row in sorted(by_reader.items())
             if not allowed or reader in allowed
         ]
-        if not witnesses:
-            continue
+        _, region = primary_regions[crop.region_id]
         result = build(
-            region_id=crop.region_id, region_type=crop.region_type, witnesses=witnesses
+            primary=PrimaryReading(
+                region_id=region["region_id"],
+                region_type=region["region_type"],
+                text=region["text"],
+                uncertainty=tuple(region.get("uncertainty", [])),
+            ),
+            witnesses=witnesses,
         )
         payload = result.to_json() | {"crop_id": crop_id, "bbox": crop.bbox}
         pages[crop.page_number].append(payload)
@@ -127,7 +157,7 @@ def command_build(arguments: argparse.Namespace) -> int:
         counters["abstained"] += 1 if result.abstained else 0
         counters["critical_conflict"] += 1 if result.critical_conflict else 0
 
-    _add_unread_regions(document, pages, counters)
+    _add_uncropped_regions(primary_pages, pages, counters)
 
     root = document.folder / "candidates"
     root.mkdir(parents=True, exist_ok=True)

@@ -95,3 +95,62 @@ tools package must never become a second production runtime.
 project environment. numpy must stay `< 2.3` while opencv is `4.12`. Heavy model
 dependencies (torch, transformers, peft) are declared only by the reader/benchmark
 scripts that need them, never by the layout or contract tooling.
+
+## D14 - The executing agent reads the source first. Local OCR is a witness.
+**Locked 2026-09-19. Supersedes the DeepSeek-first ordering shipped earlier.**
+
+The reader order is:
+
+```
+1. deterministic render / layout, no text
+2. PRIMARY VISUAL READING by the executing agent, from the original pixels
+3. the primary candidate JSON is written to <document>/primary/pages/page-NNN.json
+4. ONLY THEN the local specialist readers run on the SAME regions/crops
+5. comparison of primary against each secondary witness
+6. Machine Candidate
+7. human Confirm / Correct
+8. Verified Source Content
+```
+
+**The executing agent is the primary source reader.** Not a provider, not an
+adapter, not a service called anything. There is no "Astra API" to build: the
+agent looks at the rendered page or crop and writes down exactly what is
+printed.
+
+DeepSeek and LightOnOCR are **independent secondary witnesses**. They are run
+after the primary JSON exists, on the same pixels, and they exist to corroborate
+or contradict. They may not create the initial Machine Candidate and may not
+silently replace the primary reading.
+
+The primary reading must not be seeded with any local reader output. Reading the
+OCR first and then "checking" it is not an independent reading; it is anchoring.
+
+Consequences, all enforced rather than described:
+
+- `tools/source_factory/primary/` owns the primary candidate schema and its
+  validation. A Machine Candidate build fails if the primary JSON is missing
+  for a region.
+- Comparison preserves every disagreement. A critical-token disagreement
+  between the primary reading and a witness forces human review; it is never
+  resolved by rank or by majority.
+- Obvious hallucinations — decoder collapse, foreign script, a witness showing
+  none of the page's script when another reader found it — disqualify that
+  witness's evidence. They never disqualify the primary reading, which a human
+  produced by looking.
+- Superseding an older DeepSeek-first candidate creates a new revision with the
+  previous one as parent. Earlier reader results and review events are
+  historical evidence and are never deleted.
+- Verification is withdrawn automatically only where the proposed text actually
+  changes.
+
+### Fidelity rules for the primary reading
+
+Transcribe what is printed, not what it should say:
+
+- Sinhala/Tamil spelling exactly as printed, including apparent typos
+- `X` versus `×` as printed; never normalise one to the other
+- punctuation, spacing, line breaks, blank lines
+- URLs and spaced emails such as `info @ nie.lk` exactly as spaced
+- numbers, equations, table cell positions, and **blank cells as blank**
+- never correct, infer, translate, solve, normalise or fill in missing content
+- where a glyph is genuinely unreadable, record uncertainty instead of guessing

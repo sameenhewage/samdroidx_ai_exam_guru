@@ -34,6 +34,14 @@ FOREIGN_SCRIPT_LIMIT = 0.5
 OUTLIER_EXPECTED_SCRIPT = 0.15
 CORROBORATED_EXPECTED_SCRIPT = 0.50
 
+# The executing agent, reading the original pixels. Not a model, not a
+# provider, not a service. It reads first and the local readers corroborate.
+PRIMARY_READER = "primary-agent-visual"
+# Below this agreement the witnesses are not quibbling about a glyph, they are
+# reading a different text. That has to reach a human even with no critical
+# token in sight.
+SUBSTANTIVE_DISAGREEMENT = 0.5
+
 
 @dataclass
 class Witness:
@@ -144,12 +152,32 @@ def _flag_script_outliers(witnesses: list[Witness]) -> None:
             witness.script_outlier = True
 
 
+@dataclass(frozen=True)
+class PrimaryReading:
+    """What the executing agent saw on the original page. Always the base text."""
+
+    region_id: str
+    region_type: str
+    text: str
+    uncertainty: tuple[dict, ...] = ()
+
+    @property
+    def blank(self) -> bool:
+        return not self.text.strip()
+
+
 def build(
     *,
-    region_id: str,
-    region_type: str,
+    primary: PrimaryReading,
     witnesses: list[Witness],
 ) -> MachineCandidate:
+    """Propose the primary reading, corroborated or contradicted by the witnesses.
+
+    The candidate text is *always* the primary reading. Local OCR never
+    replaces it, never outvotes it and never supplies the initial proposal:
+    it is here to disagree loudly so a human looks again (D14).
+    """
+
     _flag_script_outliers(witnesses)
     names = [witness.reader for witness in witnesses]
     rejected = {
@@ -158,58 +186,75 @@ def build(
         if not witness.trustworthy
     }
     usable = [witness for witness in witnesses if witness.trustworthy]
+    flagged = [item.get("kind", "?") for item in primary.uncertainty]
 
-    if not usable:
+    if primary.blank:
+        # A region the agent read as carrying no text - a figure, a rule, a
+        # blank cell. It still has to be decided, so it abstains rather than
+        # proposing emptiness as a reading.
+        detail = primary.uncertainty[0]["detail"] if primary.uncertainty else "no text"
         return MachineCandidate(
-            region_id=region_id,
-            region_type=region_type,
+            region_id=primary.region_id,
+            region_type=primary.region_type,
             text="",
             abstained=True,
-            reason="no witness was trustworthy for this region",
-            chosen_reader=None,
+            reason=f"primary reading found no text: {detail}"[:400],
+            chosen_reader=PRIMARY_READER,
             witnesses=names,
             rejected=rejected,
             agreement_ratio=0.0,
         )
 
-    if len(usable) == 1:
-        only = usable[0]
+    if not usable:
         return MachineCandidate(
-            region_id=region_id,
-            region_type=region_type,
-            text=only.text,
+            region_id=primary.region_id,
+            region_type=primary.region_type,
+            text=primary.text,
             abstained=False,
             reason=(
-                "single trustworthy witness; unverified because nothing corroborates it"
-                if rejected
-                else "single configured witness"
-            ),
-            chosen_reader=only.reader,
+                "primary reading, uncorroborated: no local reader produced usable evidence"
+                + (f"; primary flagged {flagged}" if flagged else "")
+            )[:400],
+            chosen_reader=PRIMARY_READER,
             witnesses=names,
             rejected=rejected,
-            agreement_ratio=1.0,
+            agreement_ratio=0.0,
+            critical_conflict=bool(flagged),
         )
 
-    disagreement = build_disagreement_map({w.reader: w.text for w in usable})
-    # The candidate text is the highest-ranked trustworthy witness's actual
-    # text. Rank comes from the measured per-language benchmark, never from a
-    # vote and never from a blend.
-    chosen = min(usable, key=lambda witness: (witness.rank, witness.reader))
+    # Compare the primary reading against every usable witness on equal terms.
+    # The primary participates in the alignment so its disagreements are
+    # visible, but it is not competing for selection.
+    disagreement = build_disagreement_map(
+        {PRIMARY_READER: primary.text} | {w.reader: w.text for w in usable}
+    )
     uncertain = [cell.to_json() for cell in disagreement.cells if cell.critical]
+    # A flat contradiction need not contain a "critical token". If the readers
+    # broadly do not recognise what the agent wrote down, that is exactly the
+    # case a human has to look at, whether or not a digit happens to differ.
+    substantive = disagreement.agreement_ratio < SUBSTANTIVE_DISAGREEMENT
+    critical = disagreement.critical_conflict or bool(flagged) or substantive
+    corroboration = (
+        f"corroborated against {len(usable)} local reader(s)"
+        if len(usable) > 1
+        else "checked against 1 local reader, no second witness"
+    )
     return MachineCandidate(
-        region_id=region_id,
-        region_type=region_type,
-        text=chosen.text,
+        region_id=primary.region_id,
+        region_type=primary.region_type,
+        text=primary.text,
         abstained=False,
         reason=(
-            f"selected {chosen.reader} by measured rank; "
+            f"primary reading {corroboration}; "
             f"{len(disagreement.cells)} token conflicts, {len(uncertain)} critical"
-        ),
-        chosen_reader=chosen.reader,
+            + ("; readers broadly disagree with the primary reading" if substantive else "")
+            + (f"; primary flagged {flagged}" if flagged else "")
+        )[:400],
+        chosen_reader=PRIMARY_READER,
         witnesses=names,
         rejected=rejected,
         uncertain_tokens=uncertain,
         agreement_ratio=disagreement.agreement_ratio,
-        critical_conflict=disagreement.critical_conflict,
+        critical_conflict=critical,
         disagreement=disagreement,
     )

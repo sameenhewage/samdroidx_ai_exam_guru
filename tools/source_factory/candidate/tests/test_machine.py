@@ -14,11 +14,40 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from tools.source_factory.candidate.alignment import build_disagreement_map  # noqa: E402
-from tools.source_factory.candidate.machine import Witness, build  # noqa: E402
+from tools.source_factory.candidate.machine import (  # noqa: E402
+    PRIMARY_READER,
+    PrimaryReading,
+    Witness,
+    build,
+)
 
 
-def candidate(witnesses: list[Witness], region_type: str = "text"):
-    return build(region_id="p156-r002", region_type=region_type, witnesses=witnesses)
+def candidate(
+    witnesses: list[Witness],
+    region_type: str = "text",
+    primary_text: str | None = None,
+    uncertainty: tuple[dict, ...] = (),
+):
+    """The agent read the page first; the witnesses corroborate or contradict.
+
+    Where a test does not care what the agent saw, it reads the same thing as
+    the highest-ranked witness, so the test is about witness handling rather
+    than about the primary reading.
+    """
+
+    if primary_text is None:
+        usable = [w for w in witnesses if w.text.strip() and not w.failed]
+        best = min(usable, key=lambda w: (w.rank, w.reader), default=None)
+        primary_text = best.text if best else ""
+    return build(
+        primary=PrimaryReading(
+            region_id="p156-r002",
+            region_type=region_type,
+            text=primary_text,
+            uncertainty=uncertainty,
+        ),
+        witnesses=witnesses,
+    )
 
 
 def test_one_operator_conflict_pins_that_token_only() -> None:
@@ -36,48 +65,89 @@ def test_one_operator_conflict_pins_that_token_only() -> None:
     assert result.agreement_ratio > 0.7
 
 
-def test_candidate_text_is_always_a_real_witness_reading() -> None:
-    first, second = "පළමු කියවීම", "දෙවන කියවීම"
-    result = candidate(
-        [Witness(reader="a", text=first, rank=0), Witness(reader="b", text=second, rank=1)]
-    )
-    assert result.text in {first, second}, "readings must never be blended"
-    assert result.chosen_reader == "a"
+def test_the_candidate_text_is_always_the_primary_reading() -> None:
+    """D14. Local OCR proposes nothing; it corroborates or contradicts."""
 
-
-def test_rank_decides_not_majority() -> None:
+    seen = "පළමු කියවීම"
     result = candidate(
         [
-            Witness(reader="weak-1", text="wrong", rank=5),
-            Witness(reader="weak-2", text="wrong", rank=6),
-            Witness(reader="measured-best", text="right", rank=0),
-        ]
+            Witness(reader="a", text="දෙවන කියවීම", rank=0),
+            Witness(reader="b", text="තෙවන කියවීම", rank=1),
+        ],
+        primary_text=seen,
     )
-    assert result.text == "right", "two agreeing weak witnesses must not outvote the measured best"
+    assert result.text == seen, "readings must never be blended or replaced"
+    assert result.chosen_reader == PRIMARY_READER
 
 
-def test_degenerate_reading_is_rejected_not_used() -> None:
+def test_agreeing_witnesses_cannot_outvote_the_primary_reading() -> None:
+    result = candidate(
+        [
+            Witness(reader="ocr-1", text="wrong", rank=0),
+            Witness(reader="ocr-2", text="wrong", rank=1),
+        ],
+        primary_text="right",
+    )
+    assert result.text == "right"
+    assert result.critical_conflict, "a flat contradiction has to reach a human"
+
+
+def test_the_highest_ranked_witness_still_cannot_take_over() -> None:
+    result = candidate(
+        [Witness(reader="measured-best", text="ocr text", rank=0)],
+        primary_text="what the page says",
+    )
+    assert result.text == "what the page says"
+    assert result.chosen_reader == PRIMARY_READER
+
+
+def test_degenerate_reading_is_rejected_as_evidence_not_used() -> None:
     result = candidate(
         [
             Witness(reader="looper", text="x" * 400, rank=0, repetition=0.99),
             Witness(reader="sound", text="real reading", rank=1),
-        ]
+        ],
+        primary_text="real reading",
     )
-    assert result.chosen_reader == "sound"
+    assert result.text == "real reading"
     assert "looper" in result.rejected
+    assert "sound" not in result.rejected
 
 
-def test_abstains_when_no_witness_is_trustworthy() -> None:
+def test_the_primary_reading_survives_every_witness_being_rejected() -> None:
     result = candidate(
         [
             Witness(reader="looper", text="y" * 400, rank=0, structural_repetition=0.95),
             Witness(reader="broken", text="", rank=1, failed=True),
-        ]
+        ],
+        primary_text="what the page says",
+    )
+    assert not result.abstained, "the agent read the page; that reading still stands"
+    assert result.text == "what the page says"
+    assert result.chosen_reader == PRIMARY_READER
+    assert set(result.rejected) == {"looper", "broken"}
+    assert "uncorroborated" in result.reason
+
+
+def test_a_blank_primary_reading_abstains_with_its_recorded_reason() -> None:
+    result = candidate(
+        [],
+        region_type="figure",
+        primary_text="",
+        uncertainty=({"kind": "non-text", "detail": "line drawing, no printed text"},),
     )
     assert result.abstained
     assert result.text == ""
-    assert result.chosen_reader is None
-    assert set(result.rejected) == {"looper", "broken"}
+    assert "line drawing" in result.reason
+
+
+def test_primary_uncertainty_forces_review() -> None:
+    result = candidate(
+        [Witness(reader="a", text="a reading", rank=0)],
+        primary_text="a reading",
+        uncertainty=({"kind": "illegible", "detail": "one glyph is smudged"},),
+    )
+    assert result.critical_conflict, "the agent said it could not read part of this"
 
 
 def test_single_witness_is_marked_uncorroborated() -> None:
@@ -87,8 +157,9 @@ def test_single_witness_is_marked_uncorroborated() -> None:
             Witness(reader="dead", text="", rank=1, failed=True),
         ]
     )
-    assert result.chosen_reader == "only"
-    assert "uncorroborated" in result.reason or "nothing corroborates" in result.reason
+    assert result.chosen_reader == PRIMARY_READER
+    assert "no second witness" in result.reason
+    assert "dead" in result.rejected
 
 
 def test_a_silent_witness_is_recorded_missing_not_invented() -> None:

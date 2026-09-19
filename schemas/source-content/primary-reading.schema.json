@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exam-guru.local/schemas/source-content/primary-reading.schema.json",
+  "title": "Source V2 primary visual reading",
+  "description": "One page transcribed directly from the original render by the executing agent, before any local OCR has run. This is the PRIMARY source candidate: local specialist readers are secondary witnesses that run afterwards on the same pixels and may corroborate or contradict it. Nothing here is verified; a human still decides every region against the original page. See docs/source-v2/DECISIONS.md D14.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_id",
+    "page_number",
+    "image_sha256",
+    "render_sha256",
+    "provenance",
+    "read_at",
+    "reader_version",
+    "regions"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "document_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "page_number": { "type": "integer", "minimum": 1 },
+    "image_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Checksum of the rendered page the regions were measured from."
+    },
+    "render_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Checksum of the exact image that was looked at. Equal to image_sha256 for a whole-page reading; the crop checksum when a region was read from its crop."
+    },
+    "language": { "type": "string", "maxLength": 32 },
+    "provenance": {
+      "const": "primary-agent-visual",
+      "description": "Recorded so no later process can mistake this for OCR output."
+    },
+    "read_at": { "type": "string", "format": "date-time" },
+    "reader_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "notes": { "type": "string", "maxLength": 2000 },
+    "regions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/region" }
+    }
+  },
+  "$defs": {
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "region_id",
+        "region_type",
+        "bbox",
+        "reading_order",
+        "text",
+        "uncertainty",
+        "status"
+      ],
+      "properties": {
+        "region_id": { "type": "string", "pattern": "^p[0-9]{3}-r[0-9]{3}$" },
+        "region_type": {
+          "enum": ["text", "heading", "figure", "table", "decorative", "unknown"]
+        },
+        "bbox": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x0, y0, x1, y1] in rendered pixels, from the deterministic layout."
+        },
+        "reading_order": { "type": "integer", "minimum": 0 },
+        "crop_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "text": {
+          "type": "string",
+          "description": "Exactly what is printed. Spelling as printed including apparent typos, X versus × as printed, punctuation, spacing, line breaks and blank lines preserved, URLs and spaced emails exactly as spaced, blank table cells left blank. Never corrected, inferred, translated, solved, normalised or filled in."
+        },
+        "uncertainty": {
+          "type": "array",
+          "description": "Every place the agent could not read the page with confidence. Empty means the whole region was legible.",
+          "items": { "$ref": "#/$defs/uncertain" }
+        },
+        "status": {
+          "const": "unverified",
+          "description": "A primary reading is never self-verifying. Only a human confirming against the original page creates Verified Source Content."
+        }
+      }
+    },
+    "uncertain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "illegible",
+            "ambiguous-glyph",
+            "cut-off",
+            "non-text",
+            "layout-doubt",
+            "spacing-doubt"
+          ]
+        },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "excerpt": { "type": "string", "maxLength": 200 }
+      }
+    }
+  }
+}

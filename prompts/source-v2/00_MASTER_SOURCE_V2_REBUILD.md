@@ -29,29 +29,45 @@ deterministic layout frame, provider-neutral comparison, and a human gate.
 ```
 Raw PDF / Image
   │
-  ├─ deterministic render          (300 dpi, checksum-bound, idempotent)
-  ├─ deterministic layout          (regions: text/heading/figure/table/decorative/unknown)
+  ├─ 1. deterministic render       (300 dpi, checksum-bound, idempotent)
+  ├─ 2. deterministic layout       (regions: text/heading/figure/table/decorative/unknown)
   │                                 bbox + reading order + column + parent, NO text
   │
-  ├─ Codex/Astra external structured JSON candidate
+  ├─ 3. PRIMARY VISUAL READING  ◄── the executing agent reads the original pixels
+  │      writes  <document>/primary/pages/page-NNN.json
+  │      exact visible text, uncertainty, checksums, provenance
+  │      NOT seeded with any local reader output
   │
-  ├─ local language-specialist readers
-  │      Sinhala : avishadilhara/sinhala-lightonocr-2-1b-Qlora
-  │                avishadilhara/sinhala-deepseek-ocr-Qlora
+  ├─ 4. local specialist readers   ◄── ONLY after the primary JSON exists
+  │      run on the SAME original regions/crops, independently
+  │      Sinhala : avishadilhara/sinhala-deepseek-ocr-Qlora
+  │                avishadilhara/sinhala-lightonocr-2-1b-Qlora
   │      Tamil   : benchmark-selected local Tamil VLM/OCR
   │
-  ├─ provider-neutral comparison / validation
-  │      token + character alignment, disagreement map, critical-token rules
-  │      NO blind majority voting
+  ├─ 5. comparison / validation
+  │      primary vs each secondary witness, token + character alignment,
+  │      disagreement map, critical-token rules, deterministic validators
+  │      NO blind majority voting, NO silent overwrite of the primary reading
   │
-  ├─ Machine Candidate               (one proposed reading per region, with evidence)
+  ├─ 6. Machine Candidate           (one proposed reading per region, with evidence)
   │
-  ├─ human Confirm / Correct / Exclude
+  ├─ 7. human Confirm / Correct / Exclude
   │
-  └─ Verified Source Content         (immutable, versioned)
+  └─ 8. Verified Source Content     (immutable, versioned)
         │
         └─ ONLY THEN: educational analysis → knowledge → embeddings → RAG → generation
 ```
+
+### Reader order (LOCKED — see D14)
+
+**The executing agent is the primary source reader.** It looks at the original
+rendered page or crop and writes the primary candidate itself. DeepSeek and
+LightOnOCR are **independent secondary witnesses** that run afterwards on the
+same pixels, and exist to corroborate or contradict the primary reading.
+
+A local OCR result must never create the initial Machine Candidate, and must
+never silently replace the primary reading. Reversing this order is a
+regression, not an optimisation.
 
 ### Hard invariant
 
