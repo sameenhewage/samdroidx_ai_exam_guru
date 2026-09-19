@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exam-guru.local/schemas/source-content/document-manifest.schema.json",
+  "title": "Source content document manifest",
+  "description": "One manifest per document folder. Describes the immutable original and how it was rendered. Grade neutral: the same shape must serve Grades 1-13, any subject and any medium.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_id",
+    "grade",
+    "subject",
+    "medium",
+    "document_type",
+    "source",
+    "page_count"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "document_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 128,
+      "description": "Folder slug; stable for the life of the document."
+    },
+    "grade": { "type": "integer", "minimum": 1, "maximum": 13 },
+    "subject": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "maxLength": 64 },
+    "medium": { "type": "string", "enum": ["sinhala", "tamil", "english"] },
+    "document_type": {
+      "type": "string",
+      "enum": ["textbook", "teacher-guide", "past-paper", "marking-scheme", "syllabus", "workbook", "other"]
+    },
+    "title": { "type": "string", "maxLength": 512 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "sha256", "bytes"],
+      "properties": {
+        "filename": { "type": "string", "maxLength": 512 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "page_count": { "type": "integer", "minimum": 1, "maximum": 5000 },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dpi", "engine", "pages"],
+      "properties": {
+        "dpi": { "type": "number", "minimum": 72, "maximum": 1200 },
+        "engine": { "type": "string", "maxLength": 128 },
+        "colour_space": { "type": "string", "enum": ["rgb", "grey"] },
+        "rendered_at": { "type": "string", "format": "date-time" },
+        "pages": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page_number", "file", "width", "height", "sha256"],
+            "properties": {
+              "page_number": { "type": "integer", "minimum": 1 },
+              "file": { "type": "string", "maxLength": 256 },
+              "width": { "type": "integer", "minimum": 1 },
+              "height": { "type": "integer", "minimum": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
