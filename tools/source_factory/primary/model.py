@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = "1.0.0"
-PROVENANCE = "primary-agent-visual"
-READER_VERSION = "primary-agent-visual.v1"
+SCHEMA_VERSION = "2.0.0"
+PROVENANCE = "primary-agent-reading"
+READER_VERSION = "primary-agent-reading.v2"
 
 REGION_ID = re.compile(r"^p[0-9]{3}-r[0-9]{3}$")
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
@@ -32,6 +32,7 @@ UNCERTAINTY_KINDS = frozenset(
         "non-text",
         "layout-doubt",
         "spacing-doubt",
+        "table-structure",
     }
 )
 
@@ -54,38 +55,90 @@ class Uncertainty:
 
 
 @dataclass(frozen=True)
+class Cell:
+    """One printed table cell. A blank cell stays blank."""
+
+    row: int
+    column: int
+    bbox: tuple[int, int, int, int]
+    exact_text: str
+    uncertainty: tuple[Uncertainty, ...] = ()
+
+    def to_json(self) -> dict:
+        payload = {
+            "row": self.row,
+            "column": self.column,
+            "bbox": list(self.bbox),
+            "exact_text": self.exact_text,
+            "blank": not self.exact_text.strip(),
+            "uncertain": bool(self.uncertainty),
+        }
+        if self.uncertainty:
+            payload["uncertainty_reason"] = [item.to_json() for item in self.uncertainty]
+        return payload
+
+
+@dataclass(frozen=True)
+class Table:
+    bbox: tuple[int, int, int, int]
+    rows: int
+    columns: int
+    cells: tuple[Cell, ...]
+
+    def to_json(self) -> dict:
+        return {
+            "bbox": list(self.bbox),
+            "rows": self.rows,
+            "columns": self.columns,
+            "cells": [cell.to_json() for cell in self.cells],
+        }
+
+
+@dataclass(frozen=True)
 class PrimaryRegion:
     region_id: str
     region_type: str
     bbox: tuple[int, int, int, int]
     reading_order: int
-    text: str
+    exact_text: str
+    source_image_sha256: str
+    language: str = "sinhala"
     uncertainty: tuple[Uncertainty, ...] = ()
     crop_sha256: str | None = None
+    table: Table | None = None
 
     @property
     def blank(self) -> bool:
-        return not self.text.strip()
+        return not self.exact_text.strip()
 
     def to_json(self) -> dict:
-        return {
+        payload = {
             "region_id": self.region_id,
             "region_type": self.region_type,
             "bbox": list(self.bbox),
             "reading_order": self.reading_order,
+            "language": self.language,
             "crop_sha256": self.crop_sha256,
-            "text": self.text,
-            "uncertainty": [item.to_json() for item in self.uncertainty],
+            "source_image_sha256": self.source_image_sha256,
+            "provenance": PROVENANCE,
+            "exact_text": self.exact_text,
+            "uncertain": bool(self.uncertainty),
             "status": "unverified",
         }
+        if self.uncertainty:
+            payload["uncertainty_reason"] = [item.to_json() for item in self.uncertainty]
+        if self.table is not None:
+            payload["table"] = self.table.to_json()
+        return payload
 
 
 @dataclass
 class PrimaryPage:
     document_id: str
     page_number: int
+    source_sha256: str
     image_sha256: str
-    render_sha256: str
+    render_dpi: float
     language: str = "sinhala"
     notes: str = ""
     read_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -96,8 +149,9 @@ class PrimaryPage:
             "schema_version": SCHEMA_VERSION,
             "document_id": self.document_id,
             "page_number": self.page_number,
+            "source_sha256": self.source_sha256,
             "image_sha256": self.image_sha256,
-            "render_sha256": self.render_sha256,
+            "render_dpi": self.render_dpi,
             "language": self.language,
             "provenance": PROVENANCE,
             "read_at": self.read_at,
@@ -122,13 +176,15 @@ def validate(page: dict) -> None:
         raise PrimaryReadingError(f"unexpected schema_version {page.get('schema_version')!r}")
     if page.get("provenance") != PROVENANCE:
         raise PrimaryReadingError(
-            "provenance must be 'primary-agent-visual'; a primary reading is not OCR output"
+            f"provenance must be {PROVENANCE!r}; a primary reading is not OCR output"
         )
-    for key in ("image_sha256", "render_sha256"):
+    for key in ("source_sha256", "image_sha256"):
         if not SHA256.fullmatch(page.get(key, "")):
             raise PrimaryReadingError(f"{key} must be a sha256 hex digest")
     if not isinstance(page.get("page_number"), int) or page["page_number"] < 1:
         raise PrimaryReadingError("page_number must be a positive integer")
+    if not 72 <= float(page.get("render_dpi", 0)) <= 1200:
+        raise PrimaryReadingError("render_dpi must be between 72 and 1200")
 
     regions = page.get("regions")
     if not isinstance(regions, list) or not regions:
@@ -147,6 +203,10 @@ def validate(page: dict) -> None:
             raise PrimaryReadingError(
                 f"{region_id}: unknown region_type {region.get('region_type')!r}"
             )
+        if region.get("provenance") != PROVENANCE:
+            raise PrimaryReadingError(f"{region_id}: provenance must be {PROVENANCE!r}")
+        if not SHA256.fullmatch(region.get("source_image_sha256", "")):
+            raise PrimaryReadingError(f"{region_id}: source_image_sha256 must be a digest")
         bbox = region.get("bbox")
         if not (isinstance(bbox, list) and len(bbox) == 4):
             raise PrimaryReadingError(f"{region_id}: bbox must be [x0, y0, x1, y1]")
@@ -156,10 +216,12 @@ def validate(page: dict) -> None:
             raise PrimaryReadingError(
                 f"{region_id}: a primary reading is never self-verifying"
             )
-        text = region.get("text")
+        text = region.get("exact_text")
         if not isinstance(text, str):
-            raise PrimaryReadingError(f"{region_id}: text must be a string")
+            raise PrimaryReadingError(f"{region_id}: exact_text must be a string")
         _check_fidelity(region_id, region, text)
+        if region.get("table") is not None:
+            _check_table(region_id, region["table"])
         orders.append(region.get("reading_order", -1))
 
     if sorted(orders) != list(range(len(orders))):
@@ -168,34 +230,63 @@ def validate(page: dict) -> None:
         )
 
 
-def _check_fidelity(region_id: str, region: dict, text: str) -> None:
-    uncertainty = region.get("uncertainty")
-    if not isinstance(uncertainty, list):
-        raise PrimaryReadingError(f"{region_id}: uncertainty must be a list")
-    for item in uncertainty:
+def _check_uncertainty(region_id: str, reasons: list) -> None:
+    for item in reasons:
         if item.get("kind") not in UNCERTAINTY_KINDS:
             raise PrimaryReadingError(f"{region_id}: unknown uncertainty kind {item.get('kind')!r}")
         if not str(item.get("detail", "")).strip():
             raise PrimaryReadingError(f"{region_id}: an uncertainty must say what was unclear")
 
+
+def _check_fidelity(region_id: str, region: dict, text: str) -> None:
+    uncertain = region.get("uncertain")
+    reasons = region.get("uncertainty_reason", [])
+    if not isinstance(uncertain, bool):
+        raise PrimaryReadingError(f"{region_id}: uncertain must be a boolean")
+    if uncertain and not reasons:
+        raise PrimaryReadingError(
+            f"{region_id}: uncertain is true but no reason was recorded; "
+            "say what could not be read rather than guessing"
+        )
+    if reasons and not uncertain:
+        raise PrimaryReadingError(f"{region_id}: uncertainty recorded but uncertain is false")
+    _check_uncertainty(region_id, reasons)
+
     # A region with nothing written down has to say why. Silence is the one
     # thing that could pass for a reading without being one.
-    if not text.strip() and not uncertainty:
+    if not text.strip() and not uncertain:
         raise PrimaryReadingError(
-            f"{region_id}: empty text needs an uncertainty entry saying why "
+            f"{region_id}: empty exact_text needs an uncertainty entry saying why "
             "(a figure carries no text; say so rather than leaving it blank)"
         )
 
-    # NFC is the comparison view, never the stored one. If the stored text is
-    # already NFC-normalised away from what was printed we cannot tell, but we
-    # can at least refuse the compatibility normalisation that destroys
-    # Sinhala conjuncts and turns ﬁ into fi.
     if text != unicodedata.normalize("NFC", unicodedata.normalize("NFC", text)):
-        raise PrimaryReadingError(f"{region_id}: text is not stable under NFC")
+        raise PrimaryReadingError(f"{region_id}: exact_text is not stable under NFC")
     if "\ufffd" in text:
         raise PrimaryReadingError(
-            f"{region_id}: text contains U+FFFD; record an illegible uncertainty instead"
+            f"{region_id}: exact_text contains U+FFFD; record an illegible uncertainty instead"
         )
+
+
+def _check_table(region_id: str, table: dict) -> None:
+    rows, columns = table.get("rows"), table.get("columns")
+    if not isinstance(rows, int) or rows < 1 or not isinstance(columns, int) or columns < 1:
+        raise PrimaryReadingError(f"{region_id}: a table needs at least one row and column")
+    seen: set[tuple[int, int]] = set()
+    for cell in table.get("cells", []):
+        position = (cell.get("row"), cell.get("column"))
+        if not (0 <= position[0] < rows and 0 <= position[1] < columns):
+            raise PrimaryReadingError(f"{region_id}: cell {position} is outside the grid")
+        if position in seen:
+            raise PrimaryReadingError(f"{region_id}: duplicate cell {position}")
+        seen.add(position)
+        blank = cell.get("blank")
+        if blank is not (not str(cell.get("exact_text", "")).strip()):
+            raise PrimaryReadingError(
+                f"{region_id}: cell {position} marks blank={blank} but its text disagrees; "
+                "a visually blank cell is never filled in"
+            )
+        _check_uncertainty(region_id, cell.get("uncertainty_reason", []))
 
 
 def write(path: Path, page: PrimaryPage) -> dict:

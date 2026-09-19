@@ -9,7 +9,7 @@
 The agent writes what it read into
 
     <document>/primary/transcripts/page-NNN.json
-    { "p156-r001": { "text": "...", "uncertainty": [ ... ] }, ... }
+    { "p156-r001": { "exact_text": "...", "uncertainty": [ ... ] }, ... }
 
 and this command joins it to the deterministic layout (bbox, region type,
 reading order), stamps the render and crop checksums, validates it against
@@ -34,13 +34,48 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from tools.source_factory.primary.model import (  # noqa: E402
+    Cell,
     PrimaryPage,
     PrimaryReadingError,
     PrimaryRegion,
+    Table,
     Uncertainty,
     sha256_of,
     write,
 )
+
+
+def _table(entry: dict | None) -> Table | None:
+    """Grid structure for a table region, if the agent recorded one.
+
+    A visually blank cell is carried through as blank; the model refuses any
+    cell whose `blank` flag disagrees with its text.
+    """
+
+    if entry is None:
+        return None
+    return Table(
+        bbox=tuple(entry["bbox"]),
+        rows=int(entry["rows"]),
+        columns=int(entry["columns"]),
+        cells=tuple(
+            Cell(
+                row=int(cell["row"]),
+                column=int(cell["column"]),
+                bbox=tuple(cell["bbox"]),
+                exact_text=cell.get("exact_text", ""),
+                uncertainty=tuple(
+                    Uncertainty(
+                        kind=item["kind"],
+                        detail=item["detail"],
+                        excerpt=item.get("excerpt"),
+                    )
+                    for item in cell.get("uncertainty", [])
+                ),
+            )
+            for cell in entry.get("cells", [])
+        ),
+    )
 
 
 def load_layout(document: Path, page_number: int) -> dict:
@@ -80,7 +115,9 @@ def command_seal(arguments: argparse.Namespace) -> int:
                 region_type=region["type"],
                 bbox=tuple(region["bbox"]),
                 reading_order=region["reading_order"],
-                text=entry["text"],
+                language=arguments.language,
+                exact_text=entry["exact_text"],
+                source_image_sha256=layout["image_sha256"],
                 uncertainty=tuple(
                     Uncertainty(
                         kind=item["kind"],
@@ -90,6 +127,7 @@ def command_seal(arguments: argparse.Namespace) -> int:
                     for item in entry.get("uncertainty", [])
                 ),
                 crop_sha256=sha256_of(crop) if crop.exists() else None,
+                table=_table(entry.get("table")),
             )
         )
     if missing:
@@ -98,11 +136,13 @@ def command_seal(arguments: argparse.Namespace) -> int:
             "Every region the detector found must be read or explicitly marked."
         )
 
+    source = document / "source" / "original.pdf"
     page = PrimaryPage(
         document_id=layout["document_id"],
         page_number=page_number,
+        source_sha256=sha256_of(source) if source.exists() else layout["image_sha256"],
         image_sha256=layout["image_sha256"],
-        render_sha256=layout["image_sha256"],
+        render_dpi=float(layout["dpi"]),
         language=arguments.language,
         notes=arguments.notes,
         regions=regions,
@@ -119,9 +159,9 @@ def command_seal(arguments: argparse.Namespace) -> int:
                 "primary": str(target),
                 "page": page_number,
                 "regions": len(payload["regions"]),
-                "blank": sum(1 for r in payload["regions"] if not r["text"].strip()),
-                "uncertain": sum(1 for r in payload["regions"] if r["uncertainty"]),
-                "characters": sum(len(r["text"]) for r in payload["regions"]),
+                "blank": sum(1 for r in payload["regions"] if not r["exact_text"].strip()),
+                "uncertain": sum(1 for r in payload["regions"] if r["uncertain"]),
+                "characters": sum(len(r["exact_text"]) for r in payload["regions"]),
             },
             indent=2,
         )
@@ -140,10 +180,10 @@ def command_show(arguments: argparse.Namespace) -> int:
     print(f"# page {payload['page_number']}  render {payload['image_sha256'][:12]}")
     for region in payload["regions"]:
         head = f"=== {region['region_id']} [{region['region_type']}]"
-        if region["uncertainty"]:
-            head += f"  uncertain: {[u['kind'] for u in region['uncertainty']]}"
+        if region["uncertain"]:
+            head += f"  uncertain: {[u[chr(39) + chr(39)] for u in []]}"
         print(head)
-        print(region["text"][: arguments.chars] or "(blank)")
+        print(region["exact_text"][: arguments.chars] or "(blank)")
     return 0
 
 

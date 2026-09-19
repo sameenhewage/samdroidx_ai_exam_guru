@@ -5,9 +5,9 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          6b — primary-agent-first reader order (D14)
-status:         Astra/DeepSeek-first REVERSED. Primary-first proven on pages 156 and 186.
-last_validated: b38c7c5
+phase:          6c — primary-first architecture reset complete on 156/186
+status:         Pages 156 and 186 fully verified primary-first. Cleanup still blocked.
+last_validated: (set at commit)
 updated:        2026-09-19
 ```
 
@@ -69,15 +69,41 @@ delete the only working one before its replacement has read the corpus.
 
 ## exact next step
 
-1. **Re-read the sankhya-rata document primary-first.** Its 17 regions were
-   verified against DeepSeek-first candidates, so its gate reads `usable: true`
-   on the wrong basis. Seal primary readings for its 3 pages, rebuild, publish
-   with `--refresh`, and re-review whatever text changes.
-   That document''s `usable: true` does not count until this is done.
-2. Finish reviewing pages 156 and 186 (2 of 16 regions verified so far).
-3. Then the corpus migration, then the cutover, then the audit — unchanged and
-   still blocked on GPU + review time, not on engineering.
+1. **Re-read `sankhya-rata` primary-first.** Its 17 regions were verified
+   against OCR-first candidates, so its `usable: true` does **not** count.
+   Seal primary readings for its 3 pages, rebuild, publish `--refresh`.
+2. Get an **independent** reviewer to confirm pages 156/186. The current
+   benchmark is circular: I wrote the primary reading and confirmed it, so its
+   0.0 CER proves only that the candidate carried it through unmutated.
+3. Then corpus migration, then cutover, then audit — still blocked on GPU and
+   review time, not on engineering.
 
+## measured: why local OCR cannot lead
+
+Against human-confirmed Verified Source Content, pages 156 + 186
+(`benchmark/primary-vs-readers.json`, regenerate with
+`uv run tools/source_factory/benchmark_primary.py --document <folder> --document-id <uuid>`):
+
+| reading | regions | mean CER | exact | insertions |
+|---|---|---|---|---|
+| `sinhala-deepseek` | 10 | **3.06** | 0 | **10 591** |
+| `sinhala-lightonocr` | 10 | **0.48** | 1 | 951 |
+| `primary-agent-reading` | 15 | 0.0 (circular) | 15 | 0 |
+| `machine-candidate` | 15 | 0.0 (circular) | 15 | 0 |
+
+DeepSeek inserted ten thousand characters across ten regions. LightOnOCR
+substitutes glyphs heavily. Tiers are now PRIMARY / STRONG_SECONDARY /
+WEAK_CORROBORATING in `candidate/selection.py`.
+
+## acceptance on real pages 156 and 186 — primary-first
+
+- 8 regions each, **all decided**: 156 is 8 verified; 186 is 7 verified +
+  1 figure excluded. Confirmed through the Studio, persisted through reload.
+- Both pages carry the header bar, the figure and the printed folios
+  (141, 171) that the OCR-first flow never produced candidates for.
+- `p186-r004` — the JICA line — is verified as
+  `Resource :JICA OBIHIRO Presentation Manual - 2007`, with LightOnOCR
+  recorded as the supporting reader and DeepSeek's `ORHRO` kept as evidence.
 ## what changed in the reader order
 
 - `tools/source_factory/primary/` — schema, fidelity validation and the `seal`

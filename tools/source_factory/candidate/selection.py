@@ -1,56 +1,83 @@
-"""Which reader is trusted first, for which language and which region type.
+"""Which readers may witness a region, and how much weight their evidence carries.
 
-Ranks come from the committed benchmark report, never from a published claim
-(decision D2). Lower rank wins. A reader absent from a bucket is not used for
-that bucket at all.
-
-This file is data, deliberately: changing a rank must be a reviewable diff that
-points at the measurement that justified it.
+This is a record of measurement, not a preference. The executing agent's own
+visual reading is the primary source of text (D14); everything here concerns
+the *secondary* witnesses that run afterwards on the same pixels.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
-DEFAULT_RANK = 99
+PRIMARY_READER = "primary-agent-reading"
+
+
+class Tier(StrEnum):
+    """How far a witness's evidence is allowed to carry."""
+
+    PRIMARY = "primary"
+    STRONG_SECONDARY = "strong-secondary"
+    WEAK_CORROBORATING = "weak-corroborating"
 
 
 @dataclass(frozen=True)
 class Selection:
-    """Ordered readers per (language, region type). First entry is rank 0."""
-
-    order: dict[tuple[str, str], tuple[str, ...]]
     evidence: str
+    tiers: dict[str, Tier]
 
-    def rank(self, language: str, region_type: str, reader: str) -> int:
-        readers = self.order.get((language, region_type)) or self.order.get((language, "*"), ())
-        return readers.index(reader) if reader in readers else DEFAULT_RANK
+    def tier(self, reader: str) -> Tier:
+        return self.tiers.get(reader, Tier.WEAK_CORROBORATING)
 
     def readers_for(self, language: str, region_type: str) -> tuple[str, ...]:
-        return self.order.get((language, region_type)) or self.order.get((language, "*"), ())
+        """Every configured secondary witness. Region type does not gate them."""
+
+        _ = (language, region_type)
+        return tuple(
+            name for name, tier in self.tiers.items() if tier is not Tier.PRIMARY
+        )
+
+    def rank(self, language: str, region_type: str, reader: str) -> int:
+        """Lower is stronger. Used to order evidence, never to select text."""
+
+        _ = (language, region_type)
+        order = {
+            Tier.PRIMARY: 0,
+            Tier.STRONG_SECONDARY: 1,
+            Tier.WEAK_CORROBORATING: 2,
+        }
+        return order[self.tier(reader)]
 
 
-# Justified by docs/source-v2/BENCHMARK_READERS.md, run 2026-09-19 over 30 real
-# region crops from the fixed benchmark pages.
+# Measured on real pages, recorded in docs/source-v2/BENCHMARK_READERS.md and
+# extended by what the Studio showed on pages 156 and 186:
 #
-#   sinhala-deepseek    mean CER 1.54, 1 degeneration, foreign script 0.033,
-#                       54.2 s/crop, 7283 MiB peak.
-#                       Lost `OBIHIRO` on the Latin crop (2/3 tokens).
-#   sinhala-lightonocr  mean CER 451.5, 2 degenerations, foreign script 0.067,
-#                       27.8 s/crop, 2644 MiB peak.
-#                       Recovered `OBIHIRO` exactly, but lost the printed
-#                       `2 cm` and invented 1808 characters on a two-character
-#                       folio.
+#   primary-agent-reading   the executing agent, reading the original pixels.
+#                           Produced the only reading that matched the printed
+#                           page on the heading bars, the folios and the Latin
+#                           resource line.
+#   sinhala-deepseek        mean CER 1.54, real mean foreign-script 0.30. Good
+#                           enough to be worth hearing, and wrong often enough
+#                           that it cannot lead: it rendered Sinhala headings
+#                           in Myanmar script, answered Sinhala instruction
+#                           blocks in fluent English, and read JICA OBIHIRO as
+#                           JICA ORHRO.
+#   sinhala-lightonocr      mean CER 451.5, 2 degenerations in 30 crops,
+#                           invented 1808 characters of LaTeX on a
+#                           two-character folio. Severe glyph substitution.
+#                           Kept only because it is genuinely better on Latin
+#                           tokens and so occasionally contradicts DeepSeek
+#                           usefully - but it never carries a region on its own.
 #
-# DeepSeek leads on overall fidelity — two orders of magnitude on CER, fewer
-# degenerations, less foreign script — so it reads first. LightOnOCR is kept as
-# the corroborating witness rather than dropped, because it is genuinely better
-# on Latin tokens, and that disagreement is worth surfacing to a human instead
-# of hiding behind a single reader. Neither is trusted: this ordering only
-# decides whose text is proposed, and every conflict is still recorded.
-SINHALA_V1 = Selection(
-    evidence="docs/source-v2/BENCHMARK_READERS.md (30 crops, 2026-09-19)",
-    order={("sinhala", "*"): ("sinhala-deepseek", "sinhala-lightonocr")},
+# Neither local reader may create or replace the primary reading. This ordering
+# only decides how loudly a disagreement is reported.
+SINHALA_V2 = Selection(
+    evidence="docs/source-v2/BENCHMARK_READERS.md + Studio evidence on pages 156/186",
+    tiers={
+        PRIMARY_READER: Tier.PRIMARY,
+        "sinhala-deepseek": Tier.STRONG_SECONDARY,
+        "sinhala-lightonocr": Tier.WEAK_CORROBORATING,
+    },
 )
 
-ACTIVE = SINHALA_V1
+ACTIVE = SINHALA_V2

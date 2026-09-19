@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tools.source_factory.candidate import selection  # noqa: E402
 from tools.source_factory.candidate.machine import PrimaryReading, Witness, build  # noqa: E402
 from tools.source_factory.layout.corpus import load_document  # noqa: E402
+from tools.source_factory.primary.model import PROVENANCE as PRIMARY_PROVENANCE  # noqa: E402
 from tools.source_factory.readers import crops as crop_tools  # noqa: E402
 
 
@@ -68,8 +69,8 @@ def _add_uncropped_regions(
                 primary=PrimaryReading(
                     region_id=region["region_id"],
                     region_type=region["region_type"],
-                    text=region["text"],
-                    uncertainty=tuple(region.get("uncertainty", [])),
+                    text=region["exact_text"],
+                    uncertainty=tuple(region.get("uncertainty_reason", [])),
                 ),
                 witnesses=[],
             )
@@ -78,6 +79,44 @@ def _add_uncropped_regions(
             counters["abstained"] += 1 if result.abstained else 0
             counters["critical_conflict"] += 1 if result.critical_conflict else 0
         pages[page_number].sort(key=lambda item: item["region_id"])
+
+
+def _write_comparison(document, pages: dict[int, list[dict]]) -> None:
+    """The evidence behind each proposal, kept separately from the proposal.
+
+    A reviewer asking "why does it say that" should not have to read the
+    candidate file, and a later audit should be able to see what every reader
+    said without trusting the candidate's summary of it.
+    """
+
+    root = document.folder / "comparison" / "pages"
+    root.mkdir(parents=True, exist_ok=True)
+    for page_number, regions in sorted(pages.items()):
+        payload = {
+            "document_id": document.document_id,
+            "page_number": page_number,
+            "regions": [
+                {
+                    "region_id": region["region_id"],
+                    "primary_text": region.get("primary_text", ""),
+                    "selected_text": region.get("selected_text", region.get("text", "")),
+                    "selected_source": region.get("selected_source"),
+                    "supporting_readers": region.get("supporting_readers", []),
+                    "rejected_readers": region.get("rejected_readers", {}),
+                    "disagreements": region.get("disagreement", {}),
+                    "critical_conflict": region.get("critical_conflict", False),
+                    "validation_findings": region.get("validation_findings", []),
+                    "uncertain": region.get("uncertain", False),
+                    "requires_human_attention": region.get(
+                        "requires_human_attention", False
+                    ),
+                }
+                for region in regions
+            ],
+        }
+        (root / f"page-{page_number:03d}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def load_primary(document) -> dict[int, dict]:
@@ -97,7 +136,7 @@ def load_primary(document) -> dict[int, dict]:
     pages: dict[int, dict] = {}
     for path in sorted(folder.glob("page-*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("provenance") != "primary-agent-visual":
+        if payload.get("provenance") != PRIMARY_PROVENANCE:
             raise SystemExit(f"{path}: not a primary agent reading")
         pages[int(payload["page_number"])] = payload
     if not pages:
@@ -146,8 +185,8 @@ def command_build(arguments: argparse.Namespace) -> int:
             primary=PrimaryReading(
                 region_id=region["region_id"],
                 region_type=region["region_type"],
-                text=region["text"],
-                uncertainty=tuple(region.get("uncertainty", [])),
+                text=region["exact_text"],
+                uncertainty=tuple(region.get("uncertainty_reason", [])),
             ),
             witnesses=witnesses,
         )
@@ -159,7 +198,9 @@ def command_build(arguments: argparse.Namespace) -> int:
 
     _add_uncropped_regions(primary_pages, pages, counters)
 
-    root = document.folder / "candidates"
+    _write_comparison(document, pages)
+
+    root = document.folder / "candidates" / "pages"
     root.mkdir(parents=True, exist_ok=True)
     for page_number, regions in sorted(pages.items()):
         target = root / f"page-{page_number:03d}.json"

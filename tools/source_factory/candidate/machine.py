@@ -36,7 +36,7 @@ CORROBORATED_EXPECTED_SCRIPT = 0.50
 
 # The executing agent, reading the original pixels. Not a model, not a
 # provider, not a service. It reads first and the local readers corroborate.
-PRIMARY_READER = "primary-agent-visual"
+PRIMARY_READER = "primary-agent-reading"
 # Below this agreement the witnesses are not quibbling about a glyph, they are
 # reading a different text. That has to reach a human even with no critical
 # token in sight.
@@ -94,17 +94,52 @@ class MachineCandidate:
     agreement_ratio: float = 1.0
     critical_conflict: bool = False
     disagreement: DisagreementMap | None = None
+    primary_text: str = ""
+    supporting_readers: list[str] = field(default_factory=list)
+    validation_findings: list[str] = field(default_factory=list)
+    uncertain: bool = False
+
+    @property
+    def selected_source(self) -> str | None:
+        return self.chosen_reader
+
+    @property
+    def requires_human_attention(self) -> bool:
+        """Anything a reviewer must look at rather than skim.
+
+        Deliberately broad. The cost of flagging a clean region is a glance;
+        the cost of missing a wrong one is corrupt source content.
+        """
+
+        return bool(
+            self.critical_conflict
+            or self.uncertain
+            or self.abstained
+            or self.validation_findings
+        )
 
     def to_json(self) -> dict:
         payload = {
             "region_id": self.region_id,
             "region_type": self.region_type,
+            # `text` is what the Studio proposes. `selected_text` is the same
+            # value named for the comparison record; `primary_text` is kept
+            # beside it so a reviewer can always see what the agent read even
+            # if a later revision changes the proposal.
             "text": self.text,
+            "primary_text": self.primary_text,
+            "selected_text": self.text,
+            "selected_source": self.chosen_reader,
             "abstained": self.abstained,
             "reason": self.reason,
             "chosen_reader": self.chosen_reader,
             "witnesses": self.witnesses,
+            "supporting_readers": self.supporting_readers,
+            "rejected_readers": self.rejected,
             "rejected": self.rejected,
+            "validation_findings": self.validation_findings,
+            "uncertain": self.uncertain,
+            "requires_human_attention": self.requires_human_attention,
             "agreement_ratio": round(self.agreement_ratio, 4),
             "critical_conflict": self.critical_conflict,
             "uncertain_tokens": self.uncertain_tokens,
@@ -187,6 +222,10 @@ def build(
     }
     usable = [witness for witness in witnesses if witness.trustworthy]
     flagged = [item.get("kind", "?") for item in primary.uncertainty]
+    findings: list[str] = [
+        f"primary reading marked uncertain: {item.get('detail', '')}"[:200]
+        for item in primary.uncertainty
+    ]
 
     if primary.blank:
         # A region the agent read as carrying no text - a figure, a rule, a
@@ -203,6 +242,9 @@ def build(
             witnesses=names,
             rejected=rejected,
             agreement_ratio=0.0,
+            primary_text="",
+            validation_findings=findings,
+            uncertain=bool(flagged),
         )
 
     if not usable:
@@ -220,6 +262,10 @@ def build(
             rejected=rejected,
             agreement_ratio=0.0,
             critical_conflict=bool(flagged),
+            primary_text=primary.text,
+            validation_findings=findings
+            + ["no local reader corroborated this region"],
+            uncertain=bool(flagged),
         )
 
     # Compare the primary reading against every usable witness on equal terms.
@@ -234,6 +280,37 @@ def build(
     # case a human has to look at, whether or not a digit happens to differ.
     substantive = disagreement.agreement_ratio < SUBSTANTIVE_DISAGREEMENT
     critical = disagreement.critical_conflict or bool(flagged) or substantive
+    if substantive:
+        findings.append("local readers broadly disagree with the primary reading")
+    # The JICA rule. Where every witness lines up against the primary on a
+    # critical token, that is the strongest signal the pipeline can produce -
+    # and still not a licence to overwrite. The primary text stands and the
+    # conflict is escalated, because two OCR models agreeing is not evidence
+    # that the page says what they say. A human looks.
+    unanimous_against = False
+    for cell in disagreement.cells:
+        opinions = {
+            variant.value: set(variant.readers) for variant in cell.variants
+        }
+        primary_value = next(
+            (value for value, readers in opinions.items() if PRIMARY_READER in readers),
+            None,
+        )
+        against = {
+            value: readers
+            for value, readers in opinions.items()
+            if PRIMARY_READER not in readers
+        }
+        if primary_value is not None and len(against) == 1:
+            other, readers = next(iter(against.items()))
+            if len(readers) >= len(usable):
+                unanimous_against = True
+                findings.append(
+                    f"every local reader reads {other!r} where the primary reading has "
+                    f"{primary_value!r} ({cell.kind}); the primary reading is kept and "
+                    "the conflict escalated rather than overwritten"
+                )
+    critical = critical or unanimous_against
     corroboration = (
         f"corroborated against {len(usable)} local reader(s)"
         if len(usable) > 1
@@ -257,4 +334,10 @@ def build(
         agreement_ratio=disagreement.agreement_ratio,
         critical_conflict=critical,
         disagreement=disagreement,
+        primary_text=primary.text,
+        supporting_readers=[
+            witness.reader for witness in usable if witness.text == primary.text
+        ],
+        validation_findings=findings,
+        uncertain=bool(flagged),
     )

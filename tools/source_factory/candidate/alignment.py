@@ -22,8 +22,13 @@ OPERATORS = frozenset({"+", "-", "*", "/", "=", "<", ">", "×", "÷", "±", "x",
 MAX_TEXT = 100_000
 MAX_TOKENS = 20_000
 
-Kind = Literal["text", "number", "operator", "url", "email", "structure"]
-CRITICAL_KINDS = frozenset({"number", "operator", "url", "email"})
+Kind = Literal["text", "number", "operator", "url", "email", "identifier", "structure"]
+CRITICAL_KINDS = frozenset({"number", "operator", "url", "email", "identifier"})
+# An all-caps Latin run is an acronym, a code or a proper name - OBIHIRO, JICA,
+# NIE. A substitution there is silent, plausible and damaging, so it is treated
+# as critical rather than as ordinary prose. Seen for real: DeepSeek read the
+# printed OBIHIRO as ORHRO.
+IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9./-]{2,}$")
 
 
 def tokens(value: str) -> list[tuple[str, int]]:
@@ -48,6 +53,8 @@ def kind_of(left: str, right: str) -> Kind:
         return "operator"
     if any(value and value[0].isdigit() for value in values):
         return "number"
+    if any(IDENTIFIER.fullmatch(value) for value in values if value):
+        return "identifier"
     return "text"
 
 

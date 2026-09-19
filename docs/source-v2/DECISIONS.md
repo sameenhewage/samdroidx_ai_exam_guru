@@ -154,3 +154,50 @@ Transcribe what is printed, not what it should say:
 - numbers, equations, table cell positions, and **blank cells as blank**
 - never correct, infer, translate, solve, normalise or fill in missing content
 - where a glyph is genuinely unreadable, record uncertainty instead of guessing
+
+### D14 addendum - reader tiers, measured (2026-09-19)
+
+Local OCR is not one tier. Measured against human-confirmed Verified Source
+Content on pages 156 and 186 (`benchmark/primary-vs-readers.json`):
+
+| reading | regions | mean CER | exact | insertions |
+|---|---|---|---|---|
+| `sinhala-deepseek` | 10 | **3.06** | 0 | **10 591** |
+| `sinhala-lightonocr` | 10 | **0.48** | 1 | 951 |
+
+DeepSeek has the lower CER on the earlier 30-crop crop benchmark but here it
+over-generates catastrophically - ten thousand inserted characters across ten
+regions. LightOnOCR substitutes glyphs heavily and has produced 1808 characters
+of invented LaTeX on a two-character folio. **Neither is fit to lead.**
+
+So the tiers, in `candidate/selection.py`:
+
+- `primary-agent-reading` - **PRIMARY**. The executing agent, reading pixels.
+- `sinhala-deepseek` - **STRONG_SECONDARY**.
+- `sinhala-lightonocr` - **WEAK_CORROBORATING**. Never carries a region alone;
+  kept because it is genuinely better on Latin tokens and so contradicts
+  DeepSeek usefully. It read the printed `JICA OBIHIRO` correctly where
+  DeepSeek read `JICA ORHRO`.
+
+Tier orders how loudly evidence is reported. It never selects text.
+
+### D14 addendum - the JICA rule
+
+Where **every** local reader agrees against the primary reading on a token, the
+primary text still stands and the conflict is escalated. Two OCR models
+agreeing is not evidence that the page says what they say. Implemented in
+`machine.build`; locked by
+`test_every_reader_agreeing_against_the_primary_escalates_but_never_overwrites`.
+
+All-caps Latin runs (`OBIHIRO`, `JICA`, `NIE`) are now classified as
+`identifier` and treated as critical tokens, because a substitution there is
+silent, plausible and damaging.
+
+### D14 addendum - circularity in the primary benchmark
+
+When the same party writes the primary reading and confirms it in the Studio,
+the resulting CER of 0.0 is **circular** and is not evidence of accuracy. It
+shows only that the Machine Candidate carried the primary reading through
+unmutated. `benchmark_primary.py` prints this caveat in every report. An
+independent reviewer is required before any accuracy claim is made for the
+primary reading.

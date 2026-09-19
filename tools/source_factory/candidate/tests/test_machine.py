@@ -129,6 +129,38 @@ def test_the_primary_reading_survives_every_witness_being_rejected() -> None:
     assert "uncorroborated" in result.reason
 
 
+def test_every_reader_agreeing_against_the_primary_escalates_but_never_overwrites() -> None:
+    """The JICA rule.
+
+    Two OCR models agreeing is not evidence that the page says what they say.
+    Where they line up against the primary reading on a critical token, the
+    primary text stands and the conflict is escalated to a human.
+    """
+
+    result = candidate(
+        [
+            Witness(reader="sinhala-deepseek", text="Resource :JICA OBIHIRO 2007", rank=1),
+            Witness(reader="sinhala-lightonocr", text="Resource :JICA OBIHIRO 2007", rank=2),
+        ],
+        primary_text="Resource :JICA ORHRO 2007",
+    )
+    assert result.text == "Resource :JICA ORHRO 2007", "the primary reading is not overwritten"
+    assert result.selected_source == PRIMARY_READER
+    assert result.requires_human_attention
+    assert any("escalated rather than overwritten" in note for note in result.validation_findings)
+
+
+def test_a_corroborating_reader_is_recorded_as_supporting() -> None:
+    result = candidate(
+        [
+            Witness(reader="sinhala-deepseek", text="same reading", rank=1),
+            Witness(reader="sinhala-lightonocr", text="different reading", rank=2),
+        ],
+        primary_text="same reading",
+    )
+    assert result.supporting_readers == ["sinhala-deepseek"]
+
+
 def test_a_blank_primary_reading_abstains_with_its_recorded_reason() -> None:
     result = candidate(
         [],

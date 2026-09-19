@@ -1,47 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exam-guru.local/schemas/source-content/primary-reading.schema.json",
-  "title": "Source V2 primary visual reading",
-  "description": "One page transcribed directly from the original render by the executing agent, before any local OCR has run. This is the PRIMARY source candidate: local specialist readers are secondary witnesses that run afterwards on the same pixels and may corroborate or contradict it. Nothing here is verified; a human still decides every region against the original page. See docs/source-v2/DECISIONS.md D14.",
+  "title": "Source V2 primary reading (executing agent)",
+  "description": "One page transcribed directly from the original render by the executing agent, before any local OCR has run or been looked at. This is the PRIMARY source interpretation. DeepSeek is a strong secondary witness and LightOnOCR a weak corroborating one; both run afterwards on the same pixels and may contradict but never replace this. Nothing here is verified: a human still decides every region against the original page. See docs/source-v2/DECISIONS.md D14.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "document_id",
     "page_number",
+    "source_sha256",
     "image_sha256",
-    "render_sha256",
+    "render_dpi",
     "provenance",
     "read_at",
     "reader_version",
     "regions"
   ],
   "properties": {
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "2.0.0" },
     "document_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "page_number": { "type": "integer", "minimum": 1 },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Checksum of the original uploaded PDF or image."
+    },
     "image_sha256": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
-      "description": "Checksum of the rendered page the regions were measured from."
+      "description": "Checksum of the rendered page that was looked at."
     },
-    "render_sha256": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$",
-      "description": "Checksum of the exact image that was looked at. Equal to image_sha256 for a whole-page reading; the crop checksum when a region was read from its crop."
-    },
+    "render_dpi": { "type": "number", "minimum": 72, "maximum": 1200 },
     "language": { "type": "string", "maxLength": 32 },
     "provenance": {
-      "const": "primary-agent-visual",
+      "const": "primary-agent-reading",
       "description": "Recorded so no later process can mistake this for OCR output."
     },
     "read_at": { "type": "string", "format": "date-time" },
     "reader_version": { "type": "string", "minLength": 1, "maxLength": 64 },
     "notes": { "type": "string", "maxLength": 2000 },
-    "regions": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/region" }
-    }
+    "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } }
   },
   "$defs": {
     "region": {
@@ -52,9 +51,12 @@
         "region_type",
         "bbox",
         "reading_order",
-        "text",
-        "uncertainty",
-        "status"
+        "language",
+        "exact_text",
+        "uncertain",
+        "status",
+        "source_image_sha256",
+        "provenance"
       ],
       "properties": {
         "region_id": { "type": "string", "pattern": "^p[0-9]{3}-r[0-9]{3}$" },
@@ -69,23 +71,31 @@
           "description": "[x0, y0, x1, y1] in rendered pixels, from the deterministic layout."
         },
         "reading_order": { "type": "integer", "minimum": 0 },
+        "language": { "type": "string", "maxLength": 32 },
         "crop_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
-        "text": {
+        "source_image_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "provenance": { "const": "primary-agent-reading" },
+        "exact_text": {
           "type": "string",
-          "description": "Exactly what is printed. Spelling as printed including apparent typos, X versus × as printed, punctuation, spacing, line breaks and blank lines preserved, URLs and spaced emails exactly as spaced, blank table cells left blank. Never corrected, inferred, translated, solved, normalised or filled in."
+          "description": "Exactly what is printed. Spelling as printed including apparent typos; X versus × as printed and never normalised; punctuation, spacing, line breaks and blank lines preserved; URLs and spaced emails such as 'info @ nie.lk' exactly as spaced; blank table cells left blank. Never corrected, inferred, translated, solved, normalised or filled in."
         },
-        "uncertainty": {
+        "uncertain": {
+          "type": "boolean",
+          "description": "True when any part of this region could not be read with confidence. Guessing is not permitted; mark uncertain instead."
+        },
+        "uncertainty_reason": {
           "type": "array",
-          "description": "Every place the agent could not read the page with confidence. Empty means the whole region was legible.",
-          "items": { "$ref": "#/$defs/uncertain" }
+          "items": { "$ref": "#/$defs/uncertainty" },
+          "description": "Required and non-empty whenever uncertain is true."
         },
+        "table": { "$ref": "#/$defs/table" },
         "status": {
           "const": "unverified",
           "description": "A primary reading is never self-verifying. Only a human confirming against the original page creates Verified Source Content."
         }
       }
     },
-    "uncertain": {
+    "uncertainty": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "detail"],
@@ -97,11 +107,54 @@
             "cut-off",
             "non-text",
             "layout-doubt",
-            "spacing-doubt"
+            "spacing-doubt",
+            "table-structure"
           ]
         },
         "detail": { "type": "string", "minLength": 1, "maxLength": 400 },
         "excerpt": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bbox", "rows", "columns", "cells"],
+      "description": "Grid structure for a table region. A visually blank cell is recorded as blank and never filled in.",
+      "properties": {
+        "bbox": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "rows": { "type": "integer", "minimum": 1 },
+        "columns": { "type": "integer", "minimum": 1 },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/cell" } }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "column", "bbox", "exact_text", "blank", "uncertain"],
+      "properties": {
+        "row": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "bbox": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "exact_text": { "type": "string" },
+        "blank": {
+          "type": "boolean",
+          "description": "True when the printed cell is visually empty. Must agree with exact_text being empty."
+        },
+        "uncertain": { "type": "boolean" },
+        "uncertainty_reason": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/uncertainty" }
+        }
       }
     }
   }

@@ -96,9 +96,9 @@ def main() -> int:
 
     folder = arguments.document.resolve()
     manifest = load(folder / "manifest.json")
-    candidate_files = sorted((folder / "candidates").glob("page-*.json"))
+    candidate_files = sorted((folder / "candidates" / "pages").glob("page-*.json"))
     if not candidate_files:
-        raise SystemExit(f"no candidates under {folder / 'candidates'}")
+        raise SystemExit(f"no candidates under {folder}/candidates/pages")
 
     client = httpx.Client(
         base_url=arguments.api,
