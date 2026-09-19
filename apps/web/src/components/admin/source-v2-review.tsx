@@ -8,7 +8,7 @@
  * The editor only opens when they choose to correct something.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -69,6 +69,7 @@ const TEXT = {
     original: "මුල් පිටුව",
     candidate: "යන්ත්‍රය කියවූ පෙළ",
     confirm: "පෙළ නිවැරදියි",
+    locate: "පිටුවේ පෙන්වන්න",
     correct: "පෙළ නිවැරදි කරන්න",
     saveCorrection: "නිවැරදි කළ පෙළ සුරකින්න",
     cancel: "අවලංගු කරන්න",
@@ -86,6 +87,7 @@ const TEXT = {
     original: "Original page",
     candidate: "Machine reading",
     confirm: "Text is correct",
+    locate: "Locate on page",
     correct: "Correct the text",
     saveCorrection: "Save corrected text",
     cancel: "Cancel",
@@ -117,6 +119,53 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [note, setNote] = useState("");
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
+  const [pulse, setPulse] = useState(false);
+  const selectedRegionIdRef = useRef<string | null>(null);
+  const viewerRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLOListElement | null>(null);
+
+  /**
+   * One selection drives both panes.
+   *
+   * `origin` says which pane the teacher acted in, so the *other* pane is the
+   * one that scrolls. Scrolling the pane they just clicked in would move the
+   * thing under their cursor.
+   */
+  const select = useCallback(
+    (regionId: string, origin: "card" | "overlay") => {
+      // Re-selecting what is already selected must not scroll anything; a
+      // teacher clicking inside the card they are reading should not have the
+      // page move.
+      if (regionId === selectedRegionIdRef.current) return;
+      selectedRegionIdRef.current = regionId;
+      setSelectedRegionId(regionId);
+      setPulse(true);
+      window.setTimeout(() => setPulse(false), 900);
+
+      if (origin === "card") {
+        const overlay = document.querySelector<HTMLElement>(
+          `[data-testid="overlay-${regionId}"]`,
+        );
+        const viewer = viewerRef.current;
+        if (overlay && viewer) {
+          // Centre the region in the viewer without scrolling the whole page.
+          const top =
+            overlay.offsetTop - viewer.clientHeight / 2 + overlay.offsetHeight / 2;
+          viewer.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        }
+        return;
+      }
+
+      const card = document.querySelector<HTMLElement>(`[data-testid="region-${regionId}"]`);
+      const list = listRef.current;
+      if (card && list) {
+        const top = card.offsetTop - list.clientHeight / 2 + card.offsetHeight / 2;
+        list.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      }
+    },
+    [],
+  );
 
   const labels = useMemo(
     () => (page?.language === "sinhala" ? TEXT.sinhala : TEXT.english),
@@ -196,20 +245,68 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
       ) : null}
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
-        <figure className="min-h-0 overflow-auto rounded border border-slate-300 bg-white p-2">
+        <figure
+          ref={viewerRef}
+          className="min-h-0 overflow-auto rounded border border-slate-300 bg-white p-2"
+        >
           <figcaption className="pb-2 text-sm font-medium text-slate-700">
             {labels.original}
           </figcaption>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={api(`/source-v2/pages/${page.page_id}/render`)}
-            alt={`${labels.original} ${page.page_number}`}
-            className="w-full"
-            data-testid="source-v2-original"
-          />
+          {/* The overlays are positioned as percentages of this wrapper, which
+              is exactly the rendered image box. That keeps them aligned under
+              any scaling - window resize, split-pane drag, zoom - with no
+              recalculation. */}
+          <div className="relative w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={api(`/source-v2/pages/${page.page_id}/render`)}
+              alt={`${labels.original} ${page.page_number}`}
+              className="block w-full"
+              data-testid="source-v2-original"
+            />
+            {page.regions.map((region) => {
+              if (!region.bbox || region.bbox.length !== 4) return null;
+              const [x0, y0, x1, y1] = region.bbox;
+              const selected = region.region_id === selectedRegionId;
+              return (
+                <button
+                  key={region.region_id}
+                  type="button"
+                  aria-label={`${labels.locate}: ${region.region_id}`}
+                  aria-pressed={selected}
+                  data-testid={`overlay-${region.region_id}`}
+                  data-selected={selected}
+                  onClick={() => select(region.region_id, "overlay")}
+                  style={{
+                    left: `${(x0 / page.width) * 100}%`,
+                    top: `${(y0 / page.height) * 100}%`,
+                    width: `${((x1 - x0) / page.width) * 100}%`,
+                    height: `${((y1 - y0) / page.height) * 100}%`,
+                  }}
+                  className={cn(
+                    "absolute cursor-pointer rounded-[2px] transition-colors",
+                    selected
+                      ? "z-10 border-[3px] border-sky-600 bg-sky-400/15 ring-2 ring-sky-300/70"
+                      : "border border-transparent hover:border-2 hover:border-sky-400/70 hover:bg-sky-300/10",
+                    selected && pulse ? "animate-pulse" : "",
+                  )}
+                >
+                  {selected ? (
+                    <span className="absolute -top-px left-0 -translate-y-full rounded-t bg-sky-600 px-1 text-[10px] font-semibold leading-4 text-white">
+                      {region.region_id.split("-").pop()}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         </figure>
 
-        <ol className="min-h-0 space-y-3 overflow-auto" data-testid="source-v2-regions">
+        <ol
+          ref={listRef}
+          className="min-h-0 space-y-3 overflow-auto"
+          data-testid="source-v2-regions"
+        >
           {page.regions.map((region) => {
             const unreadable = region.abstained || region.text.trim().length === 0;
             const isEditing = editing === region.region_id;
@@ -218,12 +315,47 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                 key={region.region_id}
                 data-testid={`region-${region.region_id}`}
                 data-region-state={region.state}
-                className="rounded border border-slate-300 bg-white p-3"
+                data-selected={region.region_id === selectedRegionId}
+                tabIndex={0}
+                onClick={() => select(region.region_id, "card")}
+                onFocus={(event) => {
+                  // onFocus bubbles, so focusing the correction textarea would
+                  // otherwise re-select and scroll the page out from under
+                  // someone who is mid-sentence. Only the card itself selects.
+                  if (event.target === event.currentTarget) {
+                    select(region.region_id, "card");
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    select(region.region_id, "card");
+                  }
+                }}
+                className={cn(
+                  "cursor-pointer rounded border bg-white p-3 outline-none transition-shadow",
+                  region.region_id === selectedRegionId
+                    ? "border-sky-600 border-l-4 shadow-md ring-1 ring-sky-300"
+                    : "border-slate-300 hover:border-slate-400",
+                )}
               >
                 <div className="flex flex-wrap items-center gap-2 pb-2">
                   <span className="font-mono text-xs text-slate-600">
                     {region.region_id} · {region.region_type}
                   </span>
+                  <button
+                    type="button"
+                    data-testid={`locate-${region.region_id}`}
+                    title={labels.locate}
+                    aria-label={`${labels.locate}: ${region.region_id}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      select(region.region_id, "card");
+                    }}
+                    className="rounded border border-slate-400 px-1.5 py-0.5 text-xs text-slate-700 hover:border-sky-600 hover:text-sky-700"
+                  >
+                    ⌖ {labels.locate}
+                  </button>
                   <span
                     className={cn(
                       "rounded border px-2 py-0.5 text-xs font-medium",
