@@ -199,6 +199,16 @@ class SinhalaDeepSeekOCRReader(_TorchReader):
     base_model = "unsloth/DeepSeek-OCR"
     adapter = "avishadilhara/sinhala-deepseek-ocr-Qlora"
 
+    # DeepSeek-OCR expects one of its own short mode prompts. A free-form
+    # instruction makes it echo the instruction for tens of thousands of
+    # tokens instead of reading the page.
+    prompt = "<image>\nFree OCR."
+    # Tiling is for full pages. On a region crop it multiplies the work by an
+    # order of magnitude for no gain.
+    crop_mode = False
+    base_size = 1024
+    image_size = 640
+
     def _build(self) -> _Loaded:
         from peft import PeftModel
         from transformers import AutoModel, AutoTokenizer
@@ -233,16 +243,19 @@ class SinhalaDeepSeekOCRReader(_TorchReader):
             image_path.write_bytes(buffer.tobytes())
             inner = getattr(model, "base_model", model)
             inner = getattr(inner, "model", inner)
+            # `eval_mode=True` is required: without it `infer` prints the
+            # reading and returns None, which would look like an abstention.
             output = inner.infer(
                 tokenizer,
-                prompt=f"<image>\n{SINHALA_INSTRUCTION}",
+                prompt=self.prompt,
                 image_file=str(image_path),
                 output_path=workspace,
-                base_size=1024,
-                image_size=640,
-                crop_mode=True,
+                base_size=self.base_size,
+                image_size=self.image_size,
+                crop_mode=self.crop_mode,
                 save_results=False,
                 test_compress=False,
+                eval_mode=True,
             )
         return (output or "").strip()
 
