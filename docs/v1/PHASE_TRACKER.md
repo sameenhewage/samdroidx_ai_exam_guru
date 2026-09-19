@@ -17,6 +17,18 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Source V2 Phase 1: real page layout segmentation
+
+- **Status:** **SOURCE FIDELITY GATE: still FAIL.** This is layout geometry only. No OCR, no transcription, no candidate, no knowledge and no RAG path was touched, and nothing here claims source accuracy.
+- **What changed:** new `tools/source_factory/layout/` detector that turns a rendered page image into typed regions (`text`, `heading`, `figure`, `table`, `decorative`, `unknown`) with bboxes, reading order and `column`/`parent` links. Naive whole-page vertical projection is explicitly **not** the primary algorithm.
+- **How it works:** adaptive ink view for glyphs (so black type on a dark tinted band survives), any-mark view for panels/bars/artwork, morphological rule extraction, glyph→line-fragment smearing, a page-learned word-gap merge (Otsu over same-row gaps, clamped to 1.2–2.5 line heights), artwork-zone grouping, then a **row-tolerant** column profile plus straddler slabs, per-column block cutting and text/graphic row separation.
+- **Why row-tolerant:** a single line, diagram label or decorative bar crossing the centre used to veto the gutter and merge both columns. The profile now counts how many printed rows reach each pixel column and allows 15% of rows to cross.
+- **Fixed benchmark (membership fixed, `tools/source_factory/layout/benchmark.py`):** real Grade 5 Sinhala teacher-guide pages 4, 152, 156, 157, 163, 171, 186, 197 — single-column front matter with a two-up signature block, dense two-column prose, the verified page 156, a figure crossing the centre gutter, full-width decorative bars over a two-column body, a ruled tinted table, stacked in-column figures, and portraits.
+- **Visual evidence (the real acceptance test):** annotated previews were regenerated and inspected by eye for all eight pages. Page 156 and page 186 segment into two clean columns with column-major reading order; page 157's centre-crossing diagram is one `figure` and the columns below it survive; pages 152/156/163's full-width bars are `decorative` and create no false columns; page 171's table is typed `table`; page 4's signature pair is recovered as a nested two-column block. No column merging, no clipped text and no figure read as prose was found on the eight pages.
+- **Verification:** `uv run tools/source_factory/layout/cli.py benchmark` (8 pages, all 2-column where expected) and `uv run tools/source_factory/layout/tests/test_detect.py` → **14 passed**, including six synthetic structural tests and the eight real benchmark pages (those skip automatically when the rendered corpus is absent).
+- **Corpus safety:** rendered pages, previews and region JSON are written under the gitignored `.exam-guru-data/.../layout/` area and are not committed.
+- **Known limitations:** reverse-out title bands classify as `decorative` rather than `heading`; long justified paragraphs occasionally split one line early; ruleless, untinted tables are still segmented as columns of text.
+
 ### 2026-09-19 — Segment-width hypothesis for Candidate B tested and rejected
 
 - **Status:** **SOURCE FIDELITY GATE: FAIL.** Nothing integrated. The accepted `62e4527` foundation was not modified; the user's `fitz`→`pymupdf` import cleanup in the renderer is kept.
