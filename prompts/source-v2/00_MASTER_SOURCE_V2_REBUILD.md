@@ -88,6 +88,48 @@ NO VERIFIED SOURCE CONTENT
 
 This must be enforced in code and proved by a test, not stated in a document.
 
+
+### Verified visual source and vectorization (LOCKED — see D18)
+
+Verified Source Content includes educational visuals, not only text. A figure
+with no printed text is still source content when it carries educational
+meaning.
+
+Downstream source kinds are:
+
+- `TEXT_ONLY`
+- `VISUAL_ONLY`
+- `VISUAL_WITH_TEXT`
+- `DECORATIVE`
+
+Vectorization is modality-specific and remains behind the verification gate:
+
+```
+TEXT_ONLY        -> verified text embedding
+VISUAL_ONLY      -> verified canonical image/crop embedding
+VISUAL_WITH_TEXT -> verified image/crop embedding + verified text embedding
+DECORATIVE       -> no educational embedding
+```
+
+Additional hard invariants:
+
+```
+UNVERIFIED TEXT   -> NO TEXT EMBEDDING
+UNVERIFIED VISUAL -> NO IMAGE EMBEDDING
+```
+
+Never fabricate source text for a visual-only region. If a model later
+describes an image, that description is **Derived Knowledge**, never Verified
+Source Content. If image embeddings are not yet implemented, the visual stays
+verified but unembedded rather than being replaced by synthetic text.
+
+Text/image vectors belonging to one region must preserve and link the same
+source provenance: `document_id`, `page_number`, `region_id`, canonical
+`bbox`, `crop_sha256`, plus explicit modality.
+
+The embedding model/provider is intentionally deferred until the vectorization
+phase; D18 locks the trust boundary and modality behavior, not a vendor.
+
 ### Provider rules
 
 - **OpenAI must not be used for source OCR/extraction.** Not as primary, not as
