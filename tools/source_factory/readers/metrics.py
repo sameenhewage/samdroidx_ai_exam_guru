@@ -75,30 +75,76 @@ def character_error_rate(reference: str, hypothesis: str) -> float:
     return (substitutions + deletions + insertions) / len(reference)
 
 
+# Named blocks are not enough: a reader can emit *any* script. Everything
+# outside the expected set has to be counted, which is how Myanmar glyphs
+# appearing on a Sinhala heading were missed the first time.
+SCRIPT_BLOCKS: tuple[tuple[str, int, int], ...] = (
+    ("latin", 0x0041, 0x024F),
+    ("greek", 0x0370, 0x03FF),
+    ("cyrillic", 0x0400, 0x04FF),
+    ("hebrew", 0x0590, 0x05FF),
+    ("arabic", 0x0600, 0x06FF),
+    ("devanagari", 0x0900, 0x097F),
+    ("bengali", 0x0980, 0x09FF),
+    ("gurmukhi", 0x0A00, 0x0A7F),
+    ("gujarati", 0x0A80, 0x0AFF),
+    ("oriya", 0x0B00, 0x0B7F),
+    ("tamil", 0x0B80, 0x0BFF),
+    ("telugu", 0x0C00, 0x0C7F),
+    ("kannada", 0x0C80, 0x0CFF),
+    ("malayalam", 0x0D00, 0x0D7F),
+    ("sinhala", 0x0D80, 0x0DFF),
+    ("thai", 0x0E00, 0x0E7F),
+    ("lao", 0x0E80, 0x0EFF),
+    ("tibetan", 0x0F00, 0x0FFF),
+    ("myanmar", 0x1000, 0x109F),
+    ("georgian", 0x10A0, 0x10FF),
+    ("khmer", 0x1780, 0x17FF),
+    ("cjk", 0x4E00, 0x9FFF),
+    ("hiragana", 0x3040, 0x309F),
+    ("katakana", 0x30A0, 0x30FF),
+    ("hangul", 0xAC00, 0xD7AF),
+)
+
+
+def _script_of(character: str) -> str | None:
+    point = ord(character)
+    for name, low, high in SCRIPT_BLOCKS:
+        if low <= point <= high:
+            return name
+    return None
+
+
 def script_profile(text: str) -> dict[str, int]:
-    return {
-        "sinhala": len(SINHALA.findall(text)),
-        "tamil": len(TAMIL.findall(text)),
-        "latin": len(LATIN.findall(text)),
-        "digits": len(DIGITS.findall(text)),
-    }
+    """Letters per script actually present, plus digits. Nothing is assumed."""
+
+    profile: dict[str, int] = {}
+    for character in text:
+        name = _script_of(character)
+        if name is not None:
+            profile[name] = profile.get(name, 0) + 1
+    digits = len(DIGITS.findall(text))
+    if digits:
+        profile["digits"] = digits
+    return profile
 
 
 def foreign_script_ratio(text: str, expected: str) -> float:
     """Share of letters written in a script the page is not printed in.
 
     Latin is tolerated inside a Sinhala page because real teacher guides carry
-    URLs, units and loan words; a *Tamil* run inside a Sinhala page is not.
+    URLs, units and loan words. Every other script is foreign, including ones
+    nobody thought to list: the check is "not expected", not "in a bad list".
     """
 
-    profile = script_profile(text)
-    letters = profile["sinhala"] + profile["tamil"] + profile["latin"]
+    profile = {name: count for name, count in script_profile(text).items() if name != "digits"}
+    letters = sum(profile.values())
     if letters == 0:
         return 0.0
-    allowed = {"sinhala": ("sinhala", "latin"), "tamil": ("tamil", "latin")}.get(
-        expected, ("sinhala", "tamil", "latin")
+    allowed = {"sinhala": {"sinhala", "latin"}, "tamil": {"tamil", "latin"}}.get(
+        expected, {"sinhala", "tamil", "latin"}
     )
-    foreign = sum(count for name, count in profile.items() if name not in allowed and name != "digits")
+    foreign = sum(count for name, count in profile.items() if name not in allowed)
     return foreign / letters
 
 

@@ -118,6 +118,13 @@ x-studio-storage: &studio-storage
   - type: bind
     source: ${EXAM_GURU_DATA_PATH:-./.exam-guru-data}
     target: /data
+  # Source V2 rendered pages. The reviewer compares the Machine Candidate
+  # against the original page, so the API has to be able to serve that render.
+  # Read-only: rendered evidence is immutable.
+  - type: bind
+    source: ${EXAM_GURU_SOURCE_V2_RENDER_PATH:-./.exam-guru-data/source-content}
+    target: /source-content
+    read_only: true
 
 services:
   postgres:

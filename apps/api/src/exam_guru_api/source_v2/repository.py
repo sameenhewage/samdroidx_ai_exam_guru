@@ -8,9 +8,12 @@ for the async path.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -23,6 +26,10 @@ from exam_guru_api.source_v2.domain import (
 )
 
 HUMAN_CORRECTION = "human-correction"
+
+# Where the immutable rendered pages live inside the API container. Bound
+# read-only by compose; rendered evidence is never written through the API.
+RENDER_ROOT = Path(os.environ.get("EXAM_GURU_SOURCE_V2_RENDER_ROOT", "/source-content"))
 
 
 class PageNotFoundError(SourceV2Error):
@@ -408,6 +415,25 @@ async def exclude(
     await session.execute(
         text("update source_v2_machine_candidates set state = 'excluded' where id = :id"),
         {"id": candidate_id},
+    )
+
+
+def rendered_page_bytes(page: PageHeader, *, root: Path | None = None) -> bytes:
+    """The exact render the readers saw, verified against the stored checksum.
+
+    The checksum is re-computed on every read. If the file on disk is not the
+    render this page was measured from, serving it would let a reviewer confirm
+    a reading against a different image.
+    """
+
+    base = root or RENDER_ROOT
+    matches = sorted(base.glob(f"**/rendered/page-{page.page_number:03d}.png"))
+    for path in matches:
+        payload = path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() == page.image_sha256:
+            return payload
+    raise PageNotFoundError(
+        f"no render matching {page.image_sha256[:12]}… for page {page.page_number} under {base}"
     )
 
 

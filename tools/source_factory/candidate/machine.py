@@ -22,6 +22,10 @@ from tools.source_factory.candidate.alignment import DisagreementMap, build_disa
 # A reading whose decoder collapsed is evidence of failure, not a reading.
 DEGENERATE_REPETITION = 0.5
 DEGENERATE_STRUCTURE = 0.6
+# A reading mostly written in a script the page is not printed in is not a
+# reading of that page. Seen for real: DeepSeek answered a Sinhala heading
+# crop with Myanmar glyphs, fluently and without repeating itself.
+FOREIGN_SCRIPT_LIMIT = 0.5
 
 
 @dataclass
@@ -45,8 +49,17 @@ class Witness:
         )
 
     @property
+    def wrong_script(self) -> bool:
+        return self.foreign_script >= FOREIGN_SCRIPT_LIMIT
+
+    @property
     def trustworthy(self) -> bool:
-        return bool(self.text.strip()) and not self.failed and not self.degenerate
+        return (
+            bool(self.text.strip())
+            and not self.failed
+            and not self.degenerate
+            and not self.wrong_script
+        )
 
 
 @dataclass
@@ -90,7 +103,11 @@ def _rejection_reason(witness: Witness) -> str:
         return "reader produced nothing"
     if witness.repetition >= DEGENERATE_REPETITION:
         return "decoder repeated the same character run"
-    return "decoder enumerated a repeated line template"
+    if witness.structural_repetition >= DEGENERATE_STRUCTURE:
+        return "decoder enumerated a repeated line template"
+    return (
+        f"reading is {witness.foreign_script:.0%} in a script the page is not printed in"
+    )
 
 
 def build(

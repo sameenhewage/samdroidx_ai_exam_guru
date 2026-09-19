@@ -151,6 +151,31 @@ async def read_page_by_number(
     return await _page_view(session, page.page_id)
 
 
+@router.get(
+    "/source-v2/pages/{page_id}/render",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
+async def read_page_render(
+    page_id: Annotated[UUID, Path()],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))],
+) -> Response:
+    """The original page, checksum-verified against what the readers saw."""
+
+    _ = principal
+    try:
+        page = await repository.get_page(session, page_id)
+        payload = repository.rendered_page_bytes(page)
+    except SourceV2Error as error:
+        raise _fail(error) from error
+    return Response(
+        content=payload,
+        media_type="image/png",
+        headers={**_PRIVATE_HEADERS, "X-Source-Image-Sha256": page.image_sha256},
+    )
+
+
 @router.post(
     "/source-v2/pages/{page_id}/regions/{region_id}/confirm",
     response_model=RegionMutationResponse,

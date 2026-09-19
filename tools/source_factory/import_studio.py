@@ -73,7 +73,77 @@ def reader_rows(page_number: int) -> dict[str, list[dict]]:
     return evidence
 
 
-def import_page(cursor, document_id: uuid.UUID, page_number: int, language: str) -> dict:
+def refresh_candidates(cursor, page_id, page_number: int, candidates: list[dict]) -> dict:
+    """Supersede the current readings of an already-stored page.
+
+    A re-run of the pipeline is a re-read, not a replacement. The previous
+    revision stays, linked as the parent, and any verification of a superseded
+    region is withdrawn because the proposed text is no longer the one the
+    reviewer looked at. Review history is untouched: it is evidence.
+    """
+
+    superseded = 0
+    withdrawn = 0
+    for region in candidates:
+        current = cursor.execute(
+            "select id, revision, text from source_v2_machine_candidates"
+            " where page_id = %s and region_id = %s and is_current",
+            (page_id, region["region_id"]),
+        ).fetchone()
+        proposed = unicodedata.normalize("NFC", region.get("text", ""))
+        if current is None:
+            continue
+        if current[2] == proposed:
+            continue
+        cursor.execute(
+            "update source_v2_machine_candidates"
+            " set is_current = false, state = 'unverified' where id = %s",
+            (current[0],),
+        )
+        removed = cursor.execute(
+            "delete from source_v2_verified_regions"
+            " where page_id = %s and region_id = %s returning id",
+            (page_id, region["region_id"]),
+        ).fetchall()
+        withdrawn += len(removed)
+        cursor.execute(
+            """
+            insert into source_v2_machine_candidates
+              (id, page_id, region_id, region_type, revision, parent_id, origin, text,
+               abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
+               disagreement, state, is_current)
+            values (%s, %s, %s, %s, %s, %s, 'machine', %s, %s, %s, %s, %s, %s, %s,
+                    'unverified', true)
+            """,
+            (
+                uuid.uuid4(),
+                page_id,
+                region["region_id"],
+                region["region_type"],
+                current[1] + 1,
+                current[0],
+                proposed,
+                bool(region.get("abstained")),
+                region.get("chosen_reader"),
+                (region.get("reason") or "")[:400],
+                bool(region.get("critical_conflict")),
+                float(region.get("agreement_ratio", 1.0)),
+                json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+            ),
+        )
+        superseded += 1
+    return {
+        "page": page_number,
+        "page_id": str(page_id),
+        "refreshed": True,
+        "superseded": superseded,
+        "verifications_withdrawn": withdrawn,
+    }
+
+
+def import_page(
+    cursor, document_id: uuid.UUID, page_number: int, language: str, refresh: bool = False
+) -> dict:
     layout = load_json(STUDIO / "layout" / "regions" / f"page-{page_number:03d}.json")
     candidates = load_json(STUDIO / "candidates" / f"page-{page_number:03d}.json")["regions"]
     sha = layout["image_sha256"]
@@ -89,7 +159,9 @@ def import_page(cursor, document_id: uuid.UUID, page_number: int, language: str)
                 f"page {page_number} already stored against render {existing[1][:12]}…; "
                 "a re-render is a new page and must not silently replace evidence"
             )
-        return {"page": page_number, "page_id": str(existing[0]), "reused": True}
+        if not refresh:
+            return {"page": page_number, "page_id": str(existing[0]), "reused": True}
+        return refresh_candidates(cursor, existing[0], page_number, candidates)
 
     page_id = uuid.uuid4()
     cursor.execute(
@@ -182,6 +254,11 @@ def main() -> int:
     parser.add_argument("--pages", default="156,186")
     parser.add_argument("--document-id", default=None)
     parser.add_argument("--language", default="sinhala")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="supersede existing readings with new revisions instead of skipping",
+    )
     parser.add_argument("--dsn", default=DSN)
     arguments = parser.parse_args()
 
@@ -197,7 +274,13 @@ def main() -> int:
                 raise SystemExit("no source_documents row to attach Source V2 pages to")
             document_id = row[0]
         results = [
-            import_page(connection, document_id, page_number, arguments.language)
+            import_page(
+                connection,
+                document_id,
+                page_number,
+                arguments.language,
+                refresh=arguments.refresh,
+            )
             for page_number in pages
         ]
         connection.commit()

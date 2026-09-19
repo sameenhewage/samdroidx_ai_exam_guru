@@ -5,99 +5,97 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          5 — persistence + human verification
-status:         IN_PROGRESS (domain + schema done; service/API wiring next)
-last_validated: 6fd326e
+phase:          6 — Studio review + Chrome MCP acceptance
+status:         review loop PASSES on real page 156; document-level acceptance pending
+last_validated: be8e749
 updated:        2026-09-19
 ```
 
 ## completed
 
-- **Phase 1 — layout segmentation: PASS.** `tools/source_factory/layout/`.
-  8 fixed real pages segment correctly; all five acceptance criteria verified
-  on annotated previews. `92950a4`.
-- **Phase 2 — contracts: DONE.** `schemas/source-content/page-layout.schema.json`
-  enforced on every write (schema, dense reading order, parent containment).
-  `c1046a5`.
-- **Phase 3 — reader benchmark: DONE.** Both Sinhala readers run on real crops.
-  30 region crops, 0 failures each. Report: `docs/source-v2/BENCHMARK_READERS.md`.
-  Selection recorded with its evidence in `candidate/selection.py`.
-  Tamil: explicit real-data blocker, `docs/source-v2/TAMIL_BLOCKER.md`.
-- **Phase 4 — Machine Candidate: DONE.** Neutral alignment ported; candidates
-  built for real pages 4, 156, 171, 186, 197. 30 regions, 0 abstentions,
-  9 regions with a critical-token conflict. 10 tests.
+- **Phase 1 — layout segmentation: PASS.** 8 fixed real pages. `92950a4`.
+- **Phase 2 — contracts: DONE.** `page-layout.schema.json` enforced on write. `c1046a5`.
+- **Phase 3 — reader benchmark: DONE.** Both Sinhala readers, 30 real crops.
+  `docs/source-v2/BENCHMARK_READERS.md`. Tamil blocked, see `TAMIL_BLOCKER.md`.
+- **Phase 4 — Machine Candidate: DONE.** Neutral alignment, no blending, no voting.
+- **Phase 5 — persistence, human gate, HTTP: DONE.** `source_v2/{domain,models,service,repository,gate,schemas}.py`,
+  migration `0056_source_v2`, six endpoints under `/admin/source-v2`.
+  `require_verified_source` guards knowledge preparation.
+- **Phase 6 — Studio review UI + Chrome MCP: review loop verified on real page 156.**
+  `/admin/source-v2/{pageId}` shows the original render beside the Machine
+  Candidate with Confirm / Correct / Exclude.
 
-- **Phase 5 parts 1-2 — human gate, schema and service: DONE.**
-  `apps/api/src/exam_guru_api/source_v2/{domain,models,service}.py` and forward
-  migration `0056_source_v2`. Applied to the real Studio database and proved by
-  round-trip (`upgrade` -> `downgrade -1` -> `upgrade`). Real page 156
-  candidates import and drive Confirm/Correct/Exclude.
-  34 tests pass, 1 honest skip: 18 pure domain + 9 schema + 8 service.
+## verified in the real Studio (Chrome DevTools MCP, page 156)
+
+- original page renders in the browser: 2480x3509 PNG, checksum-verified server-side
+- Confirm -> `verified`, progress advances, button disables
+- Correct -> new revision, state stays `unverified` (correcting is not verifying)
+- Confirm on the corrected text -> `verified`
+- Exclude with a reason -> `excluded`
+- hard reload: all three states and the corrected text persist
+- console clean apart from one pre-existing form-field-id advisory
+- stale revision over HTTP returns 409; document gate returns `usable: false`
+  naming the unresolved pages
+
+## defect found by looking at the real UI, fixed, same page re-run
+
+`p156-r001`/`r003` displayed **Myanmar script** (`အေသးစိတ်စံပြု 11`) for Sinhala
+headings. `foreign_script_ratio` only counted Sinhala/Tamil/Latin, so an
+unlisted script scored 0.0. Now every script block is counted and anything
+outside the expected set is foreign; a witness over 50% foreign script is
+rejected by the Machine Candidate. DeepSeek's real mean foreign-script on the
+benchmark was 0.30, not the 0.033 first reported. After the fix the headings
+read `ක්‍රියාකාරකම් 11` / `12`.
+
+Re-importing used a new `--refresh` path: a re-run of the pipeline is a
+**re-read**, so it supersedes with a new revision, keeps the old one linked as
+parent, and withdraws any verification of changed text. Evidence is never
+deleted. Revision history for `p156-r003` now reads: r1 Myanmar hallucination
+(superseded), r2 corrected machine reading, r3 human correction (verified).
 
 ## blockers
 
-- **Tamil**: no Tamil material exists in `RAG DATA/` at all. Engineering is
-  language-agnostic and ready; see `docs/source-v2/TAMIL_BLOCKER.md`.
+- **Tamil**: no Tamil material anywhere in `RAG DATA/`. `docs/source-v2/TAMIL_BLOCKER.md`.
+- **Document-level acceptance**: the gate needs *every* page of a document
+  verified or excluded. 3 of 293 pages are imported and 2 of 6 regions on page
+  156 are verified. Resolving a whole document is teacher work, not engineering.
 
 ## exact next step
 
-Phase 5 part 3 — expose the gate over HTTP, then Phase 6.
+Phase 6 completion, then 7 and 8 in order:
 
-1. `api/routes/source_v2.py`: list a page's regions with the Machine Candidate,
-   its disagreement map and the original page image, and expose
-   Confirm / Correct / Exclude on top of `source_v2/service.py`. Reading is a
-   background job, never a request: a region read is 28-54 s.
-2. Call `require_verified_source` at the knowledge / embedding / RAG /
-   generation boundary and add the integration test that proves the bypass
-   fails there too.
+1. Import the rest of the benchmark pages (`uv run tools/source_factory/import_studio.py --pages 4,152,157,163,197`)
+   and run the same Chrome MCP loop on page 186 to confirm the two-column page
+   behaves identically.
+2. Add a Playwright E2E for the review loop (web AGENTS.md requires browser
+   evidence, not unit tests alone) covering confirm, correct-then-confirm,
+   exclude and reload persistence.
+3. Resolve one whole small document end to end so the gate flips to
+   `usable: true`, and prove knowledge preparation then proceeds.
+4. **Only then** Phase 7: delete the old source-reading architecture
+   (`tesseract_ocr.py`, `source_reading_qwen.py`, `source_reading_openai.py`,
+   `understanding_openai.py` and their env/config/tests), switch
+   `LegacyPolicy` to `CUTOVER` and delete `PRE_CUTOVER`, using forward
+   migrations only.
+5. Phase 8: repo-wide audit proving one active source architecture.
 
-Then Phase 6 (Studio UI + continuous Chrome DevTools MCP on real pages),
-Phase 7 (remove the old source architecture), Phase 8 (final audit).
+Do not start step 4 before step 3 passes.
 
-## running the database tests
+## running it
 
 ```
-docker start ai-exam-guru-postgres-1
-$env:EXAM_GURU_DATABASE_URL="postgresql+asyncpg://exam_guru:exam-guru-local-db@127.0.0.1:55432/exam_guru"
-uv run alembic upgrade head                       # from apps/api
-$env:EXAM_GURU_TEST_DSN="host=127.0.0.1 port=55432 dbname=exam_guru user=exam_guru password=exam-guru-local-db"
-uv run --with "psycopg[binary]==3.2.10" pytest tests/source_v2 -q
+docker compose up -d                       # api :8000, web :3000, postgres :55432
+uv run tools/source_factory/import_studio.py --pages 156,171,186 [--refresh]
+# Studio: http://localhost:3000/admin/source-v2/<page_id>
+#   use localhost, not 127.0.0.1 - the browser guard rejects the cross-site origin
 ```
 
-The PostgreSQL tests skip themselves when `EXAM_GURU_TEST_DSN` is unset. They
-are never replaced by fakes: a fake cannot prove a trigger fires.
+Rebuild note: `migrate` and `worker` are **separate images** from `api`. After
+changing a migration, `docker compose build migrate` too, or the stack fails
+with "Can't locate revision".
 
 ## environment
 
-- GPU: RTX 3060, 12 GiB, driver 616.92.
-- `.venv-sourcev2` — torch 2.6.0+cu124, **transformers 5.0.0** (LightOnOCR-2
-  needs the explicit `LightOnOcr*` classes, absent before 5.x).
-- `.venv-sourcev2-ds` — torch 2.6.0+cu124, **transformers 4.57.1** (DeepSeek-OCR
-  remote code needs `DeepseekV2Model`, gone in 5.x; 4.46 lacks `DeepseekV2MoE`).
-  The two readers cannot share one environment.
-
-## commands
-
-```
-uv run tools/source_factory/layout/cli.py benchmark
-uv run tools/source_factory/layout/tests/test_detect.py
-uv run tools/source_factory/readers/cli.py crops --pages 156,186,171,4,197
-.venv-sourcev2/Scripts/python.exe    tools/source_factory/readers/bench.py --reader sinhala-lightonocr
-.venv-sourcev2-ds/Scripts/python.exe tools/source_factory/readers/bench.py --reader sinhala-deepseek
-uv run tools/source_factory/readers/cli.py rescore     # re-measure without re-running models
-uv run tools/source_factory/readers/report.py          # regenerate BENCHMARK_READERS.md
-uv run tools/source_factory/candidate/cli.py build
-uv run tools/source_factory/candidate/cli.py show --page 156
-uv run tools/source_factory/candidate/tests/test_machine.py
-```
-
-## notes
-
-- Reading a region crop is 28 s (LightOnOCR) to 54 s (DeepSeek); a full page of
-  regions is minutes. Phase 5 must run reads as background jobs, never in a
-  request.
-- DeepSeek ignores `max_new_tokens` passed to `bench.py`; it has run for 700 s
-  on one region. A generation cap belongs in the reader before production use.
-- Old source-reading surface to delete in Phase 7: ~50 modules under
-  `apps/api/src/exam_guru_api/documents/`, including `tesseract_ocr.py`,
-  `source_reading_qwen.py`, `source_reading_openai.py`, `understanding_openai.py`.
+- GPU: RTX 3060, 12 GiB. `.venv-sourcev2` (transformers 5.0.0, LightOnOCR) and
+  `.venv-sourcev2-ds` (transformers 4.57.1, DeepSeek-OCR) cannot be merged.
+- `apps/api` cannot run natively on Windows (`fcntl`, `resource`); use the container.

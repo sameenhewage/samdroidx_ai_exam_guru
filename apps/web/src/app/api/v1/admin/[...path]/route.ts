@@ -116,6 +116,11 @@ function isSourceContentPath(path: readonly string[]): boolean {
 
 function isSourceImagePath(path: readonly string[]): boolean {
   return (
+    // Source V2 serves the original rendered page the reviewer compares against.
+    (path.length === 4 &&
+      path[0] === "source-v2" &&
+      path[1] === "pages" &&
+      path[3] === "render") ||
     (path.length === 5 &&
       ((path[2] === "pages" &&
         ((path[0] === "materials" && path[4] === "image") ||
