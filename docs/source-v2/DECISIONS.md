@@ -201,3 +201,67 @@ shows only that the Machine Candidate carried the primary reading through
 unmutated. `benchmark_primary.py` prints this caveat in every report. An
 independent reviewer is required before any accuracy claim is made for the
 primary reading.
+
+## D15 - Local Sinhala OCR is AUDIT-ONLY. It is not a source of text.
+**Locked 2026-09-19. Narrows D14 further; supersedes the strong/weak tiering.**
+
+Measured against human-confirmed source, reported as ratio and percentage:
+
+| document | reader | mean CER | exact | insertions |
+|---|---|---|---|---|
+| sankhya-rata | `sinhala-deepseek` | 3.27 (**327%**) | 2/16 | 6 870 |
+| sankhya-rata | `sinhala-lightonocr` | 75.06 (**7 506%**) | 0/16 | 2 617 |
+| mawbasa 156+186 | `sinhala-deepseek` | 3.06 (**306%**) | - | 10 591 |
+| mawbasa 156+186 | `sinhala-lightonocr` | 0.48 (**48%**) | - | 951 |
+
+A CER above 1.0 means the reading contains more errors than the reference has
+characters: the model is inventing, not misreading. Both readers have also
+produced foreign-script output on Sinhala pages, and LightOnOCR invented 1808
+characters of LaTeX on a two-character folio.
+
+Therefore, in `candidate/selection.py` there are now exactly two tiers:
+
+- `primary-agent-reading` - **PRIMARY**
+- `sinhala-deepseek` - **AUDIT_ONLY**
+- `sinhala-lightonocr` - **AUDIT_ONLY**
+
+An audit-only reader **may**: raise a warning, contribute disagreement
+evidence, and set `requires_human_attention`.
+An audit-only reader **may never**: supply candidate text, replace or rewrite
+the primary reading, or outvote it. There is no majority voting anywhere.
+
+Do not spend further effort trying to make either model the primary reader.
+Locked by `tests/test_validators.py::test_an_audit_reader_cannot_supply_the_candidate_text`.
+
+### The pipeline inside a region
+
+```
+PRIMARY reading
+  -> deterministic validators   (brackets, mixed script, placeholders, NFC,
+                                 control characters, expected script)
+  -> OCR audit warnings         (rejected readers, over/under generation,
+                                 unanimous disagreement on a token)
+  -> Machine Candidate          (text is ALWAYS the primary reading)
+  -> human Confirm / Correct
+```
+
+Validators run *before* any OCR is consulted. They cannot hallucinate and they
+need no second opinion. Any validator finding sets `requires_human_attention`.
+
+### The audit earns its keep
+
+On page 186 the audit caught a mistake in the **primary** reading: region
+`p186-r006` had been transcribed with the wrong paragraph and confirmed. Both
+audit readers disagreed wholesale, which is what prompted re-reading the crop
+and finding the error. The verification was withdrawn by the supersession rule
+and the region re-read.
+
+This is exactly why audit-only readers are kept rather than deleted: they are
+not good enough to write source, and they are good enough to notice when the
+primary reading is wrong.
+
+### Crop freshness
+
+`candidate/cli.py` refuses to build when a crop is not its region's bounding
+box grown by an even padding. Stale crops silently attach OCR text to the
+wrong pixels, which looks identical to a disagreement.

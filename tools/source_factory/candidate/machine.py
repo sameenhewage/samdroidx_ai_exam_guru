@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from tools.source_factory.candidate.alignment import DisagreementMap, build_disagreement_map
+from tools.source_factory.candidate.validators import audit_warnings, validate_primary
 
 # A reading whose decoder collapsed is evidence of failure, not a reading.
 DEGENERATE_REPETITION = 0.5
@@ -195,6 +196,7 @@ class PrimaryReading:
     region_type: str
     text: str
     uncertainty: tuple[dict, ...] = ()
+    language: str = "sinhala"
 
     @property
     def blank(self) -> bool:
@@ -225,6 +227,24 @@ def build(
     findings: list[str] = [
         f"primary reading marked uncertain: {item.get('detail', '')}"[:200]
         for item in primary.uncertainty
+    ]
+    # Deterministic validators run on the primary reading *before* any local
+    # reader is consulted. They cannot hallucinate and they need no second
+    # opinion (D15).
+    findings += [
+        str(item)
+        for item in validate_primary(
+            primary.text, region_type=primary.region_type, language=primary.language
+        )
+    ]
+    # Then the audit-only readers contribute warnings. Never text.
+    findings += [
+        str(item)
+        for item in audit_warnings(
+            primary.text,
+            {witness.reader: witness.text for witness in usable},
+            rejected=rejected,
+        )
     ]
 
     if primary.blank:
@@ -301,9 +321,12 @@ def build(
             for value, readers in opinions.items()
             if PRIMARY_READER not in readers
         }
-        if primary_value is not None and len(against) == 1:
+        if primary_value and len(against) == 1:
             other, readers = next(iter(against.items()))
-            if len(readers) >= len(usable):
+            # Both sides must actually say something. An empty side is an
+            # alignment gap - the readers segmented the line differently -
+            # not a claim that the page reads otherwise.
+            if other and len(readers) >= len(usable):
                 unanimous_against = True
                 findings.append(
                     f"every local reader reads {other!r} where the primary reading has "

@@ -5,28 +5,35 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — corpus migration (primary-first)
-status:         sankhya-rata is usable:true PRIMARY-FIRST. Pages 156/186 fully verified.
+phase:          7 — corpus migration (primary-first, OCR audit-only)
+status:         D15 locked. Pages 156/186 verified; sankhya-rata usable:true.
 last_validated: (set at commit)
 updated:        2026-09-19
 ```
 
-## READER ORDER IS LOCKED (D14) — read this before touching the pipeline
+## READER ORDER IS LOCKED (D14 + D15) — read this before touching the pipeline
 
 ```
 1 render/layout  ->  2 PRIMARY VISUAL READING BY THE EXECUTING AGENT
-                 ->  3 local specialist readers on the SAME crops
-                 ->  4 comparison  ->  5 Machine Candidate
-                 ->  6 human Confirm/Correct  ->  7 Verified Source Content
+                 ->  3 deterministic validators on the primary text
+                 ->  4 local readers, AUDIT ONLY (warnings, never text)
+                 ->  5 Machine Candidate  ->  6 human Confirm/Correct
+                 ->  7 Verified Source Content
 ```
 
-The executing agent reads the original pixels and writes
-`<document>/primary/pages/page-NNN.json`. DeepSeek and LightOnOCR are
-**secondary witnesses**. They may not create the initial candidate and may not
-replace the primary reading. `candidate/cli.py` now **fails** if the primary
-JSON is missing, and `test_machine.py` locks the behaviour. There is no "Astra"
-provider and none is to be built.
+**Local Sinhala OCR is audit-only (D15).** Measured at 306–7506% CER against
+human-confirmed source, DeepSeek and LightOnOCR may raise warnings and force
+human attention, and may never supply, replace, rewrite or outvote the primary
+reading. No majority voting. `candidate/cli.py` fails without a primary
+reading and refuses stale crops; `test_validators.py` locks the policy. There
+is no "Astra" provider and none is to be built.
 
+**The audit earns its keep.** On page 186 it caught a mistake in the *primary*
+reading: `p186-r006` had been transcribed with the wrong paragraph and
+confirmed. Both readers disagreed wholesale, that prompted re-reading the crop,
+the error was found, the verification was withdrawn automatically and the
+region re-read. The readers are not good enough to write source and are good
+enough to notice when the primary reading is wrong.
 ## acceptance: the mechanism passes
 
 - **Phase 1 layout** — 8 fixed real pages. `92950a4`
