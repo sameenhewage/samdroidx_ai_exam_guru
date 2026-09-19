@@ -41,12 +41,11 @@ Raw PDF / Image
   ├─ 4. deterministic validators  ◄── on the primary text, before any OCR
   │      brackets, mixed script, placeholders, NFC, expected script
   │
-  ├─ 5. local readers: AUDIT ONLY ◄── warnings and disagreement evidence only
-  │      run on the SAME original regions/crops, independently
-  │      Sinhala : avishadilhara/sinhala-deepseek-ocr-Qlora     AUDIT_ONLY
-  │                avishadilhara/sinhala-lightonocr-2-1b-Qlora  AUDIT_ONLY
-  │      they may NEVER supply, replace, rewrite or outvote the primary text
-  │
+  ├─ 5. source kind (D18)          text_only / visual_only / visual_with_text
+  │      decorative / undecided. Proposed from region type + whether text was
+  │      transcribed. A figure with no printed text is source, not an error.
+  │      NO OCR RUNS HERE. DeepSeek, LightOnOCR, Tesseract, Qwen, Ornith and
+  │      Luna are removed from the active architecture (D17).  │
   ├─ 5. comparison / validation
   │      primary vs each secondary witness, token + character alignment,
   │      disagreement map, critical-token rules, deterministic validators
@@ -61,17 +60,20 @@ Raw PDF / Image
         └─ ONLY THEN: educational analysis → knowledge → embeddings → RAG → generation
 ```
 
-### Reader order (LOCKED — see D14 and D15)
+### Reader order (LOCKED — see D17 and D18)
 
-**The executing agent is the primary source reader.** It looks at the original
-rendered page or crop and writes the primary candidate itself.
+**The executing agent is the only source of machine transcription.** It opens
+the canonical crop at `<document>/crops/crop-NNN-rNNN.png` and writes the text
+itself. Code renders, segments, crops, checksums, validates, persists, gates
+and displays; **code never produces source text**.
 
-**DeepSeek and LightOnOCR are AUDIT-ONLY.** Measured at 306–7506% character
-error against human-confirmed source, they are not competing transcriptions;
-they are audit signals. They may raise warnings, contribute disagreement
-evidence and force human attention. They may never supply candidate text,
-replace or rewrite the primary reading, or outvote it. There is no majority
-voting anywhere in the pipeline.
+**No OCR runs in the active pipeline.** DeepSeek, LightOnOCR, Tesseract,
+Qwen, Ornith and Luna are removed from it. Their measured results survive in
+`docs/source-v2/BENCHMARK_READERS.md` as the evidence for why. Re-introducing
+any of them requires a new measured decision that explicitly supersedes D17.
+
+**Every region carries a source kind (D18)**, so an educational figure with no
+printed text is Verified Source Content rather than an empty mistake.
 
 Reversing this order is a regression, not an optimisation.
 
