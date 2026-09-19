@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+SCHEMA_VERSION = "1.0.0"
+
 RegionType = Literal["text", "heading", "figure", "table", "decorative", "unknown"]
 
 REGION_TYPES: tuple[RegionType, ...] = (
@@ -129,15 +131,12 @@ class Region:
             "type": self.type,
             "bbox": self.bbox.as_list(),
             "reading_order": self.reading_order,
+            "parent": self.parent,
+            "column": self.column,
+            "column_count": self.column_count if self.column is not None else None,
+            "band": self.band,
+            "line_count": self.line_count,
         }
-        if self.parent is not None:
-            payload["parent"] = self.parent
-        if self.column is not None:
-            payload["column"] = self.column
-            payload["column_count"] = self.column_count
-        if self.band is not None:
-            payload["band"] = self.band
-        payload["line_count"] = self.line_count
         if self.evidence:
             payload["evidence"] = self.evidence
         return payload
@@ -159,6 +158,7 @@ class PageLayout:
 
     def to_json(self) -> dict:
         return {
+            "schema_version": SCHEMA_VERSION,
             "document_id": self.document_id,
             "page_number": self.page_number,
             "width": self.width,

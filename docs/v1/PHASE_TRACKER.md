@@ -17,6 +17,14 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Source V2 Phase 2 (part 1): the layout region contract is committed and enforced
+
+- **Status:** **SOURCE FIDELITY GATE: still FAIL.** Geometry contract only; no reader output was imported and no text was touched.
+- **What changed:** `schemas/source-content/page-layout.schema.json` now states the Phase 1 output shape — page identity, the rendered image checksum the regions were measured from, detector version, and per-region `id`/`type`/`bbox`/`reading_order`/`parent`/`column`/`band`/`line_count`. The description is explicit that this file carries no text and no interpretation; it is the frame a reader's transcription is later bound to.
+- **Enforced, not just documented:** `tools/source_factory/layout/contract.py` validates every page the CLI writes, and additionally checks that reading order is a dense zero-based sequence and that a `parent` link points at an earlier region that actually encloses the child. A contract only checked in tests drifts.
+- **Verification:** `uv run tools/source_factory/layout/tests/test_detect.py` → **14 passed** (the contract check now runs inside the synthetic contract test and on all eight real benchmark pages); `uv run tools/source_factory/layout/cli.py benchmark` re-validated and rewrote all eight pages with no contract violations.
+- **Next and why it is blocked:** "Astra" is the reader named beside Codex in `source-page.schema.json`, so the importer must join an Astra `source-page` document to the matching layout page by bbox overlap. No Astra output file exists on this machine for any benchmark page, so the importer is not written rather than written against an invented shape.
+
 ### 2026-09-19 — Source V2 Phase 1: real page layout segmentation
 
 - **Status:** **SOURCE FIDELITY GATE: still FAIL.** This is layout geometry only. No OCR, no transcription, no candidate, no knowledge and no RAG path was touched, and nothing here claims source accuracy.

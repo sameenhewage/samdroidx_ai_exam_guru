@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#   "jsonschema==4.25.1",
 #   "numpy==2.2.6",
 #   "opencv-python-headless==4.12.0.88",
 #   "pytest==8.4.2",
@@ -16,6 +17,7 @@ skips otherwise, because rendered source pages are never committed.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -26,6 +28,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from tools.source_factory.layout import benchmark as benchmark_set  # noqa: E402
+from tools.source_factory.layout.contract import check_page  # noqa: E402
 from tools.source_factory.layout.detect import detect_layout  # noqa: E402
 
 WIDTH, HEIGHT = 2480, 3508
@@ -56,7 +59,11 @@ def draw_column(page: np.ndarray, x: int, y: int, width: int, lines: int) -> Non
 
 def segment(page: np.ndarray, number: int = 1):
     return detect_layout(
-        page, document_id="synthetic", page_number=number, dpi=300.0, image_sha256="x"
+        page,
+        document_id="synthetic",
+        page_number=number,
+        dpi=300.0,
+        image_sha256=hashlib.sha256(page.tobytes()).hexdigest(),
     )
 
 
@@ -123,10 +130,9 @@ def test_regions_carry_the_phase_one_contract() -> None:
     draw_column(page, MARGIN + 940, 400, 780, 12)
     payload = segment(page).to_json()
     assert payload["detector_version"]
+    check_page(payload)
     for index, region in enumerate(payload["regions"]):
         assert region["reading_order"] == index
-        assert region["type"] in {"text", "heading", "figure", "table", "decorative", "unknown"}
-        assert len(region["bbox"]) == 4
         x0, y0, x1, y1 = region["bbox"]
         assert x0 < x1 and y0 < y1
 
@@ -166,6 +172,7 @@ def test_benchmark_page_segments_as_reviewed(page_number: int) -> None:
         dpi=document.dpi,
         image_sha256=page.sha256,
     )
+    check_page(layout.to_json())
     counts = column_counts(layout)
     assert counts == {EXPECTED_COLUMNS[page_number]}, f"page {page_number} columns {counts}"
     present = {region.type for region in layout.regions}

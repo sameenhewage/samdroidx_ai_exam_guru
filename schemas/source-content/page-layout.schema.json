@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exam-guru.local/schemas/source-content/page-layout.schema.json",
+  "title": "Page layout segmentation",
+  "description": "Geometry only. Candidate layout regions detected from one rendered page image by deterministic code, with no text, no transcription and no educational interpretation. This is the frame a reader's source-page transcription is later bound to; it never carries what a region says.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_id",
+    "page_number",
+    "width",
+    "height",
+    "dpi",
+    "image_sha256",
+    "detector_version",
+    "regions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "document_id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "maxLength": 128 },
+    "page_number": { "type": "integer", "minimum": 1 },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "dpi": { "type": "number", "minimum": 72, "maximum": 1200 },
+    "image_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Checksum of the rendered page these regions were measured from. Regions are only valid for that exact image."
+    },
+    "detector_version": { "type": "string", "maxLength": 128 },
+    "regions": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/region" } },
+    "diagnostics": {
+      "type": "object",
+      "description": "Free-form detector counters kept for debugging. Never authority for anything.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "bbox": {
+      "type": "array",
+      "description": "[x0, y0, x1, y1] in rendered-page pixels, x1/y1 exclusive.",
+      "items": { "type": "integer", "minimum": 0 },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "bbox", "reading_order"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^p[0-9]{3,5}-r[0-9]{3,5}$", "maxLength": 32 },
+        "type": {
+          "type": "string",
+          "enum": ["text", "heading", "figure", "table", "decorative", "unknown"],
+          "description": "Structural role inferred from geometry and ink alone. 'unknown' is a legitimate answer and must not be guessed away."
+        },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "reading_order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based position in the page's reading sequence: band by band, column by column, block by block."
+        },
+        "parent": {
+          "type": ["string", "null"],
+          "description": "Region id of the containing panel when this region sits inside a tint panel or callout box.",
+          "maxLength": 32
+        },
+        "column": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Zero-based column index within the region's band; null when the region spans the full width."
+        },
+        "column_count": { "type": ["integer", "null"], "minimum": 1 },
+        "band": { "type": ["integer", "null"], "minimum": 0 },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Printed rows detected inside the region. A count of ink rows, not a transcription."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Why the detector chose this type: component counts, areas, rule counts. Diagnostic only.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

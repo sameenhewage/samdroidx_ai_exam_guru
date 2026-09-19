@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#   "jsonschema==4.25.1",
 #   "numpy==2.2.6",
 #   "opencv-python-headless==4.12.0.88",
 #   "pillow==11.3.0",
@@ -29,6 +30,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from tools.source_factory.layout import benchmark as benchmark_set  # noqa: E402
+from tools.source_factory.layout.contract import check_page  # noqa: E402
 from tools.source_factory.layout.corpus import Document, load_document  # noqa: E402
 from tools.source_factory.layout.detect import analyse_page, detect_layout  # noqa: E402
 from tools.source_factory.layout.preview import (  # noqa: E402
@@ -101,10 +103,12 @@ def command_detect(arguments: argparse.Namespace) -> int:
             dpi=document.dpi,
             image_sha256=page.sha256,
         )
+        payload = layout.to_json()
+        check_page(payload)
         json_target = document.layout_root / "regions" / f"page-{page_number:03d}.json"
         json_target.parent.mkdir(parents=True, exist_ok=True)
         json_target.write_text(
-            json.dumps(layout.to_json(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         preview = annotate(image, layout, max_side=arguments.preview_width)
         preview_target = document.layout_root / "previews" / f"page-{page_number:03d}.png"

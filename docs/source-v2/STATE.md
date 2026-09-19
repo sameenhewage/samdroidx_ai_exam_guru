@@ -1,8 +1,8 @@
 # Source V2 — STATE
 
-phase: 1 — layout segmentation
-status: PASS (visually verified on 8 real pages)
-last_commit: 7970dd7 (parent of this work)
+phase: 2 — contracts + reader import (Phase 1 PASS)
+status: contract landed; Astra import blocked on one input
+last_commit: 92950a4 (Source V2 Phase 1 detector; pushed to origin/master)
 updated: 2026-09-19
 
 ## completed
@@ -32,12 +32,30 @@ updated: 2026-09-19
 - a table with no rules and no tint is still segmented as columns of text
 - tuned against one document; a second document should be benchmarked before trusting the constants
 
+## phase 2 progress
+
+- DONE: `schemas/source-content/page-layout.schema.json` — the geometry-only
+  region contract. Every page written by `cli.py detect` is validated against it,
+  plus dense reading order and parent-containment checks (`layout/contract.py`).
+- Astra is the reader named alongside Codex in `schemas/source-content/source-page.schema.json`
+  (`"Used unchanged by Codex/Astra, Qwen, Ornith and the machine candidate"`).
+  So "Astra JSON" means a `source-page.schema.json` document produced by that reader.
+
 ## next exact step
 
-Phase 2 — Source V2 contracts + Astra JSON import. Start by defining the
-`PageLayout` -> Source V2 region contract in `schemas/source-content/`
-(extend `source-page.schema.json`) and an importer that ingests Astra JSON into
-the same region shape.
+Write `tools/source_factory/import_reader.py`:
+
+- load one reader page JSON, validate it against `schemas/source-content/source-page.schema.json`
+- load the matching `layout/regions/page-NNN.json`
+- bind each reader region to a layout region by bbox overlap (IoU, then containment),
+  carrying the layout's `reading_order`, `column` and `parent`
+- report unbound reader regions and empty layout regions rather than guessing;
+  an unbound region is evidence of a layout or reading error, not something to hide
+- emit the joined document and validate it; do not merge, correct or normalise any text
+
+BLOCKED until one real Astra output file for a benchmark page exists on disk.
+No such file is present under `.exam-guru-data/`; ask for one, or run the Astra
+reader over page 156 and 186 first.
 
 ## relevant files
 
@@ -46,6 +64,8 @@ the same region shape.
 - `tools/source_factory/layout/corpus.py` — locates rendered pages on local disk
 - `tools/source_factory/layout/preview.py` — annotated previews, element debug view, contact sheets
 - `tools/source_factory/layout/benchmark.py` — fixed benchmark page list (do not edit to make results look better)
+- `tools/source_factory/layout/contract.py` — schema + reading-order + parent validation
+- `schemas/source-content/page-layout.schema.json` — the committed region contract
 - `tools/source_factory/layout/cli.py` — `contact-sheet` | `detect` | `elements` | `benchmark`
 - `tools/source_factory/layout/tests/test_detect.py`
 - `.exam-guru-data/source-content/grade-05/sinhala/mawbasa-teacher-guide/` — rendered pages + `layout/` output (gitignored)
