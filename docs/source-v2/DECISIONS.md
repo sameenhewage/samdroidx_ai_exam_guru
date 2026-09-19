@@ -317,3 +317,80 @@ architecture. Their measured results stay in `docs/source-v2/BENCHMARK_READERS.m
 and under `_archive/` as historical evidence for why. Do not run them in the
 rebuild. Re-introducing them requires a new measured decision that explicitly
 supersedes this one.
+
+## D18 — Verified visual source is preserved and vectorized by modality.
+**Locked 2026-09-19. Extends D5/D7 and does not supersede D17.**
+
+Source fidelity applies to visuals as well as text. An educational figure must
+not be excluded merely because it contains no printed text, and a model-generated
+caption must never be promoted to Verified Source Content.
+
+Every reviewed region is classified for downstream use as one of:
+
+- `TEXT_ONLY` — source meaning is carried by verified printed text.
+- `VISUAL_ONLY` — an educational figure/diagram/image with no printed text.
+- `VISUAL_WITH_TEXT` — an educational visual that also contains verified
+  printed labels/caption text.
+- `DECORATIVE` — layout/decorative material with no educational source meaning.
+
+### Human verification semantics
+
+- `TEXT_ONLY`: normal Confirm / Correct flow.
+- `VISUAL_ONLY`: reviewer explicitly confirms the crop as **visual-only**.
+  Verification preserves the canonical crop, bbox, checksum and provenance;
+  verified text remains empty/null.
+- `VISUAL_WITH_TEXT`: reviewer verifies both the visual region and its exact
+  printed text. Labels are source text and follow the same fidelity rules as
+  prose.
+- `DECORATIVE`: may be excluded from educational retrieval/vectorization.
+
+A real educational visual is not `DECORATIVE` simply because it has no text.
+
+### Embedding / vectorization contract
+
+Vectorization is modality-specific and only runs after verification:
+
+| verified source kind | downstream vectorization |
+|---|---|
+| `TEXT_ONLY` | verified text embedding |
+| `VISUAL_ONLY` | canonical image/crop embedding only |
+| `VISUAL_WITH_TEXT` | canonical image/crop embedding **and** verified text embedding |
+| `DECORATIVE` | no embedding |
+
+Hard rules:
+
+- **UNVERIFIED TEXT → NO TEXT EMBEDDING.**
+- **UNVERIFIED VISUAL → NO IMAGE EMBEDDING.**
+- Never invent a caption/description to make a `VISUAL_ONLY` region embeddable
+  as text.
+- If image embeddings are not implemented yet, verified visuals remain verified
+  but unembedded; they are never replaced by synthetic text.
+- Any later generated image description belongs to **Derived Knowledge**, not
+  Verified Source Content, and its provenance must say it was generated.
+- Text and image vectors from the same region remain linked by the same
+  `document_id`, `page_number`, `region_id`, canonical `bbox` and
+  `crop_sha256`; modality is stored explicitly.
+- Retrieval may use neighboring **verified** source regions as context, but must
+  not rewrite or merge that context back into the source record.
+
+The embedding model/provider is deliberately **not locked here**. It will be
+selected and measured when the vectorization phase begins. This decision locks
+what may be vectorized and the trust boundary, not a vendor.
+
+### Required acceptance when vectorization is implemented
+
+Tests/runtime acceptance must prove:
+
+1. an unverified text region cannot produce a text vector;
+2. an unverified visual region cannot produce an image vector;
+3. a verified `VISUAL_ONLY` region produces no fabricated source text;
+4. a verified `VISUAL_WITH_TEXT` region can emit separate image and text
+   vectors linked to the same source region;
+5. a `DECORATIVE` region emits no educational vector;
+6. generated visual descriptions, if added later, are stored only as derived
+   knowledge with explicit provenance.
+
+Example from the real acceptance page: `p186-r002` is an educational
+`VISUAL_ONLY` figure (drawing, no printed text); `p186-r003` is
+`VISUAL_WITH_TEXT` because its six printed diagram labels are source text.
+
