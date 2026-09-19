@@ -17,6 +17,14 @@
 
 This is the canonical per-change log. Keep newest entries first and include each completed cohesive change's entry in the same commit. Historical phase evidence below remains intact; log entries do not change acceptance statuses or imply remote CI success.
 
+### 2026-09-19 — Source V2 Phase 5 (part 2): real Machine Candidates imported and driven through the human gate
+
+- **Status:** **SOURCE FIDELITY GATE: still FAIL.** Verification now works end to end in the database, but no teacher has reviewed a real page in the Studio UI, so no legitimate Verified Source Content exists and nothing downstream is unlocked.
+- **`source_v2/service.py`** imports the offline pipeline's output — the layout payload, the per-reader evidence and the Machine Candidates — into the tables that enforce the rules, and drives Confirm / Correct / Exclude on top of them. It is idempotent on (document, page, rendered image sha256), and a *different* render of the same page number is refused rather than silently replacing evidence: a re-render is a new page and verification does not follow it.
+- **Driven with the real Grade 5 Sinhala page 156 candidates** where they exist on the machine, falling back to an equivalent inline payload otherwise. Eight tests cover import idempotency, the refusal of a different render, confirmation producing verified content, confirmation refused when it cites a page image other than the one compared, a correction withdrawing the prior verification and awaiting a fresh confirmation, the superseded revision becoming unconfirmable, an exclusion needing a reason and counting as resolved, and an abstained region being unconfirmable.
+- **Verification:** `uv run pytest tests/source_v2 -q` → **34 passed, 1 skipped** (the skip is honest: the real page 156 candidate set contains no abstained region, which matches the measured 0 abstentions); `uv run ruff check` clean.
+- **Not done:** HTTP endpoints, the Studio review UI, the Chrome DevTools MCP acceptance loop, calling `require_verified_source` at the knowledge/RAG/generation boundary, and removal of the old source architecture.
+
 ### 2026-09-19 — Source V2 Phase 5 (part 1): the human gate and the hard invariant, enforced in code
 
 - **Status:** **SOURCE FIDELITY GATE: still FAIL.** The gate exists and is tested; no real page has been confirmed through it yet, so there is still no Verified Source Content and nothing downstream has been unlocked.

@@ -27,11 +27,12 @@ updated:        2026-09-19
   built for real pages 4, 156, 171, 186, 197. 30 regions, 0 abstentions,
   9 regions with a critical-token conflict. 10 tests.
 
-- **Phase 5 part 1 — human gate + schema: DONE.**
-  `apps/api/src/exam_guru_api/source_v2/{domain,models}.py` and forward
-  migration `0056_source_v2`. Applied to the real Studio database and proved
-  by round-trip (`upgrade` → `downgrade -1` → `upgrade`).
-  27 tests pass: 18 pure domain + 9 against real PostgreSQL.
+- **Phase 5 parts 1-2 — human gate, schema and service: DONE.**
+  `apps/api/src/exam_guru_api/source_v2/{domain,models,service}.py` and forward
+  migration `0056_source_v2`. Applied to the real Studio database and proved by
+  round-trip (`upgrade` -> `downgrade -1` -> `upgrade`). Real page 156
+  candidates import and drive Confirm/Correct/Exclude.
+  34 tests pass, 1 honest skip: 18 pure domain + 9 schema + 8 service.
 
 ## blockers
 
@@ -40,18 +41,15 @@ updated:        2026-09-19
 
 ## exact next step
 
-Phase 5 part 2 — wire the on-disk candidates into the database and expose the
-gate over HTTP.
+Phase 5 part 3 — expose the gate over HTTP, then Phase 6.
 
-1. `source_v2/service.py`: import `.exam-guru-data/.../candidates/page-NNN.json`
-   plus the layout JSON into `source_v2_pages`, `source_v2_reader_candidates`
-   and `source_v2_machine_candidates`, bound to document id, page number and
-   the rendered image sha256. Idempotent on (document, page, image sha).
-2. `api/routes/source_v2.py`: list a page's regions with the Machine Candidate
-   and its disagreement, and expose Confirm / Correct / Exclude. Long reads are
-   background jobs — a region read is 28–54 s, so nothing runs in a request.
-3. Call `require_verified_source` at the knowledge/embedding/RAG/generation
-   boundary and add the integration test that proves the bypass fails there too.
+1. `api/routes/source_v2.py`: list a page's regions with the Machine Candidate,
+   its disagreement map and the original page image, and expose
+   Confirm / Correct / Exclude on top of `source_v2/service.py`. Reading is a
+   background job, never a request: a region read is 28-54 s.
+2. Call `require_verified_source` at the knowledge / embedding / RAG /
+   generation boundary and add the integration test that proves the bypass
+   fails there too.
 
 Then Phase 6 (Studio UI + continuous Chrome DevTools MCP on real pages),
 Phase 7 (remove the old source architecture), Phase 8 (final audit).
