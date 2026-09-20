@@ -282,6 +282,8 @@ A teacher must be able to review the **paper and its answers together** before p
 
 Generated marks and marking guidance remain suggestions until a teacher explicitly confirms them or edits them and completes fresh validation. Question approval and draft assembly must fail closed without immutable confirmation tied to the current reviewed candidate revision.
 
+Question-level edit/reject/regenerate intervention semantics, the separate Agent Tasks queue, and manual local Codex/agent execution are governed by [`08_MANUAL_AGENT_INTERVENTION_WORKFLOW.md`](08_MANUAL_AGENT_INTERVENTION_WORKFLOW.md). In particular, `Regenerate this question` is slot-scoped and must not silently regenerate the whole paper.
+
 ## 11. Generated paper library
 Operators need a simple list of generated papers with:
 - grade;
