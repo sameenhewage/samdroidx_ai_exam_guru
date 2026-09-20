@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exam-guru.local/schemas/source-content/primary-reading.schema.json",
   "title": "Source V2 primary reading (executing agent)",
-  "description": "One page transcribed directly from the original render by the executing agent, before any local OCR has run or been looked at. This is the PRIMARY source interpretation. DeepSeek is a strong secondary witness and LightOnOCR a weak corroborating one; both run afterwards on the same pixels and may contradict but never replace this. Nothing here is verified: a human still decides every region against the original page. See docs/source-v2/DECISIONS.md D14.",
+  "description": "The current executing AI agent directly visually transcribes the exact canonical crop. This is the sole machine source reading. It remains unverified until a genuine human compares it with the original/crop evidence. There is no second reader, no corroboration and no vote. See docs/source-v2/DECISIONS.md D14.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -35,10 +35,15 @@
     "language": { "type": "string", "maxLength": 32 },
     "provenance": {
       "const": "primary-agent-reading",
-      "description": "Recorded so no later process can mistake this for OCR output."
+      "description": "The one machine source reader: the executing AI agent looking at the canonical crop. Recorded so no later process can mistake this for machine-generated text from anything else."
     },
     "read_at": { "type": "string", "format": "date-time" },
-    "reader_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "reader_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Version of the primary-agent reading contract this page was sealed under. Not a choice between readers: there is only one."
+    },
     "notes": { "type": "string", "maxLength": 2000 },
     "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } }
   },

@@ -43,11 +43,12 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_source_v2_visual_abstention_is_the_single_bounded_revision_head() -> None:
+def test_source_v2_single_reader_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0059_source_v2_visual_abstention"]
+    assert scripts.get_heads() == ["0060_source_v2_single_reader"]
     for identifier, parent in (
+        ("0060_source_v2_single_reader", "0059_source_v2_visual_abstention"),
         ("0059_source_v2_visual_abstention", "0058_source_v2_candidate_crop"),
         ("0058_source_v2_candidate_crop", "0057_source_v2_source_kind"),
         ("0057_source_v2_source_kind", "0056_source_v2"),

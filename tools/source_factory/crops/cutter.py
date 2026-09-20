@@ -1,21 +1,17 @@
 """Cut the canonical region crops.
 
 These are the *only* images anyone is allowed to read a region from: the
-executing agent transcribing it, the audit readers auditing it, and the
-reviewer confirming it all look at the same pixels. Re-cutting a crop by hand
-is how a region gets attributed to the wrong paragraph, which happened for
-real on page 186 (D16).
+executing agent transcribing it and the reviewer confirming it look at the
+same pixels. Re-cutting a crop by hand is how a region gets attributed to the
+wrong paragraph, which happened for real on page 186 (D16).
 
 A crop is produced for **every** region the layout found, including figures
 and decorative bars. A region with no crop would have to be read from
 somewhere else, and there is nowhere else.
 
-Historically these lived under `readers/crops`; they are canonical pipeline
-output, not reader output, so they live at `<document>/crops`.
-
-Readers are benchmarked on the *same* crops, produced deterministically from the
-committed layout, so a difference between two readers is a difference in reading
-and not in framing.
+Cutting is deterministic: the same render and the same committed layout always
+produce the same bytes, so `crops.json` can bind a reading to its image by
+checksum.
 """
 
 from __future__ import annotations
@@ -33,7 +29,7 @@ from tools.source_factory.layout.detect import detect_layout
 from tools.source_factory.layout.model import Box
 
 READABLE_TYPES = ("text", "heading", "table")
-CROP_PAD = 8  # a reader needs a little paper around the ink
+CROP_PAD = 8  # a little paper around the ink keeps the edge glyphs legible
 
 
 @dataclass(frozen=True)
@@ -134,7 +130,7 @@ def load(document: Document) -> list[Crop]:
     root = document.folder / "crops"
     manifest = root / "crops.json"
     if not manifest.exists():
-        raise SystemExit(f"no crops yet; run the crops command first ({manifest})")
+        raise SystemExit(f"no crops yet; run the cut command first ({manifest})")
     entries = json.loads(manifest.read_text(encoding="utf-8"))
     return [
         Crop(

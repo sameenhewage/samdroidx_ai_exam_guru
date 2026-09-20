@@ -6,9 +6,13 @@
 
     uv run tools/source_factory/import_studio.py --pages 156,186 --document-id <uuid>
 
-Moves what the offline pipeline produced — the layout, the per-reader evidence
-and the Machine Candidates — into `source_v2_*`. It never marks anything
-verified: that is a human act, performed in the Studio.
+Moves what the offline pipeline produced — the layout and the Machine
+Candidates, one per region, each carrying the single primary reading — into
+`source_v2_*`. It never marks anything verified: that is a human act,
+performed in the Studio.
+
+Superseded by `publish_to_studio.py`, which goes through the Studio API.
+Kept as the direct-database fallback for a Studio that is not running.
 
 Idempotent on (document, page, rendered image sha256). A different render of
 the same page number is refused, because a re-render is a new page and
@@ -44,33 +48,6 @@ DSN = (
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def reader_rows(page_number: int) -> dict[str, list[dict]]:
-    """Per-reader measured rows for this page, keyed by reader name."""
-
-    folder = STUDIO / "readers" / "results"
-    prefix = f"{page_number:03d}-"
-    evidence: dict[str, list[dict]] = {}
-    for path in sorted(folder.glob("*.json")):
-        report = load_json(path)
-        rows = [row for row in report.get("crops", []) if row["crop_id"].startswith(prefix)]
-        if rows:
-            evidence[report["reader"]] = [
-                {
-                    # crop ids are "156-r001"; region ids are "p156-r001".
-                    "region_id": f"p{page_number:03d}-{row['crop_id'].split('-')[-1]}",
-                    "text": row.get("text", ""),
-                    "abstained": bool(row.get("abstained")),
-                    "failure": row.get("failure"),
-                    "seconds": float(row.get("seconds", 0.0)),
-                    "repetition": row.get("repetition"),
-                    "structural_repetition": row.get("structural_repetition"),
-                    "foreign_script": row.get("foreign_script"),
-                }
-                for row in rows
-            ]
-    return evidence
 
 
 def refresh_candidates(cursor, page_id, page_number: int, candidates: list[dict]) -> dict:
@@ -110,10 +87,8 @@ def refresh_candidates(cursor, page_id, page_number: int, candidates: list[dict]
             """
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-               abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
-               disagreement, state, is_current)
-            values (%s, %s, %s, %s, %s, %s, 'machine', %s, %s, %s, %s, %s, %s, %s,
-                    'unverified', true)
+               abstained, reason, state, is_current)
+            values (%s, %s, %s, %s, %s, %s, 'machine', %s, %s, %s, 'unverified', true)
             """,
             (
                 uuid.uuid4(),
@@ -124,11 +99,7 @@ def refresh_candidates(cursor, page_id, page_number: int, candidates: list[dict]
                 current[0],
                 proposed,
                 bool(region.get("abstained")),
-                region.get("chosen_reader"),
                 (region.get("reason") or "")[:400],
-                bool(region.get("critical_conflict")),
-                float(region.get("agreement_ratio", 1.0)),
-                json.dumps(region.get("disagreement", {}), ensure_ascii=False),
             ),
         )
         superseded += 1
@@ -145,7 +116,9 @@ def import_page(
     cursor, document_id: uuid.UUID, page_number: int, language: str, refresh: bool = False
 ) -> dict:
     layout = load_json(STUDIO / "layout" / "regions" / f"page-{page_number:03d}.json")
-    candidates = load_json(STUDIO / "candidates" / f"page-{page_number:03d}.json")["regions"]
+    candidates = load_json(
+        STUDIO / "candidates" / "pages" / f"page-{page_number:03d}.json"
+    )["regions"]
     sha = layout["image_sha256"]
 
     existing = cursor.execute(
@@ -185,45 +158,13 @@ def import_page(
         ),
     )
 
-    readers = 0
-    for reader, rows in reader_rows(page_number).items():
-        for row in rows:
-            cursor.execute(
-                """
-                insert into source_v2_reader_candidates
-                  (id, page_id, region_id, reader, text, abstained, failure, seconds, signals)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (page_id, region_id, reader) do nothing
-                """,
-                (
-                    uuid.uuid4(),
-                    page_id,
-                    row["region_id"],
-                    reader,
-                    row["text"],
-                    row["abstained"],
-                    row["failure"],
-                    row["seconds"],
-                    json.dumps(
-                        {
-                            key: row[key]
-                            for key in ("repetition", "structural_repetition", "foreign_script")
-                            if row.get(key) is not None
-                        }
-                    ),
-                ),
-            )
-            readers += 1
-
     for region in candidates:
         cursor.execute(
             """
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, origin, text, abstained,
-               chosen_reader, reason, critical_conflict, agreement_ratio, disagreement,
-               state, is_current)
-            values (%s, %s, %s, %s, 1, 'machine', %s, %s, %s, %s, %s, %s, %s,
-                    'unverified', true)
+               reason, state, is_current)
+            values (%s, %s, %s, %s, 1, 'machine', %s, %s, %s, 'unverified', true)
             """,
             (
                 uuid.uuid4(),
@@ -232,11 +173,7 @@ def import_page(
                 region["region_type"],
                 unicodedata.normalize("NFC", region.get("text", "")),
                 bool(region.get("abstained")),
-                region.get("chosen_reader"),
                 (region.get("reason") or "")[:400],
-                bool(region.get("critical_conflict")),
-                float(region.get("agreement_ratio", 1.0)),
-                json.dumps(region.get("disagreement", {}), ensure_ascii=False),
             ),
         )
 
@@ -244,7 +181,6 @@ def import_page(
         "page": page_number,
         "page_id": str(page_id),
         "regions": len(candidates),
-        "reader_rows": readers,
         "reused": False,
     }
 

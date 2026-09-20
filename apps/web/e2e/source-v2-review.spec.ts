@@ -13,8 +13,8 @@ import {
  * The readings below are deliberately short ASCII/Sinhala fixtures: this proves
  * the *workflow* — confirm, correct, confirm the correction, exclude, reload,
  * and the stale-revision refusal. It is not evidence about real Sinhala
- * reading accuracy, which is measured in docs/source-v2/BENCHMARK_READERS.md
- * and checked by eye against the original page.
+ * reading accuracy, which is only ever established by a human checking the
+ * one machine reading against the original page.
  */
 
 const ORIGINAL_HEADING = "ක්‍රියාකාරකම 11";
@@ -48,11 +48,7 @@ function region(
     region_type: type,
     text,
     abstained: false,
-    chosen_reader: "sinhala-deepseek",
-    reason: "selected by measured rank",
-    critical_conflict: false,
-    agreement_ratio: 1,
-    disagreement: {},
+    reason: "primary reading by the executing agent from the canonical crop",
     ...extra,
   };
 }
@@ -105,20 +101,8 @@ async function importPage(page: Page, documentId: string) {
         region("p001-r003", "decorative", FOOTER),
         region("p001-r004", "unknown", "", {
           abstained: true,
-          chosen_reader: null,
-          reason: "no witness was trustworthy for this region",
+          reason: "primary reading found no text: no printed text in this region",
         }),
-      ],
-      reader_results: [
-        {
-          region_id: "p001-r001",
-          reader: "sinhala-deepseek",
-          text: MISREAD_HEADING,
-          abstained: false,
-          failure: null,
-          seconds: 2.1,
-          signals: {},
-        },
       ],
     },
   });
@@ -155,6 +139,12 @@ test.describe("Source V2 review", () => {
       "unverified",
     );
     await expect(page.getByTestId("text-p001-r001")).toHaveText(MISREAD_HEADING);
+
+    // One machine reading, so no ensemble to compare: no reader panel, no
+    // "readers disagree" badge, no OCR wording anywhere on the screen.
+    await expect(page.getByText(/Technical details/i)).toHaveCount(0);
+    await expect(page.getByText(/readers disagree/i)).toHaveCount(0);
+    await expect(page.getByText(/deepseek|lightonocr|\bOCR\b/i)).toHaveCount(0);
 
     // 1. confirm an acceptable reading
     await page.getByTestId("confirm-p001-r002").click();

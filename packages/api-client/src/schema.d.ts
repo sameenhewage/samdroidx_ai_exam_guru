@@ -2027,7 +2027,7 @@ export interface paths {
         };
         /**
          * Read Page Render
-         * @description The original page, checksum-verified against what the readers saw.
+         * @description The original page, checksum-verified against what the agent read.
          */
         get: operations["read_page_render_api_v1_admin_source_v2_pages__page_id__render_get"];
         put?: never;
@@ -2752,24 +2752,8 @@ export interface components {
              * @default false
              */
             abstained: boolean;
-            /**
-             * Agreement Ratio
-             * @default 1
-             */
-            agreement_ratio: number;
-            /** Chosen Reader */
-            chosen_reader?: string | null;
-            /**
-             * Critical Conflict
-             * @default false
-             */
-            critical_conflict: boolean;
             /** Crop Sha256 */
             crop_sha256?: string | null;
-            /** Disagreement */
-            disagreement?: {
-                [key: string]: unknown;
-            };
             /**
              * Reason
              * @default
@@ -4375,8 +4359,9 @@ export interface components {
          * ImportPageRequest
          * @description One page of Source Factory output, handed to the Studio.
          *
-         *     Carries geometry and proposed readings only. Nothing here can mark anything
-         *     verified: that remains a human act performed against the original page.
+         *     Carries geometry and the one primary reading per region. Nothing here can
+         *     mark anything verified: that remains a human act performed against the
+         *     original page.
          */
         ImportPageRequest: {
             /** Candidates */
@@ -4402,8 +4387,6 @@ export interface components {
             };
             /** Page Number */
             page_number: number;
-            /** Reader Results */
-            reader_results?: components["schemas"]["ReaderResultInput"][];
             /** Width */
             width: number;
         };
@@ -4416,8 +4399,6 @@ export interface components {
             page_id: string;
             /** Page Number */
             page_number: number;
-            /** Reader Rows */
-            reader_rows: number;
             /** Regions */
             regions: number;
             /** Reused */
@@ -6344,50 +6325,6 @@ export interface components {
         RateLimiterUnavailableResponse: {
             detail: components["schemas"]["RateLimiterUnavailableDetail"];
         };
-        /** ReaderEvidence */
-        ReaderEvidence: {
-            /**
-             * Abstained
-             * @default false
-             */
-            abstained: boolean;
-            /** Failure */
-            failure?: string | null;
-            /** Reader */
-            reader: string;
-            /**
-             * Seconds
-             * @default 0
-             */
-            seconds: number;
-            /** Text */
-            text: string;
-        };
-        /** ReaderResultInput */
-        ReaderResultInput: {
-            /**
-             * Abstained
-             * @default false
-             */
-            abstained: boolean;
-            /** Failure */
-            failure?: string | null;
-            /** Reader */
-            reader: string;
-            /** Region Id */
-            region_id: string;
-            /**
-             * Seconds
-             * @default 0
-             */
-            seconds: number;
-            /** Signals */
-            signals?: {
-                [key: string]: unknown;
-            };
-            /** Text */
-            text: string;
-        };
         /** ReadinessResponse */
         ReadinessResponse: {
             checks: components["schemas"]["DependencyChecks"];
@@ -6399,7 +6336,7 @@ export interface components {
         };
         /**
          * ReclassifyRequest
-         * @description The reviewer disagrees with the proposed kind.
+         * @description The reviewer overrules the proposed kind.
          *
          *     Changing what a region *is* is a human decision and lands as its own
          *     review event; the machine never applies it silently.
@@ -6440,8 +6377,6 @@ export interface components {
         RegionView: {
             /** Abstained */
             abstained: boolean;
-            /** Agreement Ratio */
-            agreement_ratio: number;
             /** Bbox */
             bbox?: number[] | null;
             /**
@@ -6449,16 +6384,8 @@ export interface components {
              * Format: uuid
              */
             candidate_id: string;
-            /** Chosen Reader */
-            chosen_reader: string | null;
-            /** Critical Conflict */
-            critical_conflict: boolean;
             /** Crop Sha256 */
             crop_sha256?: string | null;
-            /** Disagreement */
-            disagreement?: {
-                [key: string]: unknown;
-            };
             /**
              * Origin
              * @enum {string}
@@ -6466,8 +6393,6 @@ export interface components {
             origin: "machine" | "human-correction";
             /** Proposed Source Kind */
             proposed_source_kind?: ("text_only" | "visual_only" | "visual_with_text" | "decorative" | "undecided") | null;
-            /** Readers */
-            readers?: components["schemas"]["ReaderEvidence"][];
             /** Reason */
             reason: string;
             /** Region Id */

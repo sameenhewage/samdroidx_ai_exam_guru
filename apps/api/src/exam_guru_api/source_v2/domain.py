@@ -50,18 +50,19 @@ class StaleReviewError(SourceV2Error):
 
 @dataclass(frozen=True)
 class MachineCandidate:
-    """What the machine proposes for one region. Never trust."""
+    """What the machine proposes for one region. Never trust.
+
+    One reading, by the executing agent, from the canonical crop. There is no
+    competing reader, so there is nothing here to choose between.
+    """
 
     candidate_id: UUID
     region_id: str
     region_type: RegionType
     text: str
     abstained: bool
-    chosen_reader: str | None
     revision: int
     parent_candidate_id: UUID | None = None
-    critical_conflict: bool = False
-    agreement_ratio: float = 1.0
 
     @property
     def confirmable(self) -> bool:
@@ -227,7 +228,6 @@ class PageReview:
             region_type=candidate.region_type,
             text=corrected_text,
             abstained=False,
-            chosen_reader=None,
             revision=candidate.revision + 1,
             parent_candidate_id=candidate.candidate_id,
         )

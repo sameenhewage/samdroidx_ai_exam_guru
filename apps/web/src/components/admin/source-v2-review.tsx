@@ -3,9 +3,9 @@
 /**
  * Source V2 page review: the original page beside what the machine read.
  *
- * The teacher is not an OCR typist. Every region arrives with a proposed
- * reading already in it; the teacher's job is to look at the page and decide.
- * The editor only opens when they choose to correct something.
+ * The teacher is not a typist. Every region arrives with one proposed reading
+ * already in it; the teacher's job is to look at the page and decide. The
+ * editor only opens when they choose to correct something.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,14 +20,6 @@ type SourceKind =
   | "decorative"
   | "undecided";
 
-type ReaderEvidence = {
-  reader: string;
-  text: string;
-  abstained: boolean;
-  failure: string | null;
-  seconds: number;
-};
-
 type Region = {
   region_id: string;
   region_type: string;
@@ -36,18 +28,13 @@ type Region = {
   origin: "machine" | "human-correction";
   text: string;
   abstained: boolean;
-  chosen_reader: string | null;
   reason: string;
-  critical_conflict: boolean;
-  agreement_ratio: number;
-  disagreement: { cells?: { kind: string; variants: { value: string; readers: string[] }[] }[] };
   state: RegionState;
   bbox: number[] | null;
   verified_text: string | null;
   source_kind: SourceKind;
   proposed_source_kind: SourceKind | null;
   crop_sha256: string | null;
-  readers: ReaderEvidence[];
 };
 
 type Progress = {
@@ -87,7 +74,6 @@ const TEXT = {
     verified: "තහවුරු කර ඇත",
     excluded: "භාවිතයෙන් ඉවත් කර ඇත",
     unverified: "තහවුරු කර නොමැත",
-    conflict: "කියවීම් අතර නොගැලපීමක්",
     notRead: "මෙම කොටසේ පෙළ නිවැරදිව කියවී නොමැත.",
     kindText: "පෙළ",
     kindVisual: "රූපය පමණි",
@@ -114,7 +100,6 @@ const TEXT = {
     verified: "Verified",
     excluded: "Removed from use",
     unverified: "Not verified",
-    conflict: "Readers disagree",
     notRead: "This region was not read correctly.",
     kindText: "Text",
     kindVisual: "Visual only",
@@ -434,11 +419,6 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   >
                     {kindLabel(labels, region.source_kind)}
                   </span>
-                  {region.critical_conflict ? (
-                    <span className="rounded border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs text-orange-900">
-                      {labels.conflict}
-                    </span>
-                  ) : null}
                   {region.origin === "human-correction" ? (
                     <span className="rounded border border-sky-300 bg-sky-100 px-2 py-0.5 text-xs text-sky-900">
                       r{region.revision}
@@ -612,24 +592,6 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                     </>
                   )}
                 </div>
-
-                {region.readers.length > 0 ? (
-                  <details className="pt-2 text-xs text-slate-700">
-                    <summary className="cursor-pointer">
-                      Technical details ({region.readers.length} readers,{" "}
-                      {region.disagreement.cells?.length ?? 0} conflicts)
-                    </summary>
-                    <ul className="space-y-1 pt-1">
-                      {region.readers.map((reader) => (
-                        <li key={reader.reader}>
-                          <span className="font-mono">{reader.reader}</span> ·{" "}
-                          {reader.seconds.toFixed(1)}s · {reader.text.length} chars
-                          {reader.failure ? ` · ${reader.failure}` : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
               </li>
             );
           })}

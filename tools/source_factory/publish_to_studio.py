@@ -7,9 +7,10 @@
     uv run tools/source_factory/publish_to_studio.py --document <folder> [--refresh]
 
 Uploads the original PDF if the Studio does not have it yet, then posts each
-page's layout, reader evidence and Machine Candidates to
-`POST /admin/source-v2/pages`. Nothing published here is verified: every region
-still has to be decided by a person against the original page.
+page's layout and its Machine Candidates — one per region, each carrying the
+single primary reading — to `POST /admin/source-v2/pages`. Nothing published
+here is verified: every region still has to be decided by a person against
+the original page.
 
 This replaces writing to the database directly, so the Studio API is the only
 way source content enters the system.
@@ -31,40 +32,6 @@ DEFAULT_TOKEN = "exam-guru-admin-local-token"
 
 def load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def reader_rows(folder: Path, page_number: int) -> list[dict]:
-    """Per-reader measured rows for this page, flattened for the API."""
-
-    prefix = f"{page_number:03d}-"
-    rows: list[dict] = []
-    for path in sorted((folder / "readers" / "results").glob("*.json")):
-        report = load(path)
-        for row in report.get("crops", []):
-            if not row["crop_id"].startswith(prefix):
-                continue
-            rows.append(
-                {
-                    # crop ids are "002-r001"; region ids are "p002-r001".
-                    "region_id": f"p{page_number:03d}-{row['crop_id'].split('-')[-1]}",
-                    "reader": report["reader"],
-                    "text": row.get("text", ""),
-                    "abstained": bool(row.get("abstained")),
-                    "failure": row.get("failure"),
-                    "seconds": float(row.get("seconds", 0.0)),
-                    "signals": {
-                        key: row[key]
-                        for key in (
-                            "repetition",
-                            "structural_repetition",
-                            "foreign_script",
-                            "expected_script",
-                        )
-                        if row.get(key) is not None
-                    },
-                }
-            )
-    return rows
 
 
 def upload_original(client, folder: Path, manifest: dict) -> str:
@@ -130,18 +97,13 @@ def main() -> int:
                         "region_type": region["region_type"],
                         "text": region.get("text", ""),
                         "abstained": bool(region.get("abstained")),
-                        "chosen_reader": region.get("chosen_reader"),
                         "reason": (region.get("reason") or "")[:400],
-                        "critical_conflict": bool(region.get("critical_conflict")),
-                        "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
-                        "disagreement": region.get("disagreement", {}),
                         # D18: the canonical crop this region was read from,
                         # so a verified visual can name its evidence.
                         "crop_sha256": region.get("crop_sha256"),
                     }
                     for region in load(path)["regions"]
                 ],
-                "reader_results": reader_rows(folder, page_number),
             },
         )
         if response.status_code >= 400:

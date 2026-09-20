@@ -1203,28 +1203,6 @@
             "title": "Abstained",
             "type": "boolean"
           },
-          "agreement_ratio": {
-            "default": 1.0,
-            "title": "Agreement Ratio",
-            "type": "number"
-          },
-          "chosen_reader": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chosen Reader"
-          },
-          "critical_conflict": {
-            "default": false,
-            "title": "Critical Conflict",
-            "type": "boolean"
-          },
           "crop_sha256": {
             "anyOf": [
               {
@@ -1236,11 +1214,6 @@
               }
             ],
             "title": "Crop Sha256"
-          },
-          "disagreement": {
-            "additionalProperties": true,
-            "title": "Disagreement",
-            "type": "object"
           },
           "reason": {
             "default": "",
@@ -5359,7 +5332,7 @@
       },
       "ImportPageRequest": {
         "additionalProperties": false,
-        "description": "One page of Source Factory output, handed to the Studio.\n\nCarries geometry and proposed readings only. Nothing here can mark anything\nverified: that remains a human act performed against the original page.",
+        "description": "One page of Source Factory output, handed to the Studio.\n\nCarries geometry and the one primary reading per region. Nothing here can\nmark anything verified: that remains a human act performed against the\noriginal page.",
         "properties": {
           "candidates": {
             "items": {
@@ -5410,14 +5383,6 @@
             "title": "Page Number",
             "type": "integer"
           },
-          "reader_results": {
-            "items": {
-              "$ref": "#/components/schemas/ReaderResultInput"
-            },
-            "maxItems": 8192,
-            "title": "Reader Results",
-            "type": "array"
-          },
           "width": {
             "minimum": 1.0,
             "title": "Width",
@@ -5451,10 +5416,6 @@
             "title": "Page Number",
             "type": "integer"
           },
-          "reader_rows": {
-            "title": "Reader Rows",
-            "type": "integer"
-          },
           "regions": {
             "title": "Regions",
             "type": "integer"
@@ -5478,7 +5439,6 @@
           "page_id",
           "page_number",
           "regions",
-          "reader_rows",
           "reused"
         ],
         "title": "ImportPageResponse",
@@ -10522,100 +10482,6 @@
         "title": "RateLimiterUnavailableResponse",
         "type": "object"
       },
-      "ReaderEvidence": {
-        "additionalProperties": false,
-        "properties": {
-          "abstained": {
-            "default": false,
-            "title": "Abstained",
-            "type": "boolean"
-          },
-          "failure": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failure"
-          },
-          "reader": {
-            "title": "Reader",
-            "type": "string"
-          },
-          "seconds": {
-            "default": 0.0,
-            "title": "Seconds",
-            "type": "number"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reader",
-          "text"
-        ],
-        "title": "ReaderEvidence",
-        "type": "object"
-      },
-      "ReaderResultInput": {
-        "additionalProperties": false,
-        "properties": {
-          "abstained": {
-            "default": false,
-            "title": "Abstained",
-            "type": "boolean"
-          },
-          "failure": {
-            "anyOf": [
-              {
-                "maxLength": 400,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failure"
-          },
-          "reader": {
-            "maxLength": 64,
-            "title": "Reader",
-            "type": "string"
-          },
-          "region_id": {
-            "maxLength": 64,
-            "title": "Region Id",
-            "type": "string"
-          },
-          "seconds": {
-            "default": 0.0,
-            "title": "Seconds",
-            "type": "number"
-          },
-          "signals": {
-            "additionalProperties": true,
-            "title": "Signals",
-            "type": "object"
-          },
-          "text": {
-            "maxLength": 200000,
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "region_id",
-          "reader",
-          "text"
-        ],
-        "title": "ReaderResultInput",
-        "type": "object"
-      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -10639,7 +10505,7 @@
       },
       "ReclassifyRequest": {
         "additionalProperties": false,
-        "description": "The reviewer disagrees with the proposed kind.\n\nChanging what a region *is* is a human decision and lands as its own\nreview event; the machine never applies it silently.",
+        "description": "The reviewer overrules the proposed kind.\n\nChanging what a region *is* is a human decision and lands as its own\nreview event; the machine never applies it silently.",
         "properties": {
           "candidate_id": {
             "format": "uuid",
@@ -10739,10 +10605,6 @@
             "title": "Abstained",
             "type": "boolean"
           },
-          "agreement_ratio": {
-            "title": "Agreement Ratio",
-            "type": "number"
-          },
           "bbox": {
             "anyOf": [
               {
@@ -10762,21 +10624,6 @@
             "title": "Candidate Id",
             "type": "string"
           },
-          "chosen_reader": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chosen Reader"
-          },
-          "critical_conflict": {
-            "title": "Critical Conflict",
-            "type": "boolean"
-          },
           "crop_sha256": {
             "anyOf": [
               {
@@ -10787,11 +10634,6 @@
               }
             ],
             "title": "Crop Sha256"
-          },
-          "disagreement": {
-            "additionalProperties": true,
-            "title": "Disagreement",
-            "type": "object"
           },
           "origin": {
             "enum": [
@@ -10818,13 +10660,6 @@
               }
             ],
             "title": "Proposed Source Kind"
-          },
-          "readers": {
-            "items": {
-              "$ref": "#/components/schemas/ReaderEvidence"
-            },
-            "title": "Readers",
-            "type": "array"
           },
           "reason": {
             "title": "Reason",
@@ -10895,10 +10730,7 @@
           "origin",
           "text",
           "abstained",
-          "chosen_reader",
           "reason",
-          "critical_conflict",
-          "agreement_ratio",
           "state"
         ],
         "title": "RegionView",
@@ -29596,7 +29428,7 @@
     },
     "/api/v1/admin/source-v2/pages/{page_id}/render": {
       "get": {
-        "description": "The original page, checksum-verified against what the readers saw.",
+        "description": "The original page, checksum-verified against what the agent read.",
         "operationId": "read_page_render_api_v1_admin_source_v2_pages__page_id__render_get",
         "parameters": [
           {

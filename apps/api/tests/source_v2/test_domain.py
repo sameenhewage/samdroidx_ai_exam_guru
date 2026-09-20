@@ -6,6 +6,7 @@ fails, source fidelity is broken regardless of what the rest of the stack does.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -36,7 +37,6 @@ def candidate(region_id="p156-r002", text="පාසල් වත්තේ", abs
         region_type=RegionType.TEXT,
         text=text,
         abstained=abstained,
-        chosen_reader="sinhala-deepseek",
         revision=revision,
     )
 
@@ -326,3 +326,36 @@ def test_a_fully_resolved_document_is_allowed() -> None:
         pages={156: verified_page(156), 157: excluded},
     )
     require_verified_source(resolution, purpose="knowledge")
+
+
+# --- one machine reader -------------------------------------------------------
+
+
+def test_a_machine_candidate_carries_no_reader_ensemble_fields() -> None:
+    """There is one machine reading, so there is nothing to choose between."""
+
+    fields = {field.name for field in dataclasses.fields(MachineCandidate)}
+    assert fields == {
+        "candidate_id",
+        "region_id",
+        "region_type",
+        "text",
+        "abstained",
+        "revision",
+        "parent_candidate_id",
+    }
+
+
+def test_a_fresh_machine_candidate_is_not_verified_source_content() -> None:
+    """A proposal is not trust, however confident the reading looks."""
+
+    review = page(candidate())
+    assert review.state_of("p156-r002") is RegionState.UNVERIFIED
+    assert review.verified == {}
+    assert review.events == []
+    assert not review.carries_source
+    with pytest.raises(NotVerifiedError):
+        require_verified_source(
+            DocumentResolution(document_id="mawbasa-teacher-guide", pages={156: review}),
+            purpose="knowledge",
+        )

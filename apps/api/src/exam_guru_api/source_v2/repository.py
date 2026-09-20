@@ -60,11 +60,7 @@ class RegionRow:
     origin: str
     text: str
     abstained: bool
-    chosen_reader: str | None
     reason: str
-    critical_conflict: bool
-    agreement_ratio: float
-    disagreement: dict
     state: str
     bbox: list[int] | None
     verified_text: str | None
@@ -111,8 +107,7 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
         await session.execute(
             text("""
                 select c.region_id, c.region_type, c.id, c.revision, c.origin, c.text,
-                       c.abstained, c.chosen_reader, c.reason, c.critical_conflict,
-                       c.agreement_ratio, c.disagreement, c.state, v.text,
+                       c.abstained, c.reason, c.state, v.text,
                        c.source_kind, c.proposed_source_kind, c.crop_sha256
                 from source_v2_machine_candidates c
                 left join source_v2_verified_regions v
@@ -139,45 +134,16 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             origin=row[4],
             text=row[5],
             abstained=row[6],
-            chosen_reader=row[7],
-            reason=row[8],
-            critical_conflict=row[9],
-            agreement_ratio=row[10],
-            disagreement=row[11] or {},
-            state=row[12],
+            reason=row[7],
+            state=row[8],
             bbox=boxes.get(row[0]),
-            verified_text=row[13],
-            source_kind=row[14],
-            proposed_source_kind=row[15],
-            crop_sha256=row[16],
+            verified_text=row[9],
+            source_kind=row[10],
+            proposed_source_kind=row[11],
+            crop_sha256=row[12],
         )
         for row in rows
     ]
-
-
-async def reader_evidence(session: AsyncSession, page_id: UUID) -> dict[str, list[dict]]:
-    rows = (
-        await session.execute(
-            text(
-                "select region_id, reader, text, abstained, failure, seconds"
-                " from source_v2_reader_candidates where page_id = :page_id"
-                " order by region_id, reader"
-            ),
-            {"page_id": page_id},
-        )
-    ).all()
-    evidence: dict[str, list[dict]] = {}
-    for region_id, reader, body, abstained, failure, seconds in rows:
-        evidence.setdefault(region_id, []).append(
-            {
-                "reader": reader,
-                "text": body,
-                "abstained": abstained,
-                "failure": failure,
-                "seconds": seconds,
-            }
-        )
-    return evidence
 
 
 async def progress(session: AsyncSession, page_id: UUID) -> dict[str, int]:
@@ -479,10 +445,11 @@ async def reclassify(
     source_kind: str,
     note: str,
 ) -> None:
-    """The reviewer disagrees with the proposed kind.
+    """The reviewer overrules the proposed kind.
 
     Recorded as its own review event and never applied by the machine. The
-    proposal is left untouched so the disagreement stays visible.
+    machine's original proposal is left untouched so the difference between
+    what was proposed and what the human decided stays visible.
     """
 
     await _require_current(session, page.page_id, region_id, candidate_id, revision)
@@ -553,9 +520,9 @@ async def correct(
         text("""
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-               abstained, chosen_reader, reason, state, is_current)
+               abstained, reason, state, is_current)
             values (:id, :page_id, :region_id, :region_type, :revision, :parent_id, :origin,
-                    :text, false, null, :reason, 'unverified', true)
+                    :text, false, :reason, 'unverified', true)
         """),
         {
             "id": child_id,
@@ -622,7 +589,6 @@ async def import_page(
     detector_version: str,
     layout: dict,
     candidates: list[dict],
-    reader_results: list[dict],
     refresh: bool = False,
 ) -> dict:
     """Ingest one page of Source Factory output.
@@ -630,8 +596,8 @@ async def import_page(
     Idempotent on (document, page, rendered image sha256). A *different*
     render of the same page number is refused rather than silently replacing
     evidence: a re-render is a new page and verification does not follow it.
-    With `refresh`, a re-run of the readers supersedes the current reading with
-    a new revision instead of being skipped; nothing is ever deleted.
+    With `refresh`, a fresh reading supersedes the current one with a new
+    revision instead of being skipped; nothing is ever deleted.
     """
 
     existing = (
@@ -654,7 +620,6 @@ async def import_page(
                 "page_id": existing[0],
                 "page_number": page_number,
                 "regions": 0,
-                "reader_rows": 0,
                 "reused": True,
             }
         return await _supersede(session, existing[0], page_number, candidates)
@@ -681,27 +646,6 @@ async def import_page(
             "layout": json.dumps(layout, ensure_ascii=False),
         },
     )
-    for result in reader_results:
-        await session.execute(
-            text("""
-                insert into source_v2_reader_candidates
-                  (id, page_id, region_id, reader, text, abstained, failure, seconds, signals)
-                values (:id, :page_id, :region_id, :reader, :text, :abstained, :failure,
-                        :seconds, cast(:signals as jsonb))
-                on conflict (page_id, region_id, reader) do nothing
-            """),
-            {
-                "id": uuid4(),
-                "page_id": page_id,
-                "region_id": result["region_id"],
-                "reader": result["reader"],
-                "text": result.get("text", ""),
-                "abstained": bool(result.get("abstained")),
-                "failure": result.get("failure"),
-                "seconds": float(result.get("seconds", 0.0)),
-                "signals": json.dumps(result.get("signals", {}), ensure_ascii=False),
-            },
-        )
     for region in candidates:
         # D18: a brand-new page proposes its source kinds here, exactly as a
         # refreshed one does in `_insert_candidate`. Leaving this path out is
@@ -720,11 +664,9 @@ async def import_page(
             text("""
                 insert into source_v2_machine_candidates
                   (id, page_id, region_id, region_type, revision, origin, text, abstained,
-                   chosen_reader, reason, critical_conflict, agreement_ratio, disagreement,
-                   state, is_current, source_kind, proposed_source_kind, crop_sha256)
+                   reason, state, is_current, source_kind, proposed_source_kind, crop_sha256)
                 values (:id, :page_id, :region_id, :region_type, 1, 'machine', :text,
-                        :abstained, :chosen_reader, :reason, :critical_conflict,
-                        :agreement_ratio, cast(:disagreement as jsonb), 'unverified', true,
+                        :abstained, :reason, 'unverified', true,
                         :source_kind, :proposed_source_kind, :crop_sha256)
             """),
             {
@@ -734,11 +676,7 @@ async def import_page(
                 "region_type": region["region_type"],
                 "text": unicodedata.normalize("NFC", region.get("text", "")),
                 "abstained": bool(region.get("abstained")),
-                "chosen_reader": region.get("chosen_reader"),
                 "reason": (region.get("reason") or "")[:400],
-                "critical_conflict": bool(region.get("critical_conflict")),
-                "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
-                "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
                 "source_kind": proposed_kind,
                 "proposed_source_kind": proposed_kind,
                 "crop_sha256": region.get("crop_sha256"),
@@ -748,7 +686,6 @@ async def import_page(
         "page_id": page_id,
         "page_number": page_number,
         "regions": len(candidates),
-        "reader_rows": len(reader_results),
         "reused": False,
     }
 
@@ -763,7 +700,7 @@ async def _supersede(
         current = (
             await session.execute(
                 text(
-                    "select id, revision, text, chosen_reader, source_kind, crop_sha256"
+                    "select id, revision, text, source_kind, crop_sha256"
                     " from source_v2_machine_candidates"
                     " where page_id = :page_id and region_id = :region_id and is_current"
                 ),
@@ -777,12 +714,12 @@ async def _supersede(
             await _insert_candidate(session, page_id, region, revision=1, parent_id=None)
             added += 1
             continue
-        # Identical text is normally nothing to do. But if the *source* of that
-        # text has been renamed - an earlier provenance label that no longer
-        # exists - the row would silently keep attributing the reading to
-        # something that is not in the pipeline any more. Supersede it so the
-        # attribution stays true, without touching any verification: the text
-        # did not change, so nothing a reviewer confirmed has changed either.
+        # Identical text is normally nothing to do. But if the row's
+        # *provenance* has moved on - a different canonical crop, or a kind
+        # proposal it predates - it would silently keep describing evidence
+        # that is no longer the evidence. Refresh that in place, without
+        # touching any verification: the text did not change, so nothing a
+        # reviewer confirmed has changed either.
         # D18: a row created before source kinds existed carries 'undecided'
         # and no crop. Refreshing that is not a text change, so it must not
         # supersede a revision or withdraw anybody's verification.
@@ -791,18 +728,14 @@ async def _supersede(
             if region.get("source_kind")
             else propose(region["region_type"], has_text=bool((region.get("text") or "").strip()))
         )
-        attribution_stale = (
-            current[3] != region.get("chosen_reader")
-            or current[4] != kind
-            or current[5] != region.get("crop_sha256")
-        )
-        if current[2] == proposed and not attribution_stale:
+        provenance_stale = current[3] != kind or current[4] != region.get("crop_sha256")
+        if current[2] == proposed and not provenance_stale:
             continue
-        if current[2] == proposed and attribution_stale:
+        if current[2] == proposed and provenance_stale:
             await session.execute(
                 text(
                     "update source_v2_machine_candidates"
-                    " set chosen_reader = :reader, crop_sha256 = :crop,"
+                    " set crop_sha256 = :crop,"
                     "     proposed_source_kind = :kind,"
                     # Never overwrite a kind a human already settled.
                     "     source_kind = case when source_kind = 'undecided'"
@@ -810,7 +743,6 @@ async def _supersede(
                     " where id = :id"
                 ),
                 {
-                    "reader": region.get("chosen_reader"),
                     "crop": region.get("crop_sha256"),
                     "kind": kind,
                     "id": current[0],
@@ -843,7 +775,6 @@ async def _supersede(
         "page_id": page_id,
         "page_number": page_number,
         "regions": added,
-        "reader_rows": 0,
         "reused": True,
         "superseded": superseded,
         "verifications_withdrawn": withdrawn,
@@ -871,12 +802,10 @@ async def _insert_candidate(
         text("""
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-               abstained, chosen_reader, reason, critical_conflict, agreement_ratio,
-               disagreement, state, is_current, source_kind, proposed_source_kind,
+               abstained, reason, state, is_current, source_kind, proposed_source_kind,
                crop_sha256)
             values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
-                    'machine', :text, :abstained, :chosen_reader, :reason,
-                    :critical_conflict, :agreement_ratio, cast(:disagreement as jsonb),
+                    'machine', :text, :abstained, :reason,
                     'unverified', true, :source_kind, :proposed_source_kind,
                     :crop_sha256)
         """),
@@ -889,11 +818,7 @@ async def _insert_candidate(
             "parent_id": parent_id,
             "text": unicodedata.normalize("NFC", region.get("text", "")),
             "abstained": bool(region.get("abstained")),
-            "chosen_reader": region.get("chosen_reader"),
             "reason": (region.get("reason") or "")[:400],
-            "critical_conflict": bool(region.get("critical_conflict")),
-            "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
-            "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
             # D18: the machine proposes from deterministic evidence only. The
             # proposal is kept beside the working value so a later human
             # reclassification is visible rather than silent.
@@ -905,7 +830,7 @@ async def _insert_candidate(
 
 
 def rendered_page_bytes(page: PageHeader, *, root: Path | None = None) -> bytes:
-    """The exact render the readers saw, verified against the stored checksum.
+    """The exact render the agent read, verified against the stored checksum.
 
     The checksum is re-computed on every read. If the file on disk is not the
     render this page was measured from, serving it would let a reviewer confirm

@@ -97,10 +97,19 @@ is real source content, not an empty mistake; `figure` alone never implies
 `visual_only`. The machine proposes from region type and whether text was
 transcribed, and only a human decides.
 
+**The offline reader subsystem is gone.** `tools/source_factory/readers/` —
+the DeepSeek/LightOnOCR classes, the reader port and the reader benchmark
+harness — has been deleted. The deterministic crop cutter that lived inside it
+now lives at `tools/source_factory/crops/`, which produces geometry and
+nothing else. Migration 0060 drops `source_v2_reader_candidates` and the
+`chosen_reader` / `critical_conflict` / `agreement_ratio` / `disagreement`
+columns, so no active schema can express a competing reader.
+
 Historical OCR measurements are kept in `docs/source-v2/BENCHMARK_READERS.md`
 and under `.exam-guru-data/_archive/` as the evidence for *why* the readers
-were removed. They are not instructions. Anything elsewhere in this repository
-that tells you to run a reader, or to read from `readers/crops`, is superseded.
+were removed. They are history, not instructions, and the code they describe
+no longer exists. Anything elsewhere in this repository that tells you to run
+a reader, or to read from `readers/crops`, is superseded.
 
 ---
 
@@ -178,9 +187,10 @@ Each surfaced in the real Studio, not in a test.
   hold.
 - **The primary CER of 0.0 is circular** wherever the same party wrote the
   reading and confirmed it. It shows only that the candidate carried the
-  primary reading through unmutated. `benchmark_primary.py` reads
-  `benchmark/independent-groundtruth.json` when present and refuses it if
-  `reviewer` names the agent.
+  primary reading through unmutated. The `benchmark_primary.py` harness that
+  reported it was deleted with the rest of the reader machinery: with one
+  reader there is nothing to compare against except a genuinely independent
+  human transcription, and none exists yet.
 - **Nothing is vectorised.** D18 implements the modality *gate* and chooses no
   embedding model. A verified `visual_only` region with no image embedding is a
   valid state, not a gap to fill with synthetic text.
@@ -213,7 +223,7 @@ Options, still awaiting a product decision:
 D=.exam-guru-data/source-content/grade-05/sinhala/<document>
 uv run --no-project --with pymupdf==1.26.4 python scripts/source_pipeline/render_pdf.py $D
 uv run tools/source_factory/layout/cli.py       --document $D detect --pages 1,2,3
-uv run tools/source_factory/readers/cli.py      --document $D crops  --pages 1,2,3
+uv run tools/source_factory/crops/cli.py        --document $D cut    --pages 1,2,3
 #   read every crop under $D/crops yourself, write $D/primary/transcripts/page-NNN.json
 uv run tools/source_factory/primary/cli.py      --document $D seal   --page 1
 uv run tools/source_factory/candidate/cli.py    --document $D build

@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["pytest==8.4.2"]
 # ///
-"""Deterministic checks on the primary reading, and OCR reduced to warnings."""
+"""Deterministic checks on the one primary reading."""
 
 from __future__ import annotations
 
@@ -13,16 +13,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from tools.source_factory.candidate import selection  # noqa: E402
-from tools.source_factory.candidate.machine import PRIMARY_READER, PrimaryReading, Witness, build  # noqa: E402
-from tools.source_factory.candidate.validators import (  # noqa: E402
-    audit_warnings,
-    validate_primary,
-)
+from tools.source_factory.candidate.machine import PrimaryReading, build  # noqa: E402
+from tools.source_factory.candidate.validators import validate_primary  # noqa: E402
 
 
-def codes(text: str, region_type: str = "text") -> set[str]:
-    return {item.code for item in validate_primary(text, region_type=region_type)}
+def codes(text: str, region_type: str = "text", layout_lines: int | None = None) -> set[str]:
+    return {
+        item.code
+        for item in validate_primary(
+            text, region_type=region_type, layout_lines=layout_lines
+        )
+    }
 
 
 def test_clean_sinhala_prose_raises_nothing() -> None:
@@ -57,39 +58,24 @@ def test_an_all_latin_text_region_on_a_sinhala_page_is_questioned() -> None:
     assert "no-expected-script" in codes("Resource :JICA OBIHIRO Presentation Manual - 2007")
 
 
-def test_a_reader_that_over_generates_raises_a_warning() -> None:
-    warnings = audit_warnings("141", {"sinhala-lightonocr": "x" * 1200}, rejected={})
-    assert any(item.code == "reader-over-generated" for item in warnings)
+# --- coverage against the deterministic layout -------------------------------
 
 
-def test_a_rejected_reader_is_carried_through_as_a_warning() -> None:
-    warnings = audit_warnings("text", {}, rejected={"sinhala-deepseek": "foreign script"})
-    assert [item.code for item in warnings] == ["reader-rejected"]
+def test_a_region_transcribed_part_way_is_reported() -> None:
+    assert "under-transcribed" in codes("one line\nsecond line", layout_lines=26)
 
 
-# --- the policy itself --------------------------------------------------------
+def test_a_region_the_layout_found_ink_in_but_nobody_wrote_is_reported() -> None:
+    assert "region-not-transcribed" in codes("", layout_lines=8)
 
 
-def test_both_local_readers_are_audit_only() -> None:
-    """D15. Neither may be promoted back to a source of text."""
+def test_a_figures_scattered_labels_are_not_a_coverage_failure() -> None:
+    """A drawing's labels are not lines of prose; counting them cries wolf."""
 
-    assert selection.ACTIVE.audit_only("sinhala-deepseek")
-    assert selection.ACTIVE.audit_only("sinhala-lightonocr")
-    assert selection.ACTIVE.tier(PRIMARY_READER) is selection.Tier.PRIMARY
+    assert codes("ලේබලය", region_type="figure", layout_lines=12) == set()
 
 
-@pytest.mark.parametrize("reader", ["sinhala-deepseek", "sinhala-lightonocr"])
-def test_an_audit_reader_cannot_supply_the_candidate_text(reader: str) -> None:
-    result = build(
-        primary=PrimaryReading(
-            region_id="p156-r002",
-            region_type="text",
-            text="what the page says",
-        ),
-        witnesses=[Witness(reader=reader, text="what the model says", rank=1)],
-    )
-    assert result.text == "what the page says"
-    assert result.selected_source == PRIMARY_READER
+# --- the contract ------------------------------------------------------------
 
 
 def test_validator_findings_force_human_attention() -> None:
@@ -98,11 +84,18 @@ def test_validator_findings_force_human_attention() -> None:
             region_id="p156-r002",
             region_type="text",
             text="දණ්ඩ චුමිබක (Bar magnet",
-        ),
-        witnesses=[],
+        )
     )
     assert result.requires_human_attention
     assert any("unbalanced-bracket" in note for note in result.validation_findings)
+
+
+def test_a_validator_reports_and_never_rewrites() -> None:
+    printed = "පාසල් \ufffd වත්තේ"
+    result = build(
+        primary=PrimaryReading(region_id="p156-r002", region_type="text", text=printed)
+    )
+    assert result.text == printed, "a finding is a warning, never a correction"
 
 
 if __name__ == "__main__":

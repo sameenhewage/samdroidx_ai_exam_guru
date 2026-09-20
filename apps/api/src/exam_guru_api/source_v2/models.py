@@ -41,7 +41,7 @@ REVIEW_ACTIONS = ("confirm", "correct", "exclude", "reopen")
 
 
 class SourceV2Page(Base):
-    """One rendered page, identified by the exact image the readers saw."""
+    """One rendered page, identified by the exact image the agent read."""
 
     __tablename__ = "source_v2_pages"
     __table_args__ = (
@@ -67,33 +67,12 @@ class SourceV2Page(Base):
     )
 
 
-class SourceV2ReaderCandidate(Base):
-    """One reader's raw proposal for one region. Evidence, never trust."""
-
-    __tablename__ = "source_v2_reader_candidates"
-    __table_args__ = (
-        UniqueConstraint("page_id", "region_id", "reader", name="uq_source_v2_reader_region"),
-        Index("ix_source_v2_reader_page", "page_id"),
-    )
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    page_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("source_v2_pages.id", ondelete="RESTRICT"), nullable=False
-    )
-    region_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    reader: Mapped[str] = mapped_column(String(64), nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    abstained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    failure: Mapped[str | None] = mapped_column(String(400))
-    seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    signals: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-
 class SourceV2MachineCandidate(Base):
     """The proposed reading for one region at one revision.
+
+    One canonical crop, one reading by the executing agent, one candidate.
+    There are no competing readers, so nothing here records a chosen reader,
+    an agreement ratio or a conflict between readings.
 
     A correction appends a new revision whose parent is the reading it
     replaced; nothing is ever overwritten.
@@ -134,11 +113,7 @@ class SourceV2MachineCandidate(Base):
     origin: Mapped[str] = mapped_column(String(32), nullable=False)  # machine | human-correction
     text: Mapped[str] = mapped_column(Text, nullable=False)
     abstained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    chosen_reader: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str] = mapped_column(String(400), nullable=False)
-    critical_conflict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    agreement_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    disagreement: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="unverified")
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -1,7 +1,8 @@
 """Import layout + Machine Candidates into Source V2 storage, and record decisions.
 
 The importer is deliberately dumb about content: it moves what the offline
-pipeline produced into the tables that enforce the rules. It never invents a
+pipeline produced into the tables that enforce the rules. It carries exactly
+one machine reading per region — the executing agent's — never invents a
 reading, never marks anything verified, and is idempotent on
 (document, page, rendered image sha256) so a re-run cannot fork the evidence.
 
@@ -36,7 +37,6 @@ class ImportedPage:
     page_number: int
     image_sha256: str
     regions: int
-    reader_rows: int
     reused: bool
 
 
@@ -52,12 +52,12 @@ def import_page(
     language: str,
     layout: dict,
     candidates: list[dict],
-    reader_results: dict[str, list[dict]] | None = None,
 ) -> ImportedPage:
-    """Store one page's layout, reader evidence and Machine Candidates.
+    """Store one page's layout and its Machine Candidates.
 
     `layout` is the `page-layout.schema.json` payload; `candidates` are the
-    regions from `candidates/page-NNN.json`.
+    regions from `candidates/pages/page-NNN.json`, one per region, each
+    carrying the single primary reading.
     """
 
     image_sha256 = layout["image_sha256"]
@@ -78,7 +78,6 @@ def import_page(
             page_number=page_number,
             image_sha256=image_sha256,
             regions=0,
-            reader_rows=0,
             reused=True,
         )
 
@@ -104,48 +103,13 @@ def import_page(
         ),
     )
 
-    reader_rows = 0
-    for reader, results in (reader_results or {}).items():
-        for result in results:
-            rows.execute(
-                """
-                insert into source_v2_reader_candidates
-                  (id, page_id, region_id, reader, text, abstained, failure, seconds, signals)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    uuid4(),
-                    page_id,
-                    result["region_id"],
-                    reader,
-                    result.get("text", ""),
-                    bool(result.get("abstained")),
-                    result.get("failure"),
-                    float(result.get("seconds", 0.0)),
-                    _json(
-                        {
-                            key: result[key]
-                            for key in (
-                                "repetition",
-                                "structural_repetition",
-                                "foreign_script",
-                                "peak_vram_bytes",
-                            )
-                            if key in result
-                        }
-                    ),
-                ),
-            )
-            reader_rows += 1
-
     for region in candidates:
         rows.execute(
             """
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, origin, text, abstained,
-               chosen_reader, reason, critical_conflict, agreement_ratio, disagreement,
-               state, is_current)
-            values (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s, 'unverified', true)
+               reason, state, is_current)
+            values (%s, %s, %s, %s, 1, %s, %s, %s, %s, 'unverified', true)
             """,
             (
                 uuid4(),
@@ -155,11 +119,7 @@ def import_page(
                 MACHINE,
                 region.get("text", ""),
                 bool(region.get("abstained")),
-                region.get("chosen_reader"),
                 region.get("reason", "")[:400],
-                bool(region.get("critical_conflict")),
-                float(region.get("agreement_ratio", 1.0)),
-                _json(region.get("disagreement", {})),
             ),
         )
 
@@ -169,7 +129,6 @@ def import_page(
         page_number=page_number,
         image_sha256=image_sha256,
         regions=len(candidates),
-        reader_rows=reader_rows,
         reused=False,
     )
 
@@ -360,8 +319,8 @@ def correct(
         """
         insert into source_v2_machine_candidates
           (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-           abstained, chosen_reader, reason, state, is_current)
-        values (%s, %s, %s, %s, %s, %s, %s, %s, false, null, %s, 'unverified', true)
+           abstained, reason, state, is_current)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, false, %s, 'unverified', true)
         """,
         (
             child_id,

@@ -1,8 +1,8 @@
 """Source V2 review API: original page beside the Machine Candidate, then decide.
 
-Reading a region takes 28-54 seconds on this hardware, so nothing in here runs
-a reader. These endpoints serve what the offline pipeline already produced and
-record the human decision on top of it.
+Source text is produced once, offline, by the executing agent looking at the
+canonical crop. Nothing in here reads a page. These endpoints serve what the
+offline pipeline already produced and record the human decision on top of it.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from exam_guru_api.source_v2.schemas import (
     ImportPageResponse,
     PageProgress,
     PageView,
-    ReaderEvidence,
     ReclassifyRequest,
     RegionMutationResponse,
     RegionView,
@@ -69,7 +68,6 @@ def _fail(error: Exception) -> HTTPException:
 async def _page_view(session: AsyncSession, page_id: UUID) -> PageView:
     page = await repository.get_page(session, page_id)
     regions = await repository.list_regions(session, page_id)
-    evidence = await repository.reader_evidence(session, page_id)
     counts = await repository.progress(session, page_id)
     return PageView(
         page_id=page.page_id,
@@ -91,18 +89,13 @@ async def _page_view(session: AsyncSession, page_id: UUID) -> PageView:
                 origin=row.origin,
                 text=row.text,
                 abstained=row.abstained,
-                chosen_reader=row.chosen_reader,
                 reason=row.reason,
-                critical_conflict=row.critical_conflict,
-                agreement_ratio=row.agreement_ratio,
-                disagreement=row.disagreement,
                 state=row.state,
                 bbox=row.bbox,
                 verified_text=row.verified_text,
                 source_kind=row.source_kind,
                 proposed_source_kind=row.proposed_source_kind,
                 crop_sha256=row.crop_sha256,
-                readers=[ReaderEvidence(**item) for item in evidence.get(row.region_id, [])],
             )
             for row in regions
         ],
@@ -153,7 +146,6 @@ async def import_page(
             detector_version=payload.detector_version,
             layout=payload.layout,
             candidates=[item.model_dump() for item in payload.candidates],
-            reader_results=[item.model_dump() for item in payload.reader_results],
             refresh=refresh,
         )
         await session.commit()
@@ -212,7 +204,7 @@ async def read_page_render(
     session: Annotated[AsyncSession, Depends(get_database_session)],
     principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))],
 ) -> Response:
-    """The original page, checksum-verified against what the readers saw."""
+    """The original page, checksum-verified against what the agent read."""
 
     _ = principal
     try:

@@ -17,9 +17,10 @@ reading order), stamps the render and crop checksums, validates it against
 
     <document>/primary/pages/page-NNN.json
 
-The transcription must be made by looking at the original render or crop.
-Seeding it from DeepSeek or LightOnOCR output is not an independent reading;
-see `docs/source-v2/DECISIONS.md` D14.
+The transcription must be made by the executing agent looking at the canonical
+crop. It is the only machine source reading there is, so seeding it from any
+other machine output is not a reading at all; see `docs/source-v2/DECISIONS.md`
+D14.
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ def command_seal(arguments: argparse.Namespace) -> int:
     if not manifest_path.exists():
         raise SystemExit(
             f"no canonical crops at {crops}. Cut them first:\n"
-            f"  uv run tools/source_factory/readers/cli.py --document {document} crops"
+            f"  uv run tools/source_factory/crops/cli.py --document {document} cut"
         )
     manifest = {
         entry["region_id"]: entry

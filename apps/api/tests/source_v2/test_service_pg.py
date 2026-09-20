@@ -4,6 +4,9 @@ Uses the actual candidate JSON produced offline for Grade 5 Sinhala page 156
 when it is present on this machine, and falls back to an equivalent inline
 payload otherwise, so the test proves the wiring everywhere but prefers real
 source shape where it exists.
+
+Each candidate carries exactly one machine reading — the executing agent's —
+and importing it never verifies anything.
 """
 
 from __future__ import annotations
@@ -59,40 +62,31 @@ def fallback_candidates() -> list[dict]:
             "region_type": "heading",
             "text": "ක්‍රියාකාරකම 11",
             "abstained": False,
-            "chosen_reader": "sinhala-deepseek",
-            "reason": "selected by measured rank",
-            "critical_conflict": False,
-            "agreement_ratio": 1.0,
-            "disagreement": {},
+            "reason": "primary reading by the executing agent from the canonical crop",
         },
         {
             "region_id": "p156-r002",
             "region_type": "text",
             "text": "පාසල් වත්තේ හෝ ආසන්න පරිසරයේ හෝ",
             "abstained": False,
-            "chosen_reader": "sinhala-deepseek",
-            "reason": "selected by measured rank; 45 token conflicts",
-            "critical_conflict": True,
-            "agreement_ratio": 0.6,
-            "disagreement": {"readers": ["sinhala-deepseek", "sinhala-lightonocr"]},
+            "reason": (
+                "primary reading by the executing agent from the canonical crop; "
+                "1 deterministic finding(s)"
+            ),
         },
         {
             "region_id": "p156-r003",
             "region_type": "decorative",
             "text": "",
             "abstained": True,
-            "chosen_reader": None,
-            "reason": "no witness was trustworthy for this region",
-            "critical_conflict": False,
-            "agreement_ratio": 0.0,
-            "disagreement": {},
+            "reason": "primary reading found no text: decorative rule",
         },
     ]
 
 
 def real_payload() -> tuple[dict, list[dict]] | None:
     layout_path = STUDIO / "layout" / "regions" / "page-156.json"
-    candidate_path = STUDIO / "candidates" / "page-156.json"
+    candidate_path = STUDIO / "candidates" / "pages" / "page-156.json"
     if not (layout_path.exists() and candidate_path.exists()):
         return None
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
@@ -134,11 +128,6 @@ def imported(connection, document):
             language="sinhala",
             layout=layout,
             candidates=candidates,
-            reader_results={
-                "sinhala-deepseek": [
-                    {"region_id": candidates[0]["region_id"], "text": "x", "seconds": 54.1}
-                ]
-            },
         ),
         candidates,
     )
@@ -160,7 +149,6 @@ def first_confirmable(connection, page_id):
 def test_import_stores_regions_and_is_idempotent(connection, document, imported) -> None:
     page, candidates = imported
     assert page.regions == len(candidates)
-    assert page.reader_rows == 1
     again = import_page(
         connection,
         document_id=document,
@@ -348,3 +336,54 @@ def test_an_abstained_region_cannot_be_confirmed(connection, imported) -> None:
             reviewer_id=uuid.uuid4(),
             compared_with_image_sha256=page.image_sha256,
         )
+
+
+def test_the_schema_at_head_carries_no_multi_reader_persistence(connection) -> None:
+    """Migration 0060. The corroboration table and its columns are gone."""
+
+    table = connection.execute(
+        "select to_regclass('public.source_v2_reader_candidates')"
+    ).fetchone()
+    assert table[0] is None, "the reader corroboration table must not exist at HEAD"
+
+    columns = {
+        name
+        for (name,) in connection.execute(
+            "select column_name from information_schema.columns"
+            " where table_schema = 'public' and table_name = 'source_v2_machine_candidates'"
+        ).fetchall()
+    }
+    assert not columns & {
+        "chosen_reader",
+        "critical_conflict",
+        "agreement_ratio",
+        "disagreement",
+    }
+    # Everything the single-reader contract still needs is present.
+    assert {"text", "abstained", "reason", "source_kind", "crop_sha256"} <= columns
+
+
+def test_a_fresh_machine_candidate_is_not_verified_source_content(connection, imported) -> None:
+    """The human gate. An imported reading is a proposal, never trust."""
+
+    page, candidates = imported
+    states = {
+        state
+        for (state,) in connection.execute(
+            "select distinct state from source_v2_machine_candidates"
+            " where page_id = %s and is_current",
+            (page.page_id,),
+        ).fetchall()
+    }
+    assert states == {"unverified"}
+    verified = connection.execute(
+        "select count(1) from source_v2_verified_regions where page_id = %s",
+        (page.page_id,),
+    ).fetchone()
+    events = connection.execute(
+        "select count(1) from source_v2_review_events where page_id = %s",
+        (page.page_id,),
+    ).fetchone()
+    assert verified[0] == 0, "importing must never create Verified Source Content"
+    assert events[0] == 0, "importing must never author a human review event"
+    assert page.regions == len(candidates)

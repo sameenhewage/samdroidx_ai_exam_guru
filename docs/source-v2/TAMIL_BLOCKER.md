@@ -23,35 +23,36 @@ A recursive search for `tamil` in every directory and PDF filename returns
 nothing. There is no Tamil-medium material on this machine at all — not a
 teacher guide, not a past paper, not a worksheet.
 
-## Why no Tamil reader was benchmarked
+## Why there is no Tamil OCR reader
 
-Decision D2 says readers are selected by measurement on real pages, and D11
-says synthetic fixtures may never be used to claim real reading quality.
-Benchmarking a Tamil VLM against Sinhala pages, or against generated Tamil
-images, would produce a number that means nothing and would be worse than
-having none. So no Tamil reader was selected.
+Historical note: local OCR readers were once going to be selected per language
+by measurement. That whole subsystem has been removed — the executing AI agent
+reading the canonical crop is the only machine source reader, for every
+language. There is therefore nothing language-specific left to benchmark or
+select.
 
 ## What is already in place for Tamil
 
-The engineering is language-agnostic and waiting:
+The remaining engineering is language-agnostic and waiting:
 
-- `tools/source_factory/readers/port.py` — `ReadRequest.language` carries the
-  language; the port has no Sinhala assumption.
-- `tools/source_factory/readers/metrics.py` — `foreign_script_ratio` already
-  scores Tamil, and `TAMIL` covers `U+0B80–U+0BFF`.
-- `tools/source_factory/candidate/selection.py` — selection is keyed by
-  `(language, region_type)`; a Tamil row is a data addition, not a code change.
-- The layout detector is script-independent: it works on ink geometry.
+- the layout detector is script-independent: it works on ink geometry;
+- `tools/source_factory/crops/cutter.py` cuts canonical crops from geometry
+  alone and has no script assumption;
+- `schemas/source-content/primary-reading.schema.json` carries `language` per
+  page and per region;
+- `tools/source_factory/candidate/validators.py` applies its Sinhala-specific
+  checks only when `language == "sinhala"`; a Tamil rule set is an addition,
+  not a rewrite.
 
 ## Exact unblock step
 
 1. Place real Tamil-medium source PDFs under `RAG DATA/` and render them with
    `scripts/source_pipeline/render_pdf.py`.
-2. Choose a fixed Tamil benchmark page set the same way as the Sinhala one:
-   single-column, two-column, a table, a figure page.
-3. Add Tamil reader classes beside `SinhalaLightOnOCRReader` and benchmark the
-   candidates on those pages.
-4. Add the measured `("tamil", "*")` row to `selection.py`, citing the report.
+2. Detect layout and cut the canonical crops for the chosen pages.
+3. Have the executing agent transcribe each crop and seal it with
+   `tools/source_factory/primary/cli.py`.
+4. Add Tamil-script validator rules alongside the Sinhala ones, then have a
+   Tamil-reading human verify the regions in the Studio.
 
 Until step 1 happens, **Source V2 cannot claim a Tamil pass**, and this file is
 the evidence for why.

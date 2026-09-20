@@ -15,7 +15,9 @@ witness, not as a sanity check. Evidence: general providers hallucinated Sinhala
 and substituted `www.moe.gov.lk` for the printed `www.nie.lk`. OpenAI remains
 allowed for non-source work (generation, validation) where a human gate exists.
 
+
 ## D2 — Readers are language specialists, chosen by measurement.
+**SUPERSEDED by D19 - there is exactly one machine source reader. Retained as history.**
 **Locked 2026-09-19.**
 Sinhala: `avishadilhara/sinhala-lightonocr-2-1b-Qlora`,
 `avishadilhara/sinhala-deepseek-ocr-Qlora`. Tamil: selected by benchmark.
@@ -31,10 +33,12 @@ vertical projection is forbidden as the primary algorithm: columns come from a
 row-tolerant coverage profile, and elements crossing a gutter become straddlers.
 
 ## D4 — No blind majority voting.
-**Locked 2026-09-19.**
+**Locked 2026-09-19. Narrowed by D19: there is nothing left to vote between.**
 Witnesses are aligned token- and character-wise. A conflict pins the specific
 token; it never makes the whole region uncertain. Where no witness is
 trustworthy the Machine Candidate abstains. **Abstaining is a correct answer.**
+Under D19 the only surviving clause is the last one: a region the agent read
+as carrying no text abstains, and abstaining is a correct answer.
 
 ## D5 — Only a human creates Verified Source Content.
 **Locked 2026-09-19.**
@@ -68,12 +72,13 @@ Qwen/Ornith/Luna/Tesseract source-reading paths are removed along with their
 env/config/dependencies/tests. Two active source architectures must not coexist.
 
 ## D10 — Reuse is narrow and deliberate.
-**Locked 2026-09-19.**
+**Locked 2026-09-19. Narrowed by D19: the ported alignment is gone too.**
 Only these V1 pieces survive: deterministic rendering, source identities and
-checksums, the human verification concepts, and the provider-neutral
-`build_disagreement_map` / `align_source_tokens` alignment. They are **ported**
-into the V2 package, not imported from the old module, so the old module can be
-deleted whole.
+checksums, and the human verification concepts. They are **ported** into the V2
+package, not imported from the old module, so the old module can be deleted
+whole. The provider-neutral `build_disagreement_map` / `align_source_tokens`
+alignment was also ported, and has since been deleted with the rest of the
+multi-reader machinery: with one reading there is nothing to align it against.
 
 ## D11 — Real pages are the acceptance evidence.
 **Locked 2026-09-19.**
@@ -93,10 +98,13 @@ tools package must never become a second production runtime.
 **Locked 2026-09-19.**
 `tools/` scripts declare their own dependencies inline so `uv run` needs no
 project environment. numpy must stay `< 2.3` while opencv is `4.12`. Heavy model
-dependencies (torch, transformers, peft) are declared only by the reader/benchmark
-scripts that need them, never by the layout or contract tooling.
+dependencies (torch, transformers, peft) are declared only by the scripts that
+need them, never by the layout or contract tooling. Under D19 no script needs
+them at all: the offline pipeline is renders, geometry and checksums.
+
 
 ## D14 - The executing agent reads the source first. Local OCR is a witness.
+**SUPERSEDED by D19 - there is exactly one machine source reader. Retained as history.**
 **Locked 2026-09-19. Supersedes the DeepSeek-first ordering shipped earlier.**
 
 The reader order is:
@@ -202,7 +210,9 @@ unmutated. `benchmark_primary.py` prints this caveat in every report. An
 independent reviewer is required before any accuracy claim is made for the
 primary reading.
 
+
 ## D15 - Local Sinhala OCR is AUDIT-ONLY. It is not a source of text.
+**SUPERSEDED by D19 - there is exactly one machine source reader. Retained as history.**
 **Locked 2026-09-19. Narrows D14 further; supersedes the strong/weak tiering.**
 
 Measured against human-confirmed source, reported as ratio and percentage:
@@ -410,3 +420,47 @@ how it is enforced.
 - pre-D18 rows default to `undecided`, preserving their trust level rather
   than asserting an educational judgement nobody made
 
+
+---
+
+## D19 - There is exactly one machine source reader.
+**Locked 2026-09-19. Supersedes D2, D14 and D15 in their entirety.**
+
+The current executing AI agent directly visually transcribes the exact
+canonical crop. That is the sole machine source reading. It remains unverified
+until a genuine human compares it with the original/crop evidence.
+
+Removed as active architecture:
+
+- `tools/source_factory/readers/**` - the DeepSeek/LightOnOCR reader classes,
+  the reader port, the reader benchmark harness and its ground-truth/metrics
+  helpers. The deterministic crop cutter moved to `tools/source_factory/crops/`,
+  which produces geometry and nothing else.
+- `tools/source_factory/candidate/selection.py` - reader tiers and ranking.
+- `tools/source_factory/candidate/alignment.py` - the cross-reader
+  disagreement map. It existed only to compare competing readings.
+- `audit_warnings()` in `candidate/validators.py` - reader-derived suspicion.
+- `reader_results` / `ReaderResultInput` on the import contract, and
+  `readers` / `ReaderEvidence` on `RegionView`.
+- `source_v2_reader_candidates`, plus the `chosen_reader`,
+  `critical_conflict`, `agreement_ratio` and `disagreement` columns on
+  `source_v2_machine_candidates` (migration `0060_source_v2_single_reader`,
+  forward-only; the table was empty).
+- the reader-evidence disclosure and the "readers disagree" badge in the
+  Studio review screen.
+
+What replaces cross-reader disagreement as a safety net: **deterministic
+checks on the one reading and on the geometry it came from**. Unbalanced
+brackets, mixed-script words, replacement characters, non-NFC text, leftover
+placeholders, and - the important one - line coverage measured against the
+layout's geometric line count, which is what actually caught the truncated
+transcription of page 186 r001. A finding never rewrites text; it sets
+`requires_human_attention`.
+
+The reviewer sees one machine proposal and its provenance, never an ensemble.
+A Machine Candidate is the sealed primary text plus deterministic validator
+findings, and it is never trust.
+
+Historical reader measurements remain in `docs/source-v2/BENCHMARK_READERS.md`
+and under `.exam-guru-data/_archive/`, marked historical. They are the evidence
+for *why* the readers were removed and may not be used to reintroduce one.

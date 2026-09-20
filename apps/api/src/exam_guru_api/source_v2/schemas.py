@@ -1,8 +1,11 @@
 """Source V2 API contracts.
 
 Shaped for the review screen: everything a reviewer needs to decide about one
-region arrives together — the machine's reading, where it is on the page, which
-reader produced it, and where the readers disagreed.
+region arrives together — the single machine reading, where it is on the page,
+the canonical crop it came from, and what the deterministic checks noticed.
+
+There is one machine source reader, the executing AI agent looking at the
+canonical crop. The reviewer sees one proposal, never an ensemble.
 """
 
 from __future__ import annotations
@@ -21,14 +24,6 @@ class SourceV2Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ReaderEvidence(SourceV2Model):
-    reader: str
-    text: str
-    abstained: bool = False
-    failure: str | None = None
-    seconds: float = 0.0
-
-
 class RegionView(SourceV2Model):
     region_id: str
     region_type: RegionTypeName
@@ -37,15 +32,10 @@ class RegionView(SourceV2Model):
     origin: Literal["machine", "human-correction"]
     text: str
     abstained: bool
-    chosen_reader: str | None
     reason: str
-    critical_conflict: bool
-    agreement_ratio: float
-    disagreement: dict = Field(default_factory=dict)
     state: RegionStateName
     bbox: list[int] | None = None
     verified_text: str | None = None
-    readers: list[ReaderEvidence] = Field(default_factory=list)
     #: D18. What kind of source this is. The machine proposes, a human decides.
     source_kind: SourceKindName = "undecided"
     proposed_source_kind: SourceKindName | None = None
@@ -74,26 +64,12 @@ class PageView(SourceV2Model):
     regions: list[RegionView]
 
 
-class ReaderResultInput(SourceV2Model):
-    region_id: str = Field(max_length=64)
-    reader: str = Field(max_length=64)
-    text: str = Field(max_length=200000)
-    abstained: bool = False
-    failure: str | None = Field(default=None, max_length=400)
-    seconds: float = 0.0
-    signals: dict = Field(default_factory=dict)
-
-
 class CandidateInput(SourceV2Model):
     region_id: str = Field(max_length=64)
     region_type: RegionTypeName
     text: str = Field(max_length=200000)
     abstained: bool = False
-    chosen_reader: str | None = Field(default=None, max_length=64)
     reason: str = Field(default="", max_length=400)
-    critical_conflict: bool = False
-    agreement_ratio: float = 1.0
-    disagreement: dict = Field(default_factory=dict)
     #: The Source Factory does not classify. When omitted the service proposes
     #: a kind from region type and whether any text was transcribed.
     source_kind: SourceKindName | None = None
@@ -103,8 +79,9 @@ class CandidateInput(SourceV2Model):
 class ImportPageRequest(SourceV2Model):
     """One page of Source Factory output, handed to the Studio.
 
-    Carries geometry and proposed readings only. Nothing here can mark anything
-    verified: that remains a human act performed against the original page.
+    Carries geometry and the one primary reading per region. Nothing here can
+    mark anything verified: that remains a human act performed against the
+    original page.
     """
 
     document_id: UUID
@@ -117,14 +94,12 @@ class ImportPageRequest(SourceV2Model):
     detector_version: str = Field(max_length=128)
     layout: dict
     candidates: list[CandidateInput] = Field(max_length=2048)
-    reader_results: list[ReaderResultInput] = Field(default_factory=list, max_length=8192)
 
 
 class ImportPageResponse(SourceV2Model):
     page_id: UUID
     page_number: int
     regions: int
-    reader_rows: int
     reused: bool
     superseded: int = 0
     verifications_withdrawn: int = 0
@@ -163,7 +138,7 @@ class ConfirmVisualRequest(SourceV2Model):
 
 
 class ReclassifyRequest(SourceV2Model):
-    """The reviewer disagrees with the proposed kind.
+    """The reviewer overrules the proposed kind.
 
     Changing what a region *is* is a human decision and lands as its own
     review event; the machine never applies it silently.

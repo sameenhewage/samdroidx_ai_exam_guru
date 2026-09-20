@@ -1,7 +1,8 @@
 """Source V2 — verified source content and the gate in front of everything else.
 
-Pipeline: deterministic render/layout -> reader candidates -> Machine Candidate
--> human Confirm/Correct/Exclude -> Verified Source Content.
+Pipeline: deterministic render/layout -> canonical crop -> the executing AI
+agent's one primary reading -> Machine Candidate -> human
+Confirm/Correct/Exclude -> Verified Source Content.
 
 The hard invariant lives here:
 
