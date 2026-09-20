@@ -375,3 +375,113 @@ describe("SourceV2Review text regions", () => {
     expect(overlay).toHaveAttribute("data-selected", "true");
   });
 });
+
+describe("SourceV2Review editor keyboard ownership", () => {
+  /**
+   * The card is a focusable `li` that activates on Space/Enter. Key events
+   * bubble, so a Space typed into the correction textarea reached the card's
+   * handler and was `preventDefault()`-ed: the teacher could not type a space,
+   * and Enter could not insert a newline.
+   *
+   * jsdom does not do native text insertion, so what these tests pin is the
+   * thing that actually broke - whether the card cancels a key event it does
+   * not own. A cancelled keydown is exactly what stops the browser inserting
+   * the character.
+   */
+
+  async function openTextEditor(id: string) {
+    const item = await card(id);
+    fireEvent.click(within(item).getByTestId(`edit-text-${id}`));
+    return await screen.findByTestId(`editor-${id}`);
+  }
+
+  it("does not cancel Space or Enter typed inside the correction editor", async () => {
+    serve([
+      region("p186-r003", {
+        source_kind: "visual_with_text",
+        text: "පහත දැක්වෙන රූපය",
+        detected_labels: [LABEL_TEXT],
+      }),
+    ]);
+    render(<SourceV2Review pageId={pageId} />);
+    const editor = await openTextEditor("p186-r003");
+
+    expect(fireEvent.keyDown(editor, { key: " ", code: "Space" })).toBe(true);
+    expect(fireEvent.keyDown(editor, { key: "Enter", code: "Enter" })).toBe(true);
+  });
+
+  it("keeps whitespace the teacher types, including newlines", async () => {
+    serve([region("p186-r003", { source_kind: "visual_with_text", text: "පෙළ" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const editor = (await openTextEditor("p186-r003")) as HTMLTextAreaElement;
+
+    const typed = "පළමු පේළිය\nදෙවන  පේළිය ";
+    fireEvent.change(editor, { target: { value: typed } });
+    expect(editor.value).toBe(typed);
+    expect(editor.value).toContain(" ");
+    expect(editor.value).toContain("\n");
+  });
+
+  it("still activates the card when the card itself owns the key", async () => {
+    serve([region("p186-r002"), region("p186-r003", { source_kind: "visual_with_text" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+
+    fireEvent.keyDown(item, { key: " ", code: "Space", target: item });
+    await waitFor(() => expect(item.dataset.selected).toBe("true"));
+  });
+
+  it("activates the card on Enter as well as Space", async () => {
+    serve([region("p186-r002"), region("p186-r003", { source_kind: "visual_with_text" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+
+    fireEvent.keyDown(item, { key: "Enter", code: "Enter" });
+    await waitFor(() => expect(item.dataset.selected).toBe("true"));
+  });
+
+  it("does not hijack keys aimed at a nested button", async () => {
+    serve([region("p186-r003", { source_kind: "visual_with_text", text: "පෙළ" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+    const button = within(item).getByTestId("confirm-p186-r003");
+
+    // A cancelled keydown would stop the browser firing the button's own
+    // activation, so the card must leave it alone.
+    expect(fireEvent.keyDown(button, { key: " ", code: "Space" })).toBe(true);
+    expect(fireEvent.keyDown(button, { key: "Enter", code: "Enter" })).toBe(true);
+  });
+
+  it("does not cancel Space or Enter inside the description editor either", async () => {
+    serve([
+      region("p186-r002", {
+        visual_description: DESCRIPTION,
+      }),
+    ]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r002");
+    fireEvent.click(within(item).getByTestId("edit-description-p186-r002"));
+    const editor = (await screen.findByTestId(
+      "description-editor-p186-r002",
+    )) as HTMLTextAreaElement;
+
+    expect(fireEvent.keyDown(editor, { key: " ", code: "Space" })).toBe(true);
+    expect(fireEvent.keyDown(editor, { key: "Enter", code: "Enter" })).toBe(true);
+
+    const typed = `${DESCRIPTION}\nදෙවන පේළියක් ද ඇත.`;
+    fireEvent.change(editor, { target: { value: typed } });
+    expect(editor.value).toBe(typed);
+  });
+
+  it("preloads the description editor with the saved description", async () => {
+    serve([region("p186-r002", { visual_description: DESCRIPTION })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r002");
+    fireEvent.click(within(item).getByTestId("edit-description-p186-r002"));
+
+    const editor = (await screen.findByTestId(
+      "description-editor-p186-r002",
+    )) as HTMLTextAreaElement;
+    expect(editor.value).toBe(DESCRIPTION);
+  });
+});

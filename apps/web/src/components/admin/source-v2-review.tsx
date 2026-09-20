@@ -609,6 +609,14 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   }
                 }}
                 onKeyDown={(event) => {
+                  // Key events bubble, so Space typed into the correction
+                  // textarea arrived here and got preventDefault()-ed: the
+                  // teacher could not type a space, and Enter could not make
+                  // a newline. The card only activates on keys it owns, the
+                  // same ownership rule onFocus above already uses. Stopping
+                  // propagation inside every child control would fix the
+                  // symptom and leave the next nested control broken.
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     select(region.region_id, "card");

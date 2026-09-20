@@ -195,6 +195,35 @@ test.describe("Source V2 review", () => {
       "verified",
     );
 
+    // 3c. the card's Space/Enter shortcut must not eat the editor's keys
+    //
+    // The region card is a focusable `li` that selects itself on Space/Enter.
+    // Key events bubble, so those keys typed into the correction textarea
+    // reached the card and were cancelled: a teacher could not type a space,
+    // and Enter inserted no newline. Typed here key by key rather than with
+    // fill(), because fill() sets the value directly and would never have
+    // caught this.
+    await page.getByTestId("correct-p001-r001").click();
+    const editor = page.getByTestId("editor-p001-r001");
+    await editor.fill("");
+    await editor.pressSequentially("ක්‍රියාකාරකම 11");
+    await editor.press("Enter");
+    await editor.pressSequentially("දෙවන පේළිය");
+    const TYPED = "ක්‍රියාකාරකම 11\nදෙවන පේළිය";
+    await expect(editor).toHaveValue(TYPED);
+
+    await page.getByTestId("save-p001-r001").click();
+    await expect(page.getByTestId("text-p001-r001")).toHaveText(TYPED);
+    await expect(card(page, "p001-r001")).toHaveAttribute(
+      "data-region-state",
+      "unverified",
+    );
+    await page.getByTestId("confirm-p001-r001").click();
+    await expect(card(page, "p001-r001")).toHaveAttribute(
+      "data-region-state",
+      "verified",
+    );
+
     // 4. exclude page furniture, with a reason
     await page.getByTestId("exclusion-note").fill("running footer, not source content");
     await page.getByTestId("exclude-p001-r003").click();
