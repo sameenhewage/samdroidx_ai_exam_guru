@@ -704,15 +704,29 @@ async def import_page(
             },
         )
     for region in candidates:
+        # D18: a brand-new page proposes its source kinds here, exactly as a
+        # refreshed one does in `_insert_candidate`. Leaving this path out is
+        # how every region on a freshly published document arrived as
+        # 'undecided' and could not be confirmed at all.
+        supplied = region.get("source_kind")
+        proposed_kind = str(
+            SourceKind(supplied)
+            if supplied
+            else propose(
+                region["region_type"],
+                has_text=bool((region.get("text") or "").strip()),
+            )
+        )
         await session.execute(
             text("""
                 insert into source_v2_machine_candidates
                   (id, page_id, region_id, region_type, revision, origin, text, abstained,
                    chosen_reader, reason, critical_conflict, agreement_ratio, disagreement,
-                   state, is_current)
+                   state, is_current, source_kind, proposed_source_kind, crop_sha256)
                 values (:id, :page_id, :region_id, :region_type, 1, 'machine', :text,
                         :abstained, :chosen_reader, :reason, :critical_conflict,
-                        :agreement_ratio, cast(:disagreement as jsonb), 'unverified', true)
+                        :agreement_ratio, cast(:disagreement as jsonb), 'unverified', true,
+                        :source_kind, :proposed_source_kind, :crop_sha256)
             """),
             {
                 "id": uuid4(),
@@ -726,6 +740,9 @@ async def import_page(
                 "critical_conflict": bool(region.get("critical_conflict")),
                 "agreement_ratio": float(region.get("agreement_ratio", 1.0)),
                 "disagreement": json.dumps(region.get("disagreement", {}), ensure_ascii=False),
+                "source_kind": proposed_kind,
+                "proposed_source_kind": proposed_kind,
+                "crop_sha256": region.get("crop_sha256"),
             },
         )
     return {

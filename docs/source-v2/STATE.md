@@ -4,28 +4,59 @@ Specification: `prompts/source-v2/00_MASTER_SOURCE_V2_REBUILD.md`
 Locked decisions: `docs/source-v2/DECISIONS.md`
 
 ```
-phase:          7 — 156/186 green; sankhya-rata BLOCKED on session independence
-status:         Full-stack restart verified. sankhya-rata needs a fresh agent session.
-last_validated: dabec0b
+phase:          7 — sankhya-rata re-earned usable:true from an independent read
+status:         156/186 and sankhya-rata all resolved under D17 + D18.
 updated:        2026-09-19
 ```
 
-## BLOCKED: sankhya-rata needs a genuinely fresh agent session
+## sankhya-rata: rebuilt from an isolated blind read
 
-Its 17 canonical crops are cut and waiting under `sankhya-rata/crops/`. Nothing
-else can be done for it here.
+Its old `usable:true` was discarded with the data reset and has now been
+re-earned from a genuinely unanchored transcription.
 
-D17's independence rule says: do not read previous text before transcribing.
-The agent session that ran the D17/D18 work **wrote sankhya-rata's earlier
-transcripts in the same conversation**, so any transcription it produces now is
-anchored no matter how carefully the crops are read. Continuing in the same
-conversation does not reset that — a *new* session is required, one that has
-never seen the old text.
+The agent conversation that built D17/D18 had written this document''s earlier
+transcripts, so it could not produce an independent read no matter how
+carefully it looked at the crops. The blind read was therefore produced by an
+**isolated subagent with an empty context window**, briefed with only the 17
+canonical crop paths, the fidelity rules, the D18 kind definitions and the
+output format, and explicitly barred from `primary/`, `candidates/`,
+`verified/`, `readers/`, `_archive/`, `docs/` and `prompts/`. It reported
+seeing no pre-existing transcription.
 
-Prompts 02, 03 and 04 each asked for this rebuild in that same conversation, so
-it was correctly refused three times rather than producing a read that only
-looks independent. **The next session must be a new conversation** and may open
-only: the original PDF, the rendered page, the layout, and `crops/`.
+Its output was sealed **verbatim**. The parent session did not correct a single
+character before sealing; the only changes came through the Studio review flow.
+
+```
+page 1   2 verified                      page 2  10 verified  1 excluded
+page 3   3 verified  1 excluded          GATE    usable: true
+```
+
+**The blind read disagreed with the earlier anchored read in ways that matter.**
+It resolved ambiguous Sinhala glyphs by rendering reference pairs and comparing
+shapes rather than by recall: `වූ` not `වු`, `ගොඩනැඟීම` with the sanyaka `ඟ`,
+`ලැබුනේ` with dental `න` left uncorrected as an apparent source typo. It
+measured word gaps and dot runs from ink profiles instead of estimating them.
+
+It also classified two regions the machine proposal got wrong, and one the
+earlier session got wrong:
+
+- `p002-r000` / `p003-r000` — printed folios. The machine proposed `text_only`
+  from the region type; they are running-header furniture, so `decorative`.
+- `p002-r003` — proposed `text_only`; it is a worked example whose printed
+  equations are linked by arrow artwork, so `visual_with_text`.
+- `p001-r001` — the cartoon-numeral illustration. The earlier session judged it
+  `decorative` because it is watermarked stock art. The blind read judged it
+  `visual_only`: it carries educational meaning in a number-patterns lesson,
+  and "it is stock art" is not the same as "it teaches nothing". That judgement
+  stands, and it is exactly the mistake D18 exists to prevent.
+
+## defect found by publishing a brand-new document
+
+Every region arrived as `undecided` and could not be confirmed at all.
+`import_page` has **two** insert paths and only the refresh one proposed a
+source kind; the new-page path was never updated. So D18 worked on documents
+that already existed and silently failed on every new one - the case that
+matters for corpus migration. Fixed, and the whole document re-published.
 
 
 ---
