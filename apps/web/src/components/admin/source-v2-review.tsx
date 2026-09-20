@@ -67,6 +67,8 @@ const TEXT = {
     confirm: "පෙළ නිවැරදියි",
     locate: "පිටුවේ පෙන්වන්න",
     correct: "පෙළ නිවැරදි කරන්න",
+    editAgain: "නැවත සංස්කරණය කරන්න",
+    reverifyNote: "සංස්කරණය කළ විට නැවත තහවුරු කළ යුතු ය.",
     saveCorrection: "නිවැරදි කළ පෙළ සුරකින්න",
     cancel: "අවලංගු කරන්න",
     exclude: "මෙම කොටස භාවිත නොකරන්න",
@@ -93,6 +95,8 @@ const TEXT = {
     confirm: "Text is correct",
     locate: "Locate on page",
     correct: "Correct the text",
+    editAgain: "Edit again",
+    reverifyNote: "Editing withdraws verification; it must be confirmed again.",
     saveCorrection: "Save corrected text",
     cancel: "Cancel",
     exclude: "Do not use this region",
@@ -565,14 +569,21 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                       <button
                         type="button"
                         disabled={busy !== null}
+                        title={
+                          region.state === "verified" ? labels.reverifyNote : undefined
+                        }
                         onClick={() => {
                           setEditing(region.region_id);
+                          // Start from the latest *human-verified* text where
+                          // one exists. Falling back to the machine candidate
+                          // would silently discard the reviewer's own
+                          // correction and invite them to redo it.
                           setDraft(region.verified_text ?? region.text);
                         }}
                         className="rounded border border-slate-500 px-3 py-1 text-sm"
                         data-testid={`correct-${region.region_id}`}
                       >
-                        {labels.correct}
+                        {region.state === "verified" ? labels.editAgain : labels.correct}
                       </button>
                       <button
                         type="button"

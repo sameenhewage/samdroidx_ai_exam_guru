@@ -387,3 +387,64 @@ def test_a_fresh_machine_candidate_is_not_verified_source_content(connection, im
     assert verified[0] == 0, "importing must never create Verified Source Content"
     assert events[0] == 0, "importing must never author a human review event"
     assert page.regions == len(candidates)
+
+
+def test_correcting_a_verified_region_keeps_the_human_confirmation_in_history(
+    connection, imported
+) -> None:
+    """Verification is reversible, but the record of it is not.
+
+    A reviewer changing their mind must not erase the fact that they once
+    confirmed this text. The confirm event stays, the correct event lands
+    beside it, and the region drops back to unverified.
+    """
+
+    page, candidates = imported
+    region_id = candidates[0]["region_id"]
+    current = connection.execute(
+        "select id, revision from source_v2_machine_candidates"
+        " where page_id = %s and region_id = %s and is_current",
+        (page.page_id, region_id),
+    ).fetchone()
+    reviewer = uuid.uuid4()
+
+    confirm(
+        connection,
+        page_id=page.page_id,
+        region_id=region_id,
+        candidate_id=current[0],
+        revision=current[1],
+        reviewer_id=reviewer,
+        compared_with_image_sha256=page.image_sha256,
+    )
+    correct(
+        connection,
+        page_id=page.page_id,
+        region_id=region_id,
+        candidate_id=current[0],
+        revision=current[1],
+        reviewer_id=reviewer,
+        corrected_text="නැවත සංස්කරණය කළ පෙළ",
+    )
+
+    actions = [
+        row[0]
+        for row in connection.execute(
+            "select action from source_v2_review_events"
+            " where page_id = %s and region_id = %s order by created_at",
+            (page.page_id, region_id),
+        ).fetchall()
+    ]
+    assert actions == ["confirm", "correct"], "the earlier confirmation must survive"
+
+    state = connection.execute(
+        "select state from source_v2_machine_candidates"
+        " where page_id = %s and region_id = %s and is_current",
+        (page.page_id, region_id),
+    ).fetchone()
+    assert state[0] == "unverified", "an edit demands confirmation again"
+    verified = connection.execute(
+        "select count(1) from source_v2_verified_regions where page_id = %s and region_id = %s",
+        (page.page_id, region_id),
+    ).fetchone()
+    assert verified[0] == 0

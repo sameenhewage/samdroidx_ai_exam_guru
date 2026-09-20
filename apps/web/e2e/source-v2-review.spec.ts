@@ -171,6 +171,30 @@ test.describe("Source V2 review", () => {
       "verified",
     );
 
+    // 3b. verification is reversible, and editing resumes from the human text
+    //
+    // The reviewer must be able to change their mind. The affordance renames
+    // itself once a region is verified, and the editor opens on the text the
+    // human verified — not empty, and not the machine's original reading,
+    // either of which would silently discard their correction.
+    await expect(page.getByTestId("correct-p001-r001")).toBeEnabled();
+    await expect(page.getByTestId("correct-p001-r001")).toHaveText(/Edit again/i);
+    await page.getByTestId("correct-p001-r001").click();
+    await expect(page.getByTestId("editor-p001-r001")).toHaveValue(ORIGINAL_HEADING);
+
+    // Saving an edit withdraws verification and demands it again.
+    await page.getByTestId("editor-p001-r001").fill(`${ORIGINAL_HEADING} (සංශෝධිත)`);
+    await page.getByTestId("save-p001-r001").click();
+    await expect(card(page, "p001-r001")).toHaveAttribute(
+      "data-region-state",
+      "unverified",
+    );
+    await page.getByTestId("confirm-p001-r001").click();
+    await expect(card(page, "p001-r001")).toHaveAttribute(
+      "data-region-state",
+      "verified",
+    );
+
     // 4. exclude page furniture, with a reason
     await page.getByTestId("exclusion-note").fill("running footer, not source content");
     await page.getByTestId("exclude-p001-r003").click();
