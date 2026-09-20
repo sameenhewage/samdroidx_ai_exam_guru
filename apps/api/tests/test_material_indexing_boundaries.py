@@ -294,10 +294,6 @@ def test_material_config_fails_closed_when_registry_preflight_is_unavailable(
     [
         {"test_runtime_id": "unattested-runtime"},
         {"retrieval_embedding_dimension": 4097},
-        {
-            "document_understanding_provider": "deterministic",
-            "document_understanding_fixture_runtime_id": "ai-exam-guru-e2e-other-runtime",
-        },
     ],
 )
 def test_material_config_revalidates_copied_settings_before_using_registry(

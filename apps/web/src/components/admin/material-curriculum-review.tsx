@@ -293,13 +293,6 @@ function ReviewDocument({ documentId, role }: Props) {
             <div className="space-y-3 text-sm">
               <p className="font-semibold">{copy.empty}</p>
               <p>{copy.emptyHelp}</p>
-              <Link
-                className={viewerButtonClass}
-                href={`/admin/materials/${documentId}/review-content`}
-                prefetch={false}
-              >
-                {copy.reviewSource}
-              </Link>
             </div>
           )}
           {pages.map((page) => (

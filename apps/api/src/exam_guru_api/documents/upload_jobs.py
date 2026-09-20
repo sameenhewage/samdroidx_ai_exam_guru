@@ -9,16 +9,9 @@ from uuid import UUID
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.core.config import Settings, StorageBackend
-from exam_guru_api.documents.fidelity_models import SourceReadJobModel
-from exam_guru_api.documents.page_reading_jobs import (
-    DramatiqSourceReadDispatcher,
-    SourceReadDispatcher,
-    dispatch_source_read,
-)
 from exam_guru_api.documents.resumable_uploads import (
     ResumableUploadError,
     ResumableUploadService,
@@ -27,7 +20,6 @@ from exam_guru_api.documents.resumable_uploads import (
 from exam_guru_api.documents.upload_schemas import (
     MAX_UPLOAD_INTEGER,
     SourceUploadResponse,
-    UploadStatus,
 )
 from exam_guru_api.infrastructure.object_storage import ObjectStorage, create_object_storage
 from exam_guru_api.infrastructure.private_artifacts import PrivateUploadArtifacts
@@ -84,7 +76,6 @@ async def run_source_upload_finalization(
     storage: ObjectStorage,
     artifacts: PrivateUploadArtifacts,
     limits: UploadLimits,
-    read_dispatcher: SourceReadDispatcher,
     execution_deadline: float | None = None,
 ) -> SourceUploadResponse:
     deadline = (
@@ -92,24 +83,9 @@ async def run_source_upload_finalization(
         if execution_deadline is None
         else execution_deadline
     )
-    result = await ResumableUploadService(session, storage, artifacts, limits=limits).finalize(
+    return await ResumableUploadService(session, storage, artifacts, limits=limits).finalize(
         upload_id, execution_deadline=deadline
     )
-    if result.status is UploadStatus.COMPLETED and result.document_id is not None:
-        job_id = await session.scalar(
-            select(SourceReadJobModel.id)
-            .where(
-                SourceReadJobModel.document_id == result.document_id,
-                SourceReadJobModel.page_number.is_(None),
-                SourceReadJobModel.status == "queued",
-            )
-            .order_by(SourceReadJobModel.created_at, SourceReadJobModel.id)
-            .limit(1)
-        )
-        await session.commit()
-        if job_id is not None:
-            await dispatch_source_read(job_id, read_dispatcher)
-    return result
 
 
 async def recover_source_uploads(
@@ -144,7 +120,6 @@ async def _finalize_source_upload(upload_id: UUID) -> None:
                 storage=storage,
                 artifacts=artifacts,
                 limits=create_upload_limits(settings),
-                read_dispatcher=DramatiqSourceReadDispatcher(),
                 execution_deadline=deadline,
             )
     finally:

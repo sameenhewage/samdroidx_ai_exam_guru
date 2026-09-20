@@ -5,7 +5,6 @@ import {
   type components,
   type operations,
 } from "@exam-guru/api-client";
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -142,7 +141,6 @@ export function DocumentsStudio({ role }: { role: Role }) {
   const [uploadError, setUploadError] = useState<UiError | null>(null);
   const [lastResult, setLastResult] = useState<SourceDocument | null>(null);
   const [uploadPermissionDenied, setUploadPermissionDenied] = useState(false);
-  const [extractionNotice, setExtractionNotice] = useState("");
 
   const activeCurricula = curricula.filter((curriculum) => curriculum.active);
   const canUpload = role === "admin" && !uploadPermissionDenied;
@@ -248,23 +246,6 @@ export function DocumentsStudio({ role }: { role: Role }) {
     }
   }
 
-  async function queueExtraction(document: SourceDocument) {
-    setExtractionNotice("");
-    try {
-      const result = await api.POST(
-        "/api/v1/admin/source-documents/{document_id}/extract",
-        { params: { path: { document_id: document.id } } },
-      );
-      if (result.error) {
-        setExtractionNotice(`Extraction was not queued: ${errorCode(result.error)}`);
-        return;
-      }
-      setExtractionNotice("Native extraction queued.");
-    } catch {
-      setExtractionNotice("Extraction was not queued: network_error");
-    }
-  }
-
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:py-10">
       <header className="border-b border-slate-300 pb-7">
@@ -285,12 +266,6 @@ export function DocumentsStudio({ role }: { role: Role }) {
           </div>
         </div>
       </header>
-
-      {extractionNotice && (
-        <p className="mt-6 rounded-lg border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900" role="status">
-          {extractionNotice}
-        </p>
-      )}
 
       {loading && (
         <div
@@ -469,11 +444,9 @@ export function DocumentsStudio({ role }: { role: Role }) {
               )}
               {documents.map((document) => (
                 <DocumentStatusCard
-                  canManage={role === "admin"}
                   curriculum={curricula.find((item) => item.id === document.curriculum_version_id)}
                   document={document}
                   key={document.id}
-                  onQueueExtraction={() => void queueExtraction(document)}
                 />
               ))}
             </div>
@@ -510,15 +483,11 @@ export function DocumentsStudio({ role }: { role: Role }) {
 }
 
 function DocumentStatusCard({
-  canManage,
   curriculum,
   document,
-  onQueueExtraction,
 }: {
-  canManage: boolean;
   curriculum: Curriculum | undefined;
   document: SourceDocument;
-  onQueueExtraction: () => void;
 }) {
   const documentType = documentTypes.find((type) => type.value === document.document_type)?.label ?? document.document_type;
   return (
@@ -569,23 +538,6 @@ function DocumentStatusCard({
         </p>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
-        {canManage && ["uploaded", "failed"].includes(document.extraction_status) && (
-          <button
-            aria-label={`Queue extraction for ${document.original_filename}`}
-            className={secondaryButton}
-            onClick={onQueueExtraction}
-            type="button"
-          >
-            Queue extraction
-          </button>
-        )}
-        {["extracted", "in_review", "trusted"].includes(document.extraction_status) && (
-          <Link className={secondaryButton} href={`/admin/documents/${document.id}`}>
-            Open extraction review
-          </Link>
-        )}
-      </div>
     </article>
   );
 }

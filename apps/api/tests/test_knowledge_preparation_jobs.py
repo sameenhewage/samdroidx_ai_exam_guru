@@ -12,8 +12,8 @@ import exam_guru_api.knowledge.preparation_jobs as jobs
 from exam_guru_api.documents.understanding_models import TrustedPageKnowledgeModel
 from exam_guru_api.knowledge.preparation_models import KnowledgePreparationJobModel
 from exam_guru_api.knowledge.unit_service import KnowledgePreparationError, KnowledgeUnitService
+from tests.job_fixtures import Resources
 from tests.test_document_understanding_verification import approve, candidate
-from tests.test_document_understanding_worker import Resources
 from tests.test_knowledge_units import scope
 
 

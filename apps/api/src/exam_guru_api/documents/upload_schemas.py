@@ -100,7 +100,6 @@ class SourceUploadResponse(BaseModel):
     expected_checksum_sha256: str | None = None
     checksum_sha256: str | None = None
     document_id: UUID | None = None
-    source_read_job_id: UUID | None = None
     deduplicated: bool = False
     likely_metadata_duplicate_of_id: UUID | None = None
     failure_code: str | None = None

@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import { SourceUnderstandingContent } from "./source-understanding-content";
 
-type Understanding = components["schemas"]["PageUnderstanding"];
+type UnitContent = Pick<
+  components["schemas"]["KnowledgeUnit"],
+  "observation" | "education" | "resolved_uncertainties"
+>;
 
-export function understandingFixture(): Understanding {
+export function understandingFixture(): UnitContent {
   return {
-    schema_version: "page-understanding.v1",
     observation: {
       language: "si",
       regions: [
@@ -113,7 +115,7 @@ export function understandingFixture(): Understanding {
         },
       ],
     },
-    uncertainties: [
+    resolved_uncertainties: [
       {
         key: "unclear_symbol",
         region_keys: ["groups"],
@@ -127,7 +129,7 @@ export function understandingFixture(): Understanding {
 
 describe("teacher-facing structured source evidence", () => {
   it("highlights only unresolved source regions without exposing provider details", () => {
-    render(<SourceUnderstandingContent understanding={understandingFixture()} language="en" sourceOnly />);
+    render(<SourceUnderstandingContent unit={understandingFixture()} language="en" sourceOnly />);
     const unresolved = screen.getByRole("article", { name: "Source detail 3" });
     expect(within(unresolved).getByText("Needs attention")).toBeVisible();
     expect(within(screen.getByRole("article", { name: "Source detail 1" })).queryByText("Needs attention")).not.toBeInTheDocument();
@@ -136,7 +138,7 @@ describe("teacher-facing structured source evidence", () => {
   it("keeps source-review blank cells empty and named without escaping positioned text", () => {
     render(
       <SourceUnderstandingContent
-        understanding={understandingFixture()}
+        unit={understandingFixture()}
         language="en"
         sourceOnly
       />,
@@ -149,11 +151,11 @@ describe("teacher-facing structured source evidence", () => {
   it("keeps literal source, teaching interpretation and uncertainty in distinct sections", () => {
     const content = understandingFixture();
     const { container } = render(
-      <SourceUnderstandingContent understanding={content} language="en" />,
+      <SourceUnderstandingContent unit={content} language="en" />,
     );
     const observed = screen.getByRole("region", { name: "What is visible" });
-    const meaning = screen.getByRole("region", { name: "What it may teach" });
-    const uncertain = screen.getByRole("region", { name: "Details to check" });
+    const meaning = screen.getByRole("region", { name: "Accepted teaching points" });
+    const uncertain = screen.getByRole("region", { name: "Details checked by the teacher" });
     expect(
       within(observed).getByText(content.observation.regions[0].exact_text),
     ).toHaveTextContent("a\u0301");
@@ -172,7 +174,7 @@ describe("teacher-facing structured source evidence", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(
       screen.getByText(
-        "Proposed reading — compare with the original before accepting it.",
+        "Checked against the original. Only accepted teaching points are shown.",
       ),
     ).toBeVisible();
   });
@@ -184,7 +186,7 @@ describe("teacher-facing structured source evidence", () => {
         unit={{
           observation: content.observation,
           education: content.education,
-          resolved_uncertainties: content.uncertainties,
+          resolved_uncertainties: content.resolved_uncertainties,
         }}
         language="en"
       />,
@@ -206,7 +208,7 @@ describe("teacher-facing structured source evidence", () => {
   it("distinguishes blank and unreadable cells without solving source exercises", () => {
     render(
       <SourceUnderstandingContent
-        understanding={understandingFixture()}
+        unit={understandingFixture()}
         language="en"
       />,
     );
@@ -220,7 +222,7 @@ describe("teacher-facing structured source evidence", () => {
 
   it("defaults presentation to Sinhala without rewriting the source Unicode", () => {
     const content = understandingFixture();
-    render(<SourceUnderstandingContent understanding={content} />);
+    render(<SourceUnderstandingContent unit={content} />);
     expect(
       screen.getByRole("region", { name: "පිටුවේ පෙනෙන දේ" }),
     ).toBeVisible();
@@ -236,7 +238,7 @@ describe("teacher-facing structured source evidence", () => {
     const content = understandingFixture();
     content.observation.regions[1].table!.cells[0].exact_text = "සිංහල වචන";
     render(
-      <SourceUnderstandingContent understanding={content} language="en" />,
+      <SourceUnderstandingContent unit={content} language="en" />,
     );
     expect(screen.getByText("සිංහල වචන").closest("[lang]")).toHaveAttribute(
       "lang",
@@ -257,7 +259,7 @@ describe("teacher-facing structured source evidence", () => {
       printed_total: "0",
     };
     render(
-      <SourceUnderstandingContent understanding={content} language="en" />,
+      <SourceUnderstandingContent unit={content} language="en" />,
     );
     const detail = screen.getByRole("article", { name: "Source detail 3" });
     expect(within(detail).getAllByText("0", { exact: true })).toHaveLength(2);
@@ -301,7 +303,7 @@ describe("teacher-facing structured source evidence", () => {
     };
     content.observation.regions.reverse();
     render(
-      <SourceUnderstandingContent understanding={content} language="en" />,
+      <SourceUnderstandingContent unit={content} language="en" />,
     );
     const table = screen.getByRole("table", { name: "Source detail 2" });
     expect(within(table).getAllByRole("cell")).toHaveLength(3);
@@ -323,12 +325,12 @@ describe("teacher-facing structured source evidence", () => {
     ];
     content.observation.relationships = [];
     content.education.claims = [];
-    content.uncertainties = [];
-    render(<SourceUnderstandingContent understanding={content} />);
-    expect(screen.getByText("No teaching points proposed yet.")).toBeVisible();
+    content.resolved_uncertainties = [];
+    render(<SourceUnderstandingContent unit={content} />);
+    expect(screen.getByText("No teaching points were accepted in this review.")).toBeVisible();
     expect(
       screen.getByText(
-        "No uncertainties were recorded. Compare with the original anyway.",
+        "No uncertain details were recorded for this review.",
       ),
     ).toBeVisible();
     expect(
@@ -338,11 +340,11 @@ describe("teacher-facing structured source evidence", () => {
 
   it("shows an unspecified reference instead of inventing a source detail", () => {
     const content = understandingFixture();
-    content.uncertainties[0].region_keys = ["unavailable"];
-    content.uncertainties[0].alternatives = [];
+    content.resolved_uncertainties[0].region_keys = ["unavailable"];
+    content.resolved_uncertainties[0].alternatives = [];
     content.observation.regions[2].visual_facts[0].group_count = null;
     render(
-      <SourceUnderstandingContent understanding={content} language="en" />,
+      <SourceUnderstandingContent unit={content} language="en" />,
     );
     expect(screen.getByText("Unspecified source detail")).toBeVisible();
     expect(screen.getByText("Not recorded")).toBeVisible();
@@ -351,7 +353,7 @@ describe("teacher-facing structured source evidence", () => {
   it("keeps diagnostics closed and satisfies basic accessible structure", async () => {
     const { container } = render(
       <SourceUnderstandingContent
-        understanding={understandingFixture()}
+        unit={understandingFixture()}
         language="en"
       />,
     );

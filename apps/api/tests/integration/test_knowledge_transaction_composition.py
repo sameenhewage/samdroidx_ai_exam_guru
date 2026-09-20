@@ -3,6 +3,7 @@ from itertools import count
 from uuid import UUID, uuid4
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,6 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
     TaxonomyNodeModel,
 )
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.unit_models import (
     KnowledgeProjectionModel,
     KnowledgeUnitModel,
@@ -30,18 +30,18 @@ from exam_guru_api.knowledge.unit_review import (
 )
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
 from exam_guru_api.knowledge.unit_service import KnowledgePreparationError, KnowledgeUnitService
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
+from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import (
     ADMIN,
     REVIEWER,
     add_curriculum,
     admit_curriculum,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
-from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
-from tests.integration.test_knowledge_units_postgres import verified_source
 
 pytestmark = pytest.mark.integration
 
@@ -577,7 +577,7 @@ def test_shared_curriculum_fixture_uses_valid_codes_for_e2e_uuid_prefixes(
     def e2e_uuid4() -> UUID:
         return UUID(f"e2e{next(sequence):05x}-0000-4000-8000-000000000000")
 
-    monkeypatch.setattr("tests.integration.test_fidelity_workspace_postgres.uuid4", e2e_uuid4)
+    monkeypatch.setattr("tests.integration.workspace_fixtures.uuid4", e2e_uuid4)
 
     async def check() -> None:
         async with database_session(workspace_database_url) as session:

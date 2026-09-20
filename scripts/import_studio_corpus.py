@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
-from exam_guru_api.documents.extraction import KNOWN_CORRUPT_SOURCE_FINGERPRINT
+from exam_guru_api.documents.domain import KNOWN_CORRUPT_SOURCE_FINGERPRINT
 from exam_guru_api.documents.schemas import SourceIntakeMetadata
 from exam_guru_api.documents.upload_schemas import (
     MAX_UPLOAD_INTEGER,
@@ -570,7 +570,6 @@ def accept_session(payload, entry):
     if view["status"] == "completed":
         entry.update(
             document_id=view["document_id"],
-            source_read_job_id=view["source_read_job_id"],
             new_upload=not view["deduplicated"],
             deduplicated=view["deduplicated"],
             metadata_review_required=True,
@@ -843,7 +842,6 @@ def run_import(
                         "total_unique": len(groups),
                         "document_id": entry["document_id"],
                         "status": entry["status"],
-                        "source_read_job_id": entry["source_read_job_id"],
                         "metadata_review_required": True,
                     }
                 )

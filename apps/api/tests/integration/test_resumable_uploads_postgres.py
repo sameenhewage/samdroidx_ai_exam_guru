@@ -4,7 +4,6 @@ import tracemalloc
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import BinaryIO, Never
@@ -183,18 +182,14 @@ def test_restart_resume_receipts_finalize_domain_audit_and_checksum_dedup(
                 assert document.extraction_attempt_count == 0
                 assert document.curriculum_version_id is None
                 assert document.created_by == owner.subject_id
-                reading = await session.scalar(
-                    select(SourceReadJobModel).where(SourceReadJobModel.document_id == document.id)
-                )
-                assert reading is not None
-                assert reading.page_number is None
-                assert reading.next_page == 1
-                assert reading.status == "queued"
-                assert reading.requested_by == owner.subject_id
-                assert completed.source_read_job_id == reading.id
                 assert (
-                    await worker.get(created.id, principal=owner)
-                ).source_read_job_id == reading.id
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(SourceReadJobModel)
+                        .where(SourceReadJobModel.document_id == document.id)
+                    )
+                    == 0
+                )
                 audit = await session.scalar(
                     select(AdminAuditEventModel).where(
                         AdminAuditEventModel.resource_id == document.id,
@@ -226,18 +221,9 @@ def test_restart_resume_receipts_finalize_domain_audit_and_checksum_dedup(
                     .where(SourceDocumentModel.checksum_sha256 == checksum)
                 )
                 assert count == 1
-                assert (
-                    await session.scalar(
-                        select(func.count())
-                        .select_from(SourceReadJobModel)
-                        .where(SourceReadJobModel.document_id == document.id)
-                    )
-                    == 1
-                )
                 for action, resource_id in (
                     ("source_upload.completed", created.id),
                     ("source_document.uploaded", document.id),
-                    ("source_read.queued", reading.id),
                 ):
                     assert (
                         await session.scalar(
@@ -566,7 +552,6 @@ def test_parallel_finalizers_keep_one_document_read_job_and_atomic_audits(
         data = PDF + str(uuid4()).encode()
         checksum = hashlib.sha256(data).hexdigest()
         upload_ids: list[UUID] = []
-        dispatcher = RecordingDispatcher()
         try:
             async with sessions() as session:
                 backend = service(session, storage, artifacts)
@@ -584,7 +569,6 @@ def test_parallel_finalizers_keep_one_document_read_job_and_atomic_audits(
                         storage=storage,
                         artifacts=artifacts,
                         limits=LIMITS,
-                        read_dispatcher=dispatcher,
                     )
 
             await asyncio.gather(run(upload_ids[0]), run(upload_ids[-1]))
@@ -610,7 +594,7 @@ def test_parallel_finalizers_keep_one_document_read_job_and_atomic_audits(
                         .select_from(SourceReadJobModel)
                         .where(SourceReadJobModel.document_id == document_id)
                     )
-                    == 1
+                    == 0
                 )
                 assert (
                     await session.scalar(
@@ -635,100 +619,6 @@ def test_parallel_finalizers_keep_one_document_read_job_and_atomic_audits(
                         )
                         == 1
                     )
-                assert len(list((tmp_path / "objects").rglob("*.pdf"))) == 1
-        finally:
-            storage.close()
-            await engine.dispose()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("after_commit", [False, True])
-def test_crashes_at_read_outbox_boundary_never_leave_completed_upload_without_a_read_job(
-    upload_database_url: str,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    after_commit: bool,
-) -> None:
-    from exam_guru_api.documents import resumable_uploads
-
-    class ProcessCrash(BaseException):
-        pass
-
-    async def scenario() -> None:
-        engine = create_async_engine(upload_database_url)
-        sessions = async_sessionmaker(engine, expire_on_commit=False)
-        storage = CountingStorage(tmp_path / "objects")
-        artifacts = PrivateUploadArtifacts(root=tmp_path / "staging")
-        owner = actor()
-        data = PDF + str(uuid4()).encode()
-        checksum = hashlib.sha256(data).hexdigest()
-        from exam_guru_api.documents.page_reading_jobs import queue_source_read
-
-        original_queue = queue_source_read
-
-        async def interrupted_queue(
-            session: AsyncSession,
-            document_id: UUID,
-            *,
-            actor_id: UUID,
-        ) -> SourceReadJobModel:
-            if after_commit:
-                await original_queue(session, document_id, actor_id=actor_id)
-            raise ProcessCrash
-
-        try:
-            async with sessions() as session:
-                backend = service(session, storage, artifacts)
-                created = await backend.create(upload_request(data), principal=owner)
-                await backend.append_chunk(created.id, principal=owner, offset=0, data=data)
-                await backend.request_completion(created.id, principal=owner)
-                monkeypatch.setattr(resumable_uploads, "queue_source_read", interrupted_queue)
-                with pytest.raises(ProcessCrash):
-                    await backend.finalize(created.id)
-            monkeypatch.setattr(resumable_uploads, "queue_source_read", original_queue)
-            async with sessions() as session:
-                stored = await session.scalar(
-                    select(SourceDocumentModel).where(
-                        SourceDocumentModel.checksum_sha256 == checksum
-                    )
-                )
-                assert (stored is not None) is after_commit
-            if not after_commit:
-                await asyncio.sleep(1.05)
-            async with sessions() as session:
-                backend = service(session, storage, artifacts)
-                completed = await backend.finalize(created.id)
-                assert completed.status is UploadStatus.COMPLETED
-                assert completed.document_id is not None
-                read_job = await session.scalar(
-                    select(SourceReadJobModel).where(
-                        SourceReadJobModel.document_id == completed.document_id
-                    )
-                )
-                assert read_job is not None
-                assert read_job.page_number is None
-                assert read_job.status == "queued"
-                for action, resource_id in (
-                    ("source_upload.completed", created.id),
-                    ("source_document.uploaded", completed.document_id),
-                    ("source_read.queued", read_job.id),
-                ):
-                    assert (
-                        await session.scalar(
-                            select(func.count())
-                            .select_from(AdminAuditEventModel)
-                            .where(
-                                AdminAuditEventModel.action == action,
-                                AdminAuditEventModel.resource_id == resource_id,
-                            )
-                        )
-                        == 1
-                    )
-                assert (await backend.finalize(created.id)).version == completed.version
-                assert (
-                    await backend.request_completion(created.id, principal=owner)
-                ).version == completed.version
                 assert len(list((tmp_path / "objects").rglob("*.pdf"))) == 1
         finally:
             storage.close()
@@ -852,7 +742,6 @@ def test_root_api_300_mib_restart_resume_worker_progress_and_read_outbox_are_mem
     from exam_guru_api.auth.rate_limits import NoOpRateLimiter
     from exam_guru_api.core.config import Settings
     from exam_guru_api.documents.fidelity_models import PageReviewStateModel
-    from exam_guru_api.documents.page_reading_jobs import recover_source_reads
     from exam_guru_api.documents.resumable_uploads import _Claim
     from exam_guru_api.documents.upload_jobs import run_source_upload_finalization
     from exam_guru_api.main import create_app
@@ -967,7 +856,6 @@ def test_root_api_300_mib_restart_resume_worker_progress_and_read_outbox_are_mem
                     progress.append(polled.json()["verified_bytes"])
 
             monkeypatch.setattr(ResumableUploadService, "_renew", observe_progress)
-            read_dispatcher = RecordingDispatcher(fail=True)
 
             async def finalize_and_recover_read() -> UUID:
                 engine = create_async_engine(upload_database_url)
@@ -980,7 +868,6 @@ def test_root_api_300_mib_restart_resume_worker_progress_and_read_outbox_are_mem
                             storage=restarted.state.object_storage,
                             artifacts=restarted.state.source_upload_artifacts,
                             limits=restarted.state.source_upload_limits,
-                            read_dispatcher=read_dispatcher,
                         )
                         assert result.status is UploadStatus.COMPLETED
                         assert result.checksum_sha256 == expected.hexdigest()
@@ -998,20 +885,14 @@ def test_root_api_300_mib_restart_resume_worker_progress_and_read_outbox_are_mem
                             )
                             == 0
                         )
-                        read_job = await session.scalar(
-                            select(SourceReadJobModel).where(
-                                SourceReadJobModel.document_id == document.id
+                        assert (
+                            await session.scalar(
+                                select(func.count())
+                                .select_from(SourceReadJobModel)
+                                .where(SourceReadJobModel.document_id == document.id)
                             )
+                            == 0
                         )
-                        assert read_job is not None
-                        assert read_job.page_number is None
-                        assert read_job.status == "queued"
-                        assert read_dispatcher.dispatched == [read_job.id]
-                        recovered = RecordingDispatcher()
-                        await recover_source_reads(
-                            session, recovered, now=datetime.now(UTC) + timedelta(minutes=1)
-                        )
-                        assert read_job.id in recovered.dispatched
                         return document.id
                 finally:
                     await engine.dispose()
@@ -1021,7 +902,7 @@ def test_root_api_300_mib_restart_resume_worker_progress_and_read_outbox_are_mem
             completed = client.get(path, headers=headers)
             assert completed.json()["status"] == "completed"
             assert completed.json()["document_id"] == str(document_id)
-            assert completed.json()["source_read_job_id"] == str(read_dispatcher.dispatched[0])
+            assert "source_read_job_id" not in completed.json()
             assert client.post(f"{path}/complete", headers=headers).status_code == 200
             assert dispatcher.dispatched == [upload_id, upload_id]
             originals = list((root / "sources").rglob("*.pdf"))
@@ -1609,7 +1490,7 @@ def test_finalizer_retries_a_real_unique_constraint_race_after_its_stale_checksu
                         .select_from(SourceReadJobModel)
                         .where(SourceReadJobModel.document_id == winner.document_id)
                     )
-                    == 1
+                    == 0
                 )
                 assert (
                     await session.scalar(

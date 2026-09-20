@@ -20,7 +20,6 @@ from exam_guru_api.infrastructure.migrations import (
 from exam_guru_api.papers.publication_service import PaperPublicationService
 from exam_guru_api.papers.review_service import ReviewCandidateService
 from exam_guru_api.validation.service import ValidationRunService
-from tests.integration.test_fidelity_workspace_postgres import database_session
 from tests.integration.test_knowledge_generation_postgres import create_knowledge_run
 from tests.integration.test_projection_retrieval_postgres import indexed_projection
 from tests.integration.test_verified_knowledge_lineage_postgres import (
@@ -30,6 +29,7 @@ from tests.integration.test_verified_knowledge_lineage_postgres import (
     succeeded_lineage_run,
     synthetic_validation_pipeline,
 )
+from tests.integration.workspace_fixtures import database_session
 
 pytestmark = pytest.mark.integration
 

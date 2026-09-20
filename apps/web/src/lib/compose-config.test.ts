@@ -39,9 +39,7 @@ describe("single-file Windows Studio launcher", () => {
     expect(launcher).toContain(
       'docker --context desktop-linux compose --project-name ai-exam-guru --file "%~dp0compose.yaml" up --build --detach --wait --wait-timeout 900',
     );
-    expect(launcher).toContain(
-      'set "EXAM_GURU_OCR_TESSERACT_MAX_SOURCE_BYTES=268435456"',
-    );
+    expect(launcher).not.toMatch(/EXAM_GURU_OCR_|tesseract/i);
     expect(launcher).not.toMatch(
       /docker\s+run|set\s+"?EXAM_GURU_DATA_PATH=|set\s+"?POSTGRES_PASSWORD=/i,
     );

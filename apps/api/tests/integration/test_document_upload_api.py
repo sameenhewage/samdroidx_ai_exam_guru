@@ -16,7 +16,6 @@ from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
 from exam_guru_api.auth.rate_limits import NoOpRateLimiter
-from exam_guru_api.documents.jobs import DeterministicExtractionDispatcher, ExtractionDispatcher
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.infrastructure.object_storage import (
@@ -91,17 +90,6 @@ class RecordingObjectStorage:
         return None
 
 
-class FailOnceExtractionDispatcher:
-    def __init__(self) -> None:
-        self.calls: list[tuple[UUID, UUID]] = []
-
-    def dispatch(self, document_id: UUID, *, actor_id: UUID) -> str:
-        self.calls.append((document_id, actor_id))
-        if len(self.calls) == 1:
-            raise RuntimeError("private valkey transport diagnostic raw-payload")
-        return "recovered-extraction-message"
-
-
 class DatabaseTestResources:
     def __init__(self, database_url: str) -> None:
         self.engine = create_async_engine(database_url)
@@ -131,16 +119,11 @@ def upload_database_url() -> Iterator[str]:
         yield database_url
 
 
-def upload_client(
-    database_url: str,
-    storage: RecordingObjectStorage,
-    dispatcher: ExtractionDispatcher | None = None,
-) -> TestClient:
+def upload_client(database_url: str, storage: RecordingObjectStorage) -> TestClient:
     return TestClient(
         create_app(
             identity_provider=StaticIdentityProvider(),
             object_storage=storage,
-            extraction_dispatcher=dispatcher,
             resource_factory=lambda _: DatabaseTestResources(database_url),
             rate_limiter=NoOpRateLimiter(),
         )
@@ -150,10 +133,9 @@ def upload_client(
 @pytest.mark.integration
 def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: str) -> None:
     storage = RecordingObjectStorage()
-    dispatcher = DeterministicExtractionDispatcher()
     headers = {"Authorization": "Bearer admin-token"}
 
-    with upload_client(upload_database_url, storage, dispatcher) as client:
+    with upload_client(upload_database_url, storage) as client:
         created = client.post(
             "/api/v1/admin/source-documents",
             data={"document_type": "syllabus"},
@@ -176,18 +158,6 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
             "/api/v1/admin/source-documents",
             headers={"Authorization": "Bearer reviewer-token"},
         )
-        extraction = client.post(
-            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
-            headers=headers,
-        )
-        duplicate_extraction = client.post(
-            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
-            headers=headers,
-        )
-        reviewer_extraction = client.post(
-            f"/api/v1/admin/source-documents/{created.json()['id']}/extract",
-            headers={"Authorization": "Bearer reviewer-token"},
-        )
 
     assert created.status_code == 201
     assert created.json()["deduplicated"] is False
@@ -200,13 +170,6 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
     assert forbidden.status_code == 403
     assert listed.status_code == 200
     assert [document["id"] for document in listed.json()] == [created.json()["id"]]
-    assert extraction.status_code == 202
-    assert extraction.json()["message_id"] == "deterministic-extraction-message-id"
-    assert extraction.json()["status"] == "extraction_pending"
-    assert duplicate_extraction.status_code == 202
-    assert duplicate_extraction.json() == extraction.json()
-    assert reviewer_extraction.status_code == 403
-    assert dispatcher.dispatched == [(UUID(created.json()["id"]), ADMIN_ID)]
     assert len(storage.puts) == 1
 
     async def persisted_state() -> tuple[int, list[str]]:
@@ -226,11 +189,7 @@ def test_admin_upload_is_immutable_audited_and_idempotent(upload_database_url: s
 
     document_count, actions = asyncio.run(persisted_state())
     assert document_count == 1
-    assert actions == [
-        "source_document.uploaded",
-        "source_document.extraction_queued",
-        "source_document.extraction_dispatched",
-    ]
+    assert actions == ["source_document.uploaded"]
 
 
 @pytest.mark.integration
@@ -378,78 +337,6 @@ def test_wrong_grade_material_remove_restore_is_readable_audited_and_cas_safe(
         "source_document.removed_from_ai_use",
         "source_document.restored_to_ai_use",
     ]
-
-
-@pytest.mark.integration
-def test_extraction_queue_failure_is_recoverable_by_same_endpoint_replay(
-    upload_database_url: str,
-) -> None:
-    storage = RecordingObjectStorage()
-    dispatcher = FailOnceExtractionDispatcher()
-    headers = {"Authorization": "Bearer admin-token"}
-
-    with upload_client(upload_database_url, storage, dispatcher) as client:
-        created = client.post(
-            "/api/v1/admin/source-documents",
-            data={"document_type": "teacher_guide"},
-            files={"file": ("recovery.pdf", RECOVERY_PDF, "application/pdf")},
-            headers=headers,
-        )
-        document_id = UUID(created.json()["id"])
-        failed = client.post(
-            f"/api/v1/admin/source-documents/{document_id}/extract",
-            headers=headers,
-        )
-        recovered = client.post(
-            f"/api/v1/admin/source-documents/{document_id}/extract",
-            headers=headers,
-        )
-        replayed = client.post(
-            f"/api/v1/admin/source-documents/{document_id}/extract",
-            headers=headers,
-        )
-
-    assert created.status_code == 201
-    assert failed.status_code == 503
-    assert failed.json() == {"detail": {"code": "extraction_queue_unavailable"}}
-    assert "raw-payload" not in failed.text
-    assert recovered.status_code == 202
-    assert recovered.json()["message_id"] == "recovered-extraction-message"
-    assert replayed.status_code == 202
-    assert replayed.json() == recovered.json()
-    assert dispatcher.calls == [(document_id, ADMIN_ID), (document_id, ADMIN_ID)]
-
-    async def persisted_state() -> tuple[SourceDocumentModel | None, list[AdminAuditEventModel]]:
-        engine = create_async_engine(upload_database_url)
-        sessions = async_sessionmaker(engine, expire_on_commit=False)
-        async with sessions() as session:
-            document = await session.get(SourceDocumentModel, document_id)
-            audits = list(
-                await session.scalars(
-                    select(AdminAuditEventModel)
-                    .where(AdminAuditEventModel.resource_id == document_id)
-                    .order_by(AdminAuditEventModel.created_at)
-                )
-            )
-        await engine.dispose()
-        return document, audits
-
-    document, audits = asyncio.run(persisted_state())
-    assert document is not None
-    assert document.extraction_status.value == "extraction_pending"
-    assert document.extraction_attempt_count == 1
-    assert document.extraction_queue_message_id == "recovered-extraction-message"
-    assert [audit.action for audit in audits] == [
-        "source_document.uploaded",
-        "source_document.extraction_queued",
-        "source_document.extraction_dispatch_failed",
-        "source_document.extraction_dispatched",
-    ]
-    assert audits[2].payload == {
-        "attempt": 1,
-        "failure_code": "queue_dispatch_failed",
-    }
-    assert "raw-payload" not in repr(audits[2].payload)
 
 
 @pytest.mark.integration

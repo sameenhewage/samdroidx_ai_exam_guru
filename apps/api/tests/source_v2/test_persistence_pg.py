@@ -81,7 +81,7 @@ def test_only_one_candidate_per_region_can_be_current(connection, page) -> None:
     add_candidate(connection, page, revision=1, current=True)
     # A savepoint, not a rollback: the page fixture must survive the refusal.
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.UniqueViolation):
-            add_candidate(connection, page, revision=2, current=True)
+        add_candidate(connection, page, revision=2, current=True)
 
 
 def test_a_superseded_revision_may_coexist_when_not_current(connection, page) -> None:
@@ -97,23 +97,23 @@ def test_review_events_cannot_be_rewritten_or_deleted(connection, page) -> None:
     candidate = add_candidate(connection, page)
     confirm_event(connection, page, "p156-r002", candidate, 1)
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.RaiseException):
-            connection.execute("update source_v2_review_events set note = 'tampered'")
+        connection.execute("update source_v2_review_events set note = 'tampered'")
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.RaiseException):
-            connection.execute("delete from source_v2_review_events")
+        connection.execute("delete from source_v2_review_events")
 
 
 def test_an_exclusion_without_a_reason_is_refused(connection, page) -> None:
     candidate = add_candidate(connection, page)
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
-            connection.execute(
-                """
+        connection.execute(
+            """
                 insert into source_v2_review_events
                   (id, page_id, region_id, candidate_id, candidate_revision, action,
                    reviewer_id, compared_with_image_sha256, note)
                 values (%s, %s, 'p156-r002', %s, 1, 'exclude', %s, %s, '   ')
                 """,
-                (uuid.uuid4(), page, candidate, uuid.uuid4(), SHA),
-            )
+            (uuid.uuid4(), page, candidate, uuid.uuid4(), SHA),
+        )
 
 
 def insert_verified(connection, page_id, region_id, candidate_id, revision, sha=SHA, text="පෙළ"):
@@ -131,14 +131,14 @@ def insert_verified(connection, page_id, region_id, candidate_id, revision, sha=
 def test_verified_content_requires_a_matching_confirm_event(connection, page) -> None:
     candidate = add_candidate(connection, page)
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.RaiseException):
-            insert_verified(connection, page, "p156-r002", candidate, 1)
+        insert_verified(connection, page, "p156-r002", candidate, 1)
 
 
 def test_verified_content_must_cite_the_current_page_image(connection, page) -> None:
     candidate = add_candidate(connection, page)
     confirm_event(connection, page, "p156-r002", candidate, 1, sha=OTHER_SHA)
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.RaiseException):
-            insert_verified(connection, page, "p156-r002", candidate, 1, sha=OTHER_SHA)
+        insert_verified(connection, page, "p156-r002", candidate, 1, sha=OTHER_SHA)
 
 
 def test_verified_content_is_accepted_once_it_is_properly_witnessed(connection, page) -> None:
@@ -155,7 +155,7 @@ def test_empty_verified_text_is_refused(connection, page) -> None:
     candidate = add_candidate(connection, page)
     confirm_event(connection, page, "p156-r002", candidate, 1)
     with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
-            insert_verified(connection, page, "p156-r002", candidate, 1, text="   ")
+        insert_verified(connection, page, "p156-r002", candidate, 1, text="   ")
 
 
 def test_a_review_event_cannot_cite_another_regions_candidate(connection, page) -> None:

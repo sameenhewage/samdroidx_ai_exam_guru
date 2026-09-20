@@ -1091,8 +1091,4 @@ def test_only_the_openai_adapters_import_the_provider_sdk() -> None:
         adapter_path,
         embedding_adapter_path,
         semantic_adapter_path,
-        source_root / "documents" / "semantic_diagnostics.py",
-        source_root / "documents" / "understanding_openai.py",
-        source_root / "documents" / "source_reading_openai.py",
-        source_root / "documents" / "source_consensus_provider.py",
     }

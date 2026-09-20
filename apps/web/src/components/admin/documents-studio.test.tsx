@@ -98,7 +98,7 @@ describe("DocumentsStudio", () => {
     expect(screen.getByText("Uploaded")).toBeInTheDocument();
   });
 
-  it("queues native extraction without running it in the browser", async () => {
+  it("no longer offers any legacy extraction trigger or review entry point", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = asRequest(input, init);
       if (request.method === "GET" && request.url.endsWith("/curriculum-versions")) {
@@ -107,30 +107,23 @@ describe("DocumentsStudio", () => {
       if (request.method === "GET" && request.url.endsWith("/source-documents")) {
         return Response.json([uploadedDocument]);
       }
-      if (request.method === "POST" && request.url.endsWith("/extract")) {
-        return Response.json(
-          {
-            document_id: uploadedDocument.id,
-            message_id: "message-1",
-            status: "uploaded",
-          },
-          { status: 202 },
-        );
-      }
       return Response.json({ detail: { code: "unexpected_request" } }, { status: 500 });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<DocumentsStudio role="admin" />);
 
-    const button = await screen.findByRole("button", {
-      name: `Queue extraction for ${uploadedDocument.original_filename}`,
-    });
-    fireEvent.click(button);
-
-    expect(await screen.findByText("Native extraction queued.")).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([input]) => asRequest(input).url.endsWith("/extract"))).toBe(
-      true,
-    );
+    await screen.findByText(uploadedDocument.original_filename);
+    expect(
+      screen.queryByRole("button", {
+        name: `Queue extraction for ${uploadedDocument.original_filename}`,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open extraction review" }),
+    ).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.every(([input]) => !asRequest(input).url.endsWith("/extract")),
+    ).toBe(true);
   });
 
   it("uploads PDF metadata through the same-origin generated endpoint and shows status", async () => {

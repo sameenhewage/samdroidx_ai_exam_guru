@@ -21,7 +21,6 @@ from exam_guru_api.retrieval.embeddings import DEFAULT_DETERMINISTIC_EMBEDDING_C
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
 from exam_guru_api.teacher_papers.models import TeacherPaperSlotRunModel
 from tests.integration.test_embedding_jobs_postgres import _registry
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
 from tests.integration.test_knowledge_units_postgres import verified_source
 from tests.integration.test_teacher_paper_aggregate import (
     ADMIN_HEADERS,
@@ -37,6 +36,7 @@ from tests.integration.test_teacher_paper_aggregate import (
     request_payload,
 )
 from tests.integration.test_teacher_paper_aggregate import aggregate_seed as aggregate_seed
+from tests.integration.workspace_fixtures import ADMIN, database_session
 
 pytestmark = pytest.mark.integration
 

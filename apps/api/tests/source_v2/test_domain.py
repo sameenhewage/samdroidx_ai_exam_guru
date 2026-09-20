@@ -245,9 +245,7 @@ def test_every_decision_is_appended_and_nothing_is_rewritten() -> None:
 
 def verified_page(number: int) -> PageReview:
     first = candidate(region_id=f"p{number:03d}-r001")
-    review = PageReview(
-        document_id="mawbasa-teacher-guide", page_number=number, image_sha256=SHA
-    )
+    review = PageReview(document_id="mawbasa-teacher-guide", page_number=number, image_sha256=SHA)
     review.candidates[first.region_id] = first
     review.confirm(
         region_id=first.region_id,
@@ -262,9 +260,7 @@ def verified_page(number: int) -> PageReview:
 
 def unresolved_page(number: int) -> PageReview:
     first = candidate(region_id=f"p{number:03d}-r001")
-    review = PageReview(
-        document_id="mawbasa-teacher-guide", page_number=number, image_sha256=SHA
-    )
+    review = PageReview(document_id="mawbasa-teacher-guide", page_number=number, image_sha256=SHA)
     review.candidates[first.region_id] = first
     return review
 

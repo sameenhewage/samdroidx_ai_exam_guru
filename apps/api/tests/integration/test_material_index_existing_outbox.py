@@ -15,13 +15,13 @@ from exam_guru_api.knowledge.material_index_models import MaterialKnowledgeIndex
 from exam_guru_api.knowledge.material_indexing import promote_material_index_intent
 from exam_guru_api.knowledge.material_review import MaterialKnowledgeReviewService
 from exam_guru_api.knowledge.models import EmbeddingJobModel
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_material_knowledge_indexing_postgres import (
     indexing_runtime,
     reviewed_intent,
+)
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
 )
 
 pytestmark = pytest.mark.integration

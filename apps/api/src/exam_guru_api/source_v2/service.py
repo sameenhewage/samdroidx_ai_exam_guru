@@ -62,8 +62,7 @@ def import_page(
 
     image_sha256 = layout["image_sha256"]
     existing = rows.execute(
-        "select id, image_sha256 from source_v2_pages "
-        "where document_id = %s and page_number = %s",
+        "select id, image_sha256 from source_v2_pages where document_id = %s and page_number = %s",
         (document_id, page_number),
     ).fetchone()
     if existing is not None:

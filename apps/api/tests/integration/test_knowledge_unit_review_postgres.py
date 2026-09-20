@@ -2,6 +2,7 @@ import asyncio
 from uuid import UUID, uuid4
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,6 @@ from exam_guru_api.curriculum.models import (
     TaxonomyNodeModel,
 )
 from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.unit_models import KnowledgeUnitModel
 from exam_guru_api.knowledge.unit_review import (
     KnowledgeReviewRequest,
@@ -24,17 +24,17 @@ from exam_guru_api.knowledge.unit_review import (
 )
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
 from exam_guru_api.knowledge.unit_service import KnowledgeUnitService
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_api import ADMIN_HEADERS, REVIEWER_HEADERS, api_client
+from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import (
     ADMIN,
     REVIEWER,
     add_curriculum,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
-from tests.integration.test_knowledge_api import ADMIN_HEADERS, REVIEWER_HEADERS, api_client
-from tests.integration.test_knowledge_units_postgres import verified_source
 
 pytestmark = pytest.mark.integration
 

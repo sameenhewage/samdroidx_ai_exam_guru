@@ -101,9 +101,7 @@ class SourceV2MachineCandidate(Base):
 
     __tablename__ = "source_v2_machine_candidates"
     __table_args__ = (
-        UniqueConstraint(
-            "page_id", "region_id", "revision", name="uq_source_v2_machine_revision"
-        ),
+        UniqueConstraint("page_id", "region_id", "revision", name="uq_source_v2_machine_revision"),
         UniqueConstraint("id", "page_id", "region_id", name="uq_source_v2_machine_identity"),
         Index(
             "uq_source_v2_machine_current",
@@ -113,9 +111,7 @@ class SourceV2MachineCandidate(Base):
             postgresql_where="is_current",
         ),
         CheckConstraint("revision >= 1", name="ck_source_v2_machine_revision"),
-        CheckConstraint(
-            f"region_type IN {REGION_TYPES}", name="ck_source_v2_machine_region_type"
-        ),
+        CheckConstraint(f"region_type IN {REGION_TYPES}", name="ck_source_v2_machine_region_type"),
         CheckConstraint(f"state IN {REGION_STATES}", name="ck_source_v2_machine_state"),
         CheckConstraint(
             # D18: abstaining on *text* is the correct reading of a figure, so a

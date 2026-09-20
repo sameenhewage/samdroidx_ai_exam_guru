@@ -13,7 +13,6 @@ from exam_guru_api.infrastructure.migrations import (
 )
 from exam_guru_api.subject_quality import service as quality_service
 from exam_guru_api.teacher_papers.jobs import DeterministicPaperGenerationDispatcher
-from tests.integration.test_fidelity_workspace_postgres import database_session
 from tests.integration.test_teacher_paper_aggregate import (
     ADMIN_HEADERS,
     REVIEWER_HEADERS,
@@ -23,6 +22,7 @@ from tests.integration.test_teacher_paper_aggregate import (
     request_payload,
 )
 from tests.integration.test_teacher_paper_aggregate import aggregate_seed as aggregate_seed
+from tests.integration.workspace_fixtures import database_session
 
 pytestmark = pytest.mark.integration
 

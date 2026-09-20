@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from uuid import UUID, uuid4
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,6 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     TaxonomyNodeModel,
 )
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingJobService,
     EmbeddingWorkerService,
@@ -30,11 +30,11 @@ from exam_guru_api.retrieval.fusion import FusionConfig
 from exam_guru_api.retrieval.repository import PostgresHybridRetrievalRepository
 from exam_guru_api.retrieval.service import HybridRetrievalService
 from tests.integration.test_embedding_jobs_postgres import _registry
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
-from tests.integration.test_knowledge_units_postgres import verified_source
 from tests.test_document_understanding_contracts import counting_candidate, parse
 
 pytestmark = pytest.mark.integration

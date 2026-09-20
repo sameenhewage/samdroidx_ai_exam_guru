@@ -118,9 +118,7 @@ def test_an_abstained_text_region_still_cannot_be_verified(connection, page) -> 
     """The rule was narrowed, not removed."""
 
     cid = candidate(connection, page, kind="text_only", text="x", abstained=True)
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         connection.execute(
             "update source_v2_machine_candidates set state = 'verified' where id = %s",
             (cid,),
@@ -150,32 +148,24 @@ def test_a_visual_only_region_cannot_be_given_invented_text(connection, page) ->
 
 def test_a_visual_with_text_region_cannot_be_verified_empty(connection, page) -> None:
     cid = candidate(connection, page, kind="visual_with_text", text="label")
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, cid, kind="visual_with_text", text="  ")
 
 
 def test_a_verified_visual_must_name_its_canonical_crop(connection, page) -> None:
     cid = candidate(connection, page, kind="visual_only", text="")
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, cid, kind="visual_only", text="", crop=None)
 
 
 def test_decorative_can_never_become_verified_source(connection, page) -> None:
     cid = candidate(connection, page, kind="decorative", text="running header")
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, cid, kind="decorative", text="running header")
 
 
 def test_an_unknown_kind_is_rejected_on_both_tables(connection, page) -> None:
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         candidate(connection, page, kind="photo", text="x")
 
 
@@ -204,9 +194,5 @@ def test_review_events_remain_append_only(connection, page) -> None:
         """,
         (uuid.uuid4(), page, cid, uuid.uuid4(), SHA),
     )
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.RaiseException
-    ):
-        connection.execute(
-            "delete from source_v2_review_events where page_id = %s", (page,)
-        )
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.RaiseException):
+        connection.execute("delete from source_v2_review_events where page_id = %s", (page,))

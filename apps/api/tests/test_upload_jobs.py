@@ -20,7 +20,6 @@ from exam_guru_api.infrastructure.private_artifacts import PrivateUploadArtifact
 
 UPLOAD_ID = UUID(int=36031)
 DOCUMENT_ID = UUID(int=36032)
-READ_ID = UUID(int=36033)
 
 
 class Message:
@@ -142,20 +141,25 @@ def test_upload_dispatcher_factory_registers_both_actors_without_sending() -> No
         broker.close()
 
 
-def test_worker_binds_upload_actors_alongside_existing_source_read_actors() -> None:
-    from exam_guru_api.documents.page_reading_jobs import read_source, recover_source_read_jobs
+def test_worker_binds_upload_actors_without_any_legacy_source_read_actor() -> None:
     from exam_guru_api.worker import create_broker
 
     broker = create_broker(Settings(environment="test"))
     try:
-        for actor in (
-            jobs.finalize_source_upload,
-            jobs.recover_source_upload_jobs,
-            read_source,
-            recover_source_read_jobs,
-        ):
+        for actor in (jobs.finalize_source_upload, jobs.recover_source_upload_jobs):
             assert broker.get_actor(actor.actor_name) is actor
             assert actor.broker is broker
+        declared = broker.get_declared_actors()
+        assert declared.isdisjoint(
+            {
+                "extract_document",
+                "recover_extraction_jobs",
+                "read_source",
+                "recover_source_read_jobs",
+                "understand_source_page",
+                "recover_understanding_page_jobs",
+            }
+        )
     finally:
         broker.close()
 
@@ -164,16 +168,13 @@ def test_worker_binds_upload_actors_alongside_existing_source_read_actors() -> N
     "status",
     [UploadStatus.PENDING, UploadStatus.FINALIZING, UploadStatus.FAILED, UploadStatus.COMPLETED],
 )
-@pytest.mark.parametrize("dispatch_fails", [False, True])
-def test_finalizer_dispatches_only_a_durable_queued_read_after_service_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: UploadStatus, dispatch_fails: bool
+def test_finalizer_stores_the_immutable_source_and_dispatches_no_source_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: UploadStatus
 ) -> None:
     session = AsyncMock(spec=AsyncSession)
-    session.scalar.return_value = READ_ID
     backend = AsyncMock(spec=ResumableUploadService)
     backend.finalize.return_value = upload_view(status)
     monkeypatch.setattr(jobs, "ResumableUploadService", lambda *_args, **_kwargs: backend)
-    dispatcher = Dispatcher(fail_on=READ_ID if dispatch_fails else None)
     result = asyncio.run(
         jobs.run_source_upload_finalization(
             session,
@@ -181,40 +182,13 @@ def test_finalizer_dispatches_only_a_durable_queued_read_after_service_success(
             storage=cast(ObjectStorage, object()),
             artifacts=PrivateUploadArtifacts(root=tmp_path / "private"),
             limits=jobs.create_upload_limits(Settings(environment="test")),
-            read_dispatcher=dispatcher,
             execution_deadline=123.0,
         )
     )
     assert result.status is status
     backend.finalize.assert_awaited_once_with(UPLOAD_ID, execution_deadline=123.0)
-    assert dispatcher.dispatched == ([READ_ID] if status is UploadStatus.COMPLETED else [])
-    if status is UploadStatus.COMPLETED:
-        session.commit.assert_awaited_once()
-    else:
-        assert not session.mock_calls
+    assert not session.mock_calls
     assert not (tmp_path / "private").exists()
-
-
-def test_terminal_redelivery_does_not_queue_another_read_when_no_read_is_pending(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    session = AsyncMock(spec=AsyncSession)
-    session.scalar.return_value = None
-    backend = AsyncMock(spec=ResumableUploadService)
-    backend.finalize.return_value = upload_view(UploadStatus.COMPLETED)
-    monkeypatch.setattr(jobs, "ResumableUploadService", lambda *_args, **_kwargs: backend)
-    dispatcher = Dispatcher()
-    asyncio.run(
-        jobs.run_source_upload_finalization(
-            session,
-            UPLOAD_ID,
-            storage=cast(ObjectStorage, object()),
-            artifacts=PrivateUploadArtifacts(root=tmp_path / "private"),
-            limits=jobs.create_upload_limits(Settings(environment="test")),
-            read_dispatcher=dispatcher,
-        )
-    )
-    assert not dispatcher.dispatched
 
 
 def test_recovery_dispatches_bounded_pending_ids_with_failure_isolation(

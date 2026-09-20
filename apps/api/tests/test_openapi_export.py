@@ -24,16 +24,26 @@ def test_openapi_export_is_deterministic(tmp_path: Path) -> None:
     session_properties = schema["components"]["schemas"]["AuthSessionResponse"]["properties"]
     assert set(session_properties) == {"subject_id", "roles"}
     document_properties = schema["components"]["schemas"]["SourceDocumentResponse"]["properties"]
-    page_properties = schema["components"]["schemas"]["SourcePageResponse"]["properties"]
-    block_properties = schema["components"]["schemas"]["ExtractedBlockResponse"]["properties"]
     assert {
         "ocr_page_count",
         "extraction_config",
         "extraction_queue_message_id",
     } <= document_properties.keys()
+    page_properties = schema["components"]["schemas"]["SourcePageResponse"]["properties"]
+    block_properties = schema["components"]["schemas"]["ExtractedBlockResponse"]["properties"]
     assert {"extraction_config", "confidence"} <= page_properties.keys()
     assert {"extraction_config", "confidence"} <= block_properties.keys()
     assert block_properties["bbox"]["anyOf"][1] == {"type": "null"}
+    assert not [
+        path
+        for path in schema["paths"]
+        if "/source-read-jobs" in path
+        or "/understanding" in path
+        or path.endswith("/extract")
+        or "/review-workspace" in path
+        or "/source-benchmarks" in path
+    ]
+    assert "/api/v1/admin/source-v2/pages/{page_id}" in schema["paths"]
 
 
 def test_openapi_export_cli_accepts_an_output_path(

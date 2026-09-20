@@ -79,8 +79,17 @@ def verify(connection, page_id, region_id, cid, *, kind, text, crop=SHA, bbox="[
         values (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            uuid.uuid4(), page_id, region_id, cid, text, text,
-            uuid.uuid4(), SHA, kind, crop, bbox,
+            uuid.uuid4(),
+            page_id,
+            region_id,
+            cid,
+            text,
+            text,
+            uuid.uuid4(),
+            SHA,
+            kind,
+            crop,
+            bbox,
         ),
     )
 
@@ -92,8 +101,7 @@ def test_a_visual_only_region_becomes_verified_with_no_text_at_all(connection, p
     confirm(connection, page, "p186-r002", cid)
     verify(connection, page, "p186-r002", cid, kind="visual_only", text="")
     row = connection.execute(
-        "select source_kind, text, crop_sha256 from source_v2_verified_regions"
-        " where page_id = %s",
+        "select source_kind, text, crop_sha256 from source_v2_verified_regions where page_id = %s",
         (page,),
     ).fetchone()
     assert row[0] == "visual_only"
@@ -104,43 +112,33 @@ def test_a_visual_only_region_becomes_verified_with_no_text_at_all(connection, p
 def test_a_visual_region_without_its_canonical_crop_is_refused(connection, page) -> None:
     cid = candidate(connection, page)
     confirm(connection, page, "p186-r002", cid)
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, "p186-r002", cid, kind="visual_only", text="", crop=None)
 
 
 def test_a_text_only_region_still_requires_text(connection, page) -> None:
     cid = candidate(connection, page, kind="text_only", text="x")
     confirm(connection, page, "p186-r002", cid)
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, "p186-r002", cid, kind="text_only", text="   ")
 
 
 def test_a_visual_with_text_region_requires_text(connection, page) -> None:
     cid = candidate(connection, page, kind="visual_with_text", text="කෝටුව")
     confirm(connection, page, "p186-r002", cid)
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, "p186-r002", cid, kind="visual_with_text", text="")
 
 
 def test_decorative_can_never_become_verified_source_content(connection, page) -> None:
     cid = candidate(connection, page, kind="decorative", text="header")
     confirm(connection, page, "p186-r002", cid)
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         verify(connection, page, "p186-r002", cid, kind="decorative", text="header")
 
 
 def test_an_unknown_source_kind_is_rejected(connection, page) -> None:
-    with connection.transaction(force_rollback=True), pytest.raises(
-        psycopg.errors.CheckViolation
-    ):
+    with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
         candidate(connection, page, kind="photograph")
 
 

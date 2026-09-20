@@ -192,7 +192,6 @@ class FakeUploads:
                     verified_bytes=self.session["size_bytes"],
                     checksum_sha256=self.session["expected_checksum_sha256"],
                     document_id=str(UUID(int=36005)),
-                    source_read_job_id=None if self.deduplicated else str(UUID(int=36006)),
                     deduplicated=self.deduplicated,
                 )
             return 200, deepcopy(self.session)
@@ -225,7 +224,7 @@ def test_resumed_import_preserves_new_upload_count_without_reupload(
     assert client.complete_calls == 1
     assert initial["entries"][0]["request_id"] == resumed["entries"][0]["request_id"]
     assert resumed["entries"][0]["new_upload"] is True
-    assert resumed["entries"][0]["source_read_job_id"] == str(UUID(int=36006))
+    assert "source_read_job_id" not in resumed["entries"][0]
     assert all("source-documents" not in path for _, path in client.calls)
 
 
@@ -327,7 +326,7 @@ def test_legacy_migration_is_explicit_preserves_history_and_does_not_trust_old_i
     assert result["legacy_history"] == [old]
     assert result["entries"][0]["document_id"] != old["entries"][0]["document_id"]
     assert result["entries"][0]["new_upload"] is False
-    assert result["entries"][0]["source_read_job_id"] is None
+    assert "source_read_job_id" not in result["entries"][0]
 
 
 @pytest.mark.parametrize("source_size", [169_816_530, 191_788_974])

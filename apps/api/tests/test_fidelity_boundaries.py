@@ -1,7 +1,5 @@
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -9,8 +7,8 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from exam_guru_api.documents import fidelity_queries, fidelity_service, page_reading_jobs
-from exam_guru_api.documents.fidelity_models import PageReviewStateModel, SourceReadJobModel
+from exam_guru_api.documents import fidelity_service
+from exam_guru_api.documents.fidelity_models import PageReviewStateModel
 from exam_guru_api.documents.fidelity_service import (
     FidelitySourceNotFoundError,
     PageFidelityConflictError,
@@ -29,47 +27,6 @@ def source(*, pages: int | None = 2) -> SourceDocumentModel:
         checksum_sha256="a" * 64,
         active_for_ai=True,
     )
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        (None, "und"),
-        (3, "und"),
-        ("", "und"),
-        ("unlisted", "und"),
-        (" SIN ", "si"),
-        ("සිංහල", "si"),
-        ("Sinhala medium", "si"),
-        ("தமிழ்", "ta"),
-        ("ta-LK", "ta"),
-        ("English", "en"),
-    ],
-)
-def test_review_hint_is_presentation_only_and_recognizes_explicit_labels(
-    value: object, expected: str
-) -> None:
-    assert fidelity_queries._review_language_hint(value) == expected
-
-
-@pytest.mark.parametrize("missing", ["curriculum", "medium", None])
-def test_source_presentation_hint_does_not_invent_missing_catalogue_language(
-    missing: str | None,
-) -> None:
-    document = source()
-    document.curriculum_version_id = UUID(int=87003)
-    session = AsyncMock(spec=AsyncSession)
-    curriculum = SimpleNamespace(medium_id=UUID(int=87004))
-    session.get.side_effect = (
-        [None]
-        if missing == "curriculum"
-        else [
-            curriculum,
-            None if missing == "medium" else SimpleNamespace(code="sin", name="English"),
-        ]
-    )
-    result = asyncio.run(fidelity_queries._source_review_language(session, document))
-    assert result == ("si" if missing is None else "und")
 
 
 @pytest.mark.parametrize("value", [None, 1, "", "  ", "x" * 2001])
@@ -140,12 +97,6 @@ def test_malformed_provided_source_evidence_never_loses_constraints_to_become_co
     assert not result.can_confirm
     assert f"invalid_{field}" in result.risk_codes
     assert result.normalized_text == "Read the original question"
-    view = fidelity_queries._text_view(
-        "Read the original question", method="native", provenance=provenance, diagnostics={}
-    )
-    assert view.system_text == result.normalized_text
-    assert not view.can_confirm
-    assert f"invalid_{field}" in view.risk_codes
 
 
 @pytest.mark.parametrize("field", ["source_languages", "languages"])
@@ -371,119 +322,3 @@ def test_benchmark_categories_are_bounded_before_any_benchmark_is_written(
         )
     session.add.assert_not_called()
     session.commit.assert_not_awaited()
-
-
-@pytest.mark.parametrize("coverage", ["0.9", None, True, float("inf"), float("nan"), -0.1, 1.1])
-def test_readonly_text_view_distrusts_malformed_coverage_without_weakening_text_risks(
-    coverage: object,
-) -> None:
-    raw = "Read the original question: ගණිතය"
-    safe = fidelity_queries._text_view(
-        raw,
-        method="native",
-        provenance={"image_coverage": coverage},
-        diagnostics={},
-    )
-    baseline = fidelity_queries._text_view(raw, method="native", provenance={}, diagnostics={})
-    assert safe.system_text == baseline.system_text == raw
-    assert safe.language == baseline.language
-    assert baseline.can_confirm
-    assert not safe.can_confirm
-    assert "invalid_image_coverage" in safe.risk_codes
-    unsafe = fidelity_queries._text_view(
-        "broken\x00text",
-        method="native",
-        provenance={"image_coverage": coverage},
-        diagnostics={"risk_codes": ["provider_warning"]},
-    )
-    assert not unsafe.can_confirm
-    assert {"unsafe_control", "provider_warning", "invalid_image_coverage"} <= set(
-        unsafe.risk_codes
-    )
-    assert "\x00" not in unsafe.system_text
-
-
-@pytest.mark.parametrize("page_number", [None, "1", 1.0, True, 0, -1, 2147483647])
-def test_read_queue_rejects_invalid_selected_page_before_io(page_number: object) -> None:
-    message = "a page version requires a selected page" if page_number is None else "out of range"
-    with pytest.raises(ValueError, match=message):
-        asyncio.run(
-            page_reading_jobs.queue_source_read(
-                cast(AsyncSession, object()),
-                DOCUMENT,
-                actor_id=ACTOR,
-                page_number=cast(int | None, page_number),
-                expected_page_version=0,
-            )
-        )
-
-
-@pytest.mark.parametrize("version", [None, True, -1, 1.0, "0", 2147483647])
-def test_explicit_reread_requires_a_bounded_integer_revision(version: object) -> None:
-    message = "reread requires the current page version" if version is None else "out of range"
-    with pytest.raises(ValueError, match=message):
-        asyncio.run(
-            page_reading_jobs.queue_source_read(
-                cast(AsyncSession, object()),
-                DOCUMENT,
-                actor_id=ACTOR,
-                page_number=1,
-                expected_page_version=cast(int | None, version),
-            )
-        )
-
-
-@pytest.mark.parametrize("parameter", ["batch_size", "outbox_min_age_seconds"])
-@pytest.mark.parametrize("value", [0, -1, True, 1.0, "1", 3601])
-def test_recovery_refuses_unbounded_or_noninteger_work_before_io(
-    parameter: str, value: object
-) -> None:
-    with pytest.raises(ValueError, match="out of range"):
-        asyncio.run(
-            page_reading_jobs.recover_source_reads(
-                cast(AsyncSession, object()),
-                cast(page_reading_jobs.SourceReadDispatcher, object()),
-                batch_size=cast(int, value) if parameter == "batch_size" else 100,
-                outbox_min_age_seconds=cast(int, value)
-                if parameter == "outbox_min_age_seconds"
-                else 30,
-            )
-        )
-
-
-def test_reading_timestamps_require_an_aware_clock_and_normalize_offsets() -> None:
-    session = AsyncMock(spec=AsyncSession)
-    with pytest.raises(ValueError, match="timezone aware"):
-        asyncio.run(
-            page_reading_jobs.claim_source_read(session, UUID(int=87005), now=datetime(2026, 1, 1))
-        )
-    session.scalar.assert_not_awaited()
-    offset = datetime(2026, 1, 1, 5, 30, tzinfo=timezone(timedelta(hours=5, minutes=30)))
-    assert page_reading_jobs._now(offset) == datetime(2026, 1, 1, tzinfo=UTC)
-
-
-def test_missing_job_delivery_does_not_open_the_source_or_create_a_job() -> None:
-    session = AsyncMock(spec=AsyncSession)
-    session.scalar.return_value = None
-    session.get.return_value = None
-    job_id = UUID(int=87005)
-    with pytest.raises(
-        page_reading_jobs.SourceReadJobNotFoundError, match="source_read_job_not_found"
-    ):
-        asyncio.run(
-            page_reading_jobs.run_source_read(
-                session, job_id, storage=cast(page_reading_jobs.SourceReadStorage, object())
-            )
-        )
-    session.get.assert_awaited_once_with(SourceReadJobModel, job_id, populate_existing=True)
-    session.add.assert_not_called()
-
-
-def test_missing_source_queue_request_rolls_back_without_creating_a_job() -> None:
-    session = AsyncMock(spec=AsyncSession)
-    session.get.return_value = None
-    with pytest.raises(FidelitySourceNotFoundError, match="source_document_not_found"):
-        asyncio.run(page_reading_jobs.queue_source_read(session, DOCUMENT, actor_id=ACTOR))
-    session.rollback.assert_awaited_once()
-    session.commit.assert_not_awaited()
-    session.add.assert_not_called()

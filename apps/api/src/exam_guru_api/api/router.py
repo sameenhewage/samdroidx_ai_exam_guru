@@ -20,14 +20,12 @@ from exam_guru_api.api.routes.papers import router as paper_router
 from exam_guru_api.api.routes.retrieval import router as retrieval_router
 from exam_guru_api.api.routes.review_candidates import router as review_candidate_router
 from exam_guru_api.api.routes.review_papers import router as review_paper_router
-from exam_guru_api.api.routes.source_fidelity import router as source_fidelity_router
-from exam_guru_api.api.routes.source_v2 import router as source_v2_router
 from exam_guru_api.api.routes.source_uploads import router as source_uploads_router
+from exam_guru_api.api.routes.source_v2 import router as source_v2_router
 from exam_guru_api.api.routes.studio_safety import router as studio_safety_router
 from exam_guru_api.api.routes.subject_quality import router as subject_quality_router
 from exam_guru_api.api.routes.taxonomy import router as taxonomy_router
 from exam_guru_api.api.routes.teacher_papers import router as teacher_paper_router
-from exam_guru_api.api.routes.understanding import router as understanding_router
 from exam_guru_api.api.routes.validation import router as validation_router
 
 api_router = APIRouter()
@@ -38,11 +36,9 @@ api_router.include_router(operations_router, prefix="/admin", tags=["admin-opera
 api_router.include_router(configuration_router, prefix="/admin", tags=["admin-configuration"])
 api_router.include_router(catalogue_admission_router, prefix="/admin", tags=["material-catalogue"])
 api_router.include_router(document_router, prefix="/admin", tags=["admin-documents"])
-api_router.include_router(source_fidelity_router, prefix="/admin", tags=["source-fidelity"])
 api_router.include_router(source_v2_router, prefix="/admin", tags=["source-v2"])
 api_router.include_router(source_uploads_router, prefix="/admin", tags=["source-uploads"])
 api_router.include_router(page_images_router, prefix="/admin", tags=["source-images"])
-api_router.include_router(understanding_router, prefix="/admin", tags=["source-understanding"])
 api_router.include_router(
     knowledge_preparation_router, prefix="/admin", tags=["material-knowledge-preparation"]
 )

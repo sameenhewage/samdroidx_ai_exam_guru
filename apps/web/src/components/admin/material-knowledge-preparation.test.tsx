@@ -90,10 +90,9 @@ describe("MaterialKnowledgePreparation", () => {
         "Confirm the material details and curriculum assignment.",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "Review pages" })).toHaveAttribute(
-      "href",
-      `/admin/materials/${documentId}/review-content`,
-    );
+    expect(
+      screen.queryByRole("link", { name: "Review pages" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Open Materials" }),
     ).toHaveAttribute("href", "/admin/materials");

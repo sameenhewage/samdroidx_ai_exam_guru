@@ -16,8 +16,8 @@ from exam_guru_api.infrastructure.migrations import (
     assert_database_schema_current,
 )
 from exam_guru_api.knowledge.unit_service import KnowledgeUnitService
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
 from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import ADMIN, database_session
 
 pytestmark = pytest.mark.integration
 
@@ -80,6 +80,7 @@ def test_preparation_migration_never_backfills_and_preserves_old_units_across_em
 
     async def enroll(url: str, document_id: UUID) -> None:
         from exam_guru_api.documents.understanding_service import PageUnderstandingService
+
         from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 
         async with database_session(url) as session:

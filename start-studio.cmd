@@ -12,9 +12,6 @@ if not "%mode%"=="" goto usage_error
 pushd "%~dp0" >nul
 if errorlevel 1 goto directory_error
 set "EXAM_GURU_MAX_UPLOAD_BYTES=268435456"
-set "EXAM_GURU_OCR_TESSERACT_MAX_SOURCE_BYTES=268435456"
-set "EXAM_GURU_OCR_TESSERACT_MAX_PAGES=40"
-set "EXAM_GURU_OCR_TESSERACT_TIMEOUT_SECONDS=5"
 
 docker --context desktop-linux info >nul 2>&1
 if errorlevel 1 goto docker_error
@@ -86,6 +83,5 @@ echo   --check       Validate configuration without starting services.
 echo   --build-only  Build images without starting services.
 echo   --help        Show this help.
 echo Uses Docker Desktop, compose.yaml and the existing local env configuration.
-echo Applies the local legacy OCR profile: 256 MiB, 40 pages, 5 seconds.
 echo Database volumes and original PDFs are never removed by this launcher.
 exit /b 0

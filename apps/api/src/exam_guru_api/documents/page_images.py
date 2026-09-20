@@ -30,7 +30,7 @@ from exam_guru_api.auth.domain import Permission, Principal, authorize
 from exam_guru_api.core.config import Settings, StorageBackend
 from exam_guru_api.documents.fidelity_models import PageReviewStateModel, PageTextCandidateModel
 from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.tesseract_ocr import RenderedPageImage, open_pdf_file
+from exam_guru_api.documents.pdf_render import RenderedPageImage, open_pdf_file
 from exam_guru_api.infrastructure.object_storage import (
     InvalidObjectKeyError,
     ObjectStorageOperationError,

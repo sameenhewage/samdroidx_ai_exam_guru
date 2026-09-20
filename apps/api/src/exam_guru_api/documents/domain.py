@@ -3,6 +3,10 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
+KNOWN_CORRUPT_SOURCE_FINGERPRINT = (
+    "sha256:a5678c45e0f2f8aced55359ad9d805d30aca136b66e2a8d713199b90800c6058"
+)
+
 
 class SourceDocumentType(StrEnum):
     SYLLABUS = "syllabus"

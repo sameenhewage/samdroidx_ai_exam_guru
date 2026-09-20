@@ -597,7 +597,6 @@ def test_wrapper_overrides_forged_runtime_id_and_scopes_cleanup_to_its_own_proje
         "docker": (
             'printf \'docker %s runtime=%s env=%s\\n\' "$*" "$EXAM_GURU_TEST_RUNTIME_ID" '
             '"$EXAM_GURU_ENVIRONMENT" >> "$CALL_LOG"\n'
-            "case \"$*\" in *tesseract*) printf 'eng\\nsin\\ntam\\n';; esac\n"
         ),
         "curl": "exit 0\n",
         "npm": (

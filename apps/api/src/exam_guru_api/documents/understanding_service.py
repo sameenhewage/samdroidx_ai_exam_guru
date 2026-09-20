@@ -23,7 +23,6 @@ from exam_guru_api.documents.page_images import (
     SourceImageStorage,
     open_verified_original,
 )
-from exam_guru_api.documents.source_machine import MachineSourceCandidate
 from exam_guru_api.documents.understanding_contracts import (
     PageUnderstanding,
     ShortText,
@@ -274,8 +273,6 @@ class PageUnderstandingService:
         run: DocumentUnderstandingRunModel,
         parent_candidate_id: UUID | None = None,
         reason: str | None = None,
-        machine: MachineSourceCandidate | None = None,
-        machine_job_id: UUID | None = None,
     ) -> ObservationCandidate:
         report = verify_understanding(candidate)
         report_id = uuid4()
@@ -347,18 +344,6 @@ class PageUnderstandingService:
             )
         )
         await self.session.flush()
-        if machine is not None:
-            from exam_guru_api.documents.source_machine_service import store_machine_source
-
-            if machine_job_id is None:
-                raise ValueError("machine source requires its originating job")
-            await store_machine_source(
-                self.session,
-                candidate=candidate,
-                job_id=machine_job_id,
-                actor_id=principal.subject_id,
-                machine=machine,
-            )
         page.current_candidate_id = candidate.id
         page.current_report_id = report_id
         page.current_trusted_id = None
@@ -465,8 +450,6 @@ class PageUnderstandingService:
                 page=page,
                 candidate=candidate,
                 run=run,
-                machine=result.machine,
-                machine_job_id=job_id,
             )
         except Exception:
             await self.session.rollback()

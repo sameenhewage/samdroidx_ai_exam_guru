@@ -16,17 +16,17 @@ from exam_guru_api.knowledge.models import EmbeddingJobModel
 from exam_guru_api.knowledge.unit_models import KnowledgeUnitModel
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
+from tests.integration.test_material_knowledge_preparation_api import (
+    materials_client as materials_client,
+)
+from tests.integration.workspace_fixtures import (
     ADMIN_HEADERS,
     REVIEWER_HEADERS,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
-)
-from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
-from tests.integration.test_material_knowledge_preparation_api import (
-    materials_client as materials_client,
 )
 
 pytestmark = pytest.mark.integration

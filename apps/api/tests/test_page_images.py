@@ -22,7 +22,7 @@ import pytest
 from pydantic import ValidationError
 
 from exam_guru_api.core.config import Settings, StorageBackend
-from exam_guru_api.documents import page_images, page_reading
+from exam_guru_api.documents import page_images
 from exam_guru_api.documents.page_images import (
     MAX_IMAGE_METADATA_BYTES,
     STREAM_CHUNK_BYTES,
@@ -38,15 +38,13 @@ from exam_guru_api.documents.page_images import (
     parse_single_range,
     render_page_image,
 )
-from exam_guru_api.documents.page_reading import FilePageReader, PageReadingConfiguration
-from exam_guru_api.documents.tesseract_ocr import CommandResult, RenderedPageImage
+from exam_guru_api.documents.pdf_render import RenderedPageImage
 from exam_guru_api.infrastructure.object_storage import (
     InvalidObjectKeyError,
     LocalFileObjectStorage,
 )
 from exam_guru_api.infrastructure.private_artifacts import ARTIFACT_CHUNK_BYTES
-from tests.test_tesseract_file_input import FileCommandRunner, file_config, source_pdf
-from tests.test_tesseract_ocr_adapter import single_word_tsv
+from tests.pdf_fixtures import source_pdf
 
 DOCUMENT_ID = UUID(int=98101)
 
@@ -424,177 +422,6 @@ def test_local_storage_integrity_failure_never_returns_original_bytes(tmp_path: 
             pytest.fail("unverified source must not escape")
     finally:
         store.close()
-
-
-def test_clean_native_render_is_persisted_without_ocr_or_text_rewriting(tmp_path: Path) -> None:
-    path = source_pdf(tmp_path / "native.pdf")
-    source = image_source(path)
-    artifacts = PageImageArtifacts(root=tmp_path / "images")
-    runner = FileCommandRunner(tmp_path / "models")
-    observed: list[Path] = []
-
-    def capture(image: RenderedPageImage) -> dict[str, object]:
-        observed.append(image.path)
-        return artifacts.persist(image, source=source)
-
-    reader = FilePageReader(command_runner=runner, on_render=capture)
-    with (
-        path.open("rb") as stream,
-        reader.open(
-            stream, configuration=PageReadingConfiguration(ocr=file_config(runner.models))
-        ) as opened,
-    ):
-        result = opened.read_page(1)
-    assert result.failure_code is None
-    assert [candidate.method for candidate in result.candidates] == ["native"]
-    assert "Read the question" in result.candidates[0].raw_text
-    assert not runner.calls
-    assert len(observed) == 1
-    assert not observed[0].exists()
-    metadata = result.candidates[0].provenance["page_image"]
-    assert isinstance(metadata, dict)
-    assert artifacts.read(metadata, source=source, page_number=1)
-    assert result.candidates[0].provenance["automatic_verification"] is False
-
-
-def test_ocr_image_artifact_is_exactly_the_raster_passed_to_ocr(tmp_path: Path) -> None:
-    rasters: list[bytes] = []
-
-    class RasterRunner(FileCommandRunner):
-        def __call__(
-            self, argv: tuple[str, ...], *, cwd: Path, timeout_seconds: float, max_output_bytes: int
-        ) -> CommandResult:
-            if "tsv" in argv:
-                rasters.append(Path(argv[1]).read_bytes())
-            return super().__call__(
-                argv, cwd=cwd, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes
-            )
-
-    path = source_pdf(tmp_path / "source.pdf", font_name="FMAbhaya")
-    source = image_source(path)
-    artifacts = PageImageArtifacts(root=tmp_path / "images")
-    raw = "සිංහල පාඩම"
-    runner = RasterRunner(tmp_path / "models", tsv=single_word_tsv(raw))
-    reader = FilePageReader(command_runner=runner, on_render=artifacts.observer(source))
-    with (
-        path.open("rb") as stream,
-        reader.open(
-            stream, configuration=PageReadingConfiguration(ocr=file_config(runner.models))
-        ) as opened,
-    ):
-        result = opened.read_page(1)
-    assert result.failure_code is None
-    native, *attempts = result.candidates
-    assert native.raw_text.strip()
-    assert len(attempts) == len(rasters) == len(runner.image_hashes) == 2
-    calls = [call for call in runner.calls if "tsv" in call]
-    assert len(calls) == 2
-    for candidate, raster, digest, call, languages in zip(
-        attempts, rasters, runner.image_hashes, calls, (("sin", "eng"), ("sin",)), strict=True
-    ):
-        assert candidate.method == "ocr"
-        assert candidate.raw_text == raw
-        provenance = candidate.provenance
-        assert provenance["ocr_languages"] == list(languages)
-        assert cast(dict[str, object], provenance["config"])["language"] == "+".join(languages)
-        assert call[call.index("-l") + 1] == "+".join(languages)
-        assert provenance["traineddata_sha256"] == {
-            language: hashlib.sha256(f"fixture {language}".encode()).hexdigest()
-            for language in languages
-        }
-        assert provenance["automatic_verification"] is False
-        assert cast(dict[str, object], provenance["candidate_selection"])["can_confirm"] is True
-        assert provenance["page_image_use"] == "ocr_input"
-        metadata = provenance["page_image"]
-        assert isinstance(metadata, dict)
-        assert metadata["page_number"] == 1
-        assert metadata["source_checksum_sha256"] == source.checksum_sha256
-        assert metadata["source_object_key"] == source.object_key
-        assert metadata["sha256"] == digest == hashlib.sha256(raster).hexdigest()
-        assert artifacts.read(metadata, source=source, page_number=1) == raster
-    assert native.provenance["page_image"] == attempts[0].provenance["page_image"]
-    assert native.provenance["page_image_use"] == "source_comparison"
-    assert native.provenance["automatic_verification"] is False
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == source.checksum_sha256
-
-
-@pytest.mark.parametrize("ocr", [False, True])
-def test_observer_failure_preserves_all_candidate_text_and_records_untrusted_failure(
-    tmp_path: Path, ocr: bool
-) -> None:
-    path = source_pdf(tmp_path / "source.pdf")
-    runner = FileCommandRunner(tmp_path / "models")
-
-    def fail(_image: RenderedPageImage) -> dict[str, object]:
-        raise OSError("PRIVATE SOURCE PATH")
-
-    reader = FilePageReader(command_runner=runner, on_render=fail)
-    with (
-        path.open("rb") as stream,
-        reader.open(
-            stream,
-            configuration=PageReadingConfiguration(ocr=file_config(runner.models), force_ocr=ocr),
-        ) as opened,
-    ):
-        result = opened.read_page(1)
-    assert result.failure_code == "page_image_artifact_unavailable"
-    assert result.candidates[0].raw_text.strip()
-    if ocr:
-        assert result.candidates[-1].raw_text == "Question"
-    assert "PRIVATE" not in repr(result)
-    metadata = result.candidates[-1].provenance["page_image"]
-    assert isinstance(metadata, dict)
-    assert metadata["failure_code"] == "page_image_artifact_unavailable"
-
-
-def test_native_blocks_record_bounded_hashes_and_only_proven_character_offsets(
-    tmp_path: Path,
-) -> None:
-    path = source_pdf(tmp_path / "source.pdf")
-    with (
-        path.open("rb") as source,
-        FilePageReader().open(source, configuration=PageReadingConfiguration()) as opened,
-    ):
-        candidate = opened.read_page(1).candidates[0]
-    layout = candidate.provenance["blocks"]
-    assert isinstance(layout, dict)
-    assert len(json.dumps(layout).encode()) <= 16384
-    entries = layout["items"]
-    assert isinstance(entries, list)
-    assert entries
-    for index, block in enumerate(entries):
-        assert block["reading_order"] == index
-        assert "text" not in block
-        assert len(block["sha256"]) == 64
-        assert len(block["bbox"]) == 4
-        if block["character_start"] is not None:
-            text = candidate.raw_text[block["character_start"] : block["character_end"]]
-            assert hashlib.sha256(text.encode()).hexdigest() == block["sha256"]
-        else:
-            assert block["offset_status"] == "unknown"
-
-
-def test_native_layout_disagreement_does_not_invent_alignment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = source_pdf(tmp_path / "source.pdf")
-    extract = page_reading.extract_native_page
-
-    def disagree(document: pymupdf.Document, number: int) -> page_reading.NativePageText:
-        return replace(extract(document, number), raw_text="A different raw text view")
-
-    monkeypatch.setattr(page_reading, "extract_native_page", disagree)
-    with (
-        path.open("rb") as source,
-        FilePageReader().open(source, configuration=PageReadingConfiguration()) as opened,
-    ):
-        candidate = opened.read_page(1).candidates[0]
-    blocks = candidate.provenance["blocks"]
-    assert isinstance(blocks, dict)
-    assert all(
-        block["character_start"] is None for block in cast(list[dict[str, object]], blocks["items"])
-    )
-    assert candidate.raw_text == "A different raw text view"
 
 
 def test_render_worker_uses_explicit_cpu_memory_and_output_limits(

@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from exam_guru_api.api.dependencies import get_database_session
-from exam_guru_api.api.routes.understanding import _PrivateUnderstandingRoute
+from exam_guru_api.api.routes.private_route import PrivateStudioRoute
 from exam_guru_api.api.schemas import ApiErrorResponse
 from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import AuthorizationError, Permission, Principal
@@ -17,7 +17,7 @@ from exam_guru_api.knowledge.preparation_summary import (
 )
 
 
-class _PrivatePreparationRoute(_PrivateUnderstandingRoute):
+class _PrivatePreparationRoute(PrivateStudioRoute):
     invalid_request_code = "invalid_material_knowledge_preparation_request"
 
 

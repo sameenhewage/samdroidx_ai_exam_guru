@@ -32,8 +32,8 @@ from tests.integration.test_embedding_jobs_postgres import (
     _seed_chunk,
     _seed_curriculum,
 )
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
 from tests.integration.test_knowledge_projection_embeddings_postgres import projection_source
+from tests.integration.workspace_fixtures import ADMIN, database_session
 
 pytestmark = pytest.mark.integration
 

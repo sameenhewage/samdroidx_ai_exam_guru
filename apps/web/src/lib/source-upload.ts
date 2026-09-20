@@ -619,9 +619,7 @@ export class ResumableSourceUpload {
       session.next_offset !== session.size_bytes ||
       session.verified_bytes !== session.size_bytes ||
       !session.checksum_sha256 ||
-      !/^[0-9a-f]{64}$/.test(session.checksum_sha256) ||
-      (session.source_read_job_id != null &&
-        !isUploadId(session.source_read_job_id))
+      !/^[0-9a-f]{64}$/.test(session.checksum_sha256)
     )
       throw new UploadFailure("upload_response_invalid");
     return session;

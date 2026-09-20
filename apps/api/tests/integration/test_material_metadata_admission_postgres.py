@@ -34,7 +34,7 @@ from exam_guru_api.documents.service import (
 )
 from exam_guru_api.infrastructure.migrations import _config_for_database
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     ADMIN,
     ADMIN_HEADERS,
     PREFIX,
@@ -46,7 +46,7 @@ from tests.integration.test_fidelity_workspace_postgres import (
     database_session,
     record_page,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
 

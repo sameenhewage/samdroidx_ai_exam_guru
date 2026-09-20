@@ -21,9 +21,7 @@ from exam_guru_api.documents.domain import (
     UploadValidationError,
     validate_pdf_upload,
 )
-from exam_guru_api.documents.fidelity_models import SourceReadJobModel
 from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.page_reading_jobs import queue_source_read
 from exam_guru_api.documents.service import (
     SourceCurriculumInactiveError,
     SourceCurriculumNotFoundError,
@@ -640,12 +638,7 @@ class ResumableUploadService:
             },
         )
         _check_execution_deadline(claim.execution_deadline)
-        if deduplicated:
-            return await self._save(upload)
-        await self._session.flush()
-        response = SourceUploadResponse.model_validate(upload)
-        read_job = await queue_source_read(self._session, document.id, actor_id=claim.owner_id)
-        return response.model_copy(update={"source_read_job_id": read_job.id})
+        return await self._save(upload)
 
     def _new_document(
         self, claim: _Claim, checksum: str, likely_duplicate_id: UUID | None
@@ -813,17 +806,6 @@ class ResumableUploadService:
     async def _save(self, upload: SourceUploadSessionModel) -> SourceUploadResponse:
         await self._session.flush()
         response = SourceUploadResponse.model_validate(upload)
-        if response.document_id is not None:
-            job_id = await self._session.scalar(
-                select(SourceReadJobModel.id)
-                .where(
-                    SourceReadJobModel.document_id == response.document_id,
-                    SourceReadJobModel.page_number.is_(None),
-                )
-                .order_by(SourceReadJobModel.created_at, SourceReadJobModel.id)
-                .limit(1)
-            )
-            response = response.model_copy(update={"source_read_job_id": job_id})
         await self._session.commit()
         return response
 

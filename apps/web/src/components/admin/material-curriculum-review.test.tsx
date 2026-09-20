@@ -474,8 +474,8 @@ describe("Materials curriculum review", () => {
       await screen.findByText("No content sections are available yet."),
     ).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "Review page content" }),
-    ).toHaveAttribute("href", `/admin/materials/${documentId}/review-content`);
+      screen.queryByRole("link", { name: "Review page content" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/^Ready for AI$/)).not.toBeInTheDocument();
     expect(writes).toEqual([]);
   });

@@ -19,29 +19,6 @@ def test_docker_context_excludes_private_corpus_storage_and_evidence() -> None:
     } <= ignored
 
 
-def test_isolated_runner_separates_fixture_understanding_from_live_settings() -> None:
-    root = Path(__file__).resolve().parents[3]
-    script = (root / "scripts/run_isolated_e2e.sh").read_text()
-    assert "export COMPOSE_DISABLE_ENV_FILE=1" in script
-    assert 'export EXAM_GURU_DOCUMENT_UNDERSTANDING_PROVIDER="deterministic"' in script
-    assert 'export EXAM_GURU_DOCUMENT_UNDERSTANDING_FIXTURE_RUNTIME_ID="$project_name"' in script
-    for suffix in (
-        "OPENAI_API_KEY",
-        "MODEL",
-        "MODEL_VERSION",
-        "PRICING_VERSION",
-        "INPUT_MICROUSD_PER_MILLION_TOKENS",
-        "OUTPUT_MICROUSD_PER_MILLION_TOKENS",
-        "TEMPERATURE",
-    ):
-        assert f'export EXAM_GURU_DOCUMENT_UNDERSTANDING_{suffix}=""' in script
-
-
-def test_worker_image_includes_tamil_for_mixed_real_sources() -> None:
-    root = Path(__file__).resolve().parents[3]
-    assert "tesseract-ocr-tam" in (root / "apps/api/Dockerfile").read_text()
-
-
 @pytest.mark.integration
 def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract() -> None:
     repository_root = Path(__file__).resolve().parents[3]
@@ -89,21 +66,23 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     ):
         assert name in api_shared
         assert api_shared[name] == maintenance["environment"][name]
-    assert worker["environment"]["EXAM_GURU_OCR_PROVIDER"] == "tesseract"
-    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_LANGUAGE"] == "sin+eng"
-    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_PAGES"] == "40"
-    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_TIMEOUT_SECONDS"] == "5"
-    assert worker["environment"]["EXAM_GURU_OCR_TESSERACT_MAX_SOURCE_BYTES"] == "268435456"
     assert api["environment"]["EXAM_GURU_MAX_UPLOAD_BYTES"] == "268435456"
     assert api["environment"]["EXAM_GURU_RATE_LIMIT_SOURCE_UPLOAD"] == "30"
-    for service in (api, maintenance, services["migrate"]):
-        assert "EXAM_GURU_OCR_PROVIDER" not in service["environment"]
+    for service in (api, worker, maintenance, services["migrate"]):
+        assert not [
+            name
+            for name in service["environment"]
+            if name.startswith(
+                (
+                    "EXAM_GURU_OCR_",
+                    "EXAM_GURU_SOURCE_QWEN_",
+                    "EXAM_GURU_DOCUMENT_UNDERSTANDING_",
+                )
+            )
+        ]
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_SEMANTIC_VERIFIER_MAX_REQUEST_BYTES"] == "65536"
     assert api["environment"]["EXAM_GURU_GENERATION_PROVIDER"] == ""
-    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_PROVIDER"] == ""
-    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_IMAGE_INPUT_VERIFIED"] == "false"
-    assert api["environment"]["EXAM_GURU_DOCUMENT_UNDERSTANDING_MAX_OUTPUT_TOKENS"] == "8192"
     assert api["environment"]["EXAM_GURU_GENERATION_TEMPERATURE"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_PROVIDER"] == ""
     assert api["environment"]["EXAM_GURU_RETRIEVAL_EMBEDDING_MODEL"] == (
@@ -116,7 +95,6 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     )
     for secret_name in (
         "EXAM_GURU_GENERATION_OPENAI_API_KEY",
-        "EXAM_GURU_DOCUMENT_UNDERSTANDING_OPENAI_API_KEY",
         "EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY",
         "EXAM_GURU_RETRIEVAL_EMBEDDING_OPENAI_API_KEY",
     ):
@@ -142,9 +120,7 @@ def test_compose_defines_healthy_maintenance_scheduler_with_api_runtime_contract
     assert {"minio", "minio-init"}.isdisjoint(services)
     assert {"api", "worker", "maintenance", "web", "postgres", "valkey"} <= services.keys()
     dockerfile = (repository_root / "apps" / "api" / "Dockerfile").read_text(encoding="utf-8")
-    assert "--no-install-recommends" in dockerfile
-    for package in ("tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-sin", "tesseract-ocr-tam"):
-        assert package in dockerfile
+    assert "tesseract" not in dockerfile
 
     profile_completed = subprocess.run(  # noqa: S603
         [

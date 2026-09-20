@@ -1,7 +1,7 @@
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Iterator
-from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import BinaryIO, cast
 from unittest.mock import AsyncMock
@@ -10,8 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Message
 from testcontainers.community.postgres import PostgresContainer
 
@@ -21,11 +20,6 @@ from exam_guru_api.auth.domain import AdminRole, Principal
 from exam_guru_api.auth.ports import AuthenticationError, AuthenticationFailureCode
 from exam_guru_api.core.config import Settings
 from exam_guru_api.documents.domain import SourceDocumentType
-from exam_guru_api.documents.fidelity_models import (
-    PageReviewEventModel,
-    PageReviewStateModel,
-    PageTextCandidateModel,
-)
 from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.documents.page_images import (
     PageImageArtifacts,
@@ -33,11 +27,10 @@ from exam_guru_api.documents.page_images import (
     SourceImageIdentity,
     image_artifact_id,
 )
-from exam_guru_api.documents.page_reading_jobs import queue_source_read, run_source_read
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.infrastructure.object_storage import ObjectStorageOperationError
+from tests.pdf_fixtures import source_pdf
 from tests.test_page_images import DOCUMENT_ID, FileSourceStore, image_source, rendered_fixture
-from tests.test_tesseract_file_input import source_pdf
 
 PREFIX = "/api/v1/admin"
 ACTOR = UUID(int=98102)
@@ -362,92 +355,6 @@ def image_database_url() -> Iterator[str]:
         url = postgres.get_connection_url()
         upgrade_database(url)
         yield url
-
-
-@pytest.mark.integration
-def test_worker_persists_image_provenance_and_gets_do_not_change_review_state(
-    image_database_url: str, tmp_path: Path
-) -> None:
-    path = source_pdf(tmp_path / "source.pdf")
-    store = FileSourceStore(path)
-    source = image_source(path)
-    artifacts = PageImageArtifacts(root=tmp_path / "data" / "fidelity-page-images")
-
-    async def prepare() -> tuple[int, int]:
-        engine = create_async_engine(image_database_url)
-        try:
-            sessions = async_sessionmaker(engine, expire_on_commit=False)
-            async with sessions() as session:
-                session.add(document_model(source))
-                await session.commit()
-                job = await queue_source_read(session, DOCUMENT_ID, actor_id=ACTOR)
-                result = await run_source_read(
-                    session, job.id, storage=store, image_artifacts=artifacts
-                )
-                assert result.status == "completed"
-                candidate = await session.scalar(
-                    select(PageTextCandidateModel).where(
-                        PageTextCandidateModel.document_id == DOCUMENT_ID
-                    )
-                )
-                assert candidate is not None
-                assert candidate.raw_text_utf8
-                assert "artifact" in cast(dict[str, object], candidate.provenance["page_image"])
-                state = await session.get(PageReviewStateModel, (DOCUMENT_ID, 1))
-                assert state is not None
-                assert state.state == "needs_review"
-                event_count = int(
-                    await session.scalar(select(func.count()).select_from(PageReviewEventModel))
-                    or 0
-                )
-                return state.version, event_count
-        finally:
-            await engine.dispose()
-
-    version, event_count = asyncio.run(prepare())
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_async_engine(image_database_url)
-        app.state.sessions = async_sessionmaker(engine, expire_on_commit=False)
-        try:
-            yield
-        finally:
-            await engine.dispose()
-
-    app = FastAPI(lifespan=lifespan)
-    app.state.identity_provider = ImageIdentityProvider()
-    app.state.object_storage = store
-    app.state.settings = Settings(
-        _env_file=None, environment="test", storage_root=str(tmp_path / "data")
-    )
-    app.include_router(routes.router, prefix=PREFIX)
-
-    async def session_dependency() -> AsyncIterator[AsyncSession]:
-        async with app.state.sessions() as session:
-            yield session
-
-    app.dependency_overrides[get_database_session] = session_dependency
-    with TestClient(app) as client:
-        assert client.get(IMAGE, headers=HEADERS).status_code == 200
-        assert client.get(ORIGINAL, headers={**HEADERS, "Range": "bytes=0-4"}).status_code == 206
-
-    async def unchanged() -> None:
-        engine = create_async_engine(image_database_url)
-        try:
-            async with async_sessionmaker(engine)() as session:
-                state = await session.get(PageReviewStateModel, (DOCUMENT_ID, 1))
-                assert state is not None
-                assert state.version == version
-                assert state.state == "needs_review"
-                assert (
-                    await session.scalar(select(func.count()).select_from(PageReviewEventModel))
-                    == event_count
-                )
-        finally:
-            await engine.dispose()
-
-    asyncio.run(unchanged())
 
 
 def test_gigabyte_original_range_uses_bounded_stream_not_get_bytes(tmp_path: Path) -> None:

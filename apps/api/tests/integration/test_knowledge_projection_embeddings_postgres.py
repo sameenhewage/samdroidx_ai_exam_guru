@@ -32,11 +32,11 @@ from tests.integration.test_embedding_jobs_postgres import (
     _client,
     _registry,
 )
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
-from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
 
 pytestmark = pytest.mark.integration
 

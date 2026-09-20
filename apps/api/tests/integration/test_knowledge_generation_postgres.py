@@ -33,13 +33,13 @@ from exam_guru_api.papers.review_service import ReviewCandidateService
 from exam_guru_api.validation.pipeline import ValidationPipeline
 from exam_guru_api.validation.service import ValidationRunService
 from exam_guru_api.validation.validators import SchemaCompletenessValidator
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_projection_retrieval_postgres import (
     IndexedProjection,
     indexed_projection,
+)
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
 )
 from tests.test_blueprint_domain import make_uniform_specification
 

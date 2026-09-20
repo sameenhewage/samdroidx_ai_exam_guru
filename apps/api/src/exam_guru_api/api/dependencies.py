@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from exam_guru_api.auth.rate_limits import RateLimiter
 from exam_guru_api.core.config import Settings
-from exam_guru_api.documents.jobs import ExtractionDispatcher
 from exam_guru_api.generation.jobs import GenerationDispatcher
 from exam_guru_api.generation.runtime import GenerationRuntimeRegistry
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
@@ -37,10 +36,6 @@ def get_rate_limiter(request: Request) -> RateLimiter:
 
 def get_object_storage(request: Request) -> ObjectStorage:
     return cast(ObjectStorage, request.app.state.object_storage)
-
-
-def get_extraction_dispatcher(request: Request) -> ExtractionDispatcher:
-    return cast(ExtractionDispatcher, request.app.state.extraction_dispatcher)
 
 
 def get_generation_dispatcher(request: Request) -> GenerationDispatcher:

@@ -10,9 +10,6 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 
 from exam_guru_api.core.config import Settings
-from exam_guru_api.documents.jobs import recover_extraction_jobs
-from exam_guru_api.documents.page_reading_jobs import recover_source_read_jobs
-from exam_guru_api.documents.understanding_jobs import recover_understanding_page_jobs
 from exam_guru_api.documents.upload_jobs import recover_source_upload_jobs
 from exam_guru_api.generation.jobs import recover_generation_jobs
 from exam_guru_api.knowledge.embedding_jobs import recover_embedding_jobs
@@ -47,56 +44,44 @@ class MaintenanceTickResult:
 
 
 _RECOVERY_ACTORS = (
-    cast(RecoveryActor, recover_extraction_jobs),
     cast(RecoveryActor, recover_generation_jobs),
     cast(RecoveryActor, recover_embedding_jobs),
     cast(RecoveryActor, reconcile_source_objects),
     cast(RecoveryActor, recover_teacher_papers),
-    cast(RecoveryActor, recover_source_read_jobs),
     cast(RecoveryActor, recover_source_upload_jobs),
-    cast(RecoveryActor, recover_understanding_page_jobs),
     cast(RecoveryActor, recover_material_knowledge),
     cast(RecoveryActor, recover_material_knowledge_indexing),
 )
 _RECOVERY_NAMES = (
-    "extraction",
     "generation",
     "embedding",
     "storage_reconciliation",
     "teacher_papers",
-    "source_page_reading",
     "source_upload_finalization",
-    "source_understanding",
     "material_knowledge_preparation",
     "material_knowledge_indexing",
 )
 
 
 def enqueue_recovery_jobs(
-    extraction_actor: RecoveryActor = _RECOVERY_ACTORS[0],
-    generation_actor: RecoveryActor = _RECOVERY_ACTORS[1],
-    embedding_actor: RecoveryActor = _RECOVERY_ACTORS[2],
-    reconciliation_actor: RecoveryActor = _RECOVERY_ACTORS[3],
-    teacher_paper_actor: RecoveryActor = _RECOVERY_ACTORS[4],
-    source_read_actor: RecoveryActor = _RECOVERY_ACTORS[5],
-    source_upload_actor: RecoveryActor = _RECOVERY_ACTORS[6],
-    understanding_actor: RecoveryActor = _RECOVERY_ACTORS[7],
-    preparation_actor: RecoveryActor = _RECOVERY_ACTORS[8],
-    material_indexing_actor: RecoveryActor = _RECOVERY_ACTORS[9],
+    generation_actor: RecoveryActor = _RECOVERY_ACTORS[0],
+    embedding_actor: RecoveryActor = _RECOVERY_ACTORS[1],
+    reconciliation_actor: RecoveryActor = _RECOVERY_ACTORS[2],
+    teacher_paper_actor: RecoveryActor = _RECOVERY_ACTORS[3],
+    source_upload_actor: RecoveryActor = _RECOVERY_ACTORS[4],
+    preparation_actor: RecoveryActor = _RECOVERY_ACTORS[5],
+    material_indexing_actor: RecoveryActor = _RECOVERY_ACTORS[6],
 ) -> MaintenanceTickResult:
     enqueued = 0
     failures = 0
     for name, actor in zip(
         _RECOVERY_NAMES,
         (
-            extraction_actor,
             generation_actor,
             embedding_actor,
             reconciliation_actor,
             teacher_paper_actor,
-            source_read_actor,
             source_upload_actor,
-            understanding_actor,
             preparation_actor,
             material_indexing_actor,
         ),

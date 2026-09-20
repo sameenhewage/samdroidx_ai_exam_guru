@@ -16,7 +16,6 @@ import {
   subscribeReviewLanguage,
   type ReviewLanguage,
 } from "@/lib/review-language";
-import { cn } from "@/lib/utils";
 
 import type { AdminRole } from "./admin-header";
 import { MaterialKnowledgePreparation } from "./material-knowledge-preparation";
@@ -385,30 +384,10 @@ export function MaterialDetails({
           >
             {viewerCopy.view}
           </a>
-          <Link
-            className={cn(
-              secondaryButton,
-              "border-slate-950 bg-slate-950 text-white hover:border-slate-800 hover:bg-slate-800",
-            )}
-            href={`/admin/materials/${documentId}/review-content`}
-            prefetch={false}
-            lang={language}
-          >
-            {language === "si"
-              ? "පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න"
-              : "Review page content"}
-          </Link>
           <MaterialCurriculumReviewLink
             documentId={documentId}
             language={language}
           />
-          <Link
-            className={secondaryButton}
-            href={`/admin/materials/${documentId}/review-text`}
-            prefetch={false}
-          >
-            Review text
-          </Link>
           {role === "reviewer" && (
             <span className="self-center text-sm text-slate-600">
               Reviewer access is read-only.

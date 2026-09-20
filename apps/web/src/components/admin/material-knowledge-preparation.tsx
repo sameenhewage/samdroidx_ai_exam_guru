@@ -218,18 +218,7 @@ export function MaterialKnowledgePreparation({
           {data.status === "needs_attention" && <p>{copy.failure}</p>}
           {data.status !== "removed" && (
             <>
-              {!data.source_ready && (
-                <p>
-                  {copy.source}{" "}
-                  <Link
-                    className="font-semibold underline underline-offset-4"
-                    href={`/admin/materials/${documentId}/review-content`}
-                    prefetch={false}
-                  >
-                    {copy.reviewPages}
-                  </Link>
-                </p>
-              )}
+              {!data.source_ready && <p>{copy.source}</p>}
               {!data.scope_ready && (
                 <p>
                   {copy.scope}{" "}

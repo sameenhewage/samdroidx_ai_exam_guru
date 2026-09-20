@@ -16,8 +16,8 @@ from exam_guru_api.infrastructure.migrations import (
     assert_database_schema_current,
 )
 from exam_guru_api.knowledge.unit_review import KnowledgeReviewRequest, KnowledgeUnitReviewService
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
 from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
+from tests.integration.workspace_fixtures import ADMIN, database_session
 
 pytestmark = pytest.mark.integration
 

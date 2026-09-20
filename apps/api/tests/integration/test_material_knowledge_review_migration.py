@@ -13,12 +13,12 @@ from testcontainers.community.postgres import PostgresContainer
 from exam_guru_api.infrastructure.database import get_metadata
 from exam_guru_api.infrastructure.migrations import _config_for_database
 from exam_guru_api.knowledge.unit_review import KnowledgeReviewRequest, KnowledgeUnitReviewService
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
 from tests.integration.test_material_knowledge_indexing_postgres import reviewed_intent
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
+)
 
 pytestmark = pytest.mark.integration
 

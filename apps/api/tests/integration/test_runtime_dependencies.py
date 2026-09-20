@@ -14,15 +14,6 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 from exam_guru_api.core.config import Settings
-from exam_guru_api.documents.jobs import EXTRACTION_QUEUE_NAME, recover_extraction_jobs
-from exam_guru_api.documents.page_reading_jobs import (
-    SOURCE_READ_QUEUE_NAME,
-    recover_source_read_jobs,
-)
-from exam_guru_api.documents.understanding_jobs import (
-    UNDERSTANDING_QUEUE_NAME,
-    recover_understanding_page_jobs,
-)
 from exam_guru_api.documents.upload_jobs import SOURCE_UPLOAD_QUEUE_NAME, recover_source_upload_jobs
 from exam_guru_api.generation.jobs import GENERATION_QUEUE_NAME, recover_generation_jobs
 from exam_guru_api.infrastructure.migrations import (
@@ -1081,14 +1072,11 @@ def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
     broker = create_maintenance_broker(settings)
     broker.flush_all()
     expected = {
-        EXTRACTION_QUEUE_NAME: recover_extraction_jobs.actor_name,
         GENERATION_QUEUE_NAME: recover_generation_jobs.actor_name,
         EMBEDDING_QUEUE_NAME: recover_embedding_jobs.actor_name,
         RECONCILIATION_QUEUE_NAME: reconcile_source_objects.actor_name,
         PAPER_GENERATION_QUEUE_NAME: recover_teacher_papers.actor_name,
-        SOURCE_READ_QUEUE_NAME: recover_source_read_jobs.actor_name,
         SOURCE_UPLOAD_QUEUE_NAME: recover_source_upload_jobs.actor_name,
-        UNDERSTANDING_QUEUE_NAME: recover_understanding_page_jobs.actor_name,
         PREPARATION_QUEUE_NAME: recover_material_knowledge.actor_name,
         MATERIAL_INDEX_QUEUE_NAME: recover_material_knowledge_indexing.actor_name,
     }
@@ -1096,7 +1084,7 @@ def test_maintenance_tick_persists_exact_recovery_actor_messages_in_real_valkey(
     try:
         result = enqueue_recovery_jobs()
 
-        assert result.enqueued == 10
+        assert result.enqueued == len(expected)
         assert result.failures == 0
         assert {queue: broker.do_qsize(queue) for queue in expected} == dict.fromkeys(
             expected,

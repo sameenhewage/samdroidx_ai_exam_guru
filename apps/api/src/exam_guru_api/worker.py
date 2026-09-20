@@ -20,12 +20,6 @@ class WorkerObservabilityMiddleware(dramatiq.Middleware):
 
 
 def _register_actors(broker: RedisBroker) -> None:
-    from exam_guru_api.documents.jobs import extract_document, recover_extraction_jobs
-    from exam_guru_api.documents.page_reading_jobs import read_source, recover_source_read_jobs
-    from exam_guru_api.documents.understanding_jobs import (
-        recover_understanding_page_jobs,
-        understand_source_page,
-    )
     from exam_guru_api.documents.upload_jobs import (
         finalize_source_upload,
         recover_source_upload_jobs,
@@ -41,12 +35,6 @@ def _register_actors(broker: RedisBroker) -> None:
     from exam_guru_api.teacher_papers.jobs import advance_teacher_paper, recover_teacher_papers
 
     for actor in (
-        extract_document,
-        recover_extraction_jobs,
-        read_source,
-        recover_source_read_jobs,
-        understand_source_page,
-        recover_understanding_page_jobs,
         finalize_source_upload,
         recover_source_upload_jobs,
         generate_question,

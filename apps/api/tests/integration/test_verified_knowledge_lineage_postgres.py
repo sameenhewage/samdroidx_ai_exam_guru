@@ -40,7 +40,6 @@ from exam_guru_api.documents.fidelity_models import (
 )
 from exam_guru_api.documents.fidelity_service import PageFidelityService
 from exam_guru_api.documents.models import ExtractedBlockModel, SourceDocumentModel, SourcePageModel
-from exam_guru_api.documents.page_reading_jobs import queue_source_read
 from exam_guru_api.generation.domain import GenerationRequest, GenerationResult
 from exam_guru_api.generation.jobs import DeterministicGenerationDispatcher
 from exam_guru_api.generation.models import GenerationAttemptModel, GenerationRunModel
@@ -436,13 +435,14 @@ async def unresolve_sibling(session: AsyncSession, source: Seed, problem: str) -
         expected_version=state.version if state is not None else None,
     )
     if problem == "processing":
-        await queue_source_read(
+        await advance_sql_page(
             session,
             source.document_id,
-            page_number=2,
-            expected_page_version=recorded.version,
-            actor_id=ACTOR.subject_id,
-            reason=EVIDENCE,
+            2,
+            candidate_id=recorded.current_candidate_id,
+            target="processing",
+            action="reread_requested",
+            payload={},
         )
     else:
         assert recorded.state == problem
@@ -906,13 +906,14 @@ async def invalidate(session: AsyncSession, source: Seed, action: str) -> None:
     state = await session.get(PageReviewStateModel, (source.document_id, 1), populate_existing=True)
     assert state is not None
     if action == "reread":
-        await queue_source_read(
+        await advance_sql_page(
             session,
             source.document_id,
-            page_number=1,
-            expected_page_version=state.version,
-            actor_id=ACTOR.subject_id,
-            reason=EVIDENCE,
+            1,
+            candidate_id=state.current_candidate_id,
+            target="processing",
+            action="reread_requested",
+            payload={},
         )
     elif action in {"removed", "unresolved"}:
         values: dict[str, object] = {

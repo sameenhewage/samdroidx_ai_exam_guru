@@ -18,13 +18,13 @@ from exam_guru_api.curriculum.models import (
     MediumModel,
     SubjectModel,
 )
+from exam_guru_api.documents.fidelity_models import SourceReadJobModel
 from exam_guru_api.documents.fidelity_service import PageFidelityService
 from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.page_reading_jobs import queue_source_read
 from exam_guru_api.documents.schemas import MaterialStatus
 from exam_guru_api.documents.service import SourceDocumentService
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     ADMIN,
     add_curriculum,
     add_source,
@@ -34,7 +34,7 @@ from tests.integration.test_fidelity_workspace_postgres import (
     evidence_counts,
     record_page,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
 
@@ -43,6 +43,27 @@ pytestmark = pytest.mark.integration
 
 def materials(session: AsyncSession) -> SourceDocumentService:
     return SourceDocumentService(session, cast(ObjectStorage, object()), max_upload_bytes=1024)
+
+
+async def legacy_read_job(
+    session: AsyncSession, document_id: UUID, *, status: str = "queued"
+) -> SourceReadJobModel:
+    """Write a historical V1 source-read row directly; no reader dispatches any more."""
+
+    job = SourceReadJobModel(
+        id=uuid4(),
+        document_id=document_id,
+        page_number=None,
+        status=status,
+        next_page=1,
+        attempts=0,
+        version=0,
+        requested_by=ADMIN.subject_id,
+        configuration={},
+    )
+    session.add(job)
+    await session.commit()
+    return job
 
 
 async def assert_status(session: AsyncSession, document_id: UUID, expected: MaterialStatus) -> None:
@@ -218,9 +239,7 @@ def test_only_active_read_jobs_override_current_page_readiness(
             await admit_curriculum(session, curriculum_id)
             document_id = await add_source(session, total=1, curriculum_id=curriculum_id)
             await confirm_state(session, await record_page(session, document_id, 1))
-            job = await queue_source_read(session, document_id, actor_id=ADMIN.subject_id)
-            job.status = job_status
-            await session.commit()
+            await legacy_read_job(session, document_id, status=job_status)
             expected = (
                 MaterialStatus.PROCESSING
                 if job_status in {"queued", "running"}
@@ -367,7 +386,7 @@ def test_list_filters_summary_and_pagination_share_one_read_only_status_without_
                 ready_ids.append(identifier)
             needs_review = await add_source(session, total=1, curriculum_id=curriculum_id)
             processing = await add_source(session, total=1, curriculum_id=curriculum_id)
-            await queue_source_read(session, processing, actor_id=ADMIN.subject_id)
+            await legacy_read_job(session, processing)
             removed = await add_source(session, total=1, curriculum_id=curriculum_id)
             await materials(session).remove_from_ai_use(
                 removed,

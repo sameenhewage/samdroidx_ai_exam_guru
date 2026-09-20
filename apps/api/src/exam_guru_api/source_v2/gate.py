@@ -46,9 +46,7 @@ def evaluate(pages: dict[int, dict[str, int]], *, document_id: str, purpose: str
     """Pure form of the gate, so it can be tested without a database."""
 
     if not pages:
-        raise NotVerifiedError(
-            f"{purpose} refused: document {document_id} has no Source V2 pages"
-        )
+        raise NotVerifiedError(f"{purpose} refused: document {document_id} has no Source V2 pages")
     unresolved = sorted(number for number, counts in pages.items() if counts["unverified"])
     if unresolved:
         raise NotVerifiedError(
@@ -94,9 +92,7 @@ async def is_document_usable(
     """The same decision as a reason string, for callers that report rather than raise."""
 
     try:
-        await assert_document_usable(
-            session, document_id, purpose=purpose, legacy=legacy
-        )
+        await assert_document_usable(session, document_id, purpose=purpose, legacy=legacy)
     except NotVerifiedError as error:
         return str(error)
     return None

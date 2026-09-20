@@ -23,6 +23,7 @@ from exam_guru_api.source_v2.gate import DownstreamPurpose, assert_document_usab
 from exam_guru_api.source_v2.repository import PageNotFoundError
 from exam_guru_api.source_v2.schemas import (
     ConfirmRequest,
+    ConfirmVisualRequest,
     CorrectRequest,
     DocumentGateView,
     ExcludeRequest,
@@ -31,9 +32,8 @@ from exam_guru_api.source_v2.schemas import (
     PageProgress,
     PageView,
     ReaderEvidence,
-    RegionMutationResponse,
-    ConfirmVisualRequest,
     ReclassifyRequest,
+    RegionMutationResponse,
     RegionView,
 )
 
@@ -420,9 +420,7 @@ async def read_gate(
     _ = principal
     pages = await repository.document_resolution(session, document_id)
     try:
-        await assert_document_usable(
-            session, document_id, purpose=DownstreamPurpose.KNOWLEDGE
-        )
+        await assert_document_usable(session, document_id, purpose=DownstreamPurpose.KNOWLEDGE)
     except NotVerifiedError as error:
         return DocumentGateView(
             document_id=document_id, usable=False, reason=str(error), pages=pages

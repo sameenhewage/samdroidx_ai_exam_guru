@@ -14,7 +14,7 @@ from exam_guru_api.auth.domain import (
     Principal,
     authorize,
 )
-from tests.test_document_understanding_worker import Resources
+from tests.job_fixtures import Resources
 
 
 @pytest.mark.parametrize("failure", [False, True])

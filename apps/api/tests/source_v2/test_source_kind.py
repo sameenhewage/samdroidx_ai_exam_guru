@@ -37,9 +37,7 @@ def test_a_decorative_region_is_proposed_decorative() -> None:
     ("region_type", "has_text"),
     [("unknown", True), ("unknown", False), ("text", False), ("table", False)],
 )
-def test_an_ambiguous_region_is_never_silently_guessed(
-    region_type: str, has_text: bool
-) -> None:
+def test_an_ambiguous_region_is_never_silently_guessed(region_type: str, has_text: bool) -> None:
     """UNDECIDED is a request for a human, not a classification."""
 
     assert propose(region_type, has_text=has_text) is SourceKind.UNDECIDED

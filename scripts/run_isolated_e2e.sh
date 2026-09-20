@@ -32,19 +32,7 @@ export APP_ENVIRONMENT="test"
 export EXAM_GURU_ENVIRONMENT="test"
 export EXAM_GURU_TEST_RUNTIME_ID="$project_name"
 export COMPOSE_DISABLE_ENV_FILE=1
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_PROVIDER="deterministic"
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_FIXTURE_RUNTIME_ID="$project_name"
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_OPENAI_API_KEY=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_MODEL=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_MODEL_VERSION=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_PRICING_VERSION=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_INPUT_MICROUSD_PER_MILLION_TOKENS=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_OUTPUT_MICROUSD_PER_MILLION_TOKENS=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_TEMPERATURE=""
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_IMAGE_INPUT_VERIFIED="false"
-export EXAM_GURU_DOCUMENT_UNDERSTANDING_STRUCTURED_OUTPUT_VERIFIED="false"
 export EXAM_GURU_STORAGE_BACKEND="local"
-export EXAM_GURU_OCR_PROVIDER=""
 export EXAM_GURU_SEMANTIC_VERIFIER_PROVIDER=""
 export EXAM_GURU_SEMANTIC_VERIFIER_OPENAI_API_KEY=""
 export EXAM_GURU_SEMANTIC_VERIFIER_MODEL=""
@@ -67,13 +55,6 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 docker compose --project-name "$project_name" up --build --detach --wait --wait-timeout 240
-ocr_languages="$(docker compose --project-name "$project_name" exec -T worker tesseract --list-langs 2>/dev/null)"
-for language in eng sin tam; do
-  if ! grep --fixed-strings --line-regexp --quiet "$language" <<<"$ocr_languages"; then
-    printf 'Worker image is missing required Tesseract language: %s\n' "$language" >&2
-    exit 1
-  fi
-done
 curl --fail --silent "http://127.0.0.1:$API_PORT/api/v1/health/ready" >/dev/null
 curl --fail --silent "$APP_BASE_URL/" >/dev/null
 E2E_RUNTIME_ISOLATED=true E2E_COMPOSE_PROJECT_NAME="$project_name" E2E_BASE_URL="$APP_BASE_URL" npm run test:e2e --prefix apps/web -- "$@"

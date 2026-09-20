@@ -12,7 +12,6 @@ from exam_guru_api.auth.rate_limits import (
     RateLimiterUnavailableError,
     RateLimitScope,
 )
-from exam_guru_api.documents.jobs import ExtractionDispatcher
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.main import create_app
 
@@ -67,16 +66,6 @@ class FailOnUseStorage:
         raise AssertionError("rate-limited request reached object storage")
 
 
-class FailOnDispatch:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def dispatch(self, document_id: UUID, *, actor_id: UUID) -> Never:
-        del document_id, actor_id
-        self.calls += 1
-        raise AssertionError("rate-limited request reached job dispatch")
-
-
 class RecordingRateLimiter:
     def __init__(self, *, unavailable: bool = False) -> None:
         self.unavailable = unavailable
@@ -94,18 +83,16 @@ class RecordingRateLimiter:
 
 def cost_control_client(
     limiter: RecordingRateLimiter,
-) -> tuple[TestClient, SideEffectResources, FailOnUseStorage, FailOnDispatch]:
+) -> tuple[TestClient, SideEffectResources, FailOnUseStorage]:
     resources = SideEffectResources()
     storage = FailOnUseStorage()
-    dispatcher = FailOnDispatch()
     application = create_app(
         identity_provider=StaticIdentityProvider(),
         resource_factory=lambda _: resources,
         object_storage=cast(ObjectStorage, storage),
-        extraction_dispatcher=cast(ExtractionDispatcher, dispatcher),
         rate_limiter=limiter,
     )
-    return TestClient(application), resources, storage, dispatcher
+    return TestClient(application), resources, storage
 
 
 def retrieval_request() -> dict[str, object]:
@@ -148,13 +135,6 @@ def costly_requests(client: TestClient) -> Iterator[tuple[Response, RateLimitSco
             headers=ADMIN_HEADERS,
         ),
         RateLimitScope.SOURCE_UPLOAD,
-    )
-    yield (
-        client.post(
-            f"/api/v1/admin/source-documents/{RESOURCE_ID}/extract",
-            headers=ADMIN_HEADERS,
-        ),
-        RateLimitScope.EXTRACTION_TRIGGER,
     )
     yield (
         client.post(
@@ -228,7 +208,7 @@ def costly_requests(client: TestClient) -> Iterator[tuple[Response, RateLimitSco
 
 def test_all_costly_routes_fail_before_database_job_or_storage_side_effects() -> None:
     limiter = RecordingRateLimiter()
-    test_client, resources, storage, dispatcher = cost_control_client(limiter)
+    test_client, resources, storage = cost_control_client(limiter)
 
     with test_client as client:
         observed = list(costly_requests(client))
@@ -252,34 +232,38 @@ def test_all_costly_routes_fail_before_database_job_or_storage_side_effects() ->
     ]
     assert resources.database_session_calls == 0
     assert storage.calls == 0
-    assert dispatcher.calls == 0
     assert resources.closed
 
 
 def test_authentication_and_permission_rejection_happen_before_cost_control() -> None:
     limiter = RecordingRateLimiter()
-    test_client, resources, storage, dispatcher = cost_control_client(limiter)
-    path = f"/api/v1/admin/source-documents/{RESOURCE_ID}/extract"
+    test_client, resources, storage = cost_control_client(limiter)
+    path = "/api/v1/admin/source-documents"
+    payload: dict[str, object] = {
+        "data": {"document_type": "syllabus"},
+        "files": {"file": ("source.pdf", VALID_PDF, "application/pdf")},
+    }
 
     with test_client as client:
-        unauthenticated = client.post(path)
-        forbidden = client.post(path, headers=REVIEWER_HEADERS)
+        unauthenticated = client.post(path, **payload)  # type: ignore[arg-type]
+        forbidden = client.post(path, headers=REVIEWER_HEADERS, **payload)  # type: ignore[arg-type]
 
     assert unauthenticated.status_code == 401
     assert forbidden.status_code == 403
     assert limiter.calls == []
     assert resources.database_session_calls == 0
     assert storage.calls == 0
-    assert dispatcher.calls == 0
 
 
 def test_rate_limiter_failure_is_503_fail_closed_and_sanitized() -> None:
     limiter = RecordingRateLimiter(unavailable=True)
-    test_client, resources, storage, dispatcher = cost_control_client(limiter)
+    test_client, resources, storage = cost_control_client(limiter)
 
     with test_client as client:
         response = client.post(
-            f"/api/v1/admin/source-documents/{RESOURCE_ID}/extract",
+            "/api/v1/admin/source-documents",
+            data={"document_type": "syllabus"},
+            files={"file": ("source.pdf", VALID_PDF, "application/pdf")},
             headers=ADMIN_HEADERS,
         )
 
@@ -290,7 +274,6 @@ def test_rate_limiter_failure_is_503_fail_closed_and_sanitized() -> None:
     assert "Retry-After" not in response.headers
     assert resources.database_session_calls == 0
     assert storage.calls == 0
-    assert dispatcher.calls == 0
 
 
 def test_openapi_documents_cost_controls_only_for_allowlisted_mutations() -> None:
@@ -298,7 +281,6 @@ def test_openapi_documents_cost_controls_only_for_allowlisted_mutations() -> Non
     paths = schema["paths"]
     costly_operations = (
         ("/api/v1/admin/source-documents", "post"),
-        ("/api/v1/admin/source-documents/{document_id}/extract", "post"),
         (
             "/api/v1/admin/curricula/{curriculum_version_id}/embedding-jobs",
             "post",

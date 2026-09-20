@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import event, func, select
 
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.curriculum.domain import TaxonomyReviewState
 from exam_guru_api.curriculum.models import TaxonomyNodeModel
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingWorkerService,
 )
@@ -36,16 +36,16 @@ from exam_guru_api.knowledge.unit_review import KnowledgeReviewRequest, Knowledg
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
 from exam_guru_api.knowledge.unit_service import KnowledgeUnitService
 from exam_guru_api.retrieval.embeddings import EmbeddingProviderRegistry
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_knowledge_units_postgres import verified_source
 from tests.integration.test_material_knowledge_indexing_postgres import (
     indexing_runtime,
     reviewed_intent,
 )
 from tests.integration.test_material_knowledge_review_api import material_unit
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
+)
 from tests.test_document_understanding_contracts import counting_candidate, parse
 
 pytestmark = pytest.mark.integration

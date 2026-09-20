@@ -4,21 +4,21 @@ import { useId } from "react";
 import type { ReviewLanguage } from "@/lib/review-language";
 import { cn } from "@/lib/utils";
 
-type Understanding = components["schemas"]["PageUnderstanding"];
-type Trusted = components["schemas"]["TrustedPageKnowledge"];
 type UnitContent = Pick<
   components["schemas"]["KnowledgeUnit"],
   "observation" | "education" | "resolved_uncertainties"
 >;
+type Understanding = {
+  observation: UnitContent["observation"];
+  education: UnitContent["education"];
+  uncertainties: UnitContent["resolved_uncertainties"];
+};
 type Props = {
   language?: ReviewLanguage;
   sourceOnly?: boolean;
   sourceVerified?: boolean;
-} & (
-  | { understanding: Understanding; trusted?: never; unit?: never }
-  | { trusted: Trusted; understanding?: never; unit?: never }
-  | { unit: UnitContent; trusted?: never; understanding?: never }
-);
+  unit: UnitContent;
+};
 type Table = components["schemas"]["ObservedTable"];
 type Relationship = components["schemas"]["ObservedRelationship"]["kind"];
 
@@ -168,16 +168,13 @@ function SourceTable({
 
 export function SourceUnderstandingContent(props: Props) {
   const { language, sourceOnly = false, sourceVerified = false } = props;
-  const trusted = props.trusted ?? props.unit;
-  const checked = sourceOnly ? sourceVerified : !!trusted;
-  const understanding: Understanding = trusted
-    ? {
-        schema_version: "page-understanding.v1",
-        observation: trusted.observation,
-        education: trusted.education,
-        uncertainties: trusted.resolved_uncertainties,
-      }
-    : props.understanding!;
+  const trusted = props.unit;
+  const checked = sourceOnly ? sourceVerified : true;
+  const understanding: Understanding = {
+    observation: trusted.observation,
+    education: trusted.education,
+    uncertainties: trusted.resolved_uncertainties,
+  };
   const id = useId();
   const selected =
     language ?? (understanding.observation.language === "si" ? "si" : "en");

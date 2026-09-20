@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from uuid import UUID, uuid4, uuid5
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,6 @@ from exam_guru_api.documents.models import SourceDocumentModel
 from exam_guru_api.documents.service import MaterialScopeImmutableError, SourceDocumentService
 from exam_guru_api.documents.understanding_contracts import PageUnderstanding, _canonical_json
 from exam_guru_api.documents.understanding_models import TrustedPageKnowledgeModel
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.documents.understanding_verification import TrustedPageKnowledge
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.knowledge.unit_models import (
@@ -48,7 +48,7 @@ from exam_guru_api.knowledge.units import (
     project_knowledge_unit,
 )
 from tests.integration.test_document_understanding_postgres import approve_page, page_input
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     ADMIN,
     REVIEWER,
     add_curriculum,
@@ -56,7 +56,7 @@ from tests.integration.test_fidelity_workspace_postgres import (
     admit_curriculum,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
 from tests.test_document_understanding_contracts import counting_candidate, parse

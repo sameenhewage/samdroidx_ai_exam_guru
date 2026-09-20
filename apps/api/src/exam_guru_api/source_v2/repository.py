@@ -129,9 +129,7 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             {"page_id": page_id},
         )
     ).scalar_one_or_none() or {}
-    boxes = {
-        region.get("id"): region.get("bbox") for region in (layout.get("regions") or [])
-    }
+    boxes = {region.get("id"): region.get("bbox") for region in (layout.get("regions") or [])}
     return [
         RegionRow(
             region_id=row[0],
@@ -407,8 +405,10 @@ async def confirm_visual(
             "the image it was confirmed against"
         )
 
-    body = "" if source_kind == "visual_only" else unicodedata.normalize(
-        "NFC", (text_value or "").strip()
+    body = (
+        ""
+        if source_kind == "visual_only"
+        else unicodedata.normalize("NFC", (text_value or "").strip())
     )
     if source_kind == "visual_with_text" and not body:
         raise SourceV2Error(
@@ -420,8 +420,7 @@ async def confirm_visual(
         # Silently dropping them would lose source; silently keeping them would
         # contradict the declared kind.
         raise SourceV2Error(
-            "text was supplied for a visual_only region; confirm it as "
-            "visual_with_text instead"
+            "text was supplied for a visual_only region; confirm it as visual_with_text instead"
         )
 
     await _append_event(
@@ -790,9 +789,7 @@ async def _supersede(
         kind = str(
             SourceKind(region["source_kind"])
             if region.get("source_kind")
-            else propose(
-                region["region_type"], has_text=bool((region.get("text") or "").strip())
-            )
+            else propose(region["region_type"], has_text=bool((region.get("text") or "").strip()))
         )
         attribution_stale = (
             current[3] != region.get("chosen_reader")
@@ -947,6 +944,5 @@ async def document_resolution(session: AsyncSession, document_id: UUID) -> dict:
         )
     ).all()
     return {
-        int(number): {"unverified": u, "verified": v, "excluded": e}
-        for number, u, v, e in rows
+        int(number): {"unverified": u, "verified": v, "excluded": e} for number, u, v, e in rows
     }

@@ -312,9 +312,7 @@ class DocumentResolution:
         return sorted(number for number, page in self.pages.items() if page.carries_source)
 
 
-def require_verified_source(
-    resolution: DocumentResolution, *, purpose: str
-) -> None:
+def require_verified_source(resolution: DocumentResolution, *, purpose: str) -> None:
     """The gate. Call before analysis, knowledge, embeddings, RAG or generation.
 
     A verified page cannot carry an unresolved sibling across the line: a

@@ -93,15 +93,11 @@ def material_embedding_config(
     providers: EmbeddingProviderRegistry,
 ) -> EmbeddingConfig | None:
     settings = Settings.model_validate(settings.model_dump(exclude_unset=True))
-    identity = settings.test_runtime_id or settings.document_understanding_fixture_runtime_id
+    identity = settings.test_runtime_id
     isolated = (
         settings.environment == "test"
         and identity is not None
         and re.fullmatch(r"ai-exam-guru-e2e-[a-z0-9][a-z0-9-]{0,47}", identity) is not None
-        and (
-            settings.document_understanding_fixture_runtime_id is None
-            or settings.document_understanding_fixture_runtime_id == identity
-        )
     )
     if settings.retrieval_embedding_provider in {None, "deterministic"} and not isolated:
         return None

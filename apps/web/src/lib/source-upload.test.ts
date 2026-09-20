@@ -185,7 +185,6 @@ async function fixture(
             ...session,
             status: "completed",
             document_id: documentId,
-            source_read_job_id: readJobId,
             verified_bytes: file.size,
             checksum_sha256: "a".repeat(64),
             deduplicated: options.deduplicated ?? false,
@@ -368,7 +367,6 @@ describe("upload protocol boundaries", () => {
     ["unverified bytes", { verified_bytes: 19 }],
     ["missing checksum", { checksum_sha256: null }],
     ["invalid checksum", { checksum_sha256: "A".repeat(64) }],
-    ["invalid read job", { source_read_job_id: "not-a-job" }],
   ])("does not report completion with %s", async (_name, invalid) => {
     const f = await fixture({
       file: fakePdf(20),
@@ -386,18 +384,14 @@ describe("upload protocol boundaries", () => {
     expect(f.requests.map((request) => request.method)).toEqual(["GET"]);
   });
 
-  it.each([null, undefined])(
-    "accepts a verified deduplicated completion without a read job (%s)",
-    async (source_read_job_id) => {
+  it("accepts a verified deduplicated completion without any source read job", async () => {
+    {
       const f = await fixture({
         file: fakePdf(20),
         prefix: 20,
         status: "pending",
         deduplicated: true,
       });
-      interceptResponses(f, async (_request, response) =>
-        Response.json({ ...(await response.json()), source_read_job_id }),
-      );
       await expect(
         new ResumableSourceUpload({ api: f.api, uploadId: id }).run(runOptions),
       ).resolves.toMatchObject({
@@ -406,8 +400,8 @@ describe("upload protocol boundaries", () => {
         status: "completed",
       });
       expect(f.requests.map((request) => request.method)).toEqual(["GET"]);
-    },
-  );
+    }
+  });
 
   it.each([
     ["wrong media type", { type: "text/plain" }],
@@ -1905,9 +1899,9 @@ describe("bounded resumable source uploads", () => {
     });
     expect(completed).toMatchObject({
       document_id: documentId,
-      source_read_job_id: readJobId,
       status: "completed",
     });
+    expect(completed).not.toHaveProperty("source_read_job_id");
     expect(checkpoints[0]).toBe(id);
     expect(Math.max(...progress)).toBe(f.file.size);
     expect(

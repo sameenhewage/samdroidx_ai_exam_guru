@@ -22,14 +22,7 @@ LOCAL_DATABASE_URL = "postgresql+asyncpg://exam_guru@localhost:5432/exam_guru"
 LOCAL_VALKEY_URL = "redis://localhost:6379/0"
 LOCAL_STORAGE_ACCESS_KEY = "exam-guru-local"
 LOCAL_STORAGE_SECRET_KEY = ""
-EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
-EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS = 60
-OCR_PROVIDER_MAX_EXECUTION_SECONDS = (
-    EXTRACTION_ACTOR_MAX_EXECUTION_SECONDS - EXTRACTION_NATIVE_STORAGE_HEADROOM_SECONDS
-)
-TESSERACT_PROBE_COMMAND_COUNT = 2
 GENERATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
-DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS = 20 * 60
 TEACHER_PAPER_ACTOR_MAX_EXECUTION_SECONDS = 10 * 60
 EMBEDDING_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
 STORAGE_RECONCILIATION_ACTOR_MAX_EXECUTION_SECONDS = 5 * 60
@@ -197,29 +190,6 @@ class Settings(BaseSettings):
         le=10_000,
     )
     storage_reconciliation_apply_tags: bool = False
-    ocr_provider: Literal["tesseract"] | None = None
-    ocr_tesseract_executable: str = Field(default="tesseract", min_length=1, max_length=255)
-    ocr_tesseract_language: str = Field(default="sin+eng", min_length=1, max_length=64)
-    ocr_tesseract_max_source_bytes: int = Field(
-        default=25 * 1024 * 1024,
-        ge=1,
-        le=256 * 1024 * 1024,
-    )
-    ocr_tesseract_max_pages: int = Field(default=16, ge=1, le=1_000)
-    ocr_tesseract_dpi: int = Field(default=300, ge=72, le=600)
-    ocr_tesseract_batch_size: int = Field(default=4, ge=1, le=16)
-    ocr_tesseract_timeout_seconds: float = Field(default=10.0, gt=0, le=300)
-    ocr_tesseract_page_segmentation_mode: int = Field(default=3, ge=1, le=13)
-    ocr_tesseract_max_pixels_per_page: int = Field(
-        default=40_000_000,
-        ge=1,
-        le=100_000_000,
-    )
-    ocr_tesseract_max_command_output_bytes: int = Field(
-        default=8 * 1024 * 1024,
-        ge=1,
-        le=64 * 1024 * 1024,
-    )
     retrieval_embedding_provider: Literal["deterministic", "openai"] | None = None
     retrieval_embedding_model: str = Field(
         default="grade5-deterministic-shake256",
@@ -259,48 +229,6 @@ class Settings(BaseSettings):
         default=600,
         ge=MIN_EMBEDDING_WORKER_LEASE_SECONDS,
         le=86_400,
-    )
-    document_understanding_provider: Literal["deterministic", "openai"] | None = None
-    source_consensus_enabled: bool = False
-    source_qwen_base_url: str = Field(default="http://127.0.0.1:11434", max_length=256)
-    source_qwen_allow_docker_host: bool = False
-    source_qwen_api_version: str = Field(default="0.34.0", min_length=1, max_length=64)
-    source_qwen_model_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    source_qwen_context_tokens: int = Field(default=8192, ge=2048, le=8192)
-    source_qwen_output_tokens: int = Field(default=4096, ge=32, le=8192)
-    source_qwen_temperature: float = Field(default=0.3, ge=0.0, le=1.0, allow_inf_nan=False)
-    document_understanding_fixture_runtime_id: str | None = Field(
-        default=None, strict=True, pattern=r"^ai-exam-guru-e2e-[a-z0-9][a-z0-9-]{0,47}$"
-    )
-    document_understanding_openai_api_key: SecretStr | None = None
-    document_understanding_model: str | None = Field(
-        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
-    )
-    document_understanding_model_version: str | None = Field(
-        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
-    )
-    document_understanding_pricing_version: str | None = Field(
-        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+\-]*$"
-    )
-    document_understanding_input_microusd_per_million_tokens: int | None = Field(
-        default=None, ge=1, le=100_000_000_000
-    )
-    document_understanding_output_microusd_per_million_tokens: int | None = Field(
-        default=None, ge=1, le=100_000_000_000
-    )
-    document_understanding_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    document_understanding_reasoning_effort: (
-        Literal["none", "low", "medium", "high", "xhigh", "max"] | None
-    ) = None
-    document_understanding_image_input_verified: bool = False
-    document_understanding_structured_output_verified: bool = False
-    document_understanding_timeout_ms: int = Field(default=30_000, ge=1, le=180_000)
-    document_understanding_max_output_tokens: int = Field(default=8_192, ge=1, le=16_384)
-    document_understanding_max_cost_microusd: int = Field(default=1_000_000, ge=1, le=100_000_000)
-    document_understanding_recovery_batch_size: int = Field(default=20, ge=1, le=100)
-    document_understanding_outbox_min_age_seconds: int = Field(default=5, ge=1, le=3_600)
-    document_understanding_worker_lease_seconds: int = Field(
-        default=1500, ge=DOCUMENT_UNDERSTANDING_ACTOR_MAX_EXECUTION_SECONDS + 1, le=86_400
     )
     generation_provider: Literal["deterministic", "openai"] | None = None
     generation_openai_api_key: SecretStr | None = None
@@ -471,76 +399,6 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def validate_document_understanding(self) -> Self:
-        provider_values = (
-            self.document_understanding_openai_api_key,
-            self.document_understanding_model,
-            self.document_understanding_model_version,
-            self.document_understanding_pricing_version,
-            self.document_understanding_input_microusd_per_million_tokens,
-            self.document_understanding_output_microusd_per_million_tokens,
-            self.document_understanding_temperature,
-        )
-        fixture_id = self.document_understanding_fixture_runtime_id
-        if fixture_id is not None and (
-            self.environment != "test"
-            or self.document_understanding_provider != "deterministic"
-            or (self.test_runtime_id is not None and fixture_id != self.test_runtime_id)
-        ):
-            raise ValueError("document understanding fixture identity must match its test runtime")
-        if self.document_understanding_provider == "deterministic" and (
-            self.environment != "test" or (fixture_id is None and self.test_runtime_id is None)
-        ):
-            raise ValueError(
-                "fixture document understanding requires an isolated test runtime identity"
-            )
-        if self.document_understanding_provider == "openai":
-            if self.environment == "test":
-                raise ValueError("test configuration cannot use paid document understanding")
-            if any(value is None for value in provider_values):
-                raise ValueError("document understanding requires explicit model, pricing and key")
-            if (
-                not self.document_understanding_image_input_verified
-                or not self.document_understanding_structured_output_verified
-            ):
-                raise ValueError(
-                    "document understanding capabilities require explicit verification"
-                )
-            key = cast(SecretStr, self.document_understanding_openai_api_key).get_secret_value()
-            if (
-                not key
-                or len(key) > 4096
-                or any(character.isspace() or not character.isprintable() for character in key)
-            ):
-                raise ValueError("document understanding API key must be bounded secret text")
-        elif (
-            any(value is not None for value in provider_values)
-            or self.document_understanding_image_input_verified
-            or self.document_understanding_structured_output_verified
-        ):
-            raise ValueError("document understanding settings require an explicit OpenAI provider")
-        if self.source_consensus_enabled:
-            from exam_guru_api.documents.source_reading_qwen import QwenSourceReadConfig
-
-            if (
-                self.document_understanding_provider != "openai"
-                or self.source_qwen_model_digest is None
-            ):
-                raise ValueError(
-                    "source consensus requires OpenAI and the verified local Qwen model"
-                )
-            QwenSourceReadConfig(
-                base_url=self.source_qwen_base_url,
-                allow_docker_host=self.source_qwen_allow_docker_host,
-                api_version=self.source_qwen_api_version,
-                model_digest=self.source_qwen_model_digest,
-                context_tokens=self.source_qwen_context_tokens,
-                output_tokens=self.source_qwen_output_tokens,
-                temperature=self.source_qwen_temperature,
-            )
-        return self
-
-    @model_validator(mode="after")
     def reject_local_credentials_in_production(self) -> Self:
         _validate_storage_root(self.storage_root)
         s3_values = (
@@ -572,35 +430,6 @@ class Settings(BaseSettings):
                 raise ValueError("S3 secret key must be bounded secret text")
             if self.environment == "production" and endpoint_scheme != "https":
                 raise ValueError("production S3 endpoint must use HTTPS")
-        if (
-            self.ocr_tesseract_executable != self.ocr_tesseract_executable.strip()
-            or not self.ocr_tesseract_executable.isprintable()
-        ):
-            raise ValueError("Tesseract executable must be bounded control-free text")
-        selected_languages = tuple(self.ocr_tesseract_language.split("+"))
-        if (
-            not 1 <= len(selected_languages) <= 4
-            or len(set(selected_languages)) != len(selected_languages)
-            or any(
-                not language
-                or any(
-                    not (character.isascii() and (character.isalnum() or character == "_"))
-                    for character in language
-                )
-                for language in selected_languages
-            )
-        ):
-            raise ValueError("Tesseract language must contain unique safe language codes")
-        if self.ocr_tesseract_batch_size > self.ocr_tesseract_max_pages:
-            raise ValueError("Tesseract batch size cannot exceed its page limit")
-        if self.ocr_provider == "tesseract":
-            if self.ocr_tesseract_max_source_bytes < self.max_upload_bytes:
-                raise ValueError("configured OCR must accept the configured upload byte limit")
-            worst_case_ocr_seconds = (
-                self.ocr_tesseract_max_pages + TESSERACT_PROBE_COMMAND_COUNT
-            ) * self.ocr_tesseract_timeout_seconds
-            if worst_case_ocr_seconds > OCR_PROVIDER_MAX_EXECUTION_SECONDS:
-                raise ValueError("configured Tesseract commands exceed the OCR execution budget")
 
         embedding_identifiers = (
             self.retrieval_embedding_model,

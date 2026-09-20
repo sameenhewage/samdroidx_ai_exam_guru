@@ -1,9 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,28 +15,21 @@ from exam_guru_api.api.router import api_router
 from exam_guru_api.auth.domain import Principal
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.auth.rate_limits import NoOpRateLimiter
-from exam_guru_api.core.config import Settings
-from exam_guru_api.documents.models import SourceDocumentModel
-from exam_guru_api.documents.service import SourceDocumentService
 from exam_guru_api.documents.understanding_service import PageUnderstandingService
-from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, KnowledgeUnitModel
 from exam_guru_api.knowledge.unit_service import KnowledgeUnitService
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import (
     ADMIN,
     ADMIN_HEADERS,
     REVIEWER_HEADERS,
     StaticIdentityProvider,
-    add_curriculum,
     add_source,
-    admit_curriculum,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
-from tests.integration.test_knowledge_units_postgres import verified_source
-from tests.integration.test_understanding_review_postgres import source_candidate
 
 pytestmark = pytest.mark.integration
 
@@ -87,117 +78,6 @@ async def request_rows(session: AsyncSession, document_id: UUID) -> list[Any]:
             )
         ).mappings()
     )
-
-
-@pytest.mark.parametrize("metadata_first", [False, True])
-def test_normal_verify_atomically_enrolls_without_derivation_in_either_metadata_order(
-    materials_client: TestClient,
-    workspace_database_url: str,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    metadata_first: bool,
-) -> None:
-    async def seed() -> tuple[UUID, UUID, UUID, object]:
-        async with database_session(workspace_database_url) as session:
-            document_id, candidate_id, storage, _artifacts = await source_candidate(
-                session, tmp_path
-            )
-            curriculum_id = await add_curriculum(session)
-            await admit_curriculum(session, curriculum_id)
-            return document_id, candidate_id, curriculum_id, storage
-
-    document_id, candidate_id, curriculum_id, storage = asyncio.run(seed())
-
-    async def confirm_metadata() -> None:
-        async with database_session(workspace_database_url) as session:
-            await SourceDocumentService(
-                session, Mock(spec=ObjectStorage), max_upload_bytes=1024
-            ).correct_scope(
-                document_id,
-                curriculum_version_id=curriculum_id,
-                unit_id=None,
-                lesson_id=None,
-                expected_version=0,
-                actor_id=ADMIN.subject_id,
-                confirm_intake_metadata=True,
-            )
-
-    if metadata_first:
-        asyncio.run(confirm_metadata())
-    state = cast(FastAPI, materials_client.app).state
-    state.object_storage = storage
-    state.settings = Settings(environment="test", storage_root=str(tmp_path))
-    prepare = AsyncMock(side_effect=AssertionError("HTTP must not derive knowledge"))
-    monkeypatch.setattr(KnowledgeUnitService, "prepare_page", prepare)
-    path = f"/api/v1/admin/materials/{document_id}/pages/1/understanding"
-    body = {
-        "candidate_id": str(candidate_id),
-        "expected_version": 1,
-        "compared_with_original": True,
-        "reviewed_region_keys": ["fixture"],
-        "accepted_claim_keys": [],
-        "resolved_uncertainty_keys": ["fixture_only"],
-        "reason": "Compared the original synthetic page for Materials",
-    }
-    assert (
-        materials_client.post(path + "/verify", headers=REVIEWER_HEADERS, json=body).status_code
-        == 403
-    )
-    verified = materials_client.post(path + "/verify", headers=ADMIN_HEADERS, json=body)
-    assert verified.status_code == 200
-    assert not prepare.mock_calls
-
-    async def inspect_enrollment() -> None:
-        async with database_session(workspace_database_url) as session:
-            rows = await request_rows(session, document_id)
-            assert len(rows) == 1
-            row = rows[0]
-            source = await session.get(SourceDocumentModel, document_id)
-            assert source is not None
-            assert row["source_sha256"] == source.checksum_sha256
-            assert row["requested_by"] == ADMIN.subject_id
-            event = await session.get(AdminAuditEventModel, row["source_audit_event_id"])
-            assert event is not None
-            assert event.action == "page_understanding.verified"
-            assert event.payload["trusted_knowledge_id"] == verified.json()["id"]
-            own = await session.get(AdminAuditEventModel, row["audit_event_id"])
-            assert own is not None
-            assert own.action == "material_knowledge.requested"
-            assert (
-                await session.scalar(
-                    select(func.count())
-                    .select_from(KnowledgeUnitModel)
-                    .where(KnowledgeUnitModel.document_id == document_id)
-                )
-                == 0
-            )
-            assert (
-                await session.scalar(
-                    text("SELECT count(*) FROM knowledge_preparation_jobs WHERE document_id=:id"),
-                    {"id": document_id},
-                )
-                == 0
-            )
-
-    asyncio.run(inspect_enrollment())
-    if not metadata_first:
-        before = materials_client.get(
-            f"/api/v1/admin/materials/{document_id}/knowledge-preparation", headers=REVIEWER_HEADERS
-        )
-        assert before.status_code == 200
-        assert before.json()["status"] == "waiting"
-        assert before.json()["source_ready"] is True
-        assert before.json()["scope_ready"] is False
-        asyncio.run(confirm_metadata())
-    after = materials_client.get(
-        f"/api/v1/admin/materials/{document_id}/knowledge-preparation", headers=REVIEWER_HEADERS
-    )
-    assert after.status_code == 200
-    assert after.json()["requested"] is True
-    assert after.json()["source_ready"] is True
-    assert after.json()["scope_ready"] is True
-    assert after.json()["pending_pages"] == 1
-    assert after.json()["prepared_pages"] == 0
 
 
 @pytest.mark.parametrize("replay_historical_exclusion", [False, True])

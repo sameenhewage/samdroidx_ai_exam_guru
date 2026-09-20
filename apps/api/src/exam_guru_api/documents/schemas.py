@@ -66,19 +66,6 @@ class SourceIntakeMetadata(BaseModel):
         return cls.model_validate(payload)
 
 
-class ExtractionJobResponse(BaseModel):
-    document_id: UUID
-    message_id: str
-    status: ExtractionStatus
-
-
-class ReviewedTextUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    reviewed_text: str = Field(min_length=1, max_length=1_000_000)
-    expected_version: int = Field(ge=0)
-
-
 class MaterialRemoveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -147,6 +134,8 @@ class SourceMetadataCandidateResponse(BaseModel):
 
 
 class SourcePageResponse(BaseModel):
+    """Read-only view of a historical extracted page row."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -166,6 +155,8 @@ class SourcePageResponse(BaseModel):
 
 
 class ExtractedBlockResponse(BaseModel):
+    """Read-only view of a historical extracted block row."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

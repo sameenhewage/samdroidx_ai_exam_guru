@@ -14,9 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RegionTypeName = Literal["text", "heading", "figure", "table", "decorative", "unknown"]
 RegionStateName = Literal["unverified", "verified", "excluded"]
-SourceKindName = Literal[
-    "text_only", "visual_only", "visual_with_text", "decorative", "undecided"
-]
+SourceKindName = Literal["text_only", "visual_only", "visual_with_text", "decorative", "undecided"]
 
 
 class SourceV2Model(BaseModel):

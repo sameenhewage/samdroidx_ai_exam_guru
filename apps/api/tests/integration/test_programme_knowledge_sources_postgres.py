@@ -14,12 +14,12 @@ from exam_guru_api.retrieval.domain import RetrievalScope
 from exam_guru_api.retrieval.repository import PostgresHybridRetrievalRepository
 from exam_guru_api.teacher_papers.models import AssessmentProgrammePolicyScopeModel
 from exam_guru_api.teacher_papers.repository import TeacherPaperRepository
-from tests.integration.test_fidelity_workspace_postgres import ADMIN, database_session
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_projection_retrieval_postgres import indexed_projection
 from tests.integration.test_verified_knowledge_lineage_postgres import ACTOR, CONFIG, seed
+from tests.integration.workspace_fixtures import ADMIN, database_session
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
+)
 
 pytestmark = pytest.mark.integration
 

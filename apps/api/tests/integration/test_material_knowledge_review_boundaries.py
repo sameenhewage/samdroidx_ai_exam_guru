@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,18 +15,9 @@ from exam_guru_api.curriculum.models import (
     CurriculumUnitModel,
     TaxonomyNodeModel,
 )
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.material_index_models import MaterialKnowledgeIndexIntentModel
 from exam_guru_api.knowledge.unit_models import KnowledgeUnitModel
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel
-from tests.integration.test_fidelity_workspace_postgres import (
-    ADMIN,
-    ADMIN_HEADERS,
-    database_session,
-)
-from tests.integration.test_fidelity_workspace_postgres import (
-    workspace_database_url as workspace_database_url,
-)
 from tests.integration.test_knowledge_unit_review_postgres import reviewable_unit
 from tests.integration.test_material_knowledge_preparation_api import (
     materials_client as materials_client,
@@ -34,6 +26,14 @@ from tests.integration.test_material_knowledge_review_api import (
     disabled_configuration,
     material_unit,
     review_body,
+)
+from tests.integration.workspace_fixtures import (
+    ADMIN,
+    ADMIN_HEADERS,
+    database_session,
+)
+from tests.integration.workspace_fixtures import (
+    workspace_database_url as workspace_database_url,
 )
 
 pytestmark = pytest.mark.integration

@@ -1208,35 +1208,8 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
         setUploadProgress(null);
         return;
       }
-      let message =
-        "Material uploaded. Open the material to check reading progress and metadata.";
-      if (uploaded.source_read_job_id) {
-        try {
-          const reading = await api.GET(
-            "/api/v1/admin/source-read-jobs/{job_id}",
-            {
-              params: { path: { job_id: uploaded.source_read_job_id } },
-              cache: "no-store",
-              signal: controller.signal,
-            },
-          );
-          if (
-            reading.data?.id === uploaded.source_read_job_id &&
-            reading.data.document_id === uploaded.document_id
-          ) {
-            if (["queued", "running"].includes(reading.data.status))
-              message = "Material uploaded. Reading the PDF now.";
-            else if (reading.data.status === "completed")
-              message =
-                "Material uploaded. Check the material details and system-read text before AI use.";
-            else
-              message =
-                "Material uploaded, but reading needs attention. Open the material to continue.";
-          }
-        } catch {
-          /* The completed upload remains authoritative; never enqueue another reading. */
-        }
-      }
+      const message =
+        "Material uploaded. Open the material to review its pages and metadata.";
       if (view !== uploadViewRequest.current) return;
       let grade: number | null = Number(wizardGrade);
       if (resumeId) {
@@ -1596,12 +1569,6 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
             See what each grade can use, add approved PDFs, and correct mistakes
             without losing the source history.
           </p>
-          <Link
-            className="mt-3 inline-block rounded text-sm font-semibold underline focus-visible:ring-2 focus-visible:ring-amber-600"
-            href="/admin/materials/benchmark-review"
-          >
-            Review selected source pages
-          </Link>
         </div>
         {role === "admin" ? (
           <button
@@ -2122,14 +2089,6 @@ export function MaterialsLibrary({ role }: { role: AdminRole }) {
                             href={`/admin/materials/${material.id}`}
                           >
                             View
-                          </Link>
-                          <Link
-                            aria-label={`Review extracted text: ${material.title}`}
-                            className={secondaryButton}
-                            href={`/admin/materials/${material.id}/review-text`}
-                            prefetch={false}
-                          >
-                            Review extracted text
                           </Link>
                           {role === "admin" &&
                             editable &&

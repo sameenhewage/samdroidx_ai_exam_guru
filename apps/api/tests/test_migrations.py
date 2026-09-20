@@ -32,7 +32,7 @@ from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     configure_database_url_from_environment,
 )
-from tests.integration.test_source_fidelity_postgres import (
+from tests.integration.fidelity_sql_fixtures import (
     ACTOR,
     add_source,
     add_sql_candidate,
@@ -43,11 +43,15 @@ from tests.test_blueprint_domain import CURRICULUM_VERSION_ID, make_uniform_spec
 from tests.test_generation_repository import ACTOR_ID, run_write
 
 
-def test_source_consensus_is_the_single_bounded_revision_head() -> None:
+def test_source_v2_visual_abstention_is_the_single_bounded_revision_head() -> None:
     config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0055_source_consensus"]
+    assert scripts.get_heads() == ["0059_source_v2_visual_abstention"]
     for identifier, parent in (
+        ("0059_source_v2_visual_abstention", "0058_source_v2_candidate_crop"),
+        ("0058_source_v2_candidate_crop", "0057_source_v2_source_kind"),
+        ("0057_source_v2_source_kind", "0056_source_v2"),
+        ("0056_source_v2", "0055_source_consensus"),
         ("0055_source_consensus", "0054_source_reading_stages"),
         ("0054_source_reading_stages", "0053_material_knowledge_review"),
         ("0053_material_knowledge_review", "0052_knowledge_preparation"),

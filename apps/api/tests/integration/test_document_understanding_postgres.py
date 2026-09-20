@@ -44,13 +44,13 @@ from exam_guru_api.infrastructure.migrations import (
     _config_for_database,
     assert_database_schema_current,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     ADMIN,
     REVIEWER,
     add_source,
     database_session,
 )
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.workspace_fixtures import (
     workspace_database_url as workspace_database_url,
 )
 from tests.test_document_understanding_contracts import counting_candidate, parse

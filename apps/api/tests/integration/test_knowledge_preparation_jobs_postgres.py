@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import anyio
 import pytest
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,6 @@ from exam_guru_api.documents.understanding_models import (
     PageUnderstandingStateModel,
     TrustedPageKnowledgeModel,
 )
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.knowledge.preparation_models import (
@@ -38,7 +38,8 @@ from exam_guru_api.knowledge.unit_models import KnowledgeProjectionModel, Knowle
 from exam_guru_api.knowledge.unit_service import KnowledgeUnitService
 from exam_guru_api.knowledge.units import KnowledgeScope
 from tests.integration.test_document_understanding_postgres import approve_page, page_input
-from tests.integration.test_fidelity_workspace_postgres import (
+from tests.integration.test_knowledge_units_postgres import verified_source
+from tests.integration.workspace_fixtures import (
     ADMIN,
     REVIEWER,
     add_curriculum,
@@ -46,7 +47,6 @@ from tests.integration.test_fidelity_workspace_postgres import (
     admit_curriculum,
     database_session,
 )
-from tests.integration.test_knowledge_units_postgres import verified_source
 from tests.test_document_understanding_contracts import counting_candidate, parse
 
 pytestmark = pytest.mark.integration

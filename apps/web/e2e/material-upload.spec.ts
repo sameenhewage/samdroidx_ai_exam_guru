@@ -437,10 +437,8 @@ test("real API: normal Materials resumes only the matching PDF, finishes once, f
     deduplicated: false,
   });
   expect(completed.document_id).toBeTruthy();
-  expect(completed.source_read_job_id).toBeTruthy();
-  expect(readingRequests).toContain(
-    `/api/v1/admin/source-read-jobs/${completed.source_read_job_id}`,
-  );
+  expect(completed).not.toHaveProperty("source_read_job_id");
+  expect(readingRequests).toEqual([]);
   expect(mutations.filter((request) => request.method === "PUT")).toEqual([
     {
       method: "PUT",

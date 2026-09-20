@@ -45,7 +45,6 @@ const ids = {
   uploaded: "00000000-0000-0000-0000-000000000506",
   uploadSession: "00000000-0000-0000-0000-000000000507",
   uploadRequest: "00000000-0000-0000-0000-000000000509",
-  readJob: "00000000-0000-0000-0000-000000000508",
 } as const;
 
 const curricula: Curriculum[] = [
@@ -597,7 +596,6 @@ function fixtureApi(options: FixtureOptions = {}) {
             ...upload,
             status: "completed",
             document_id: options.exactDuplicate ? ids.syllabus : ids.uploaded,
-            source_read_job_id: options.exactDuplicate ? null : ids.readJob,
             verified_bytes: upload.size_bytes,
             checksum_sha256: "a".repeat(64),
             deduplicated: options.exactDuplicate ?? false,
@@ -702,21 +700,6 @@ function fixtureApi(options: FixtureOptions = {}) {
         upload = { ...upload, status: "pending", version: upload.version + 1 };
         return Response.json(upload, { status: 202 });
       }
-      if (
-        request.method === "GET" &&
-        path.endsWith(`/source-read-jobs/${ids.readJob}`)
-      ) {
-        return Response.json({
-          id: ids.readJob,
-          document_id: ids.uploaded,
-          status: "queued",
-          next_page: 1,
-          page_number: null,
-          version: 0,
-          failure_code: null,
-        });
-      }
-
       const material = currentMaterials.find((candidate) =>
         path.includes(candidate.id),
       );
@@ -1612,15 +1595,17 @@ describe("MaterialsLibrary", () => {
     expect(within(dialog).getByLabelText("Subject")).toHaveValue("");
   });
 
-  it("provides the new comparison link for sources regardless of legacy extraction state", async () => {
+  it("no longer offers any legacy extracted-text review entry point", async () => {
     await renderLibrary("admin");
-    const link = await screen.findByRole("link", {
-      name: `Review extracted text: ${materials[1].title}`,
-    });
-    expect(link).toHaveAttribute(
-      "href",
-      `/admin/materials/${ids.guide}/review-text`,
-    );
+    await screen.findByRole("region", { name: "Uploaded materials" });
+    expect(
+      screen.queryByRole("link", {
+        name: `Review extracted text: ${materials[1].title}`,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Review selected source pages" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps unadmitted legacy scope out of the material detail assignment and shows detected evidence first", async () => {
@@ -1679,15 +1664,12 @@ describe("MaterialsLibrary", () => {
     vi.stubGlobal("fetch", fixture.fetchMock);
     render(<MaterialDetails documentId={ids.guide} role="admin" />);
     await screen.findByRole("heading", { name: materials[1].title });
-    expect(screen.getByRole("link", { name: "Review text" })).toHaveAttribute(
-      "href",
-      `/admin/materials/${ids.guide}/review-text`,
-    );
     expect(
-      screen.getByRole("link", {
-        name: /Review page content|පිටුවේ අන්තර්ගතය පරීක්ෂා කරන්න/,
-      }),
-    ).toHaveAttribute("href", `/admin/materials/${ids.guide}/review-content`);
+      screen.queryByRole("link", { name: "Review text" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Review page content/ }),
+    ).not.toBeInTheDocument();
     expect(fixture.requests.every((request) => request.method === "GET")).toBe(
       true,
     );
@@ -2475,7 +2457,7 @@ describe("MaterialsLibrary", () => {
       within(dialog).getByRole("button", { name: "Upload material" }),
     );
     expect(
-      await screen.findByText("Material uploaded. Reading the PDF now."),
+      await screen.findByText("Material uploaded. Open the material to review its pages and metadata."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("region", { name: "Uploaded materials" }),
@@ -2513,12 +2495,8 @@ describe("MaterialsLibrary", () => {
       ),
     ).toHaveLength(1);
     expect(
-      requests.some(
-        (request) =>
-          request.method === "GET" &&
-          request.url.endsWith(`/source-read-jobs/${ids.readJob}`),
-      ),
-    ).toBe(true);
+      requests.some((request) => request.url.includes("/source-read-jobs/")),
+    ).toBe(false);
     expect(
       requests.some(
         (request) =>
@@ -2755,7 +2733,7 @@ describe("MaterialsLibrary", () => {
     fireEvent.click(
       within(resumed).getByRole("button", { name: "Resume upload" }),
     );
-    await screen.findByText("Material uploaded. Reading the PDF now.");
+    await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
     expect(
       view.requests.some(
         (request) =>
@@ -2804,7 +2782,7 @@ describe("MaterialsLibrary", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Continue upload" }),
     );
-    await screen.findByText("Material uploaded. Reading the PDF now.");
+    await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
     const creates = requests.filter(
       (request) =>
         request.method === "POST" && request.url.endsWith("/source-uploads"),
@@ -2905,7 +2883,7 @@ describe("MaterialsLibrary", () => {
     });
     expect(retry).toBeEnabled();
     fireEvent.click(retry);
-    await screen.findByText("Material uploaded. Reading the PDF now.");
+    await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
     const creates = requests.filter(
       (request) =>
         request.method === "POST" && request.url.endsWith("/source-uploads"),
@@ -3013,7 +2991,7 @@ describe("MaterialsLibrary", () => {
         name: "Continue upload",
       }),
     );
-    await screen.findByText("Material uploaded. Reading the PDF now.");
+    await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
     expect(
       requests.filter(
         (request) =>
@@ -3066,7 +3044,7 @@ describe("MaterialsLibrary", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Resume upload" }),
     );
-    await screen.findByText("Material uploaded. Reading the PDF now.");
+    await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
     expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
       1,
     );
@@ -3149,7 +3127,7 @@ describe("MaterialsLibrary", () => {
           true,
         );
       } else {
-        await screen.findByText("Material uploaded. Reading the PDF now.");
+        await screen.findByText("Material uploaded. Open the material to review its pages and metadata.");
         expect(
           requests.filter((request) => request.method !== "GET"),
         ).toHaveLength(1);
