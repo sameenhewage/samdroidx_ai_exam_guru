@@ -420,6 +420,50 @@ how it is enforced.
 - pre-D18 rows default to `undecided`, preserving their trust level rather
   than asserting an educational judgement nobody made
 
+### D18 implementation notes - three concepts, three columns (migration 0061)
+
+D18 says a description of a visual is Derived Knowledge and can never become
+Verified Source Content. One `text` column cannot express that: whatever is in
+`text` is source by definition. So a visual region's three concepts are stored
+and served separately, on both `source_v2_machine_candidates` and
+`source_v2_verified_regions` (migration `0061_source_v2_description`,
+forward-only):
+
+- `text` - the exact text printed **inside the crop**. Unchanged. Source.
+- `visual_description` - what the picture shows, in the language of the
+  material. Derived knowledge, never source, never `text`.
+- `detected_labels` - JSONB array of labels legible inside the crop.
+
+The failure this fixes was visible on the acceptance page: `p186-r002`
+displayed `"Line-art figure only (a foam block, a ring magnet...)"` - English,
+machine-written, about Sinhala material - in the field that means "the exact
+text printed here".
+
+Enforced rather than described:
+
+- `source_v2/visual_description.py` validates every description *before* it is
+  stored. Sinhala material demands a Sinhala description; a measurement or a
+  quoted label that the crop does not itself print is refused with its
+  findings. `validate_labels` applies the same rule to `detected_labels`,
+  which is why a `visual_only` region cannot carry one.
+- `assert_describable` refuses a non-visual region, a crop-less region, and an
+  unverified one: derived knowledge is built on verified source, not ahead of
+  it.
+- Saving a description is an ordinary edit. It writes **no review event**,
+  never touches `state`, never touches `text`, and needs `SOURCE_WRITE` rather
+  than `SOURCE_TRUST`. Describing is not trusting (D5).
+- A correction and a re-import both carry the description, the labels, the
+  crop and the settled kind onto the new revision. Verification is still
+  withdrawn when the text changes; the derived work is not silently discarded.
+- `GET /source-v2/pages/{page_id}/regions/{region_id}/crop` serves the
+  canonical crop under the same integrity contract as the page render: the
+  checksum is recomputed on every read and a mismatch is a refusal. Derived
+  text never replaces the image (D17).
+- `RegionView.technical_evidence` groups reason, deterministic findings,
+  declared uncertainty, abstention, origin, revision and crop checksum, so the
+  review card can collapse all of it behind `තාක්ෂණික විස්තර` instead of
+  putting it above the picture.
+
 
 ---
 

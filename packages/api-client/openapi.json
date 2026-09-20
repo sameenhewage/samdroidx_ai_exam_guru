@@ -2384,6 +2384,43 @@
         "title": "DependencyChecks",
         "type": "object"
       },
+      "DescribeRequest": {
+        "additionalProperties": false,
+        "description": "Save what the picture shows. Derived knowledge, not a verification.\n\nDeliberately carries no `compared_with_image_sha256`: that field exists so\na confirmation names the evidence a human compared, and describing a\nfigure is not a confirmation. Sending one would imply a review decision\nthat this endpoint must never make.",
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "detected_labels": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Detected Labels",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "visual_description": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Visual Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "revision",
+          "visual_description"
+        ],
+        "title": "DescribeRequest",
+        "type": "object"
+      },
       "Difficulty": {
         "enum": [
           "easy",
@@ -10635,6 +10672,24 @@
             ],
             "title": "Crop Sha256"
           },
+          "crop_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crop Url"
+          },
+          "detected_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detected Labels",
+            "type": "array"
+          },
           "origin": {
             "enum": [
               "machine",
@@ -10706,6 +10761,9 @@
             "title": "State",
             "type": "string"
           },
+          "technical_evidence": {
+            "$ref": "#/components/schemas/TechnicalEvidence"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -10720,6 +10778,17 @@
               }
             ],
             "title": "Verified Text"
+          },
+          "visual_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visual Description"
           }
         },
         "required": [
@@ -10731,7 +10800,8 @@
           "text",
           "abstained",
           "reason",
-          "state"
+          "state",
+          "technical_evidence"
         ],
         "title": "RegionView",
         "type": "object"
@@ -16798,6 +16868,83 @@
         ],
         "title": "TeacherPaperType",
         "type": "string"
+      },
+      "TechnicalEvidence": {
+        "additionalProperties": false,
+        "description": "Everything the machine noticed, in one place a card can collapse.\n\nProvenance, deterministic findings, declared uncertainty and checksums are\nwhat an auditor needs and what a teacher must not have to wade through to\nreach the picture. Grouping them makes \"hide this by default\" a property\nof the contract rather than a habit of one component.",
+        "properties": {
+          "abstained": {
+            "default": false,
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "crop_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crop Sha256"
+          },
+          "findings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "origin": {
+            "default": "machine",
+            "enum": [
+              "machine",
+              "human-correction"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "proposed_source_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "text_only",
+                  "visual_only",
+                  "visual_with_text",
+                  "decorative",
+                  "undecided"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Source Kind"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "revision": {
+            "default": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "uncertainty": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uncertainty",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "TechnicalEvidence",
+        "type": "object"
       },
       "TechnicalValidationFindingResponse": {
         "additionalProperties": false,
@@ -29203,6 +29350,307 @@
           }
         ],
         "summary": "Correct Region",
+        "tags": [
+          "source-v2"
+        ]
+      }
+    },
+    "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/crop": {
+      "get": {
+        "description": "The canonical crop, checksum-verified against what the agent read.\n\nD17: the crop is the only image a region may be read from. Extraction and\nconfirmation never consume it — a verified figure keeps its picture, and\nderived text never stands in for the original.",
+        "operationId": "read_region_crop_api_v1_admin_source_v2_pages__page_id__regions__region_id__crop_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "region_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Region Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {}
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Region Crop",
+        "tags": [
+          "source-v2"
+        ]
+      }
+    },
+    "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/describe": {
+      "post": {
+        "description": "POST alias for saving a description, same semantics as the PUT.",
+        "operationId": "describe_region_post_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "region_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Region Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Describe Region Post",
+        "tags": [
+          "source-v2"
+        ]
+      },
+      "put": {
+        "description": "Save what the picture shows. An ordinary edit, **not** a verification.\n\nD18: a generated or written description of a visual is Derived Knowledge.\nIt is stored beside the source, never inside `text`, it records no review\nevent, and it cannot move a region's state. `SOURCE_WRITE` rather than\n`SOURCE_TRUST` for exactly that reason — describing is not trusting.\n\nA description that asserts something the crop does not show is refused\nwith its findings rather than stored and quietly believed later.",
+        "operationId": "describe_region_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "region_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Region Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Describe Region",
         "tags": [
           "source-v2"
         ]

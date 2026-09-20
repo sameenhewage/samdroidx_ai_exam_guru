@@ -781,6 +781,9 @@ describe("admin API proxy browser request boundary", () => {
         "image",
       ],
     },
+    { path: ["source-v2", "pages", uploadId, "render"] },
+    // The canonical crop of one region is original source imagery too.
+    { path: ["source-v2", "pages", uploadId, "regions", "p186-r002", "crop"] },
   ])(
     "keeps comparison image responses private and sandboxed: $path",
     async ({ path }) => {

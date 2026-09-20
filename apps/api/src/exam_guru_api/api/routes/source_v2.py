@@ -19,12 +19,14 @@ from exam_guru_api.auth.api import require_permission
 from exam_guru_api.auth.domain import Permission, Principal
 from exam_guru_api.source_v2 import repository
 from exam_guru_api.source_v2.domain import NotVerifiedError, SourceV2Error, StaleReviewError
+from exam_guru_api.source_v2.evidence import diagnostics
 from exam_guru_api.source_v2.gate import DownstreamPurpose, assert_document_usable
-from exam_guru_api.source_v2.repository import PageNotFoundError
+from exam_guru_api.source_v2.repository import CropNotFoundError, PageNotFoundError
 from exam_guru_api.source_v2.schemas import (
     ConfirmRequest,
     ConfirmVisualRequest,
     CorrectRequest,
+    DescribeRequest,
     DocumentGateView,
     ExcludeRequest,
     ImportPageRequest,
@@ -34,7 +36,9 @@ from exam_guru_api.source_v2.schemas import (
     ReclassifyRequest,
     RegionMutationResponse,
     RegionView,
+    TechnicalEvidence,
 )
+from exam_guru_api.source_v2.visual_description import DescriptionRefusedError
 
 _PRIVATE_HEADERS = {
     "Cache-Control": "private, no-store",
@@ -56,13 +60,17 @@ def _private(response: Response) -> None:
 
 
 def _fail(error: Exception) -> HTTPException:
-    if isinstance(error, PageNotFoundError):
+    if isinstance(error, PageNotFoundError | CropNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, detail=str(error))
     if isinstance(error, StaleReviewError):
         return HTTPException(status.HTTP_409_CONFLICT, detail=str(error))
     if isinstance(error, NotVerifiedError):
         return HTTPException(status.HTTP_409_CONFLICT, detail=str(error))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+
+
+def _crop_url(page_id: UUID, region_id: str) -> str:
+    return f"/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/crop"
 
 
 async def _page_view(session: AsyncSession, page_id: UUID) -> PageView:
@@ -80,25 +88,48 @@ async def _page_view(session: AsyncSession, page_id: UUID) -> PageView:
         language=page.language,
         detector_version=page.detector_version,
         progress=PageProgress(**counts),
-        regions=[
-            RegionView(
-                region_id=row.region_id,
-                region_type=row.region_type,
-                candidate_id=row.candidate_id,
-                revision=row.revision,
-                origin=row.origin,
-                text=row.text,
-                abstained=row.abstained,
-                reason=row.reason,
-                state=row.state,
-                bbox=row.bbox,
-                verified_text=row.verified_text,
-                source_kind=row.source_kind,
-                proposed_source_kind=row.proposed_source_kind,
-                crop_sha256=row.crop_sha256,
-            )
-            for row in regions
-        ],
+        regions=[_region_view(page_id, row) for row in regions],
+    )
+
+
+def _region_view(page_id: UUID, row: repository.RegionRow) -> RegionView:
+    """One region, with source, derived knowledge and diagnostics separated.
+
+    `text` keeps exactly one meaning — the text printed inside the crop — and
+    everything the machine inferred or noticed leaves it. That separation is
+    the whole point: a reviewer must be able to tell what came off the page
+    from what a machine decided about it.
+    """
+
+    split = diagnostics(row.reason)
+    return RegionView(
+        region_id=row.region_id,
+        region_type=row.region_type,
+        candidate_id=row.candidate_id,
+        revision=row.revision,
+        origin=row.origin,
+        text=row.text,
+        abstained=row.abstained,
+        reason=row.reason,
+        state=row.state,
+        bbox=row.bbox,
+        verified_text=row.verified_text,
+        source_kind=row.source_kind,
+        proposed_source_kind=row.proposed_source_kind,
+        crop_sha256=row.crop_sha256,
+        visual_description=row.visual_description,
+        detected_labels=list(row.detected_labels),
+        crop_url=_crop_url(page_id, row.region_id) if row.crop_sha256 else None,
+        technical_evidence=TechnicalEvidence(
+            reason=row.reason,
+            findings=list(split.findings),
+            uncertainty=list(split.uncertainty),
+            abstained=row.abstained,
+            proposed_source_kind=row.proposed_source_kind,
+            origin=row.origin,
+            revision=row.revision,
+            crop_sha256=row.crop_sha256,
+        ),
     )
 
 
@@ -216,6 +247,38 @@ async def read_page_render(
         content=payload,
         media_type="image/png",
         headers={**_PRIVATE_HEADERS, "X-Source-Image-Sha256": page.image_sha256},
+    )
+
+
+@router.get(
+    "/source-v2/pages/{page_id}/regions/{region_id}/crop",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
+async def read_region_crop(
+    page_id: Annotated[UUID, Path()],
+    region_id: Annotated[str, Path(max_length=64)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_READ))],
+) -> Response:
+    """The canonical crop, checksum-verified against what the agent read.
+
+    D17: the crop is the only image a region may be read from. Extraction and
+    confirmation never consume it — a verified figure keeps its picture, and
+    derived text never stands in for the original.
+    """
+
+    _ = principal
+    try:
+        page = await repository.get_page(session, page_id)
+        crop_sha256 = await repository.region_crop_sha256(session, page_id, region_id)
+        payload = repository.crop_bytes(page, region_id, crop_sha256)
+    except SourceV2Error as error:
+        raise _fail(error) from error
+    return Response(
+        content=payload,
+        media_type="image/png",
+        headers={**_PRIVATE_HEADERS, "X-Crop-Sha256": crop_sha256},
     )
 
 
@@ -363,6 +426,79 @@ async def correct_region(
         await session.rollback()
         raise _fail(error) from error
     return await _region_response(session, page_id, region_id)
+
+
+async def _describe(
+    page_id: UUID,
+    region_id: str,
+    payload: DescribeRequest,
+    session: AsyncSession,
+) -> RegionMutationResponse:
+    try:
+        page = await repository.get_page(session, page_id)
+        await repository.describe(
+            session,
+            page=page,
+            region_id=region_id,
+            candidate_id=payload.candidate_id,
+            revision=payload.revision,
+            description=payload.visual_description,
+            detected_labels=payload.detected_labels,
+        )
+        await session.commit()
+    except (SourceV2Error, DescriptionRefusedError) as error:
+        await session.rollback()
+        raise _fail(error) from error
+    return await _region_response(session, page_id, region_id)
+
+
+@router.put(
+    "/source-v2/pages/{page_id}/regions/{region_id}/describe",
+    response_model=RegionMutationResponse,
+    responses={409: {"model": ApiErrorResponse}},
+)
+async def describe_region(
+    response: Response,
+    page_id: Annotated[UUID, Path()],
+    region_id: Annotated[str, Path(max_length=64)],
+    payload: DescribeRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_WRITE))],
+) -> RegionMutationResponse:
+    """Save what the picture shows. An ordinary edit, **not** a verification.
+
+    D18: a generated or written description of a visual is Derived Knowledge.
+    It is stored beside the source, never inside `text`, it records no review
+    event, and it cannot move a region's state. `SOURCE_WRITE` rather than
+    `SOURCE_TRUST` for exactly that reason — describing is not trusting.
+
+    A description that asserts something the crop does not show is refused
+    with its findings rather than stored and quietly believed later.
+    """
+
+    _private(response)
+    _ = principal
+    return await _describe(page_id, region_id, payload, session)
+
+
+@router.post(
+    "/source-v2/pages/{page_id}/regions/{region_id}/describe",
+    response_model=RegionMutationResponse,
+    responses={409: {"model": ApiErrorResponse}},
+)
+async def describe_region_post(
+    response: Response,
+    page_id: Annotated[UUID, Path()],
+    region_id: Annotated[str, Path(max_length=64)],
+    payload: DescribeRequest,
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    principal: Annotated[Principal, Depends(require_permission(Permission.SOURCE_WRITE))],
+) -> RegionMutationResponse:
+    """POST alias for saving a description, same semantics as the PUT."""
+
+    _private(response)
+    _ = principal
+    return await _describe(page_id, region_id, payload, session)
 
 
 @router.post(

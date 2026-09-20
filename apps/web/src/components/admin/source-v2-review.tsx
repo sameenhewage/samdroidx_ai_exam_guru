@@ -6,6 +6,14 @@
  * The teacher is not a typist. Every region arrives with one proposed reading
  * already in it; the teacher's job is to look at the page and decide. The
  * editor only opens when they choose to correct something.
+ *
+ * For a figure, three different things used to arrive as one block of text:
+ * the words printed inside the picture, a machine's description of the
+ * picture, and the validator's diagnostics. A reviewer could not tell which
+ * was which — page 186's `p186-r002` showed an English sentence about a
+ * line-art figure in the field that means "the exact Sinhala text printed
+ * here". They are now three labelled sections with the diagnostics collapsed,
+ * and each says plainly whether it is source or machine-generated.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,12 +28,24 @@ type SourceKind =
   | "decorative"
   | "undecided";
 
+type TechnicalEvidence = {
+  reason: string;
+  findings: string[];
+  uncertainty: string[];
+  abstained: boolean;
+  proposed_source_kind: SourceKind | null;
+  origin: "machine" | "human-correction";
+  revision: number;
+  crop_sha256: string | null;
+};
+
 type Region = {
   region_id: string;
   region_type: string;
   candidate_id: string;
   revision: number;
   origin: "machine" | "human-correction";
+  /** The text printed *inside the crop*. Source, and only source. */
   text: string;
   abstained: boolean;
   reason: string;
@@ -35,6 +55,11 @@ type Region = {
   source_kind: SourceKind;
   proposed_source_kind: SourceKind | null;
   crop_sha256: string | null;
+  /** Derived knowledge about the picture. Never source. */
+  visual_description: string | null;
+  detected_labels: string[];
+  crop_url: string | null;
+  technical_evidence: TechnicalEvidence;
 };
 
 type Progress = {
@@ -82,11 +107,34 @@ const TEXT = {
     kindVisualText: "රූපය + පෙළ",
     kindDecorative: "අලංකරණ",
     kindUndecided: "තීරණය අවස්ථා",
-    visualOnlyBody: "මෙය අධ්‍යාපනික රූපයකි. මුද්‍රිත පෙළක් නොමැත.",
     confirmVisual: "රූපය තහවුරු කරන්න",
     textPresent: "මෙහි පෙළ ඇත",
     needsDecision: "මෙම කොටස කුමක්දි යන්න තීරණය කරන්න.",
     reason: "හේතුව",
+    // --- the separated visual sections ---
+    originalCrop: "මුල් රූපය",
+    cropMissing: "මුල් රූපය නොලැබේ.",
+    textInImage: "රූපයේ ඇති පෙළ",
+    noTextInImage: "රූපයේ ඇති පෙළ: නොමැත",
+    visualDescription: "රූප විස්තරය",
+    noDescriptionYet: "රූප විස්තරයක් තවම ලියා නැත.",
+    detectedLabels: "හඳුනාගත් ලේබල්",
+    technical: "තාක්ෂණික විස්තර",
+    fromSource: "මූලාශ්‍රයෙන්",
+    machineGenerated: "යන්ත්‍රයෙන් සාදන ලදි",
+    edit: "සංස්කරණය කරන්න",
+    editDescription: "රූප විස්තරය සංස්කරණය කරන්න",
+    saveDescription: "රූප විස්තරය සුරකින්න",
+    reclassify: "වර්ගය වෙනස් කරන්න",
+    descriptionNotVerification: "විස්තරය සුරැකීම තහවුරු කිරීමක් නොවේ.",
+    evidenceReason: "හේතුව",
+    evidenceFindings: "නිර්ණායක සොයාගැනීම්",
+    evidenceUncertainty: "අවිනිශ්චිතතා",
+    evidenceOrigin: "මූලය",
+    evidenceRevision: "සංශෝධනය",
+    evidenceCrop: "රූප පිටපතේ හැෂ්",
+    evidenceProposedKind: "යන්ත්‍රය යෝජනා කළ වර්ගය",
+    evidenceAbstained: "පෙළක් හමු නොවීය",
   },
   english: {
     heading: "Source page review",
@@ -110,13 +158,38 @@ const TEXT = {
     kindVisualText: "Visual + text",
     kindDecorative: "Decorative",
     kindUndecided: "Needs decision",
-    visualOnlyBody: "This is an educational figure. It contains no printed text.",
     confirmVisual: "Confirm visual",
     textPresent: "Text is present",
     needsDecision: "Decide what this region is.",
     reason: "Reason",
+    // --- the separated visual sections ---
+    originalCrop: "Original image",
+    cropMissing: "The original image is unavailable.",
+    textInImage: "Text in the image",
+    noTextInImage: "Text in the image: none",
+    visualDescription: "Image description",
+    noDescriptionYet: "No image description has been written yet.",
+    detectedLabels: "Detected labels",
+    technical: "Technical details",
+    fromSource: "From the source",
+    machineGenerated: "Machine-generated",
+    edit: "Edit",
+    editDescription: "Edit image description",
+    saveDescription: "Save image description",
+    reclassify: "Change the kind",
+    descriptionNotVerification: "Saving a description is not a verification.",
+    evidenceReason: "Reason",
+    evidenceFindings: "Deterministic findings",
+    evidenceUncertainty: "Declared uncertainty",
+    evidenceOrigin: "Origin",
+    evidenceRevision: "Revision",
+    evidenceCrop: "Crop checksum",
+    evidenceProposedKind: "Kind proposed by the machine",
+    evidenceAbstained: "No printed text was found",
   },
 } as const;
+
+type Labels = (typeof TEXT)["english"] | (typeof TEXT)["sinhala"];
 
 /** Each kind gets its own wording *and* its own shape of border, so the
  *  distinction never depends on colour alone. */
@@ -134,10 +207,7 @@ const STATE_STYLES: Record<RegionState, string> = {
   unverified: "bg-amber-100 text-amber-900 border-amber-300",
 };
 
-function kindLabel(
-  labels: (typeof TEXT)["english"] | (typeof TEXT)["sinhala"],
-  kind: SourceKind,
-): string {
+function kindLabel(labels: Labels, kind: SourceKind): string {
   switch (kind) {
     case "visual_only":
       return labels.kindVisual;
@@ -156,12 +226,139 @@ function api(path: string): string {
   return `/api/v1/admin${path}`;
 }
 
+/**
+ * A section heading that says where its content came from.
+ *
+ * The badge is the whole point. Two sections of a figure card look alike and
+ * mean opposite things: one is the source, one is a machine's opinion about
+ * the source. Labelling only the machine one would leave the reader guessing
+ * about the other, so both are marked.
+ */
+function ProvenanceHeading({
+  title,
+  provenance,
+  regionId,
+  slot,
+  action,
+}: {
+  title: string;
+  provenance: { text: string; machine: boolean };
+  regionId: string;
+  slot: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 pb-1 pt-3">
+      <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+      <span
+        data-testid={`${slot}-provenance-${regionId}`}
+        data-provenance={provenance.machine ? "machine" : "source"}
+        className={cn(
+          "rounded border px-1.5 py-0.5 text-[11px] font-medium leading-4",
+          provenance.machine
+            ? "border-amber-400 bg-amber-50 text-amber-900"
+            : "border-emerald-400 bg-emerald-50 text-emerald-900",
+        )}
+      >
+        {provenance.text}
+      </span>
+      {action}
+    </div>
+  );
+}
+
+/**
+ * Everything the machine noticed, closed by default.
+ *
+ * Provenance strings, `N deterministic finding(s)`, `spacing-doubt`,
+ * `no-text`, the crop checksum and the revision are all real and all
+ * auditable. None of them is what the teacher opened this card to look at,
+ * and above the picture they drown it.
+ */
+function TechnicalDetails({
+  labels,
+  region,
+}: {
+  labels: Labels;
+  region: Region;
+}) {
+  const evidence = region.technical_evidence;
+  return (
+    <details
+      className="mt-3 rounded border border-slate-300 bg-slate-50"
+      data-testid={`technical-${region.region_id}`}
+    >
+      <summary className="cursor-pointer px-2 py-1 text-xs font-medium text-slate-700">
+        ▸ {labels.technical}
+      </summary>
+      <dl className="space-y-1 px-3 pb-2 pt-1 text-xs text-slate-700">
+        <div>
+          <dt className="inline font-medium">{labels.evidenceReason}: </dt>
+          <dd className="inline break-words">{evidence.reason}</dd>
+        </div>
+        {evidence.findings.length > 0 ? (
+          <div>
+            <dt className="font-medium">{labels.evidenceFindings}</dt>
+            <dd>
+              <ul className="list-disc pl-5">
+                {evidence.findings.map((finding) => (
+                  <li key={finding} className="break-words">
+                    {finding}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ) : null}
+        {evidence.uncertainty.length > 0 ? (
+          <div>
+            <dt className="inline font-medium">{labels.evidenceUncertainty}: </dt>
+            <dd className="inline font-mono">{evidence.uncertainty.join(", ")}</dd>
+          </div>
+        ) : null}
+        {evidence.abstained ? (
+          <div>
+            <dt className="inline font-medium">{labels.evidenceAbstained}</dt>
+            <dd className="inline" />
+          </div>
+        ) : null}
+        {evidence.proposed_source_kind ? (
+          <div>
+            <dt className="inline font-medium">{labels.evidenceProposedKind}: </dt>
+            <dd className="inline">
+              {kindLabel(labels, evidence.proposed_source_kind)}
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt className="inline font-medium">{labels.evidenceOrigin}: </dt>
+          <dd className="inline font-mono">{evidence.origin}</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium">{labels.evidenceRevision}: </dt>
+          <dd className="inline font-mono">r{evidence.revision}</dd>
+        </div>
+        {evidence.crop_sha256 ? (
+          <div>
+            <dt className="inline font-medium">{labels.evidenceCrop}: </dt>
+            <dd className="inline break-all font-mono">{evidence.crop_sha256}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </details>
+  );
+}
+
 export function SourceV2Review({ pageId }: { pageId: string }) {
   const [page, setPage] = useState<PageView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // The description editor is separate state from the text editor. Sharing
+  // one draft would let a half-typed description be saved as source text.
+  const [describing, setDescribing] = useState<string | null>(null);
+  const [descriptionDraft, setDescriptionDraft] = useState("");
   const [note, setNote] = useState("");
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [pulse, setPulse] = useState(false);
@@ -229,18 +426,34 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
   }, [pageId]);
 
   useEffect(() => {
-    void load();
+    // Deferred by a zero timeout, as the other admin studios do: the first
+    // load is a synchronisation with the server, not a render-time state
+    // update, and running it inside the effect body cascades renders.
+    const timeout = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timeout);
   }, [load]);
 
   const act = useCallback(
-    async (region: Region, action: "confirm" | "correct" | "exclude" | "confirm-visual" | "reclassify", body: object) => {
+    async (
+      region: Region,
+      action:
+        | "confirm"
+        | "correct"
+        | "exclude"
+        | "confirm-visual"
+        | "reclassify"
+        // Saving a description is an ordinary edit, so it goes through the
+        // same request path as the others — and records no review event.
+        | "describe",
+      body: object,
+    ) => {
       setBusy(`${region.region_id}:${action}`);
       setError(null);
       try {
         const response = await fetch(
           api(`/source-v2/pages/${pageId}/regions/${region.region_id}/${action}`),
           {
-            method: "POST",
+            method: action === "describe" ? "PUT" : "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           },
@@ -357,8 +570,28 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
             const needsDecision = region.source_kind === "undecided";
             // A figure with no printed text is not unreadable; it is a figure.
             const unreadable =
-              !isVisualOnly && (region.abstained || region.text.trim().length === 0);
+              !isVisualOnly &&
+              !isVisualWithText &&
+              (region.abstained || region.text.trim().length === 0);
             const isEditing = editing === region.region_id;
+            // The three concepts only need separating where there is a
+            // picture. Prose keeps the layout it already had.
+            const isVisual =
+              isVisualOnly || isVisualWithText || region.region_type === "figure";
+            const isDescribing = describing === region.region_id;
+            const openTextEditor = () => {
+              setEditing(region.region_id);
+              // Start from the latest *human-verified* text where one exists.
+              // Falling back to the machine candidate would silently discard
+              // the reviewer's own correction and invite them to redo it.
+              setDraft(region.verified_text ?? region.text);
+            };
+            const openDescriptionEditor = () => {
+              setDescribing(region.region_id);
+              // Same rule for derived knowledge: resume from the description
+              // that is actually saved, never from a blank box.
+              setDescriptionDraft(region.visual_description ?? "");
+            };
             return (
               <li
                 key={region.region_id}
@@ -430,46 +663,242 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   ) : null}
                 </div>
 
-                {isVisualOnly ? (
-                  /* Emptiness is the right answer here, so this is
-                     informational rather than an error. */
-                  <p
-                    data-testid={`visual-note-${region.region_id}`}
-                    className="rounded border border-violet-300 bg-violet-50 p-2 text-sm text-violet-900"
-                  >
-                    {labels.visualOnlyBody}
-                  </p>
-                ) : needsDecision ? (
-                  <p
-                    data-testid={`undecided-note-${region.region_id}`}
-                    className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
-                  >
-                    {labels.needsDecision}
-                  </p>
-                ) : unreadable ? (
-                  <p className="rounded border border-red-300 bg-red-50 p-2 text-sm text-red-800">
-                    {labels.notRead}
-                  </p>
-                ) : isEditing ? (
-                  <textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    rows={6}
-                    className="w-full rounded border border-slate-400 p-2 font-sans text-sm"
-                    data-testid={`editor-${region.region_id}`}
-                  />
-                ) : (
-                  <pre
-                    className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-sm"
-                    data-testid={`text-${region.region_id}`}
-                  >
-                    {region.verified_text ?? region.text}
-                  </pre>
-                )}
+                {isVisual ? (
+                  <div data-testid={`visual-${region.region_id}`}>
+                    {/* 1. The picture itself. It is the evidence; everything
+                        below is either read off it or written about it. */}
+                    {region.crop_url ? (
+                      <figure className="rounded border border-violet-300 bg-violet-50 p-2">
+                        <figcaption className="pb-1 text-center text-xs font-medium text-violet-900">
+                          {labels.originalCrop}
+                        </figcaption>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={region.crop_url}
+                          alt={`${labels.originalCrop}: ${region.region_id}`}
+                          className="mx-auto block max-h-72 w-auto max-w-full bg-white"
+                          data-testid={`crop-${region.region_id}`}
+                        />
+                      </figure>
+                    ) : (
+                      <p
+                        data-testid={`crop-missing-${region.region_id}`}
+                        className="rounded border border-slate-300 bg-slate-50 p-2 text-sm text-slate-700"
+                      >
+                        {labels.cropMissing}
+                      </p>
+                    )}
 
-                <p className="pt-1 text-xs text-slate-600">
-                  {labels.reason}: {region.reason}
-                </p>
+                    {needsDecision ? (
+                      <p
+                        data-testid={`undecided-note-${region.region_id}`}
+                        className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
+                      >
+                        {labels.needsDecision}
+                      </p>
+                    ) : null}
+
+                    {/* 2. Text printed inside the crop. Source. */}
+                    {isEditing ? (
+                      <>
+                        <ProvenanceHeading
+                          title={labels.textInImage}
+                          provenance={{ text: labels.fromSource, machine: false }}
+                          regionId={region.region_id}
+                          slot="text-in-image"
+                        />
+                        <textarea
+                          value={draft}
+                          onChange={(event) => setDraft(event.target.value)}
+                          rows={4}
+                          className="w-full rounded border border-slate-400 p-2 font-sans text-sm"
+                          data-testid={`editor-${region.region_id}`}
+                        />
+                      </>
+                    ) : isVisualOnly ? (
+                      /* Emptiness is the right answer for a drawing, so this
+                         states the fact rather than reporting a failure. */
+                      <ProvenanceHeading
+                        title={labels.noTextInImage}
+                        provenance={{ text: labels.fromSource, machine: false }}
+                        regionId={region.region_id}
+                        slot="text-in-image"
+                      />
+                    ) : (
+                      <>
+                        <ProvenanceHeading
+                          title={labels.textInImage}
+                          provenance={{ text: labels.fromSource, machine: false }}
+                          regionId={region.region_id}
+                          slot="text-in-image"
+                          action={
+                            <button
+                              type="button"
+                              disabled={busy !== null}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openTextEditor();
+                              }}
+                              className="rounded border border-slate-400 px-1.5 py-0.5 text-xs text-slate-700 hover:border-sky-600 hover:text-sky-700"
+                              data-testid={`edit-text-${region.region_id}`}
+                            >
+                              ✎ {labels.edit}
+                            </button>
+                          }
+                        />
+                        <pre
+                          className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-sm"
+                          data-testid={`text-${region.region_id}`}
+                        >
+                          {region.verified_text ?? region.text}
+                        </pre>
+                      </>
+                    )}
+
+                    {/* 3. What the picture shows. Derived knowledge (D18) —
+                        badged as machine-generated so it can never be read as
+                        something printed on the page. */}
+                    <ProvenanceHeading
+                      title={labels.visualDescription}
+                      provenance={{ text: labels.machineGenerated, machine: true }}
+                      regionId={region.region_id}
+                      slot="description"
+                      action={
+                        isDescribing ? null : (
+                          <button
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openDescriptionEditor();
+                            }}
+                            className="rounded border border-slate-400 px-1.5 py-0.5 text-xs text-slate-700 hover:border-sky-600 hover:text-sky-700"
+                            data-testid={`edit-description-${region.region_id}`}
+                          >
+                            ✎ {labels.edit}
+                          </button>
+                        )
+                      }
+                    />
+                    {isDescribing ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={descriptionDraft}
+                          onChange={(event) => setDescriptionDraft(event.target.value)}
+                          rows={4}
+                          className="w-full rounded border border-amber-400 p-2 font-sans text-sm"
+                          data-testid={`description-editor-${region.region_id}`}
+                        />
+                        <p className="text-xs text-slate-600">
+                          {labels.descriptionNotVerification}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={
+                              busy !== null || descriptionDraft.trim().length === 0
+                            }
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              const saved = await act(region, "describe", {
+                                candidate_id: region.candidate_id,
+                                revision: region.revision,
+                                visual_description: descriptionDraft,
+                                detected_labels: region.detected_labels,
+                              });
+                              if (saved) {
+                                setDescribing(null);
+                                setDescriptionDraft("");
+                              }
+                            }}
+                            className="rounded bg-amber-700 px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                            data-testid={`save-description-${region.region_id}`}
+                          >
+                            {labels.saveDescription}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDescribing(null);
+                              setDescriptionDraft("");
+                            }}
+                            className="rounded border border-slate-400 px-3 py-1 text-sm"
+                            data-testid={`cancel-description-${region.region_id}`}
+                          >
+                            {labels.cancel}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p
+                        className="whitespace-pre-wrap break-words rounded border border-amber-200 bg-amber-50/60 p-2 text-sm text-slate-800"
+                        data-testid={`description-${region.region_id}`}
+                      >
+                        {region.visual_description ?? labels.noDescriptionYet}
+                      </p>
+                    )}
+
+                    {/* 4. Labels legible inside the crop, only when there are
+                        any. An empty heading asserts nothing and just adds
+                        another thing to read. */}
+                    {region.detected_labels.length > 0 ? (
+                      <>
+                        <ProvenanceHeading
+                          title={labels.detectedLabels}
+                          provenance={{ text: labels.fromSource, machine: false }}
+                          regionId={region.region_id}
+                          slot="labels"
+                        />
+                        <ul
+                          className="list-disc pl-6 text-sm text-slate-800"
+                          data-testid={`labels-${region.region_id}`}
+                        >
+                          {region.detected_labels.map((label) => (
+                            <li key={label}>{label}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+
+                    {/* 5. Diagnostics, closed. */}
+                    <TechnicalDetails labels={labels} region={region} />
+                  </div>
+                ) : (
+                  <>
+                    {needsDecision ? (
+                      <p
+                        data-testid={`undecided-note-${region.region_id}`}
+                        className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
+                      >
+                        {labels.needsDecision}
+                      </p>
+                    ) : unreadable ? (
+                      <p className="rounded border border-red-300 bg-red-50 p-2 text-sm text-red-800">
+                        {labels.notRead}
+                      </p>
+                    ) : isEditing ? (
+                      <textarea
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        rows={6}
+                        className="w-full rounded border border-slate-400 p-2 font-sans text-sm"
+                        data-testid={`editor-${region.region_id}`}
+                      />
+                    ) : (
+                      <pre
+                        className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-sm"
+                        data-testid={`text-${region.region_id}`}
+                      >
+                        {region.verified_text ?? region.text}
+                      </pre>
+                    )}
+
+                    <p className="pt-1 text-xs text-slate-600">
+                      {labels.reason}: {region.reason}
+                    </p>
+                  </>
+                )}
 
                 <div className="flex flex-wrap gap-2 pt-2">
                   {isEditing ? (
@@ -566,25 +995,52 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           {labels.textPresent}
                         </button>
                       ) : null}
+                      {isVisualWithText ? (
+                        /* The mirror of `text-present`: a reviewer who looks
+                           and sees no printed label says so, rather than the
+                           machine's proposal quietly standing. */
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            act(region, "reclassify", {
+                              candidate_id: region.candidate_id,
+                              revision: region.revision,
+                              source_kind: "visual_only",
+                              note:
+                                note.trim() ||
+                                "reviewer sees no printed text in this figure",
+                            })
+                          }
+                          className="rounded border border-violet-600 px-3 py-1 text-sm text-violet-800"
+                          data-testid={`reclassify-${region.region_id}`}
+                        >
+                          {labels.reclassify}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         disabled={busy !== null}
                         title={
                           region.state === "verified" ? labels.reverifyNote : undefined
                         }
-                        onClick={() => {
-                          setEditing(region.region_id);
-                          // Start from the latest *human-verified* text where
-                          // one exists. Falling back to the machine candidate
-                          // would silently discard the reviewer's own
-                          // correction and invite them to redo it.
-                          setDraft(region.verified_text ?? region.text);
-                        }}
+                        onClick={openTextEditor}
                         className="rounded border border-slate-500 px-3 py-1 text-sm"
                         data-testid={`correct-${region.region_id}`}
                       >
                         {region.state === "verified" ? labels.editAgain : labels.correct}
                       </button>
+                      {isVisual ? (
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={openDescriptionEditor}
+                          className="rounded border border-amber-600 px-3 py-1 text-sm text-amber-900"
+                          data-testid={`describe-${region.region_id}`}
+                        >
+                          {labels.editDescription}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         disabled={busy !== null || region.state === "excluded"}

@@ -111,7 +111,15 @@ class SourceV2MachineCandidate(Base):
         Uuid, ForeignKey("source_v2_machine_candidates.id", ondelete="RESTRICT")
     )
     origin: Mapped[str] = mapped_column(String(32), nullable=False)  # machine | human-correction
+    #: The exact text printed *inside* the crop. Source.
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    #: What the picture shows, in the language of the material. Derived
+    #: knowledge (D18), never source, and deliberately not part of `text`.
+    visual_description: Mapped[str | None] = mapped_column(Text)
+    #: Labels legible inside the crop, one per entry.
+    detected_labels: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     abstained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reason: Mapped[str] = mapped_column(String(400), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="unverified")
@@ -189,6 +197,12 @@ class SourceV2VerifiedRegion(Base):
     candidate_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     text_nfc: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Derived knowledge about the verified visual, kept beside it rather than
+    #: inside `text`, so nothing downstream can mistake it for source.
+    visual_description: Mapped[str | None] = mapped_column(Text)
+    detected_labels: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     reviewer_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     image_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     verified_at: Mapped[datetime] = mapped_column(

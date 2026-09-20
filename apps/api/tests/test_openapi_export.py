@@ -44,6 +44,34 @@ def test_openapi_export_is_deterministic(tmp_path: Path) -> None:
         or "/source-benchmarks" in path
     ]
     assert "/api/v1/admin/source-v2/pages/{page_id}" in schema["paths"]
+    # A visual region publishes its three concepts separately: the text
+    # printed inside the crop, the derived description, and the crop itself.
+    region_properties = schema["components"]["schemas"]["RegionView"]["properties"]
+    assert {
+        "text",
+        "visual_description",
+        "detected_labels",
+        "crop_url",
+        "technical_evidence",
+    } <= region_properties.keys()
+    evidence_properties = schema["components"]["schemas"]["TechnicalEvidence"]["properties"]
+    assert {
+        "reason",
+        "findings",
+        "uncertainty",
+        "abstained",
+        "proposed_source_kind",
+        "origin",
+        "revision",
+        "crop_sha256",
+    } == evidence_properties.keys()
+    crop_path = "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/crop"
+    assert "image/png" in schema["paths"][crop_path]["get"]["responses"]["200"]["content"]
+    describe_path = "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/describe"
+    assert {"put", "post"} <= schema["paths"][describe_path].keys()
+    describe_properties = schema["components"]["schemas"]["DescribeRequest"]["properties"]
+    # Describing is not confirming, so the request cannot cite compared evidence.
+    assert "compared_with_image_sha256" not in describe_properties
 
 
 def test_openapi_export_cli_accepts_an_output_path(

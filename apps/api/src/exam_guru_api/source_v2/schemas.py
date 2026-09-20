@@ -24,12 +24,37 @@ class SourceV2Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class TechnicalEvidence(SourceV2Model):
+    """Everything the machine noticed, in one place a card can collapse.
+
+    Provenance, deterministic findings, declared uncertainty and checksums are
+    what an auditor needs and what a teacher must not have to wade through to
+    reach the picture. Grouping them makes "hide this by default" a property
+    of the contract rather than a habit of one component.
+    """
+
+    #: The full stored reason string, never truncated or reworded.
+    reason: str
+    #: Deterministic findings lifted out of the reason, where recognisable.
+    findings: list[str] = Field(default_factory=list)
+    #: Codes the reader declared about its own reading: `spacing-doubt`,
+    #: `no-text`, `layout-doubt`.
+    uncertainty: list[str] = Field(default_factory=list)
+    abstained: bool = False
+    proposed_source_kind: SourceKindName | None = None
+    origin: Literal["machine", "human-correction"] = "machine"
+    revision: int = 1
+    crop_sha256: str | None = None
+
+
 class RegionView(SourceV2Model):
     region_id: str
     region_type: RegionTypeName
     candidate_id: UUID
     revision: int
     origin: Literal["machine", "human-correction"]
+    #: The exact text printed **inside the crop**. Source, and only source.
+    #: Never a description, never a diagnostic, never a caption from the page.
     text: str
     abstained: bool
     reason: str
@@ -40,6 +65,15 @@ class RegionView(SourceV2Model):
     source_kind: SourceKindName = "undecided"
     proposed_source_kind: SourceKindName | None = None
     crop_sha256: str | None = None
+    #: What the picture shows, in the language of the material. **Derived
+    #: knowledge, never Verified Source Content** (D18).
+    visual_description: str | None = None
+    #: Labels legible inside the crop, as separate addressable strings.
+    detected_labels: list[str] = Field(default_factory=list)
+    #: Where to fetch the canonical crop itself. Null when none is recorded.
+    crop_url: str | None = None
+    #: Diagnostics, grouped so the review card can keep them out of the way.
+    technical_evidence: TechnicalEvidence
 
 
 class PageProgress(SourceV2Model):
@@ -135,6 +169,24 @@ class ConfirmVisualRequest(SourceV2Model):
     #: Required for visual_with_text: the printed labels, verified as text.
     text: str | None = Field(default=None, max_length=20000)
     note: str | None = Field(default=None, max_length=2000)
+
+
+class DescribeRequest(SourceV2Model):
+    """Save what the picture shows. Derived knowledge, not a verification.
+
+    Deliberately carries no `compared_with_image_sha256`: that field exists so
+    a confirmation names the evidence a human compared, and describing a
+    figure is not a confirmation. Sending one would imply a review decision
+    that this endpoint must never make.
+    """
+
+    candidate_id: UUID
+    revision: int = Field(ge=1)
+    #: In the language of the material. Validated before it is stored.
+    visual_description: str = Field(min_length=1, max_length=4000)
+    #: Labels legible **inside the crop**. Each is checked against the text
+    #: transcribed from that same crop.
+    detected_labels: list[str] = Field(default_factory=list, max_length=64)
 
 
 class ReclassifyRequest(SourceV2Model):

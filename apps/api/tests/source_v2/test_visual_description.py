@@ -13,6 +13,7 @@ from exam_guru_api.source_v2.visual_description import (
     DescriptionRefusedError,
     assert_describable,
     validate,
+    validate_labels,
 )
 
 # "A bar magnet, a paper butterfly and a piece of thread are shown."
@@ -91,27 +92,61 @@ def test_several_imported_claims_are_all_reported() -> None:
     assert {"unverifiable-measurement", "unverifiable-label"} <= {f.code for f in findings}
 
 
+# --- detected labels claim the same thing, in a list -------------------------
+
+
+def label_codes(labels: list[str], *, visible_text: str = "") -> set[str]:
+    return {item.code for item in validate_labels(labels, visible_text=visible_text)}
+
+
+def test_a_label_printed_inside_the_crop_is_accepted() -> None:
+    assert label_codes(["චුම්බකය"], visible_text="කෝටුව නූල චුම්බකය") == set()
+
+
+def test_a_label_taken_from_elsewhere_on_the_page_is_refused() -> None:
+    """The list format does not make an imported label true."""
+
+    assert "unverifiable-label" in label_codes(["රෙජිෆෝම්"], visible_text="කෝටුව නූල")
+
+
+def test_a_visual_only_region_cannot_carry_detected_labels() -> None:
+    """No crop text at all means nothing in the crop is legible as a label."""
+
+    assert "unverifiable-label" in label_codes(["චුම්බකය"], visible_text="")
+
+
+def test_no_labels_is_always_fine() -> None:
+    assert validate_labels([], visible_text="") == []
+
+
+def test_a_blank_label_is_refused() -> None:
+    assert "empty-label" in label_codes(["  "], visible_text="කෝටුව")
+
+
 # --- a description is only written about verified source ----------------------
 
 
 def test_only_a_visual_region_can_be_described() -> None:
     with pytest.raises(DescriptionRefusedError):
-        assert_describable(source_kind="text_only", verified=True, has_canonical_visual=True)
+        assert_describable(source_kind="text_only", has_canonical_visual=True)
 
 
-def test_an_unverified_visual_cannot_be_described_yet() -> None:
-    """Derived knowledge is built on verified source, never ahead of it."""
+def test_an_unverified_visual_can_still_be_described() -> None:
+    """The reviewer has to be able to see the description in order to judge it.
 
-    with pytest.raises(DescriptionRefusedError) as error:
-        assert_describable(source_kind="visual_only", verified=False, has_canonical_visual=True)
-    assert "not verified" in str(error.value)
+    Requiring verification first would mean a description only ever appears
+    after the human has already decided, which is a description nobody can
+    review. It arrives as a proposal beside the machine's reading of the text.
+    """
+
+    assert_describable(source_kind="visual_only", has_canonical_visual=True)
 
 
 def test_a_visual_without_its_crop_cannot_be_described() -> None:
     with pytest.raises(DescriptionRefusedError):
-        assert_describable(source_kind="visual_only", verified=True, has_canonical_visual=False)
+        assert_describable(source_kind="visual_only", has_canonical_visual=False)
 
 
-def test_a_verified_visual_with_its_crop_may_be_described() -> None:
-    assert_describable(source_kind="visual_only", verified=True, has_canonical_visual=True)
-    assert_describable(source_kind="visual_with_text", verified=True, has_canonical_visual=True)
+def test_a_visual_with_its_crop_may_be_described() -> None:
+    assert_describable(source_kind="visual_only", has_canonical_visual=True)
+    assert_describable(source_kind="visual_with_text", has_canonical_visual=True)

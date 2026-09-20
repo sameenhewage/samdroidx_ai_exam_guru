@@ -26,6 +26,12 @@ from exam_guru_api.source_v2.domain import (
     StaleReviewError,
 )
 from exam_guru_api.source_v2.source_kind import SourceKind, propose
+from exam_guru_api.source_v2.visual_description import (
+    DescriptionRefusedError,
+    assert_describable,
+    validate,
+    validate_labels,
+)
 
 HUMAN_CORRECTION = "human-correction"
 
@@ -36,6 +42,10 @@ RENDER_ROOT = Path(os.environ.get("EXAM_GURU_SOURCE_V2_RENDER_ROOT", "/source-co
 
 class PageNotFoundError(SourceV2Error):
     """The requested Source V2 page does not exist."""
+
+
+class CropNotFoundError(SourceV2Error):
+    """No canonical crop on disk matches what this region was read from."""
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,7 @@ class RegionRow:
     candidate_id: UUID
     revision: int
     origin: str
+    #: The text printed inside the crop. Source, and only that.
     text: str
     abstained: bool
     reason: str
@@ -67,6 +78,9 @@ class RegionRow:
     source_kind: str = "undecided"
     proposed_source_kind: str | None = None
     crop_sha256: str | None = None
+    #: Derived knowledge about the picture. Never source (D18).
+    visual_description: str | None = None
+    detected_labels: tuple[str, ...] = ()
 
 
 async def get_page(session: AsyncSession, page_id: UUID) -> PageHeader:
@@ -108,7 +122,11 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             text("""
                 select c.region_id, c.region_type, c.id, c.revision, c.origin, c.text,
                        c.abstained, c.reason, c.state, v.text,
-                       c.source_kind, c.proposed_source_kind, c.crop_sha256
+                       c.source_kind, c.proposed_source_kind, c.crop_sha256,
+                       -- The verified copy wins where one exists: it is the
+                       -- description attached to the verification a human made.
+                       coalesce(v.visual_description, c.visual_description),
+                       coalesce(v.detected_labels, c.detected_labels)
                 from source_v2_machine_candidates c
                 left join source_v2_verified_regions v
                        on v.page_id = c.page_id and v.region_id = c.region_id
@@ -141,9 +159,46 @@ async def list_regions(session: AsyncSession, page_id: UUID) -> list[RegionRow]:
             source_kind=row[10],
             proposed_source_kind=row[11],
             crop_sha256=row[12],
+            visual_description=row[13],
+            detected_labels=_labels(row[14]),
         )
         for row in rows
     ]
+
+
+def _labels(raw: object) -> tuple[str, ...]:
+    """Whatever JSONB holds, read as an ordered list of label strings."""
+
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(item) for item in raw if str(item).strip())
+
+
+async def region_crop_sha256(session: AsyncSession, page_id: UUID, region_id: str) -> str:
+    """The canonical crop checksum recorded for the current candidate.
+
+    Read from the verified row first where one exists: that is the image the
+    human actually compared against, and it is the checksum a verified visual
+    is required to carry.
+    """
+
+    row = (
+        await session.execute(
+            text(
+                "select coalesce(v.crop_sha256, c.crop_sha256)"
+                " from source_v2_machine_candidates c"
+                " left join source_v2_verified_regions v"
+                "        on v.page_id = c.page_id and v.region_id = c.region_id"
+                " where c.page_id = :page_id and c.region_id = :region_id and c.is_current"
+            ),
+            {"page_id": page_id, "region_id": region_id},
+        )
+    ).first()
+    if row is None:
+        raise PageNotFoundError(f"unknown region {region_id}")
+    if not row[0]:
+        raise CropNotFoundError(f"region {region_id} has no canonical crop")
+    return str(row[0])
 
 
 async def progress(session: AsyncSession, page_id: UUID) -> dict[str, int]:
@@ -273,15 +328,21 @@ async def confirm(
         text("""
             insert into source_v2_verified_regions
               (id, page_id, region_id, candidate_id, candidate_revision, text, text_nfc,
-               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox)
+               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox,
+               visual_description, detected_labels)
             values (:id, :page_id, :region_id, :candidate_id, :revision, :text, :text_nfc,
-                    :reviewer_id, :sha, :verified_at, :source_kind, :crop_sha256, :bbox)
+                    :reviewer_id, :sha, :verified_at, :source_kind, :crop_sha256, :bbox,
+                    :description, cast(:labels as jsonb))
         """),
         {
             "id": verified_id,
             "source_kind": facts["source_kind"],
             "crop_sha256": facts["crop_sha256"],
             "bbox": facts["bbox"],
+            # Derived knowledge travels with the verification rather than
+            # being re-read later from a candidate that may have moved on.
+            "description": facts["visual_description"],
+            "labels": facts["detected_labels"],
             "page_id": page.page_id,
             "region_id": region_id,
             "candidate_id": candidate_id,
@@ -301,12 +362,13 @@ async def confirm(
 
 
 async def _region_facts(session: AsyncSession, page_id: UUID, region_id: str) -> dict:
-    """Kind, canonical crop and geometry for the current candidate."""
+    """Kind, canonical crop, derived description and geometry for the current candidate."""
 
     row = (
         await session.execute(
             text(
-                "select source_kind, crop_sha256 from source_v2_machine_candidates"
+                "select source_kind, crop_sha256, visual_description, detected_labels,"
+                " text, state, proposed_source_kind from source_v2_machine_candidates"
                 " where page_id = :page_id and region_id = :region_id and is_current"
             ),
             {"page_id": page_id, "region_id": region_id},
@@ -334,6 +396,11 @@ async def _region_facts(session: AsyncSession, page_id: UUID, region_id: str) ->
     return {
         "source_kind": row[0],
         "crop_sha256": row[1],
+        "visual_description": row[2],
+        "detected_labels": json.dumps(list(_labels(row[3])), ensure_ascii=False),
+        "text": row[4],
+        "state": row[5],
+        "proposed_source_kind": row[6],
         "bbox": json.dumps(bbox) if bbox is not None else None,
     }
 
@@ -413,9 +480,11 @@ async def confirm_visual(
         text("""
             insert into source_v2_verified_regions
               (id, page_id, region_id, candidate_id, candidate_revision, text, text_nfc,
-               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox)
+               reviewer_id, image_sha256, verified_at, source_kind, crop_sha256, bbox,
+               visual_description, detected_labels)
             values (:id, :page_id, :region_id, :candidate_id, :revision, :text, :text,
-                    :reviewer_id, :sha, now(), :kind, :crop, :bbox)
+                    :reviewer_id, :sha, now(), :kind, :crop, :bbox,
+                    :description, cast(:labels as jsonb))
         """),
         {
             "id": verified_id,
@@ -429,6 +498,8 @@ async def confirm_visual(
             "kind": source_kind,
             "crop": facts["crop_sha256"],
             "bbox": facts["bbox"],
+            "description": facts["visual_description"],
+            "labels": facts["detected_labels"],
         },
     )
     return verified_id
@@ -489,6 +560,10 @@ async def correct(
     if not corrected_text.strip():
         raise SourceV2Error("a correction must contain text; use exclude to drop a region")
     row = await _require_current(session, page.page_id, region_id, candidate_id, revision)
+    # Correcting the *printed text* says nothing about what the picture shows.
+    # Dropping the description here is how a reviewer loses work they already
+    # did, with nothing on screen to tell them it happened.
+    facts = await _region_facts(session, page.page_id, region_id)
     await _append_event(
         session,
         page_id=page.page_id,
@@ -520,9 +595,11 @@ async def correct(
         text("""
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
-               abstained, reason, state, is_current)
+               abstained, reason, state, is_current, source_kind, proposed_source_kind,
+               crop_sha256, visual_description, detected_labels)
             values (:id, :page_id, :region_id, :region_type, :revision, :parent_id, :origin,
-                    :text, false, :reason, 'unverified', true)
+                    :text, false, :reason, 'unverified', true, :kind, :proposed_kind,
+                    :crop, :description, cast(:labels as jsonb))
         """),
         {
             "id": child_id,
@@ -534,9 +611,87 @@ async def correct(
             "origin": HUMAN_CORRECTION,
             "text": corrected_text,
             "reason": "human correction; awaiting confirmation",
+            # The kind, the crop and the description describe the same region
+            # and the same pixels. Only the transcription changed. The
+            # machine's original proposal is carried, not re-derived, so a
+            # human reclassification stays visible across revisions.
+            "kind": facts["source_kind"],
+            "proposed_kind": facts["proposed_source_kind"],
+            "crop": facts["crop_sha256"],
+            "description": facts["visual_description"],
+            "labels": facts["detected_labels"],
         },
     )
     return child_id
+
+
+async def describe(
+    session: AsyncSession,
+    *,
+    page: PageHeader,
+    region_id: str,
+    candidate_id: UUID,
+    revision: int,
+    description: str,
+    detected_labels: list[str] | None = None,
+) -> None:
+    """Save what the picture shows. Derived knowledge, not a verification.
+
+    Three things make this an ordinary edit rather than a review decision:
+    it writes no review event, it never touches `state`, and it never touches
+    `text`. A reviewer describing a figure has not re-checked the printed
+    text, so pretending they confirmed anything would manufacture trust
+    nobody gave (D5).
+
+    Validation runs before the write, not after, and a refusal carries its
+    findings. A description that quietly stores a measurement the crop does
+    not print is worse than no description: a later reader cannot tell it was
+    imported from elsewhere on the page.
+    """
+
+    await _require_current(session, page.page_id, region_id, candidate_id, revision)
+    facts = await _region_facts(session, page.page_id, region_id)
+    assert_describable(
+        source_kind=facts["source_kind"],
+        has_canonical_visual=bool(facts["crop_sha256"]),
+    )
+
+    labels = [label.strip() for label in (detected_labels or [])]
+    body = unicodedata.normalize("NFC", description).strip()
+    findings = validate(body, language=page.language, visible_text=facts["text"])
+    findings.extend(validate_labels(labels, visible_text=facts["text"]))
+    if findings:
+        raise DescriptionRefusedError(
+            "this description asserts something the crop does not show: "
+            + "; ".join(str(finding) for finding in findings)
+        )
+
+    payload = {
+        "page_id": page.page_id,
+        "region_id": region_id,
+        "description": body,
+        "labels": json.dumps([label for label in labels if label], ensure_ascii=False),
+    }
+    await session.execute(
+        text(
+            "update source_v2_machine_candidates"
+            " set visual_description = :description,"
+            "     detected_labels = cast(:labels as jsonb)"
+            " where page_id = :page_id and region_id = :region_id and is_current"
+        ),
+        payload,
+    )
+    # The verified row keeps its own copy, so the description a reviewer reads
+    # beside verified source is the one stored against that verification.
+    await session.execute(
+        text(
+            "update source_v2_verified_regions"
+            " set visual_description = :description,"
+            "     detected_labels = cast(:labels as jsonb)"
+            " where page_id = :page_id and region_id = :region_id"
+        ),
+        payload,
+    )
 
 
 async def exclude(
@@ -700,7 +855,8 @@ async def _supersede(
         current = (
             await session.execute(
                 text(
-                    "select id, revision, text, source_kind, crop_sha256"
+                    "select id, revision, text, source_kind, crop_sha256,"
+                    "       visual_description, detected_labels"
                     " from source_v2_machine_candidates"
                     " where page_id = :page_id and region_id = :region_id and is_current"
                 ),
@@ -767,8 +923,18 @@ async def _supersede(
             )
         ).all()
         withdrawn += len(removed)
+        # A fresh transcription of the same pixels does not make an existing
+        # description of those pixels false. Verification is withdrawn because
+        # the *text* changed; the derived description is carried onto the new
+        # revision so it is not silently lost by a re-import.
         await _insert_candidate(
-            session, page_id, region, revision=current[1] + 1, parent_id=current[0]
+            session,
+            page_id,
+            region,
+            revision=current[1] + 1,
+            parent_id=current[0],
+            visual_description=current[5],
+            detected_labels=current[6],
         )
         superseded += 1
     return {
@@ -788,6 +954,8 @@ async def _insert_candidate(
     *,
     revision: int,
     parent_id: UUID | None,
+    visual_description: str | None = None,
+    detected_labels: object = None,
 ) -> None:
     supplied = region.get("source_kind")
     proposed = (
@@ -803,11 +971,11 @@ async def _insert_candidate(
             insert into source_v2_machine_candidates
               (id, page_id, region_id, region_type, revision, parent_id, origin, text,
                abstained, reason, state, is_current, source_kind, proposed_source_kind,
-               crop_sha256)
+               crop_sha256, visual_description, detected_labels)
             values (:id, :page_id, :region_id, :region_type, :revision, :parent_id,
                     'machine', :text, :abstained, :reason,
                     'unverified', true, :source_kind, :proposed_source_kind,
-                    :crop_sha256)
+                    :crop_sha256, :visual_description, cast(:detected_labels as jsonb))
         """),
         {
             "id": uuid4(),
@@ -825,6 +993,10 @@ async def _insert_candidate(
             "source_kind": str(proposed),
             "proposed_source_kind": str(proposed),
             "crop_sha256": region.get("crop_sha256"),
+            # The importer never authors a description. It only carries one
+            # that already existed for this region forward to the new revision.
+            "visual_description": visual_description,
+            "detected_labels": json.dumps(list(_labels(detected_labels)), ensure_ascii=False),
         },
     )
 
@@ -845,6 +1017,54 @@ def rendered_page_bytes(page: PageHeader, *, root: Path | None = None) -> bytes:
             return payload
     raise PageNotFoundError(
         f"no render matching {page.image_sha256[:12]}… for page {page.page_number} under {base}"
+    )
+
+
+def crop_filename(page_number: int, region_id: str) -> str:
+    """`p186-r002` on page 186 is `crop-186-r002.png`.
+
+    The region id carries the page it belongs to, but the *page number on the
+    page row* is the authority: a crop named from a region id alone could be
+    served for a page it was never cut from.
+    """
+
+    suffix = region_id.rsplit("-", 1)[-1]
+    return f"crop-{page_number:03d}-{suffix}.png"
+
+
+def crop_bytes(
+    page: PageHeader,
+    region_id: str,
+    crop_sha256: str,
+    *,
+    root: Path | None = None,
+) -> bytes:
+    """The canonical crop this region was read from, checksum-verified.
+
+    Exactly the contract `rendered_page_bytes` holds, for the same reason.
+    D17 makes the crop the only image a region may be read from, by the agent
+    transcribing it and by the reviewer confirming it; serving different
+    pixels under the same name would let someone confirm a reading against an
+    image it did not come from. The checksum is recomputed on every read, and
+    a mismatch is a refusal, not a warning.
+
+    The original crop stays available after extraction and confirmation.
+    Derived text never replaces the image.
+    """
+
+    if not crop_sha256:
+        raise CropNotFoundError(
+            f"region {region_id} has no canonical crop; nothing can be served for it"
+        )
+    base = root or RENDER_ROOT
+    name = crop_filename(page.page_number, region_id)
+    for path in sorted(base.glob(f"**/crops/{name}")):
+        payload = path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() == crop_sha256:
+            return payload
+    raise CropNotFoundError(
+        f"no crop matching {crop_sha256[:12]}… for region {region_id} "
+        f"(expected {name}) under {base}"
     )
 
 

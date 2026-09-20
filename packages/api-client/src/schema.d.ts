@@ -1978,6 +1978,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/crop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Region Crop
+         * @description The canonical crop, checksum-verified against what the agent read.
+         *
+         *     D17: the crop is the only image a region may be read from. Extraction and
+         *     confirmation never consume it — a verified figure keeps its picture, and
+         *     derived text never stands in for the original.
+         */
+        get: operations["read_region_crop_api_v1_admin_source_v2_pages__page_id__regions__region_id__crop_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Describe Region
+         * @description Save what the picture shows. An ordinary edit, **not** a verification.
+         *
+         *     D18: a generated or written description of a visual is Derived Knowledge.
+         *     It is stored beside the source, never inside `text`, it records no review
+         *     event, and it cannot move a region's state. `SOURCE_WRITE` rather than
+         *     `SOURCE_TRUST` for exactly that reason — describing is not trusting.
+         *
+         *     A description that asserts something the crop does not show is refused
+         *     with its findings rather than stored and quietly believed later.
+         */
+        put: operations["describe_region_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_put"];
+        /**
+         * Describe Region Post
+         * @description POST alias for saving a description, same semantics as the PUT.
+         */
+        post: operations["describe_region_post_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/source-v2/pages/{page_id}/regions/{region_id}/exclude": {
         parameters: {
             query?: never;
@@ -3277,6 +3333,28 @@ export interface components {
              * @enum {string}
              */
             valkey: "ok" | "unavailable";
+        };
+        /**
+         * DescribeRequest
+         * @description Save what the picture shows. Derived knowledge, not a verification.
+         *
+         *     Deliberately carries no `compared_with_image_sha256`: that field exists so
+         *     a confirmation names the evidence a human compared, and describing a
+         *     figure is not a confirmation. Sending one would imply a review decision
+         *     that this endpoint must never make.
+         */
+        DescribeRequest: {
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /** Detected Labels */
+            detected_labels?: string[];
+            /** Revision */
+            revision: number;
+            /** Visual Description */
+            visual_description: string;
         };
         /**
          * Difficulty
@@ -6386,6 +6464,10 @@ export interface components {
             candidate_id: string;
             /** Crop Sha256 */
             crop_sha256?: string | null;
+            /** Crop Url */
+            crop_url?: string | null;
+            /** Detected Labels */
+            detected_labels?: string[];
             /**
              * Origin
              * @enum {string}
@@ -6415,10 +6497,13 @@ export interface components {
              * @enum {string}
              */
             state: "unverified" | "verified" | "excluded";
+            technical_evidence: components["schemas"]["TechnicalEvidence"];
             /** Text */
             text: string;
             /** Verified Text */
             verified_text?: string | null;
+            /** Visual Description */
+            visual_description?: string | null;
         };
         /** RestoreSourceFixtureRequest */
         RestoreSourceFixtureRequest: {
@@ -8637,6 +8722,43 @@ export interface components {
          * @enum {string}
          */
         TeacherPaperType: "subject_practice" | "term_test" | "scholarship_practice";
+        /**
+         * TechnicalEvidence
+         * @description Everything the machine noticed, in one place a card can collapse.
+         *
+         *     Provenance, deterministic findings, declared uncertainty and checksums are
+         *     what an auditor needs and what a teacher must not have to wade through to
+         *     reach the picture. Grouping them makes "hide this by default" a property
+         *     of the contract rather than a habit of one component.
+         */
+        TechnicalEvidence: {
+            /**
+             * Abstained
+             * @default false
+             */
+            abstained: boolean;
+            /** Crop Sha256 */
+            crop_sha256?: string | null;
+            /** Findings */
+            findings?: string[];
+            /**
+             * Origin
+             * @default machine
+             * @enum {string}
+             */
+            origin: "machine" | "human-correction";
+            /** Proposed Source Kind */
+            proposed_source_kind?: ("text_only" | "visual_only" | "visual_with_text" | "decorative" | "undecided") | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Revision
+             * @default 1
+             */
+            revision: number;
+            /** Uncertainty */
+            uncertainty?: string[];
+        };
         /** TechnicalValidationFindingResponse */
         TechnicalValidationFindingResponse: {
             /** Code */
@@ -15944,6 +16066,209 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CorrectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionMutationResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_region_crop_api_v1_admin_source_v2_pages__page_id__regions__region_id__crop_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: string;
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    describe_region_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: string;
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DescribeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionMutationResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    describe_region_post_api_v1_admin_source_v2_pages__page_id__regions__region_id__describe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                page_id: string;
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DescribeRequest"];
             };
         };
         responses: {

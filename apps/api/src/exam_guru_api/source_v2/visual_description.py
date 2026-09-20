@@ -135,12 +135,49 @@ def validate(
     return findings
 
 
-def assert_describable(*, source_kind: str, verified: bool, has_canonical_visual: bool) -> None:
-    """A description may only be written about a real, verified source visual.
+def validate_labels(labels: list[str], *, visible_text: str = "") -> list[Finding]:
+    """A detected label claims "this exact text is legible inside the crop".
 
-    Refusing here keeps the ordering honest: the picture is confirmed as source
-    first, and only then described. A description of an unverified region would
-    be derived knowledge built on something nobody has checked.
+    Same rule as a quoted label inside a description, applied to the structured
+    list. It is stricter than it looks in one useful way: a `visual_only`
+    region has no crop text at all, so any label attached to it is refused —
+    which is correct, because a figure with legible labels is
+    `visual_with_text`, not `visual_only`.
+    """
+
+    inside = unicodedata.normalize("NFC", visible_text)
+    findings: list[Finding] = []
+    for raw in labels:
+        label = unicodedata.normalize("NFC", raw).strip()
+        if not label:
+            findings.append(Finding("empty-label", "a detected label must say something"))
+            continue
+        if label not in inside:
+            findings.append(
+                Finding(
+                    "unverifiable-label",
+                    f"{label!r} is listed as legible inside the crop, but it is not part "
+                    "of the text transcribed from this crop",
+                )
+            )
+    return findings
+
+
+def assert_describable(*, source_kind: str, has_canonical_visual: bool) -> None:
+    """A description may only be written about a real source visual.
+
+    It must be a visual region, and the canonical crop it claims to describe
+    has to exist — describing pixels nobody can produce is not reviewable.
+
+    It deliberately does **not** require the region to be verified already.
+    An earlier version did, and that was wrong: a description the reviewer
+    cannot see until after they have confirmed is a description they can never
+    review. The description is a machine *proposal* that arrives beside the
+    machine's reading of the text, and the human decides on both together.
+    What must never happen is the reverse — a description being treated as
+    verified content, or its arrival standing in for a human decision. Writing
+    one records no review event and changes no state, which is what keeps the
+    gate honest.
     """
 
     if source_kind not in {"visual_only", "visual_with_text"}:
@@ -148,9 +185,4 @@ def assert_describable(*, source_kind: str, verified: bool, has_canonical_visual
     if not has_canonical_visual:
         raise DescriptionRefusedError(
             "the canonical crop for this region is missing; there is nothing to describe"
-        )
-    if not verified:
-        raise DescriptionRefusedError(
-            "the visual is not verified source content yet; describe it after a human "
-            "has confirmed it, not before"
         )

@@ -116,11 +116,18 @@ function isSourceContentPath(path: readonly string[]): boolean {
 
 function isSourceImagePath(path: readonly string[]): boolean {
   return (
-    // Source V2 serves the original rendered page the reviewer compares against.
+    // Source V2 serves the original rendered page the reviewer compares
+    // against, and the canonical crop of one region on it. Both are original
+    // source pixels and get the same sandboxing as any other source image.
     (path.length === 4 &&
       path[0] === "source-v2" &&
       path[1] === "pages" &&
       path[3] === "render") ||
+    (path.length === 6 &&
+      path[0] === "source-v2" &&
+      path[1] === "pages" &&
+      path[3] === "regions" &&
+      path[5] === "crop") ||
     (path.length === 5 &&
       ((path[2] === "pages" &&
         ((path[0] === "materials" && path[4] === "image") ||
