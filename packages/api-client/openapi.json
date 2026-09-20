@@ -10485,8 +10485,6 @@
       "RateLimitScope": {
         "enum": [
           "source_upload",
-          "extraction_trigger",
-          "document_understanding",
           "embedding_job_create",
           "retrieval_explore",
           "generation_create_retry",

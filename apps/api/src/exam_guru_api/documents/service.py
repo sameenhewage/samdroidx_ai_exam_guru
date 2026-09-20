@@ -41,7 +41,6 @@ from exam_guru_api.documents.domain import (
     SourceDocumentType,
     validate_pdf_upload,
 )
-from exam_guru_api.documents.fidelity_models import SourceReadJobModel
 from exam_guru_api.documents.models import SourceDocumentModel, SourceMetadataCandidateModel
 from exam_guru_api.documents.schemas import (
     MaterialGradeSummaryResponse,
@@ -1237,15 +1236,9 @@ class SourceDocumentService:
 
     @staticmethod
     def _material_status_expression() -> ColumnElement[str]:
-        document, job = SourceDocumentModel, SourceReadJobModel
+        document = SourceDocumentModel
         verified_pages = func.public.source_document_fidelity_is_current(
             document.id, type_=Boolean()
-        )
-        reading = (
-            select(job.id)
-            .where(job.document_id == document.id, job.status.in_(("queued", "running")))
-            .correlate(document)
-            .exists()
         )
         ready = and_(
             document.active_for_ai.is_(True),
@@ -1263,7 +1256,6 @@ class SourceDocumentService:
                 ),
                 MaterialStatus.REMOVED.value,
             ),
-            (reading, MaterialStatus.PROCESSING.value),
             (ready, MaterialStatus.READY_FOR_AI.value),
             else_=MaterialStatus.NEEDS_REVIEW.value,
         )

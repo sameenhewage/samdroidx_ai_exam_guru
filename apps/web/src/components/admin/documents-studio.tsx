@@ -453,31 +453,6 @@ export function DocumentsStudio({ role }: { role: Role }) {
           </section>
         </div>
       )}
-
-      <section aria-labelledby="review-heading" className="mt-8 rounded-xl border border-slate-300 bg-slate-950 p-5 text-white sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-5">
-          <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="font-mono text-xs tracking-wide text-slate-400 uppercase">Next pipeline step</p>
-              <span className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2.5 py-1 text-xs font-semibold text-amber-200">
-                Human gate active
-              </span>
-            </div>
-            <h2 className="mt-2 text-2xl font-semibold" id="review-heading">Extraction review</h2>
-            <p className="mt-3 leading-7 text-slate-300">
-              Open an extracted source from its status card to compare immutable page/block provenance, record corrections with conflict detection, and promote reviewed content to trusted.
-            </p>
-          </div>
-          <Button
-            aria-describedby="review-pending-detail"
-            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-white/20 bg-white/10 px-5 py-2.5 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed"
-            isDisabled
-          >
-            Choose an extracted source
-          </Button>
-        </div>
-        <p className="sr-only" id="review-pending-detail">Choose an extracted source from the document status list.</p>
-      </section>
     </div>
   );
 }

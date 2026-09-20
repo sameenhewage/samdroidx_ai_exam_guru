@@ -80,7 +80,6 @@ def test_preparation_migration_never_backfills_and_preserves_old_units_across_em
 
     async def enroll(url: str, document_id: UUID) -> None:
         from exam_guru_api.documents.understanding_service import PageUnderstandingService
-
         from exam_guru_api.knowledge.preparation_requests import MaterialKnowledgeRequestRecorder
 
         async with database_session(url) as session:

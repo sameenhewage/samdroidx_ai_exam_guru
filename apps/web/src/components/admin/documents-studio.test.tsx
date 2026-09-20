@@ -71,7 +71,7 @@ afterEach(() => {
 });
 
 describe("DocumentsStudio", () => {
-  it("renders loading, empty, and extraction-review guidance", async () => {
+  it("renders loading and empty workspace guidance", async () => {
     let resolveRequest!: (response: Response) => void;
     const pendingRequest = new Promise<Response>((resolve) => {
       resolveRequest = resolve;
@@ -85,8 +85,6 @@ describe("DocumentsStudio", () => {
 
     expect(await screen.findByText("No source documents uploaded yet.")).toBeInTheDocument();
     expect(screen.getByText("No active curriculum versions are available.")).toBeInTheDocument();
-    expect(screen.getByText("Human gate active")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Choose an extracted source" })).toBeDisabled();
   });
 
   it("loads persisted document statuses from the source catalog", async () => {
@@ -121,6 +119,14 @@ describe("DocumentsStudio", () => {
     expect(
       screen.queryByRole("link", { name: "Open extraction review" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Extraction review" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Human gate active")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Choose an extracted source" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button").every((button) => !button.hasAttribute("disabled")),
+    ).toBe(true);
     expect(
       fetchMock.mock.calls.every(([input]) => !asRequest(input).url.endsWith("/extract")),
     ).toBe(true);

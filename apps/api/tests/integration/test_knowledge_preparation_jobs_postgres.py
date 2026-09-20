@@ -10,7 +10,6 @@ from uuid import UUID, uuid4
 
 import anyio
 import pytest
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +25,7 @@ from exam_guru_api.documents.understanding_models import (
     PageUnderstandingStateModel,
     TrustedPageKnowledgeModel,
 )
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.infrastructure.migrations import upgrade_database
 from exam_guru_api.infrastructure.object_storage import ObjectStorage
 from exam_guru_api.knowledge.preparation_models import (

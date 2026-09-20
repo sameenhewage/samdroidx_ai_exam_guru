@@ -152,8 +152,6 @@ class Settings(BaseSettings):
         le=MAX_RATE_LIMIT_WINDOW_SECONDS,
     )
     rate_limit_source_upload: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
-    rate_limit_extraction_trigger: int = Field(default=60, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
-    rate_limit_document_understanding: int = Field(default=5, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_embedding_job_create: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_retrieval_explore: int = Field(default=30, ge=1, le=MAX_RATE_LIMIT_PER_WINDOW)
     rate_limit_generation_create_retry: int = Field(

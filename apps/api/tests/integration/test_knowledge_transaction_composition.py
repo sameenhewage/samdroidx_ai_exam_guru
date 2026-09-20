@@ -3,7 +3,6 @@ from itertools import count
 from uuid import UUID, uuid4
 
 import pytest
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +17,7 @@ from exam_guru_api.curriculum.models import (
     SubjectModel,
     TaxonomyNodeModel,
 )
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.unit_models import (
     KnowledgeProjectionModel,
     KnowledgeUnitModel,

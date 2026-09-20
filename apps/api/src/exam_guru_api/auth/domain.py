@@ -13,7 +13,6 @@ class Permission(StrEnum):
     TAXONOMY_WRITE = "taxonomy:write"
     SOURCE_READ = "source:read"
     SOURCE_WRITE = "source:write"
-    EXTRACTION_TRIGGER = "extraction:trigger"
     CONTENT_REVIEW = "content:review"
     SOURCE_TRUST = "source:trust"
     KNOWLEDGE_READ = "knowledge:read"

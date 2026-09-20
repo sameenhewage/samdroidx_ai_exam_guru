@@ -22,7 +22,6 @@ REVIEWER_ID = UUID(int=2)
         Permission.CONTENT_REVIEW,
         Permission.SOURCE_READ,
         Permission.SOURCE_WRITE,
-        Permission.EXTRACTION_TRIGGER,
         Permission.SOURCE_TRUST,
         Permission.KNOWLEDGE_READ,
         Permission.KNOWLEDGE_WRITE,
@@ -64,7 +63,6 @@ def test_reviewer_has_read_and_review_permissions(permission: Permission) -> Non
     [
         Permission.TAXONOMY_WRITE,
         Permission.SOURCE_WRITE,
-        Permission.EXTRACTION_TRIGGER,
         Permission.SOURCE_TRUST,
         Permission.KNOWLEDGE_WRITE,
         Permission.ANALYTICS_RUN,
@@ -88,3 +86,10 @@ def test_principal_without_roles_has_no_permissions() -> None:
 
     with pytest.raises(AuthorizationError):
         authorize(principal, Permission.TAXONOMY_READ)
+
+
+def test_no_legacy_extraction_pipeline_permission_remains() -> None:
+    """The V1 extraction/OCR trigger pipeline is gone; its permission must not linger."""
+
+    assert "EXTRACTION_TRIGGER" not in Permission.__members__
+    assert "extraction:trigger" not in {permission.value for permission in Permission}

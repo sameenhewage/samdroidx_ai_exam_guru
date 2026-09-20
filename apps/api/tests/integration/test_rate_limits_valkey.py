@@ -47,7 +47,7 @@ def test_real_valkey_enforces_exact_limit_expiry_and_actor_scope_isolation(
             second = await limiter.consume(ACTOR_A, RateLimitScope.SOURCE_UPLOAD)
             rejected = await limiter.consume(ACTOR_A, RateLimitScope.SOURCE_UPLOAD)
             other_actor = await limiter.consume(ACTOR_B, RateLimitScope.SOURCE_UPLOAD)
-            other_scope = await limiter.consume(ACTOR_A, RateLimitScope.EXTRACTION_TRIGGER)
+            other_scope = await limiter.consume(ACTOR_A, RateLimitScope.EMBEDDING_JOB_CREATE)
 
             assert [first.allowed, second.allowed, rejected.allowed] == [True, True, False]
             assert rejected.retry_after_seconds == 1

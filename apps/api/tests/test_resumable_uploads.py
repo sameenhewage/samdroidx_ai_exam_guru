@@ -539,7 +539,7 @@ def restored_service(
     tmp_path: Path, *, status: UploadStatus = UploadStatus.UPLOADING
 ) -> tuple[ResumableUploadService, AsyncMock, SourceUploadSessionModel, Mock]:
     row = SourceUploadSessionModel(
-        **upload_view(status=status).model_dump(exclude={"chunk_size_bytes", "source_read_job_id"}),
+        **upload_view(status=status).model_dump(exclude={"chunk_size_bytes"}),
         owner_id=ADMIN.subject_id,
     )
     session = AsyncMock(spec=AsyncSession)

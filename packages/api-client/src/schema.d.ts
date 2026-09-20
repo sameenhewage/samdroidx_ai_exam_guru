@@ -6331,7 +6331,7 @@ export interface components {
          * RateLimitScope
          * @enum {string}
          */
-        RateLimitScope: "source_upload" | "extraction_trigger" | "document_understanding" | "embedding_job_create" | "retrieval_explore" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
+        RateLimitScope: "source_upload" | "embedding_job_create" | "retrieval_explore" | "generation_create_retry" | "validation_run" | "paper_publish_archive";
         /** RateLimiterUnavailableDetail */
         RateLimiterUnavailableDetail: {
             /**

@@ -1274,7 +1274,10 @@ def test_material_rows_filters_and_summary_use_read_only_fidelity_and_admission_
     for query in session.executed:
         compiled = str(cast(Any, query).compile(compile_kwargs={"literal_binds": True}))
         assert "AND public.source_document_fidelity_is_current(source_documents.id)" in compiled
-        assert "source_read_jobs" in compiled
+        # Regression: material status must never reconsult the removed V1 reader's job table.
+        # Nothing enqueues those rows any more, so a stale queued/running row would otherwise
+        # pin a material to PROCESSING forever.
+        assert "source_read_jobs" not in compiled
         assert (
             "AND catalogue_curriculum_is_admitted(source_documents.curriculum_version_id)"
             in compiled

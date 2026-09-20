@@ -25,7 +25,12 @@ def test_no_legacy_source_reader_settings_remain() -> None:
         name
         for name in fields
         if name.startswith(("ocr_", "source_qwen_", "document_understanding_"))
-        or name == "source_consensus_enabled"
+        or name
+        in {
+            "source_consensus_enabled",
+            "rate_limit_extraction_trigger",
+            "rate_limit_document_understanding",
+        }
     }
 
 
@@ -237,7 +242,6 @@ def test_authenticated_cost_controls_are_enabled_with_bounded_scope_defaults() -
     assert 1 <= settings.rate_limit_window_seconds <= MAX_RATE_LIMIT_WINDOW_SECONDS
     limits = (
         settings.rate_limit_source_upload,
-        settings.rate_limit_extraction_trigger,
         settings.rate_limit_embedding_job_create,
         settings.rate_limit_retrieval_explore,
         settings.rate_limit_generation_create_retry,
@@ -253,7 +257,7 @@ def test_authenticated_cost_controls_are_enabled_with_bounded_scope_defaults() -
         ("rate_limit_window_seconds", 0),
         ("rate_limit_window_seconds", MAX_RATE_LIMIT_WINDOW_SECONDS + 1),
         ("rate_limit_source_upload", 0),
-        ("rate_limit_extraction_trigger", MAX_RATE_LIMIT_PER_WINDOW + 1),
+        ("rate_limit_source_upload", MAX_RATE_LIMIT_PER_WINDOW + 1),
         ("rate_limit_embedding_job_create", 0),
         ("rate_limit_retrieval_explore", MAX_RATE_LIMIT_PER_WINDOW + 1),
         ("rate_limit_generation_create_retry", MAX_RATE_LIMIT_PER_WINDOW + 1),

@@ -3,7 +3,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +14,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumUnitModel,
     TaxonomyNodeModel,
 )
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.material_index_models import MaterialKnowledgeIndexIntentModel
 from exam_guru_api.knowledge.unit_models import KnowledgeUnitModel
 from exam_guru_api.knowledge.unit_review_models import KnowledgeUnitReviewModel

@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import event, func, select
 
 from exam_guru_api.auth.models import AdminAuditEventModel
 from exam_guru_api.curriculum.domain import TaxonomyReviewState
 from exam_guru_api.curriculum.models import TaxonomyNodeModel
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingWorkerService,
 )

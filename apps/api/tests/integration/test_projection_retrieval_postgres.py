@@ -3,7 +3,6 @@ from dataclasses import dataclass, replace
 from uuid import UUID, uuid4
 
 import pytest
-from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +13,7 @@ from exam_guru_api.curriculum.models import (
     CurriculumVersionModel,
     TaxonomyNodeModel,
 )
+from exam_guru_api.documents.understanding_service import PageUnderstandingService
 from exam_guru_api.knowledge.embedding_job_service import (
     EmbeddingJobService,
     EmbeddingWorkerService,

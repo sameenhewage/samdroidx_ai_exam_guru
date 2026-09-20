@@ -48,7 +48,11 @@ def materials(session: AsyncSession) -> SourceDocumentService:
 async def legacy_read_job(
     session: AsyncSession, document_id: UUID, *, status: str = "queued"
 ) -> SourceReadJobModel:
-    """Write a historical V1 source-read row directly; no reader dispatches any more."""
+    """Write a historical V1 source-read row directly; no reader dispatches any more.
+
+    The table is retained for historical readback only. Runtime material status must not
+    consult it, so these rows exist purely as regression evidence of that absence.
+    """
 
     job = SourceReadJobModel(
         id=uuid4(),
@@ -230,9 +234,16 @@ def test_verified_pages_do_not_bypass_current_catalogue_or_metadata_admission(
 
 
 @pytest.mark.parametrize("job_status", ["queued", "running", "completed", "failed"])
-def test_only_active_read_jobs_override_current_page_readiness(
+def test_historical_source_read_jobs_never_influence_material_status(
     workspace_database_url: str, job_status: str
 ) -> None:
+    """Regression: the removed V1 reader left rows behind; status must ignore them entirely.
+
+    A stale ``queued``/``running`` row used to pin a material to PROCESSING forever because
+    nothing drains ``source_read_jobs`` any more. Material status is now derived only from
+    catalogue admission, metadata review and current page-fidelity state.
+    """
+
     async def scenario() -> None:
         async with database_session(workspace_database_url) as session:
             curriculum_id = await add_curriculum(session)
@@ -240,12 +251,7 @@ def test_only_active_read_jobs_override_current_page_readiness(
             document_id = await add_source(session, total=1, curriculum_id=curriculum_id)
             await confirm_state(session, await record_page(session, document_id, 1))
             await legacy_read_job(session, document_id, status=job_status)
-            expected = (
-                MaterialStatus.PROCESSING
-                if job_status in {"queued", "running"}
-                else MaterialStatus.READY_FOR_AI
-            )
-            await assert_status(session, document_id, expected)
+            await assert_status(session, document_id, MaterialStatus.READY_FOR_AI)
             await materials(session).remove_from_ai_use(
                 document_id,
                 reason="Removed from future use",
@@ -385,8 +391,8 @@ def test_list_filters_summary_and_pagination_share_one_read_only_status_without_
                 await confirm_state(session, await record_page(session, identifier, 1))
                 ready_ids.append(identifier)
             needs_review = await add_source(session, total=1, curriculum_id=curriculum_id)
-            processing = await add_source(session, total=1, curriculum_id=curriculum_id)
-            await legacy_read_job(session, processing)
+            stale_read_job = await add_source(session, total=1, curriculum_id=curriculum_id)
+            await legacy_read_job(session, stale_read_job)
             removed = await add_source(session, total=1, curriculum_id=curriculum_id)
             await materials(session).remove_from_ai_use(
                 removed,
@@ -421,7 +427,7 @@ def test_list_filters_summary_and_pagination_share_one_read_only_status_without_
                     if status is MaterialStatus.READY_FOR_AI
                 } == set(ready_ids)
                 assert by_id[needs_review] is MaterialStatus.NEEDS_REVIEW
-                assert by_id[processing] is MaterialStatus.PROCESSING
+                assert by_id[stale_read_job] is MaterialStatus.NEEDS_REVIEW
                 assert by_id[removed] is MaterialStatus.REMOVED
                 statements.clear()
                 page = await materials(session).list_materials(
@@ -439,8 +445,8 @@ def test_list_filters_summary_and_pagination_share_one_read_only_status_without_
                 assert len(statements) == 1
                 assert summary.material_count - before.material_count == 11
                 assert summary.ready_count - before.ready_count == 8
-                assert summary.needs_review_count - before.needs_review_count == 1
-                assert summary.processing_count - before.processing_count == 1
+                assert summary.needs_review_count - before.needs_review_count == 2
+                assert summary.processing_count - before.processing_count == 0
                 assert summary.removed_count - before.removed_count == 1
                 assert not any("FOR UPDATE" in sql or "FOR SHARE" in sql for sql in statements)
             finally:
