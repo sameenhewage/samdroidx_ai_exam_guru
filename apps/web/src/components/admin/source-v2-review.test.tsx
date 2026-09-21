@@ -24,6 +24,8 @@ const pageId = "00000000-0000-0000-0000-0000000001b6";
 const DESCRIPTION = "වළලු චුම්බකයක්, කඩදාසි සමනලයෙක් සහ නූල් කැබැල්ලක් දැක්වේ.";
 const LABEL_TEXT = "රෙජිෆෝම්/මැටි";
 const PROSE = "පාසල් වත්තේ හෝ ආසන්න පරිසරයේ හෝ ශාකවල විවිධත්වය සොයා බලන්න.";
+/** What `p186-r007` actually carries: the printed folio. Not source content. */
+const FOLIO = "171";
 const NO_TEXT_REASON =
   "primary reading found no text: Line-art figure only (a foam block, a ring magnet, " +
   "a paper butterfly, a pin, two sticks and a length of thread).";
@@ -122,6 +124,19 @@ afterEach(() => {
 
 async function card(id: string) {
   return await screen.findByTestId(`region-${id}`);
+}
+
+/** A running header or folio: printed, read correctly, and not source content. */
+function decorative(id: string, overrides: RegionOverrides = {}) {
+  return region(id, {
+    region_type: "decorative",
+    source_kind: "decorative",
+    proposed_source_kind: "decorative",
+    text: FOLIO,
+    crop_sha256: null,
+    crop_url: null,
+    ...overrides,
+  });
 }
 
 describe("SourceV2Review visual card", () => {
@@ -483,5 +498,229 @@ describe("SourceV2Review editor keyboard ownership", () => {
       "description-editor-p186-r002",
     )) as HTMLTextAreaElement;
     expect(editor.value).toBe(DESCRIPTION);
+  });
+});
+
+/**
+ * Decorative regions offer the decisions that exist, and only those.
+ *
+ * Reported from the real pilot: `p186-r000` (a running header) and
+ * `p186-r007` (the folio `171`) are `decorative`, and the card showed the
+ * ordinary green "පෙළ නිවැරදියි" button for both. Pressing it returned 422,
+ * because decorative content can never become Verified Source Content — and
+ * the error told the reviewer to use confirm-visual, which refuses decorative
+ * too. A button whose only possible outcome is an error is the bug; disabling
+ * it would only make the dead end quieter.
+ */
+describe("SourceV2Review decorative regions", () => {
+  it("offers no ordinary text-confirm button at all, not even a disabled one", async () => {
+    serve([decorative("p186-r007")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r007");
+
+    expect(within(item).queryByTestId("confirm-p186-r007")).not.toBeInTheDocument();
+    // Not merely absent by test id: no control anywhere on the card carries
+    // the confirm wording, enabled or otherwise.
+    expect(within(item).queryByText("පෙළ නිවැරදියි")).not.toBeInTheDocument();
+    expect(within(item).queryByText("රූපය තහවුරු කරන්න")).not.toBeInTheDocument();
+    // And the card says why, rather than leaving a gap where a button was.
+    expect(within(item).getByTestId("decorative-note-p186-r007")).toHaveTextContent(
+      "මූලාශ්‍ර අන්තර්ගතයක් ලෙස තහවුරු කළ නොහැක",
+    );
+  });
+
+  it("makes Exclude the normal resolution, enabled and prominent", async () => {
+    const calls = serve([decorative("p186-r000", { text: "පරිසරය ආශ්‍රිත ක්‍රියාකාරකම්" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r000");
+
+    const exclude = within(item).getByTestId("exclude-p186-r000");
+    expect(exclude).toBeEnabled();
+    expect(exclude).toHaveTextContent("මෙම කොටස භාවිත නොකරන්න");
+
+    fireEvent.click(exclude);
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/exclude"))).toBe(true),
+    );
+    const excluded = calls.find((call) => call.url.endsWith("/exclude"))!;
+    expect(excluded.method).toBe("POST");
+    // The permanent reason says what this is, not "it was not read": the
+    // machine read the header perfectly well.
+    expect(excluded.body).toEqual({
+      candidate_id: "00000000-0000-0000-0000-00000000c001",
+      revision: 1,
+      note: "අලංකරණ කොටසකි; මූලාශ්‍ර අන්තර්ගතයක් නොවේ.",
+    });
+  });
+
+  it("exposes an explicit Change-kind control listing every destination kind", async () => {
+    serve([decorative("p186-r007")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r007");
+
+    const select = within(item).getByTestId("kind-select-p186-r007");
+    // Reachable by its visible label, not only by test id.
+    expect(within(item).getByLabelText("මෙම කොටස කුමක්ද?")).toBe(select);
+    expect(
+      [...(select as HTMLSelectElement).options].map((option) => option.value),
+    ).toEqual(["text_only", "visual_only", "visual_with_text", "decorative", "undecided"]);
+    // It opens on what the region currently is, so nothing is preselected
+    // away from the machine's proposal.
+    expect(select).toHaveValue("decorative");
+    expect(within(item).getByTestId("reclassify-p186-r007")).toHaveTextContent(
+      "වර්ගය වෙනස් කරන්න",
+    );
+  });
+
+  it("reclassifies to text_only against the current candidate and revision", async () => {
+    const calls = serve([decorative("p186-r007", { revision: 2 })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r007");
+
+    fireEvent.change(within(item).getByTestId("kind-select-p186-r007"), {
+      target: { value: "text_only" },
+    });
+    fireEvent.click(within(item).getByTestId("reclassify-p186-r007"));
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/reclassify"))).toBe(true),
+    );
+    const sent = calls.find((call) => call.url.endsWith("/reclassify"))!;
+    expect(sent.method).toBe("POST");
+    expect(sent.url).toBe(
+      `/api/v1/admin/source-v2/pages/${pageId}/regions/p186-r007/reclassify`,
+    );
+    expect(sent.body).toEqual({
+      candidate_id: "00000000-0000-0000-0000-00000000c001",
+      revision: 2,
+      source_kind: "text_only",
+      note: "reviewer reclassified this region as text_only",
+    });
+    // Nothing was confirmed on the way past.
+    expect(
+      calls.some((call) => /\/(confirm|confirm-visual)$/.test(call.url)),
+    ).toBe(false);
+  });
+
+  it("shows the ordinary text actions once the server says it is text_only", async () => {
+    const served = [decorative("p186-r007")];
+    serve(served);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r007");
+
+    fireEvent.change(within(item).getByTestId("kind-select-p186-r007"), {
+      target: { value: "text_only" },
+    });
+    // The reload after the decision is what decides the next set of actions,
+    // so the server's answer changes here and nowhere else.
+    served[0] = region("p186-r007", {
+      region_type: "decorative",
+      source_kind: "text_only",
+      proposed_source_kind: "decorative",
+      text: FOLIO,
+      crop_sha256: null,
+      crop_url: null,
+    });
+    fireEvent.click(within(item).getByTestId("reclassify-p186-r007"));
+
+    const confirm = await screen.findByTestId("confirm-p186-r007");
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveTextContent("පෙළ නිවැරදියි");
+    expect(screen.queryByTestId("decorative-note-p186-r007")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("kind-select-p186-r007")).not.toBeInTheDocument();
+    expect(screen.getByTestId("text-p186-r007")).toHaveTextContent(FOLIO);
+  });
+
+  it("exposes confirm-visual once the server says it is visual_only", async () => {
+    const served = [decorative("p186-r000")];
+    const calls = serve(served);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r000");
+
+    fireEvent.change(within(item).getByTestId("kind-select-p186-r000"), {
+      target: { value: "visual_only" },
+    });
+    served[0] = region("p186-r000", {
+      region_type: "decorative",
+      source_kind: "visual_only",
+      proposed_source_kind: "decorative",
+      text: "",
+    });
+    fireEvent.click(within(item).getByTestId("reclassify-p186-r000"));
+
+    const confirm = await screen.findByTestId("confirm-p186-r000");
+    expect(confirm).toHaveTextContent("රූපය තහවුරු කරන්න");
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/confirm-visual"))).toBe(true),
+    );
+    expect(calls.find((call) => call.url.endsWith("/confirm-visual"))!.body).toEqual({
+      candidate_id: "00000000-0000-0000-0000-00000000c001",
+      revision: 1,
+      compared_with_image_sha256: "a".repeat(64),
+      source_kind: "visual_only",
+    });
+  });
+
+  it("never reclassifies without an explicit click", async () => {
+    const calls = serve([decorative("p186-r007")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r007");
+
+    // Rendering the card decides nothing.
+    const wrote = () => calls.filter((call) => call.method !== "GET");
+    expect(wrote()).toEqual([]);
+    // Nor does the control offering the region's own kind back to it.
+    expect(within(item).getByTestId("reclassify-p186-r007")).toBeDisabled();
+
+    // Picking an option is not deciding either: the draft moves, the server
+    // is not told, and the reviewer can still change their mind.
+    fireEvent.change(within(item).getByTestId("kind-select-p186-r007"), {
+      target: { value: "visual_with_text" },
+    });
+    expect(within(item).getByTestId("kind-select-p186-r007")).toHaveValue(
+      "visual_with_text",
+    );
+    expect(within(item).getByTestId("reclassify-p186-r007")).toBeEnabled();
+    await waitFor(() => expect(wrote()).toEqual([]));
+
+    // Putting it back leaves nothing to apply.
+    fireEvent.change(within(item).getByTestId("kind-select-p186-r007"), {
+      target: { value: "decorative" },
+    });
+    expect(within(item).getByTestId("reclassify-p186-r007")).toBeDisabled();
+    expect(wrote()).toEqual([]);
+  });
+
+  it("leaves the visual_only and visual_with_text controls exactly as they were", async () => {
+    const calls = serve([
+      region("p186-r002"),
+      region("p186-r003", { source_kind: "visual_with_text", text: LABEL_TEXT }),
+    ]);
+    render(<SourceV2Review pageId={pageId} />);
+
+    // visual_only keeps `text-present-`, and it still reclassifies upward.
+    fireEvent.click(
+      within(await card("p186-r002")).getByTestId("text-present-p186-r002"),
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/reclassify"))).toBe(true),
+    );
+    expect(calls.find((call) => call.url.endsWith("/reclassify"))!.body).toEqual({
+      candidate_id: "00000000-0000-0000-0000-00000000c001",
+      revision: 1,
+      source_kind: "visual_with_text",
+      note: "reviewer sees printed text in this figure",
+    });
+
+    // visual_with_text keeps the single-button `reclassify-` control rather
+    // than gaining the decorative card's select.
+    const figure = await card("p186-r003");
+    expect(within(figure).getByTestId("reclassify-p186-r003")).toHaveTextContent(
+      "වර්ගය වෙනස් කරන්න",
+    );
+    expect(within(figure).queryByTestId("kind-select-p186-r003")).not.toBeInTheDocument();
+    expect(within(figure).getByTestId("confirm-p186-r003")).toBeEnabled();
   });
 });

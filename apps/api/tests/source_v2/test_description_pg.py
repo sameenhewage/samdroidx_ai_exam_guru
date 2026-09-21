@@ -281,21 +281,38 @@ def test_labels_printed_inside_the_crop_are_stored_as_a_list() -> None:
     run(scenario)
 
 
-def test_an_unverified_visual_cannot_be_described_yet() -> None:
-    """Derived knowledge is built on verified source, never ahead of it."""
+def test_an_unverified_visual_can_still_be_described() -> None:
+    """The reviewer has to see the description in order to judge it.
+
+    An earlier version of `assert_describable` demanded verification first,
+    which meant a description only ever appeared *after* the human had
+    decided — a description nobody could review. It is a proposal that
+    arrives beside the machine's reading. What still must not happen is the
+    reverse: describing must not verify anything, which the assertions below
+    pin.
+    """
 
     async def scenario(session: AsyncSession) -> None:
         page = await seed(session, text_value="", kind="visual_only")
         row = await current(session, page)
-        with pytest.raises(DescriptionRefusedError, match="not verified"):
-            await repository.describe(
-                session,
-                page=page,
-                region_id="r-fig",
-                candidate_id=row.candidate_id,
-                revision=row.revision,
-                description=SINHALA,
+        await repository.describe(
+            session,
+            page=page,
+            region_id="r-fig",
+            candidate_id=row.candidate_id,
+            revision=row.revision,
+            description=SINHALA,
+        )
+        after = await current(session, page)
+        assert after.visual_description == SINHALA
+        assert after.state == "unverified", "describing must not verify"
+        events = (
+            await session.execute(
+                text("select count(1) from source_v2_review_events where page_id = :page"),
+                {"page": page.page_id},
             )
+        ).scalar_one()
+        assert events == 0, "describing must author no human review event"
 
     run(scenario)
 

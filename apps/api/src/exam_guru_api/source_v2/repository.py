@@ -35,6 +35,19 @@ from exam_guru_api.source_v2.visual_description import (
 
 HUMAN_CORRECTION = "human-correction"
 
+#: What a reviewer is told when they aim any verification action at decorative
+#: content. One wording for every such endpoint, because the reason is the same
+#: one in every case and the reviewer's two real options never change.
+#:
+#: Deliberately does *not* mention confirm-visual. That endpoint accepts only
+#: `visual_only` and `visual_with_text`, so sending a decorative region there
+#: cannot work — the old shared message pointed at a dead end and left the
+#: reviewer with a 422 and nowhere to go.
+DECORATIVE_REFUSAL = (
+    "region {region_id} is decorative; decorative content is page furniture and "
+    "cannot be verified as source content — exclude it, or reclassify it first"
+)
+
 # Where the immutable rendered pages live inside the API container. Bound
 # read-only by compose; rendered evidence is never written through the API.
 RENDER_ROOT = Path(os.environ.get("EXAM_GURU_SOURCE_V2_RENDER_ROOT", "/source-content"))
@@ -300,13 +313,18 @@ async def confirm(
     row = await _require_current(session, page.page_id, region_id, candidate_id, revision)
     body, abstained = row[2], row[3]
     facts = await _region_facts(session, page.page_id, region_id)
-    if facts["source_kind"] in {"visual_only", "decorative"}:
+    if facts["source_kind"] == "decorative":
+        # D18: decorative is page furniture — a running header, a folio, an
+        # ornamental rule. It has no educational source meaning, so no action
+        # can turn it into Verified Source Content. Naming confirm-visual here
+        # would be a dead end: that endpoint only accepts the visual kinds.
+        raise SourceV2Error(DECORATIVE_REFUSAL.format(region_id=region_id))
+    if facts["source_kind"] == "visual_only":
         # Confirming *text* on a region that carries none would either store an
         # empty verified row or invite someone to invent a description. Both
         # are wrong; the reviewer needs the visual action or a reclassification.
         raise SourceV2Error(
-            f"region {region_id} is {facts['source_kind']}; use confirm-visual "
-            "or reclassify it first"
+            f"region {region_id} is visual_only; use confirm-visual or reclassify it first"
         )
     if abstained or not body.strip():
         raise SourceV2Error(
@@ -432,6 +450,13 @@ async def confirm_visual(
         raise SourceV2Error(f"{source_kind} is not a visual source kind")
     await _require_current(session, page.page_id, region_id, candidate_id, revision)
     facts = await _region_facts(session, page.page_id, region_id)
+    if facts["source_kind"] == "decorative":
+        # This call *writes* `source_kind`, so without this guard confirming a
+        # decorative region as a visual would reclassify it on the way past and
+        # verify it in the same statement — a silent promotion of page
+        # furniture to source content that no reviewer ever asked for. D18
+        # requires the reclassification to be its own recorded human decision.
+        raise SourceV2Error(DECORATIVE_REFUSAL.format(region_id=region_id))
     if not facts["crop_sha256"]:
         raise SourceV2Error(
             f"region {region_id} has no canonical crop; a verified visual must name "

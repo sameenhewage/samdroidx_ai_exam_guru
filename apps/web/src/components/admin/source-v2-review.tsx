@@ -111,6 +111,13 @@ const TEXT = {
     textPresent: "මෙහි පෙළ ඇත",
     needsDecision: "මෙම කොටස කුමක්දි යන්න තීරණය කරන්න.",
     reason: "හේතුව",
+    // --- decorative page furniture (D18) ---
+    decorativeNote:
+      "මෙය පිටුවේ අලංකරණ කොටසකි (ශීර්ෂකය, පිටු අංකය, අලංකරණ ඉරි). " +
+      "එය මූලාශ්‍ර අන්තර්ගතයක් ලෙස තහවුරු කළ නොහැක. " +
+      "එකඟ නම් එය භාවිත නොකරන්න; එකඟ නොවේ නම් පළමුව වර්ගය වෙනස් කරන්න.",
+    decorativeReason: "අලංකරණ කොටසකි; මූලාශ්‍ර අන්තර්ගතයක් නොවේ.",
+    chooseKind: "මෙම කොටස කුමක්ද?",
     // --- the separated visual sections ---
     originalCrop: "මුල් රූපය",
     cropMissing: "මුල් රූපය නොලැබේ.",
@@ -162,6 +169,13 @@ const TEXT = {
     textPresent: "Text is present",
     needsDecision: "Decide what this region is.",
     reason: "Reason",
+    // --- decorative page furniture (D18) ---
+    decorativeNote:
+      "This is page furniture (running header, page number, ornamental rule). " +
+      "It cannot be verified as source content. " +
+      "If you agree, do not use it; if you disagree, change its kind first.",
+    decorativeReason: "Decorative page furniture, not source content.",
+    chooseKind: "What is this region?",
     // --- the separated visual sections ---
     originalCrop: "Original image",
     cropMissing: "The original image is unavailable.",
@@ -206,6 +220,16 @@ const STATE_STYLES: Record<RegionState, string> = {
   excluded: "bg-slate-200 text-slate-700 border-slate-300",
   unverified: "bg-amber-100 text-amber-900 border-amber-300",
 };
+
+/** Every kind a reviewer may move a region to, in the order they are offered.
+ *  `undecided` is last because it is a retreat, not a decision. */
+const KIND_CHOICES: readonly SourceKind[] = [
+  "text_only",
+  "visual_only",
+  "visual_with_text",
+  "decorative",
+  "undecided",
+];
 
 function kindLabel(labels: Labels, kind: SourceKind): string {
   switch (kind) {
@@ -359,6 +383,11 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
   // one draft would let a half-typed description be saved as source text.
   const [describing, setDescribing] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState("");
+  // What the reviewer has *picked* in a Change-kind control, per region, and
+  // has not yet applied. Kept separate from `region.source_kind` so choosing
+  // an option changes nothing on the server until they press the button:
+  // reclassification is always an explicit act (D18).
+  const [kindDraft, setKindDraft] = useState<Record<string, SourceKind>>({});
   const [note, setNote] = useState("");
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [pulse, setPulse] = useState(false);
@@ -567,11 +596,19 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
           {page.regions.map((region) => {
             const isVisualOnly = region.source_kind === "visual_only";
             const isVisualWithText = region.source_kind === "visual_with_text";
+            // D18: page furniture. Non-educational by definition, so it can
+            // never become Verified Source Content and must never be offered
+            // the ordinary text-confirm button.
+            const isDecorative = region.source_kind === "decorative";
             const needsDecision = region.source_kind === "undecided";
             // A figure with no printed text is not unreadable; it is a figure.
+            // Neither is an ornamental rule that prints nothing: emptiness is
+            // the correct reading of both, and the decorative note below says
+            // so far more usefully than a reading-failure banner.
             const unreadable =
               !isVisualOnly &&
               !isVisualWithText &&
+              !isDecorative &&
               (region.abstained || region.text.trim().length === 0);
             const isEditing = editing === region.region_id;
             // The three concepts only need separating where there is a
@@ -592,6 +629,51 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
               // that is actually saved, never from a blank box.
               setDescriptionDraft(region.visual_description ?? "");
             };
+            // The kind shown in the Change-kind control: what the reviewer
+            // picked if they picked anything, otherwise what the region is.
+            const chosenKind = kindDraft[region.region_id] ?? region.source_kind;
+
+            /* Exclude and Correct are offered to every kind; only their
+               prominence changes. Building them once keeps the decorative
+               card's ordering a layout decision rather than a second copy of
+               the same two buttons drifting out of step. */
+            const excludeAction = (emphasis: string) => (
+              <button
+                type="button"
+                disabled={busy !== null || region.state === "excluded"}
+                onClick={() =>
+                  act(region, "exclude", {
+                    candidate_id: region.candidate_id,
+                    revision: region.revision,
+                    // The exclusion reason is permanent. "This region was not
+                    // read" is simply untrue of a running header the machine
+                    // read perfectly well, so decorative carries its own.
+                    note:
+                      note.trim() ||
+                      (isDecorative ? labels.decorativeReason : labels.unreadable),
+                  })
+                }
+                className={cn(
+                  "rounded border px-3 py-1 text-sm disabled:cursor-not-allowed",
+                  emphasis,
+                )}
+                data-testid={`exclude-${region.region_id}`}
+              >
+                {labels.exclude}
+              </button>
+            );
+            const correctAction = (
+              <button
+                type="button"
+                disabled={busy !== null}
+                title={region.state === "verified" ? labels.reverifyNote : undefined}
+                onClick={openTextEditor}
+                className="rounded border border-slate-500 px-3 py-1 text-sm"
+                data-testid={`correct-${region.region_id}`}
+              >
+                {region.state === "verified" ? labels.editAgain : labels.correct}
+              </button>
+            );
             return (
               <li
                 key={region.region_id}
@@ -670,6 +752,18 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                     </span>
                   ) : null}
                 </div>
+
+                {isDecorative ? (
+                  /* Says what the card is, and therefore why the ordinary
+                     confirm button is absent rather than merely greyed out.
+                     A disabled button with no explanation reads as a bug. */
+                  <p
+                    data-testid={`decorative-note-${region.region_id}`}
+                    className="mb-2 rounded border border-slate-400 bg-slate-100 p-2 text-sm text-slate-800"
+                  >
+                    {labels.decorativeNote}
+                  </p>
+                ) : null}
 
                 {isVisual ? (
                   <div data-testid={`visual-${region.region_id}`}>
@@ -941,6 +1035,74 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                         {labels.cancel}
                       </button>
                     </>
+                  ) : isDecorative ? (
+                    /* D18. Decorative content can never become Verified
+                       Source Content, so the ordinary confirm button is not
+                       rendered here at all — a control whose only possible
+                       outcome is a 422 is worse than no control. The two real
+                       decisions are offered instead: agree and take it out of
+                       use, or disagree and say what it actually is. */
+                    <>
+                      {excludeAction(
+                        "border-slate-900 bg-slate-900 font-medium text-white hover:bg-slate-800 disabled:border-slate-400 disabled:bg-slate-400 disabled:text-white",
+                      )}
+                      <span className="inline-flex flex-wrap items-center gap-2 rounded border border-sky-300 bg-sky-50 px-2 py-1">
+                        <label
+                          htmlFor={`kind-select-${region.region_id}`}
+                          className="text-xs font-medium text-slate-700"
+                        >
+                          {labels.chooseKind}
+                        </label>
+                        <select
+                          id={`kind-select-${region.region_id}`}
+                          data-testid={`kind-select-${region.region_id}`}
+                          value={chosenKind}
+                          disabled={busy !== null}
+                          onChange={(event) =>
+                            // Picking is not deciding. This only moves the
+                            // draft; nothing reaches the server until the
+                            // button beside it is pressed.
+                            setKindDraft((current) => ({
+                              ...current,
+                              [region.region_id]: event.target.value as SourceKind,
+                            }))
+                          }
+                          className="rounded border border-slate-400 bg-white px-2 py-1 text-sm text-slate-900"
+                        >
+                          {KIND_CHOICES.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {kindLabel(labels, kind)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          disabled={busy !== null || chosenKind === region.source_kind}
+                          onClick={async () => {
+                            const changed = await act(region, "reclassify", {
+                              candidate_id: region.candidate_id,
+                              revision: region.revision,
+                              source_kind: chosenKind,
+                              note:
+                                note.trim() ||
+                                `reviewer reclassified this region as ${chosenKind}`,
+                            });
+                            if (changed) {
+                              setKindDraft((current) => {
+                                const next = { ...current };
+                                delete next[region.region_id];
+                                return next;
+                              });
+                            }
+                          }}
+                          className="rounded border border-sky-700 bg-white px-3 py-1 text-sm font-medium text-sky-900 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+                          data-testid={`reclassify-${region.region_id}`}
+                        >
+                          {labels.reclassify}
+                        </button>
+                      </span>
+                      {correctAction}
+                    </>
                   ) : (
                     <>
                       <button
@@ -1026,18 +1188,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           {labels.reclassify}
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        disabled={busy !== null}
-                        title={
-                          region.state === "verified" ? labels.reverifyNote : undefined
-                        }
-                        onClick={openTextEditor}
-                        className="rounded border border-slate-500 px-3 py-1 text-sm"
-                        data-testid={`correct-${region.region_id}`}
-                      >
-                        {region.state === "verified" ? labels.editAgain : labels.correct}
-                      </button>
+                      {correctAction}
                       {isVisual ? (
                         <button
                           type="button"
@@ -1049,21 +1200,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           {labels.editDescription}
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        disabled={busy !== null || region.state === "excluded"}
-                        onClick={() =>
-                          act(region, "exclude", {
-                            candidate_id: region.candidate_id,
-                            revision: region.revision,
-                            note: note.trim() || labels.unreadable,
-                          })
-                        }
-                        className="rounded border border-slate-500 px-3 py-1 text-sm disabled:cursor-not-allowed disabled:text-slate-400"
-                        data-testid={`exclude-${region.region_id}`}
-                      >
-                        {labels.exclude}
-                      </button>
+                      {excludeAction("border-slate-500 disabled:text-slate-400")}
                     </>
                   )}
                 </div>
