@@ -508,3 +508,90 @@ findings, and it is never trust.
 Historical reader measurements remain in `docs/source-v2/BENCHMARK_READERS.md`
 and under `.exam-guru-data/_archive/`, marked historical. They are the evidence
 for *why* the readers were removed and may not be used to reintroduce one.
+
+---
+
+## D20 - Human correction is an unbounded chain, and nothing may hide or erase it.
+**Locked 2026-09-21.**
+
+Every save creates a new immutable candidate revision whose `parent_id` names
+the one it replaced. Earlier candidates stay with `is_current = false`, exactly
+one candidate per region is current, and every correction event is retained.
+The editor always opens on the text the card is currently showing. A reviewer
+may correct an unverified correction, and may correct a verified revision -
+which withdraws the verification and produces the next unverified child. There
+is no cap on the number of revisions, and no edit overwrites an older one in
+place. Confirm applies only to the current candidate; a stale browser is
+refused.
+
+Two rules the review screen must obey, both learned from defects:
+
+- **Whether a region has printed source text is a fact about the text, not
+  about `source_kind`.** The card derived it from the kind, so a correction
+  saved on a `visual_only` region was stored by the server and rendered
+  nowhere - the reviewer saw "රූපයේ ඇති පෙළ: නොමැත" and concluded the edit had
+  done nothing. Real damage followed: the only remaining action, Confirm
+  visual, declares the region textless and `confirm_visual()` writes that
+  emptiness over the current candidate. `p186-r003` in the pilot still shows
+  it - a correction event carrying 48 characters of human text at revision 1,
+  and a current revision-2 candidate carrying none.
+- **A control whose only outcome is destroying a human decision is withheld,
+  not disabled**, the same rule D18 applies to the decorative confirm. A
+  `visual_only` region that carries text offers the reclassification instead,
+  and says why.
+
+Pressing an edit affordance must always produce an editor. An `undecided` or
+unread region used to switch its buttons to Save/Cancel and render no textarea
+at all, stranding the reviewer on precisely the regions that most need a human
+to type the reading in.
+
+Pinned by `apps/api/tests/source_v2/test_repeat_edit_pg.py`, the repeat-editing
+and visual-correction suites in
+`apps/web/src/components/admin/source-v2-review.test.tsx`, and
+`apps/web/e2e/source-v2-review.spec.ts`.
+
+---
+
+## D21 - Review language: bilingual domain terms, English actions, untranslated source.
+**Locked 2026-09-21.**
+
+> Source-review domain labels and statuses are bilingual Sinhala + English
+> where the term matters. Action controls use concise English. Original source
+> content is never translated.
+
+The Source V2 review screen has two readers with different needs. The teacher
+reviewing Sinhala material reads Sinhala; the person reconstructing a review
+decision from a bug report months later reads the domain term. The screen
+serves both explicitly rather than drifting to 100% of either.
+
+- **Domain labels, statuses and section headings: `සිංහල (English)`.** For
+  example `පෙළ (Text)`, `රූපය පමණි (Visual only)`, `රූපය + පෙළ (Visual + text)`,
+  `අලංකරණ (Decorative)`, `තීරණය අවශ්‍යයි (Needs decision)`,
+  `තහවුරු කර ඇත (Verified)`, `තහවුරු කර නොමැත (Not verified)`,
+  `භාවිතයෙන් ඉවත් කර ඇත (Excluded)`, `මුල් රූපය (Original image)`,
+  `රූපයේ ඇති පෙළ (Text in image)`, `රූප විස්තරය (Visual description)`,
+  `තාක්ෂණික විස්තර (Technical details)`. A term does not change meaning because
+  the page it describes is in another language, so these strings are shared by
+  every dictionary rather than translated per language.
+- **Action controls: concise English.** Confirm, Confirm visual, Edit, Edit
+  again, Save, Cancel, Exclude, Change kind, Apply, Edit description, Save
+  description, Locate. Sinhala-only action text such as `පෙළ නිවැරදියි`,
+  `පෙළ නිවැරදි කරන්න` or `වර්ගය වෙනස් කරන්න` is not used: `පෙළ නිවැරදියි`
+  (confirm) and `පෙළ නිවැරදි කරන්න` (open an editor) are near-identical at a
+  glance and mean opposite things.
+- **Explanatory and help text follows the page's language**, Sinhala-first,
+  with the English term in brackets only where the term is the thing being
+  named. Not every sentence is bilingual; that is clutter, not clarity.
+- **Original source content is never translated.** A region's `text`,
+  `verified_text` and `visual_description` render verbatim, in whatever script
+  and language the page and the reviewer used.
+
+Persisted strings are not labels. The default exclusion reasons written into
+`source_v2_review_events.note` stay in the reviewer's language: they are
+recorded content, and rewording them would change what past and future audit
+rows say.
+
+The vocabulary lives in one map in
+`apps/web/src/components/admin/source-v2-review.tsx` - `DOMAIN` (bilingual,
+shared), `ACTIONS` (English, shared) and per-language help text - so the policy
+is enforced by structure rather than by remembering it.

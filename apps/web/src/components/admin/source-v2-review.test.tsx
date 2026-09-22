@@ -70,6 +70,8 @@ function region(id: string, overrides: RegionOverrides = {}) {
 }
 
 function pageView(regions: ReturnType<typeof region>[]) {
+  const counted = (state: string) =>
+    regions.filter((item) => item.state === state).length;
   return {
     page_id: pageId,
     document_id: "00000000-0000-0000-0000-0000000000d1",
@@ -82,10 +84,10 @@ function pageView(regions: ReturnType<typeof region>[]) {
     detector_version: "test",
     progress: {
       total: regions.length,
-      unverified: regions.length,
-      verified: 0,
-      excluded: 0,
-      resolved: 0,
+      unverified: counted("unverified"),
+      verified: counted("verified"),
+      excluded: counted("excluded"),
+      resolved: counted("verified") + counted("excluded"),
     },
     regions,
   };
@@ -101,6 +103,86 @@ function serve(regions: ReturnType<typeof region>[]) {
       body: init?.body ? JSON.parse(String(init.body)) : null,
     });
     return Response.json(pageView(regions));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return calls;
+}
+
+/**
+ * A fetch double that keeps revisions the way the server keeps them.
+ *
+ * `serve` above answers every request with the same frozen page, which can
+ * only ever prove what one revision looks like. Repeat editing is a property
+ * of the *sequence*: each correction must supersede the current candidate
+ * with a new unverified child, and the next request must cite that child.
+ * Anything citing a superseded candidate gets the real 409, so a test cannot
+ * pass by accident on a UI that failed to pick the refreshed candidate up.
+ */
+function serveRevisions(initial: ReturnType<typeof region>[]) {
+  const state = new Map(initial.map((item) => [item.region_id, item]));
+  const calls: { url: string; method: string; body: Record<string, unknown> }[] = [];
+  let issued = 0;
+
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = typeof input === "string" ? input : String(input);
+    const body = init?.body
+      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+      : {};
+    calls.push({ url, method: init?.method ?? "GET", body });
+
+    const acted = /\/regions\/([^/]+)\/([a-z-]+)$/.exec(url);
+    if (acted) {
+      const [, regionId, action] = acted;
+      const current = state.get(regionId)!;
+      if (
+        body.candidate_id !== current.candidate_id ||
+        body.revision !== current.revision
+      ) {
+        return new Response(
+          `region ${regionId} moved on: the current candidate is ` +
+            `${current.candidate_id} revision ${current.revision}`,
+          { status: 409 },
+        );
+      }
+      if (action === "correct") {
+        issued += 1;
+        state.set(
+          regionId,
+          region(regionId, {
+            ...current,
+            candidate_id: `00000000-0000-0000-0000-0000000000${(0xd0 + issued).toString(16)}`,
+            revision: current.revision + 1,
+            origin: "human-correction",
+            abstained: false,
+            reason: "human correction; awaiting confirmation",
+            text: body.corrected_text as string,
+            // A correction withdraws any verification it supersedes.
+            verified_text: null,
+            state: "unverified",
+            technical_evidence: { revision: current.revision + 1, origin: "human-correction" },
+          }),
+        );
+      } else if (action === "confirm" || action === "confirm-visual") {
+        state.set(
+          regionId,
+          region(regionId, {
+            ...current,
+            state: "verified",
+            verified_text: (body.text as string | undefined) ?? current.text,
+            technical_evidence: {
+              revision: current.revision,
+              origin: current.origin,
+            },
+          }),
+        );
+      } else if (action === "reclassify") {
+        state.set(
+          regionId,
+          region(regionId, { ...current, source_kind: body.source_kind as string }),
+        );
+      }
+    }
+    return Response.json(pageView([...state.values()]));
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -153,7 +235,7 @@ describe("SourceV2Review visual card", () => {
     );
 
     // 2. emptiness stated as a fact, in the exact agreed wording
-    expect(within(item).getByText("රූපයේ ඇති පෙළ: නොමැත")).toBeVisible();
+    expect(within(item).getByText("රූපයේ ඇති පෙළ: නොමැත (No text in image)")).toBeVisible();
 
     // 3. a description slot that is honest about being empty, and about
     //    being machine-generated rather than printed on the page
@@ -187,14 +269,14 @@ describe("SourceV2Review visual card", () => {
     expect(within(item).getByTestId("crop-p186-r003")).toBeVisible();
     // printed text — source
     expect(within(item).getByTestId("text-p186-r003")).toHaveTextContent(LABEL_TEXT);
-    expect(within(item).getByText("රූපයේ ඇති පෙළ")).toBeVisible();
+    expect(within(item).getByText("රූපයේ ඇති පෙළ (Text in image)")).toBeVisible();
     // description — derived knowledge
     expect(within(item).getByTestId("description-p186-r003")).toHaveTextContent(
       DESCRIPTION,
     );
-    expect(within(item).getByText("රූප විස්තරය")).toBeVisible();
+    expect(within(item).getByText("රූප විස්තරය (Visual description)")).toBeVisible();
     // labels — only rendered because there are some
-    expect(within(item).getByText("හඳුනාගත් ලේබල්")).toBeVisible();
+    expect(within(item).getByText("හඳුනාගත් ලේබල් (Detected labels)")).toBeVisible();
     expect(within(item).getByTestId("labels-p186-r003")).toHaveTextContent(LABEL_TEXT);
 
     // the description is never mistaken for source text
@@ -208,7 +290,7 @@ describe("SourceV2Review visual card", () => {
     render(<SourceV2Review pageId={pageId} />);
     const item = await card("p186-r002");
     expect(within(item).queryByTestId("labels-p186-r002")).not.toBeInTheDocument();
-    expect(within(item).queryByText("හඳුනාගත් ලේබල්")).not.toBeInTheDocument();
+    expect(within(item).queryByText("හඳුනාගත් ලේබල් (Detected labels)")).not.toBeInTheDocument();
   });
 
   it("hides every diagnostic inside a collapsed technical disclosure", async () => {
@@ -231,7 +313,7 @@ describe("SourceV2Review visual card", () => {
     const details = within(item).getByTestId("technical-p186-r003");
     expect(details.tagName).toBe("DETAILS");
     expect(details).not.toHaveAttribute("open");
-    expect(within(details).getByText("▸ තාක්ෂණික විස්තර")).toBeVisible();
+    expect(within(details).getByText("▸ තාක්ෂණික විස්තර (Technical details)")).toBeVisible();
 
     // Every diagnostic string lives inside that disclosure, not beside the
     // picture. `closest` proves containment rather than mere co-existence.
@@ -360,7 +442,7 @@ describe("SourceV2Review text regions", () => {
       expect(within(item).queryByTestId(testId)).not.toBeInTheDocument();
     }
     // The old reason line is still where it was.
-    expect(within(item).getByText(/^හේතුව:/)).toBeVisible();
+    expect(within(item).getByText(/^හේතුව \(Reason\):/)).toBeVisible();
   });
 
   it("still preloads the verified text when editing again", async () => {
@@ -506,7 +588,7 @@ describe("SourceV2Review editor keyboard ownership", () => {
  *
  * Reported from the real pilot: `p186-r000` (a running header) and
  * `p186-r007` (the folio `171`) are `decorative`, and the card showed the
- * ordinary green "පෙළ නිවැරදියි" button for both. Pressing it returned 422,
+ * ordinary green "Confirm" button for both. Pressing it returned 422,
  * because decorative content can never become Verified Source Content — and
  * the error told the reviewer to use confirm-visual, which refuses decorative
  * too. A button whose only possible outcome is an error is the bug; disabling
@@ -521,8 +603,8 @@ describe("SourceV2Review decorative regions", () => {
     expect(within(item).queryByTestId("confirm-p186-r007")).not.toBeInTheDocument();
     // Not merely absent by test id: no control anywhere on the card carries
     // the confirm wording, enabled or otherwise.
-    expect(within(item).queryByText("පෙළ නිවැරදියි")).not.toBeInTheDocument();
-    expect(within(item).queryByText("රූපය තහවුරු කරන්න")).not.toBeInTheDocument();
+    expect(within(item).queryByText("Confirm")).not.toBeInTheDocument();
+    expect(within(item).queryByText("Confirm visual")).not.toBeInTheDocument();
     // And the card says why, rather than leaving a gap where a button was.
     expect(within(item).getByTestId("decorative-note-p186-r007")).toHaveTextContent(
       "මූලාශ්‍ර අන්තර්ගතයක් ලෙස තහවුරු කළ නොහැක",
@@ -536,7 +618,7 @@ describe("SourceV2Review decorative regions", () => {
 
     const exclude = within(item).getByTestId("exclude-p186-r000");
     expect(exclude).toBeEnabled();
-    expect(exclude).toHaveTextContent("මෙම කොටස භාවිත නොකරන්න");
+    expect(exclude).toHaveTextContent("Exclude");
 
     fireEvent.click(exclude);
     await waitFor(() =>
@@ -560,16 +642,15 @@ describe("SourceV2Review decorative regions", () => {
 
     const select = within(item).getByTestId("kind-select-p186-r007");
     // Reachable by its visible label, not only by test id.
-    expect(within(item).getByLabelText("මෙම කොටස කුමක්ද?")).toBe(select);
+    expect(within(item).getByLabelText("Change kind")).toBe(select);
     expect(
       [...(select as HTMLSelectElement).options].map((option) => option.value),
     ).toEqual(["text_only", "visual_only", "visual_with_text", "decorative", "undecided"]);
     // It opens on what the region currently is, so nothing is preselected
     // away from the machine's proposal.
     expect(select).toHaveValue("decorative");
-    expect(within(item).getByTestId("reclassify-p186-r007")).toHaveTextContent(
-      "වර්ගය වෙනස් කරන්න",
-    );
+    // The control names the change; the button applies it. Both English.
+    expect(within(item).getByTestId("reclassify-p186-r007")).toHaveTextContent("Apply");
   });
 
   it("reclassifies to text_only against the current candidate and revision", async () => {
@@ -625,7 +706,7 @@ describe("SourceV2Review decorative regions", () => {
 
     const confirm = await screen.findByTestId("confirm-p186-r007");
     expect(confirm).toBeEnabled();
-    expect(confirm).toHaveTextContent("පෙළ නිවැරදියි");
+    expect(confirm).toHaveTextContent("Confirm");
     expect(screen.queryByTestId("decorative-note-p186-r007")).not.toBeInTheDocument();
     expect(screen.queryByTestId("kind-select-p186-r007")).not.toBeInTheDocument();
     expect(screen.getByTestId("text-p186-r007")).toHaveTextContent(FOLIO);
@@ -649,7 +730,7 @@ describe("SourceV2Review decorative regions", () => {
     fireEvent.click(within(item).getByTestId("reclassify-p186-r000"));
 
     const confirm = await screen.findByTestId("confirm-p186-r000");
-    expect(confirm).toHaveTextContent("රූපය තහවුරු කරන්න");
+    expect(confirm).toHaveTextContent("Confirm visual");
     fireEvent.click(confirm);
 
     await waitFor(() =>
@@ -718,9 +799,295 @@ describe("SourceV2Review decorative regions", () => {
     // than gaining the decorative card's select.
     const figure = await card("p186-r003");
     expect(within(figure).getByTestId("reclassify-p186-r003")).toHaveTextContent(
-      "වර්ගය වෙනස් කරන්න",
+      "Change kind",
     );
     expect(within(figure).queryByTestId("kind-select-p186-r003")).not.toBeInTheDocument();
     expect(within(figure).getByTestId("confirm-p186-r003")).toBeEnabled();
+  });
+});
+
+/**
+ * Correcting a region is not a one-shot.
+ *
+ * Reported by the reviewer: "text correction appears to work only once".
+ * A reviewer must be able to correct a correction — an arbitrary number of
+ * times, before or after a confirmation — because the alternative is being
+ * stuck with a typo they have already noticed. `serveRevisions` supplies the
+ * real revision discipline, so each step here has to cite the candidate the
+ * previous step created or be refused with a 409.
+ */
+describe("SourceV2Review repeat editing", () => {
+  const MACHINE = "ක්‍රියාකාරකම් 11";
+  const FIRST = "ක්‍රියාකාරකම 11";
+  const SECOND = "ක්‍රියාකාරකම 11 (නිවැරදි කළ)";
+  const THIRD = "ක්‍රියාකාරකම 11 (තෙවන වර)";
+
+  function prose(id: string) {
+    return region(id, {
+      region_type: "text",
+      source_kind: "text_only",
+      proposed_source_kind: "text_only",
+      text: MACHINE,
+      crop_sha256: null,
+      crop_url: null,
+    });
+  }
+
+  /** Open the editor, replace the text, save, and wait for the card to show it. */
+  async function correct(id: string, next: string) {
+    const item = await card(id);
+    fireEvent.click(within(item).getByTestId(`correct-${id}`));
+    fireEvent.change(await screen.findByTestId(`editor-${id}`), {
+      target: { value: next },
+    });
+    fireEvent.click(within(item).getByTestId(`save-${id}`));
+    await waitFor(() =>
+      expect(screen.getByTestId(`text-${id}`)).toHaveTextContent(next),
+    );
+  }
+
+  it("still offers Edit once the first correction is saved", async () => {
+    serveRevisions([prose("p186-r005")]);
+    render(<SourceV2Review pageId={pageId} />);
+    await correct("p186-r005", FIRST);
+
+    const again = within(await card("p186-r005")).getByTestId("correct-p186-r005");
+    expect(again).toBeVisible();
+    expect(again).toBeEnabled();
+    expect(again).toHaveTextContent("Edit");
+  });
+
+  it("opens the second edit on the first corrected text, never the machine's", async () => {
+    serveRevisions([prose("p186-r005")]);
+    render(<SourceV2Review pageId={pageId} />);
+    await correct("p186-r005", FIRST);
+
+    fireEvent.click(within(await card("p186-r005")).getByTestId("correct-p186-r005"));
+    const editor = (await screen.findByTestId(
+      "editor-p186-r005",
+    )) as HTMLTextAreaElement;
+    expect(editor.value).toBe(FIRST);
+    expect(editor.value).not.toBe(MACHINE);
+  });
+
+  it("chains corrections, each citing the revision the last one created", async () => {
+    const calls = serveRevisions([prose("p186-r005")]);
+    render(<SourceV2Review pageId={pageId} />);
+
+    await correct("p186-r005", FIRST);
+    await correct("p186-r005", SECOND);
+    await correct("p186-r005", THIRD);
+
+    const corrections = calls.filter((call) => call.url.endsWith("/correct"));
+    expect(corrections.map((call) => call.body.revision)).toEqual([1, 2, 3]);
+    expect(corrections.map((call) => call.body.corrected_text)).toEqual([
+      FIRST,
+      SECOND,
+      THIRD,
+    ]);
+    // Distinct candidates, so no step re-sent a superseded one.
+    expect(new Set(corrections.map((call) => call.body.candidate_id)).size).toBe(3);
+    // And nothing was refused on the way.
+    expect(screen.queryByTestId("source-v2-error")).not.toBeInTheDocument();
+    expect(screen.getByTestId("text-p186-r005")).toHaveTextContent(THIRD);
+  });
+
+  it("renames the action to Edit again once the region is verified", async () => {
+    serveRevisions([prose("p186-r005")]);
+    render(<SourceV2Review pageId={pageId} />);
+    await correct("p186-r005", FIRST);
+
+    fireEvent.click(within(await card("p186-r005")).getByTestId("confirm-p186-r005"));
+    await waitFor(() =>
+      expect(screen.getByTestId("region-p186-r005")).toHaveAttribute(
+        "data-region-state",
+        "verified",
+      ),
+    );
+    expect(screen.getByTestId("correct-p186-r005")).toHaveTextContent("Edit again");
+    expect(screen.getByTestId("correct-p186-r005")).toBeEnabled();
+  });
+
+  it("lets Edit again be followed by another edit before reconfirming", async () => {
+    const calls = serveRevisions([prose("p186-r005")]);
+    render(<SourceV2Review pageId={pageId} />);
+    await correct("p186-r005", FIRST);
+
+    fireEvent.click(within(await card("p186-r005")).getByTestId("confirm-p186-r005"));
+    await waitFor(() =>
+      expect(screen.getByTestId("region-p186-r005")).toHaveAttribute(
+        "data-region-state",
+        "verified",
+      ),
+    );
+
+    // Edit again resumes from the verified text, and withdraws verification.
+    await correct("p186-r005", SECOND);
+    expect(screen.getByTestId("region-p186-r005")).toHaveAttribute(
+      "data-region-state",
+      "unverified",
+    );
+    // A second edit before reconfirming, which is the step the reviewer
+    // reported as impossible.
+    await correct("p186-r005", THIRD);
+
+    fireEvent.click(screen.getByTestId("confirm-p186-r005"));
+    await waitFor(() =>
+      expect(screen.getByTestId("region-p186-r005")).toHaveAttribute(
+        "data-region-state",
+        "verified",
+      ),
+    );
+    expect(screen.getByTestId("text-p186-r005")).toHaveTextContent(THIRD);
+    expect(
+      calls.filter((call) => call.url.endsWith("/correct")).map((c) => c.body.revision),
+    ).toEqual([1, 2, 3]);
+    expect(screen.queryByTestId("source-v2-error")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A human correction is source. Nothing may hide it or throw it away.
+ *
+ * Reproduced in Chrome against a disposable fixture: a `visual_only` region
+ * was corrected, the server stored the text on a new revision, and the card
+ * went on printing "රූපයේ ඇති පෙළ: නොමැත (No text in image)" with no `text-` node at all — the
+ * reviewer's words were invisible, so the edit looked like it had done
+ * nothing. The only primary action left was Confirm visual, which the client
+ * sends as `visual_only` with no text; the server then writes an empty string
+ * over the current candidate and the correction is gone for good.
+ *
+ * The live pilot carries the scar: `p186-r003` has a correction event holding
+ * 48 characters of human text at revision 1, and its current revision-2
+ * candidate now holds none.
+ *
+ * The card decided "this region has no printed text" from `source_kind`. It
+ * must decide it from the text the current candidate actually carries.
+ */
+describe("SourceV2Review corrections inside a visual region", () => {
+  const CORRECTED = "දණ්ඩ චුම්බකය (Bar magnet)";
+
+  function correctedVisualOnly(id: string) {
+    return region(id, {
+      source_kind: "visual_only",
+      proposed_source_kind: "visual_only",
+      origin: "human-correction",
+      revision: 2,
+      text: CORRECTED,
+      reason: "human correction; awaiting confirmation",
+      technical_evidence: { origin: "human-correction", revision: 2 },
+    });
+  }
+
+  it("shows the correction rather than claiming the image has no text", async () => {
+    serve([correctedVisualOnly("p186-r003")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+
+    expect(within(item).getByTestId("text-p186-r003")).toHaveTextContent(CORRECTED);
+    expect(within(item).queryByText("රූපයේ ඇති පෙළ: නොමැත (No text in image)")).not.toBeInTheDocument();
+    // Still source, still badged as such.
+    expect(
+      within(item).getByTestId("text-in-image-provenance-p186-r003"),
+    ).toHaveAttribute("data-provenance", "source");
+  });
+
+  it("lets the correction be corrected again from the card", async () => {
+    serve([correctedVisualOnly("p186-r003")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+
+    fireEvent.click(within(item).getByTestId("edit-text-p186-r003"));
+    expect(await screen.findByTestId("editor-p186-r003")).toHaveValue(CORRECTED);
+  });
+
+  it("withholds the visual confirm that would erase the correction", async () => {
+    const calls = serve([correctedVisualOnly("p186-r003")]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r003");
+
+    // Not merely disabled: a control whose only outcome is silent deletion
+    // has no business being on the card at all, the same rule D18 applies to
+    // the decorative confirm.
+    expect(within(item).queryByTestId("confirm-p186-r003")).not.toBeInTheDocument();
+    // The card says why, and names the decision that resolves it.
+    expect(within(item).getByTestId("visual-text-note-p186-r003")).toBeVisible();
+    expect(within(item).getByTestId("text-present-p186-r003")).toBeEnabled();
+
+    // Rendering the card decides nothing.
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+  });
+
+  it("keeps saying 'no text' for a figure that genuinely carries none", async () => {
+    serve([region("p186-r002", { abstained: true, text: "" })]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r002");
+
+    expect(within(item).getByText("රූපයේ ඇති පෙළ: නොමැත (No text in image)")).toBeVisible();
+    expect(within(item).queryByTestId("text-p186-r002")).not.toBeInTheDocument();
+    expect(within(item).queryByTestId("visual-text-note-p186-r002")).not.toBeInTheDocument();
+    expect(within(item).getByTestId("confirm-p186-r002")).toBeEnabled();
+  });
+});
+
+/**
+ * Pressing Edit must produce an editor.
+ *
+ * Reproduced in Chrome on a disposable fixture: for an `undecided` region the
+ * action row switched to Save/Cancel, the explanatory note stayed where the
+ * text would be, and no textarea was rendered anywhere — the reviewer was
+ * left in an edit state they could only Cancel out of, on exactly the regions
+ * that most need a human to type the reading in.
+ */
+describe("SourceV2Review editor availability", () => {
+  it("opens an editor for a region whose kind is still undecided", async () => {
+    serve([
+      region("p186-r008", {
+        region_type: "text",
+        source_kind: "undecided",
+        proposed_source_kind: null,
+        text: "",
+        abstained: true,
+        crop_sha256: null,
+        crop_url: null,
+      }),
+    ]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r008");
+
+    fireEvent.click(within(item).getByTestId("correct-p186-r008"));
+    const editor = await screen.findByTestId("editor-p186-r008");
+    expect(editor).toBeVisible();
+    // The note that explains the state is not replaced by the editor; the
+    // reviewer needs both.
+    expect(within(item).getByTestId("undecided-note-p186-r008")).toBeVisible();
+
+    // Empty is not saveable, but typing makes it so.
+    expect(within(item).getByTestId("save-p186-r008")).toBeDisabled();
+    fireEvent.change(editor, { target: { value: "ක්‍රියාකාරකම 11" } });
+    expect(within(item).getByTestId("save-p186-r008")).toBeEnabled();
+  });
+
+  it("opens an editor for a region whose reading failed", async () => {
+    serve([
+      region("p186-r009", {
+        region_type: "text",
+        source_kind: "text_only",
+        proposed_source_kind: "text_only",
+        text: "",
+        abstained: true,
+        crop_sha256: null,
+        crop_url: null,
+      }),
+    ]);
+    render(<SourceV2Review pageId={pageId} />);
+    const item = await card("p186-r009");
+
+    // The failure is stated, and confirming it stays impossible.
+    expect(within(item).getByText("මෙම කොටසේ පෙළ නිවැරදිව කියවී නොමැත.")).toBeVisible();
+    expect(within(item).getByTestId("confirm-p186-r009")).toBeDisabled();
+
+    fireEvent.click(within(item).getByTestId("correct-p186-r009"));
+    expect(await screen.findByTestId("editor-p186-r009")).toBeVisible();
   });
 });

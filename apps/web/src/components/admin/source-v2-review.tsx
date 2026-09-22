@@ -14,6 +14,14 @@
  * line-art figure in the field that means "the exact Sinhala text printed
  * here". They are now three labelled sections with the diagnostics collapsed,
  * and each says plainly whether it is source or machine-generated.
+ *
+ * Two locked decisions govern this file and should be read before changing
+ * its wording or its edit flow — `docs/source-v2/DECISIONS.md`:
+ *
+ * - **D20** human correction is an unbounded revision chain, and nothing may
+ *   hide or erase it;
+ * - **D21** bilingual domain terms, English action controls, and source text
+ *   that is never translated.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -84,122 +92,120 @@ type PageView = {
   regions: Region[];
 };
 
+/**
+ * Domain vocabulary: bilingual, and the same whatever the page's language.
+ *
+ * The screen has two readers with different needs. The teacher reviewing
+ * Sinhala material reads Sinhala; the person reconstructing a review decision
+ * from a bug report six months later reads the domain term. `පෙළ (Text)`
+ * serves both, and a term does not change meaning because the page it
+ * describes is in another language — so these strings are shared rather than
+ * translated per dictionary.
+ */
+const DOMAIN = {
+  heading: "මූලාශ්‍ර පිටුව සමාලෝචනය (Source page review)",
+  original: "මුල් පිටුව (Original page)",
+  reason: "හේතුව (Reason)",
+  excludeReason: "ඉවත් කිරීමේ හේතුව (Exclusion reason)",
+  // --- states ---
+  verified: "තහවුරු කර ඇත (Verified)",
+  excluded: "භාවිතයෙන් ඉවත් කර ඇත (Excluded)",
+  unverified: "තහවුරු කර නොමැත (Not verified)",
+  // --- source kinds (D18) ---
+  kindText: "පෙළ (Text)",
+  kindVisual: "රූපය පමණි (Visual only)",
+  kindVisualText: "රූපය + පෙළ (Visual + text)",
+  kindDecorative: "අලංකරණ (Decorative)",
+  kindUndecided: "තීරණය අවශ්‍යයි (Needs decision)",
+  // --- section headings ---
+  originalCrop: "මුල් රූපය (Original image)",
+  textInImage: "රූපයේ ඇති පෙළ (Text in image)",
+  noTextInImage: "රූපයේ ඇති පෙළ: නොමැත (No text in image)",
+  visualDescription: "රූප විස්තරය (Visual description)",
+  detectedLabels: "හඳුනාගත් ලේබල් (Detected labels)",
+  technical: "තාක්ෂණික විස්තර (Technical details)",
+  // --- provenance badges ---
+  fromSource: "මූලාශ්‍රයෙන් (From the source)",
+  machineGenerated: "යන්ත්‍රයෙන් (Machine-generated)",
+  // --- technical evidence ---
+  evidenceReason: "හේතුව (Reason)",
+  evidenceFindings: "නිර්ණායක සොයාගැනීම් (Deterministic findings)",
+  evidenceUncertainty: "අවිනිශ්චිතතා (Declared uncertainty)",
+  evidenceOrigin: "මූලය (Origin)",
+  evidenceRevision: "සංශෝධනය (Revision)",
+  evidenceCrop: "රූප පිටපතේ හැෂ් (Crop checksum)",
+  evidenceProposedKind: "යන්ත්‍රය යෝජනා කළ වර්ගය (Kind proposed by the machine)",
+  evidenceAbstained: "පෙළක් හමු නොවීය (No printed text was found)",
+} as const;
+
+/**
+ * Action controls: concise English, in every language.
+ *
+ * An action is a verb the operator learns once. Half the buttons in Sinhala
+ * and half in English read as an unfinished translation, and a Sinhala-only
+ * `පෙළ නිවැරදියි` is indistinguishable from `පෙළ නිවැරදි කරන්න` at a glance —
+ * one confirms, the other opens an editor. The domain meaning stays available
+ * bilingually in the status chip and the help text beside them.
+ */
+const ACTIONS = {
+  confirm: "Confirm",
+  confirmVisual: "Confirm visual",
+  correct: "Edit",
+  editAgain: "Edit again",
+  saveCorrection: "Save",
+  cancel: "Cancel",
+  exclude: "Exclude",
+  edit: "Edit",
+  editDescription: "Edit description",
+  saveDescription: "Save description",
+  reclassify: "Change kind",
+  applyKind: "Apply",
+  textPresent: "Text is present",
+  locate: "Locate",
+} as const;
+
 const TEXT = {
   sinhala: {
-    heading: "මූලාශ්‍ර පිටුව සමාලෝචනය",
-    original: "මුල් පිටුව",
-    candidate: "යන්ත්‍රය කියවූ පෙළ",
-    confirm: "පෙළ නිවැරදියි",
-    locate: "පිටුවේ පෙන්වන්න",
-    correct: "පෙළ නිවැරදි කරන්න",
-    editAgain: "නැවත සංස්කරණය කරන්න",
-    reverifyNote: "සංස්කරණය කළ විට නැවත තහවුරු කළ යුතු ය.",
-    saveCorrection: "නිවැරදි කළ පෙළ සුරකින්න",
-    cancel: "අවලංගු කරන්න",
-    exclude: "මෙම කොටස භාවිත නොකරන්න",
+    ...DOMAIN,
+    ...ACTIONS,
+    // --- help: the page's own language, English term in brackets only where
+    //     the term is the thing being named ---
+    reverifyNote: "සංස්කරණය කළ විට තහවුරු කිරීම ඉවත් වේ; නැවත තහවුරු කළ යුතු ය.",
     unreadable: "මෙම කොටස කියවී නොමැත",
-    verified: "තහවුරු කර ඇත",
-    excluded: "භාවිතයෙන් ඉවත් කර ඇත",
-    unverified: "තහවුරු කර නොමැත",
     notRead: "මෙම කොටසේ පෙළ නිවැරදිව කියවී නොමැත.",
-    kindText: "පෙළ",
-    kindVisual: "රූපය පමණි",
-    kindVisualText: "රූපය + පෙළ",
-    kindDecorative: "අලංකරණ",
-    kindUndecided: "තීරණය අවස්ථා",
-    confirmVisual: "රූපය තහවුරු කරන්න",
-    textPresent: "මෙහි පෙළ ඇත",
-    needsDecision: "මෙම කොටස කුමක්දි යන්න තීරණය කරන්න.",
-    reason: "හේතුව",
-    // --- decorative page furniture (D18) ---
+    needsDecision: "මෙම කොටස කුමක්ද යන්න තීරණය කරන්න.",
     decorativeNote:
-      "මෙය පිටුවේ අලංකරණ කොටසකි (ශීර්ෂකය, පිටු අංකය, අලංකරණ ඉරි). " +
+      "මෙය පිටුවේ අලංකරණ (Decorative) කොටසකි — ශීර්ෂකය, පිටු අංකය, අලංකරණ ඉරි. " +
       "එය මූලාශ්‍ර අන්තර්ගතයක් ලෙස තහවුරු කළ නොහැක. " +
-      "එකඟ නම් එය භාවිත නොකරන්න; එකඟ නොවේ නම් පළමුව වර්ගය වෙනස් කරන්න.",
+      "එකඟ නම් Exclude කරන්න; එකඟ නොවේ නම් පළමුව වර්ගය වෙනස් කරන්න.",
     decorativeReason: "අලංකරණ කොටසකි; මූලාශ්‍ර අන්තර්ගතයක් නොවේ.",
-    chooseKind: "මෙම කොටස කුමක්ද?",
-    // --- the separated visual sections ---
-    originalCrop: "මුල් රූපය",
     cropMissing: "මුල් රූපය නොලැබේ.",
-    textInImage: "රූපයේ ඇති පෙළ",
-    noTextInImage: "රූපයේ ඇති පෙළ: නොමැත",
-    visualDescription: "රූප විස්තරය",
     noDescriptionYet: "රූප විස්තරයක් තවම ලියා නැත.",
-    detectedLabels: "හඳුනාගත් ලේබල්",
-    technical: "තාක්ෂණික විස්තර",
-    fromSource: "මූලාශ්‍රයෙන්",
-    machineGenerated: "යන්ත්‍රයෙන් සාදන ලදි",
-    edit: "සංස්කරණය කරන්න",
-    editDescription: "රූප විස්තරය සංස්කරණය කරන්න",
-    saveDescription: "රූප විස්තරය සුරකින්න",
-    reclassify: "වර්ගය වෙනස් කරන්න",
     descriptionNotVerification: "විස්තරය සුරැකීම තහවුරු කිරීමක් නොවේ.",
-    evidenceReason: "හේතුව",
-    evidenceFindings: "නිර්ණායක සොයාගැනීම්",
-    evidenceUncertainty: "අවිනිශ්චිතතා",
-    evidenceOrigin: "මූලය",
-    evidenceRevision: "සංශෝධනය",
-    evidenceCrop: "රූප පිටපතේ හැෂ්",
-    evidenceProposedKind: "යන්ත්‍රය යෝජනා කළ වර්ගය",
-    evidenceAbstained: "පෙළක් හමු නොවීය",
+    visualTextNote:
+      "මෙම කොටසෙහි පෙළක් ඇත. එය “රූපය පමණි (Visual only)” ලෙස තහවුරු කළහොත් " +
+      "එම පෙළ මැකී යයි, එබැවින් එම ක්‍රියාව මෙහි ඉදිරිපත් නොකෙරේ. " +
+      "පළමුව “Text is present” ඔබා වර්ගය “රූපය + පෙළ (Visual + text)” ලෙස සලකුණු කරන්න.",
   },
   english: {
-    heading: "Source page review",
-    original: "Original page",
-    candidate: "Machine reading",
-    confirm: "Text is correct",
-    locate: "Locate on page",
-    correct: "Correct the text",
-    editAgain: "Edit again",
+    ...DOMAIN,
+    ...ACTIONS,
     reverifyNote: "Editing withdraws verification; it must be confirmed again.",
-    saveCorrection: "Save corrected text",
-    cancel: "Cancel",
-    exclude: "Do not use this region",
     unreadable: "This region was not read",
-    verified: "Verified",
-    excluded: "Removed from use",
-    unverified: "Not verified",
     notRead: "This region was not read correctly.",
-    kindText: "Text",
-    kindVisual: "Visual only",
-    kindVisualText: "Visual + text",
-    kindDecorative: "Decorative",
-    kindUndecided: "Needs decision",
-    confirmVisual: "Confirm visual",
-    textPresent: "Text is present",
     needsDecision: "Decide what this region is.",
-    reason: "Reason",
-    // --- decorative page furniture (D18) ---
     decorativeNote:
       "This is page furniture (running header, page number, ornamental rule). " +
       "It cannot be verified as source content. " +
-      "If you agree, do not use it; if you disagree, change its kind first.",
+      "If you agree, exclude it; if you disagree, change its kind first.",
     decorativeReason: "Decorative page furniture, not source content.",
-    chooseKind: "What is this region?",
-    // --- the separated visual sections ---
-    originalCrop: "Original image",
     cropMissing: "The original image is unavailable.",
-    textInImage: "Text in the image",
-    noTextInImage: "Text in the image: none",
-    visualDescription: "Image description",
     noDescriptionYet: "No image description has been written yet.",
-    detectedLabels: "Detected labels",
-    technical: "Technical details",
-    fromSource: "From the source",
-    machineGenerated: "Machine-generated",
-    edit: "Edit",
-    editDescription: "Edit image description",
-    saveDescription: "Save image description",
-    reclassify: "Change the kind",
     descriptionNotVerification: "Saving a description is not a verification.",
-    evidenceReason: "Reason",
-    evidenceFindings: "Deterministic findings",
-    evidenceUncertainty: "Declared uncertainty",
-    evidenceOrigin: "Origin",
-    evidenceRevision: "Revision",
-    evidenceCrop: "Crop checksum",
-    evidenceProposedKind: "Kind proposed by the machine",
-    evidenceAbstained: "No printed text was found",
+    visualTextNote:
+      "This region carries printed text. Confirming it as Visual only would " +
+      "erase that text, so the visual confirm is not offered here. " +
+      "Use “Text is present” to record that the figure has text in it.",
   },
 } as const;
 
@@ -515,7 +521,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
     <section className="flex min-h-0 flex-1 flex-col gap-4 p-4" data-source-v2-review>
       <header className="flex flex-wrap items-baseline gap-4">
         <h1 className="text-xl font-semibold">
-          {labels.heading} — {labels.original} {page.page_number}
+          {labels.heading} — {page.page_number}
         </h1>
         <p className="text-sm text-slate-700" data-testid="source-v2-progress">
           {labels.verified}: {page.progress.verified} · {labels.excluded}:{" "}
@@ -601,6 +607,13 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
             // the ordinary text-confirm button.
             const isDecorative = region.source_kind === "decorative";
             const needsDecision = region.source_kind === "undecided";
+            // The printed text this region currently carries. The verified
+            // copy wins where one exists; both are source. Whether a region
+            // *has* text is a fact about this string and nothing else —
+            // reading it off `source_kind` is what made a saved human
+            // correction invisible on a visual_only card.
+            const sourceText = region.verified_text ?? region.text;
+            const hasSourceText = sourceText.trim().length > 0;
             // A figure with no printed text is not unreadable; it is a figure.
             // Neither is an ornamental rule that prints nothing: emptiness is
             // the correct reading of both, and the decorative note below says
@@ -609,19 +622,28 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
               !isVisualOnly &&
               !isVisualWithText &&
               !isDecorative &&
-              (region.abstained || region.text.trim().length === 0);
+              (region.abstained || !hasSourceText);
             const isEditing = editing === region.region_id;
             // The three concepts only need separating where there is a
             // picture. Prose keeps the layout it already had.
             const isVisual =
               isVisualOnly || isVisualWithText || region.region_type === "figure";
             const isDescribing = describing === region.region_id;
+            // A region declared textless that nonetheless carries text is a
+            // contradiction only the reviewer can settle, and the wrong way
+            // to settle it is destructively: confirm-visual writes the
+            // declared emptiness over the candidate, so the human's words are
+            // gone with no trace on the card. The confirm is withheld and the
+            // reclassification offered instead — the same rule D18 applies to
+            // the decorative confirm.
+            const visualTextConflict = isVisualOnly && hasSourceText;
             const openTextEditor = () => {
               setEditing(region.region_id);
-              // Start from the latest *human-verified* text where one exists.
-              // Falling back to the machine candidate would silently discard
-              // the reviewer's own correction and invite them to redo it.
-              setDraft(region.verified_text ?? region.text);
+              // Start from the text the card is showing, whichever revision
+              // it came from. Falling back to the machine candidate would
+              // silently discard the reviewer's own correction and invite
+              // them to redo it.
+              setDraft(sourceText);
             };
             const openDescriptionEditor = () => {
               setDescribing(region.region_id);
@@ -800,7 +822,13 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                       </p>
                     ) : null}
 
-                    {/* 2. Text printed inside the crop. Source. */}
+                    {/* 2. Text printed inside the crop. Source.
+
+                        "This region has no text" is a claim about the text,
+                        so it is made from the text. Deriving it from
+                        `source_kind` alone is what hid a saved human
+                        correction behind "රූපයේ ඇති පෙළ: නොමැත" and made the
+                        edit look as though it had done nothing. */}
                     {isEditing ? (
                       <>
                         <ProvenanceHeading
@@ -817,16 +845,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           data-testid={`editor-${region.region_id}`}
                         />
                       </>
-                    ) : isVisualOnly ? (
-                      /* Emptiness is the right answer for a drawing, so this
-                         states the fact rather than reporting a failure. */
-                      <ProvenanceHeading
-                        title={labels.noTextInImage}
-                        provenance={{ text: labels.fromSource, machine: false }}
-                        regionId={region.region_id}
-                        slot="text-in-image"
-                      />
-                    ) : (
+                    ) : hasSourceText || isVisualWithText ? (
                       <>
                         <ProvenanceHeading
                           title={labels.textInImage}
@@ -852,10 +871,28 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-sm"
                           data-testid={`text-${region.region_id}`}
                         >
-                          {region.verified_text ?? region.text}
+                          {sourceText}
                         </pre>
                       </>
+                    ) : (
+                      /* Emptiness is the right answer for a drawing, so this
+                         states the fact rather than reporting a failure. */
+                      <ProvenanceHeading
+                        title={labels.noTextInImage}
+                        provenance={{ text: labels.fromSource, machine: false }}
+                        regionId={region.region_id}
+                        slot="text-in-image"
+                      />
                     )}
+
+                    {visualTextConflict ? (
+                      <p
+                        data-testid={`visual-text-note-${region.region_id}`}
+                        className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
+                      >
+                        {labels.visualTextNote}
+                      </p>
+                    ) : null}
 
                     {/* 3. What the picture shows. Derived knowledge (D18) —
                         badged as machine-generated so it can never be read as
@@ -968,6 +1005,12 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                   </div>
                 ) : (
                   <>
+                    {/* The state of the reading, and the reading itself, are
+                        two separate statements. Chaining them made the note
+                        swallow the editor: pressing Edit on an undecided or
+                        unread region switched the buttons to Save/Cancel and
+                        rendered no textarea anywhere, stranding the reviewer
+                        on exactly the regions that most need them to type. */}
                     {needsDecision ? (
                       <p
                         data-testid={`undecided-note-${region.region_id}`}
@@ -979,22 +1022,24 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                       <p className="rounded border border-red-300 bg-red-50 p-2 text-sm text-red-800">
                         {labels.notRead}
                       </p>
-                    ) : isEditing ? (
+                    ) : null}
+
+                    {isEditing ? (
                       <textarea
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                         rows={6}
-                        className="w-full rounded border border-slate-400 p-2 font-sans text-sm"
+                        className="mt-2 w-full rounded border border-slate-400 p-2 font-sans text-sm"
                         data-testid={`editor-${region.region_id}`}
                       />
-                    ) : (
+                    ) : hasSourceText ? (
                       <pre
                         className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-sm"
                         data-testid={`text-${region.region_id}`}
                       >
-                        {region.verified_text ?? region.text}
+                        {sourceText}
                       </pre>
-                    )}
+                    ) : null}
 
                     <p className="pt-1 text-xs text-slate-600">
                       {labels.reason}: {region.reason}
@@ -1051,7 +1096,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           htmlFor={`kind-select-${region.region_id}`}
                           className="text-xs font-medium text-slate-700"
                         >
-                          {labels.chooseKind}
+                          {labels.reclassify}
                         </label>
                         <select
                           id={`kind-select-${region.region_id}`}
@@ -1098,52 +1143,59 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
                           className="rounded border border-sky-700 bg-white px-3 py-1 text-sm font-medium text-sky-900 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
                           data-testid={`reclassify-${region.region_id}`}
                         >
-                          {labels.reclassify}
+                          {labels.applyKind}
                         </button>
                       </span>
                       {correctAction}
                     </>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        disabled={
-                          unreadable ||
-                          needsDecision ||
-                          busy !== null ||
-                          region.state === "verified"
-                        }
-                        onClick={() =>
-                          act(
-                            region,
-                            isVisualOnly || isVisualWithText ? "confirm-visual" : "confirm",
-                            isVisualOnly
-                              ? {
-                                  candidate_id: region.candidate_id,
-                                  revision: region.revision,
-                                  compared_with_image_sha256: page.image_sha256,
-                                  source_kind: "visual_only",
-                                }
-                              : isVisualWithText
+                      {/* Withheld, not disabled, when the region is declared
+                          textless but carries text: the request would succeed
+                          and take the reviewer's words with it. */}
+                      {visualTextConflict ? null : (
+                        <button
+                          type="button"
+                          disabled={
+                            unreadable ||
+                            needsDecision ||
+                            busy !== null ||
+                            region.state === "verified"
+                          }
+                          onClick={() =>
+                            act(
+                              region,
+                              isVisualOnly || isVisualWithText
+                                ? "confirm-visual"
+                                : "confirm",
+                              isVisualOnly
                                 ? {
                                     candidate_id: region.candidate_id,
                                     revision: region.revision,
                                     compared_with_image_sha256: page.image_sha256,
-                                    source_kind: "visual_with_text",
-                                    text: region.verified_text ?? region.text,
+                                    source_kind: "visual_only",
                                   }
-                                : {
-                                    candidate_id: region.candidate_id,
-                                    revision: region.revision,
-                                    compared_with_image_sha256: page.image_sha256,
-                                  },
-                          )
-                        }
-                        className="rounded bg-emerald-700 px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-                        data-testid={`confirm-${region.region_id}`}
-                      >
-                        {isVisualOnly ? labels.confirmVisual : labels.confirm}
-                      </button>
+                                : isVisualWithText
+                                  ? {
+                                      candidate_id: region.candidate_id,
+                                      revision: region.revision,
+                                      compared_with_image_sha256: page.image_sha256,
+                                      source_kind: "visual_with_text",
+                                      text: sourceText,
+                                    }
+                                  : {
+                                      candidate_id: region.candidate_id,
+                                      revision: region.revision,
+                                      compared_with_image_sha256: page.image_sha256,
+                                    },
+                            )
+                          }
+                          className="rounded bg-emerald-700 px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                          data-testid={`confirm-${region.region_id}`}
+                        >
+                          {isVisualOnly ? labels.confirmVisual : labels.confirm}
+                        </button>
+                      )}
                       {isVisualOnly ? (
                         /* The machine saw no text. If the reviewer can see
                            labels, reclassifying is the honest route - never
@@ -1211,7 +1263,7 @@ export function SourceV2Review({ pageId }: { pageId: string }) {
       </div>
 
       <label className="text-xs text-slate-600">
-        Exclusion reason
+        {labels.excludeReason}
         <input
           value={note}
           onChange={(event) => setNote(event.target.value)}

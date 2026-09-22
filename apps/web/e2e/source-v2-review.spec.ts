@@ -81,9 +81,23 @@ async function seedDocument(page: Page): Promise<string> {
   return ((await response.json()) as { id: string }).id;
 }
 
-async function importPage(page: Page, documentId: string) {
+async function importPage(
+  page: Page,
+  documentId: string,
+  extra: ReturnType<typeof region>[] = [],
+) {
   const pageNumber = 800_000 + Math.floor(Math.random() * 90_000);
   const sha = createHash("sha256").update(randomUUID()).digest("hex");
+  const candidates = [
+    region("p001-r001", "heading", MISREAD_HEADING),
+    region("p001-r002", "text", PROSE),
+    region("p001-r003", "decorative", FOOTER),
+    region("p001-r004", "unknown", "", {
+      abstained: true,
+      reason: "primary reading found no text: no printed text in this region",
+    }),
+    ...extra,
+  ];
   const response = await page.request.post("/api/v1/admin/source-v2/pages", {
     data: {
       document_id: documentId,
@@ -94,21 +108,18 @@ async function importPage(page: Page, documentId: string) {
       height: 3509,
       dpi: 300,
       detector_version: "e2e",
-      layout: { regions: [{ id: "p001-r001", bbox: [10, 10, 100, 40] }] },
-      candidates: [
-        region("p001-r001", "heading", MISREAD_HEADING),
-        region("p001-r002", "text", PROSE),
-        region("p001-r003", "decorative", FOOTER),
-        region("p001-r004", "unknown", "", {
-          abstained: true,
-          reason: "primary reading found no text: no printed text in this region",
-        }),
-      ],
+      layout: {
+        regions: [
+          { id: "p001-r001", bbox: [10, 10, 100, 40] },
+          { id: "p001-r005", bbox: [10, 60, 400, 300] },
+        ],
+      },
+      candidates,
     },
   });
   expect(response.status(), await response.text()).toBe(201);
   const body = (await response.json()) as ImportResult;
-  expect(body.regions).toBe(4);
+  expect(body.regions).toBe(candidates.length);
   return { pageId: body.page_id, sha };
 }
 
@@ -241,7 +252,8 @@ test.describe("Source V2 review", () => {
       "data-region-state",
       "verified",
     );
-    await expect(page.getByTestId("text-p001-r001")).toHaveText(ORIGINAL_HEADING);
+    // The *last* human text, not the first: step 3c corrected it again.
+    await expect(page.getByTestId("text-p001-r001")).toHaveText(TYPED);
     await expect(card(page, "p001-r002")).toHaveAttribute(
       "data-region-state",
       "verified",
@@ -251,6 +263,129 @@ test.describe("Source V2 review", () => {
       "excluded",
     );
     await expect(page.getByTestId("source-v2-progress")).toContainText("2");
+  });
+
+  test("a correction can itself be corrected, before and after confirming", async ({
+    page,
+  }) => {
+    // "Text correction appears to work only once" — the reviewer's words.
+    // Three corrections in a row with no confirmation between them, then a
+    // confirmation, then two more corrections before reconfirming. Every
+    // step must cite the revision the previous step created, so a UI that
+    // failed to pick up the refreshed candidate would be refused with a 409
+    // rather than quietly passing this test.
+    await signIn(page);
+    const documentId = await seedDocument(page);
+    const { pageId } = await importPage(page, documentId);
+    await page.goto(`/admin/source-v2/${pageId}`);
+
+    const editor = page.getByTestId("editor-p001-r001");
+    const shown = page.getByTestId("text-p001-r001");
+    const state = card(page, "p001-r001");
+
+    async function correct(next: string, expectedPreload: string) {
+      await page.getByTestId("correct-p001-r001").click();
+      await expect(editor).toHaveValue(expectedPreload);
+      await editor.fill(next);
+      await page.getByTestId("save-p001-r001").click();
+      await expect(shown).toHaveText(next);
+    }
+
+    // r1 -> r2 -> r3 -> r4, no confirmation anywhere in between.
+    await expect(shown).toHaveText(MISREAD_HEADING);
+    await correct(ORIGINAL_HEADING, MISREAD_HEADING);
+    await correct(`${ORIGINAL_HEADING} (දෙවන)`, ORIGINAL_HEADING);
+    await correct(`${ORIGINAL_HEADING} (තෙවන)`, `${ORIGINAL_HEADING} (දෙවන)`);
+    await expect(state).toHaveAttribute("data-region-state", "unverified");
+
+    let current = (await readPage(page, pageId)).regions.find(
+      (item) => item.region_id === "p001-r001",
+    )!;
+    expect(current.revision).toBe(4);
+    expect(current.text).toBe(`${ORIGINAL_HEADING} (තෙවන)`);
+
+    // Confirm only the final revision.
+    await page.getByTestId("confirm-p001-r001").click();
+    await expect(state).toHaveAttribute("data-region-state", "verified");
+    await expect(page.getByTestId("correct-p001-r001")).toHaveText(/Edit again/i);
+
+    // Edit again, and edit that again before reconfirming.
+    await correct(`${ORIGINAL_HEADING} (හතරවන)`, `${ORIGINAL_HEADING} (තෙවන)`);
+    await expect(state).toHaveAttribute("data-region-state", "unverified");
+    await correct(`${ORIGINAL_HEADING} (පස්වන)`, `${ORIGINAL_HEADING} (හතරවන)`);
+
+    await page.getByTestId("confirm-p001-r001").click();
+    await expect(state).toHaveAttribute("data-region-state", "verified");
+
+    // The last human text is what is verified, and a reload proves the
+    // database agrees with the screen.
+    await page.reload();
+    await expect(page.getByTestId("text-p001-r001")).toHaveText(
+      `${ORIGINAL_HEADING} (පස්වන)`,
+    );
+    await expect(card(page, "p001-r001")).toHaveAttribute(
+      "data-region-state",
+      "verified",
+    );
+    current = (await readPage(page, pageId)).regions.find(
+      (item) => item.region_id === "p001-r001",
+    )!;
+    expect(current.revision).toBe(6);
+    expect(current.state).toBe("verified");
+  });
+
+  test("a corrected figure keeps the reviewer's text visible", async ({ page }) => {
+    // The live scar this pins: `p186-r003` is a `visual_only` figure with a
+    // correction event carrying 48 characters of human text, and a current
+    // candidate carrying none. The card showed "no text in image" whatever
+    // the candidate held, so the correction was invisible; the only action
+    // left was Confirm visual, which writes the declared emptiness over the
+    // candidate and deletes it.
+    await signIn(page);
+    const documentId = await seedDocument(page);
+    const { pageId } = await importPage(page, documentId, [
+      region("p001-r005", "figure", "", {
+        abstained: true,
+        reason: "primary reading found no text: line-art figure only",
+        crop_sha256: createHash("sha256").update("e2e-crop").digest("hex"),
+      }),
+    ]);
+    await page.goto(`/admin/source-v2/${pageId}`);
+
+    // A textless figure states the fact and offers the visual confirm.
+    await expect(page.getByText("රූපයේ ඇති පෙළ: නොමැත (No text in image)")).toBeVisible();
+    await expect(page.getByTestId("confirm-p001-r005")).toBeEnabled();
+
+    const LABEL = "උතුරු ධ්‍රැවය";
+    await page.getByTestId("correct-p001-r005").click();
+    await page.getByTestId("editor-p001-r005").fill(LABEL);
+    await page.getByTestId("save-p001-r005").click();
+
+    // The correction is on the card, not only in the database.
+    await expect(page.getByTestId("text-p001-r005")).toHaveText(LABEL);
+    await expect(page.getByText("රූපයේ ඇති පෙළ: නොමැත (No text in image)")).toHaveCount(0);
+    // And the button that would erase it is gone, replaced by an
+    // explanation and the reclassification that actually resolves this.
+    await expect(page.getByTestId("confirm-p001-r005")).toHaveCount(0);
+    await expect(page.getByTestId("visual-text-note-p001-r005")).toBeVisible();
+
+    await page.getByTestId("text-present-p001-r005").click();
+    await expect(page.getByTestId("kind-p001-r005")).toHaveAttribute(
+      "data-source-kind",
+      "visual_with_text",
+    );
+    await expect(page.getByTestId("text-p001-r005")).toHaveText(LABEL);
+
+    // Confirming the figure now keeps the words the reviewer typed.
+    await page.getByTestId("confirm-p001-r005").click();
+    await expect(card(page, "p001-r005")).toHaveAttribute(
+      "data-region-state",
+      "verified",
+    );
+    const verified = (await readPage(page, pageId)).regions.find(
+      (item) => item.region_id === "p001-r005",
+    )!;
+    expect(verified.text).toBe(LABEL);
   });
 
   test("a superseded revision can no longer be confirmed", async ({ page }) => {
